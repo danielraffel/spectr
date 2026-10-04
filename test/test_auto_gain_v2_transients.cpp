@@ -21,6 +21,11 @@
 //
 //   SPECTR_LEVEL_PLANT=autogain-v2-reset-on-seek    the first v2 forgot the
 //                                                   material at every locate
+//   SPECTR_LEVEL_PLANT=autogain-v2-no-drop-path     v2c's detector: one
+//                                                   threshold, a quieter
+//                                                   section glides for seconds
+//   SPECTR_LEVEL_PLANT=autogain-v2-detect-only-when-on  v2c: no change
+//                                                   detection while AUTO is off
 //   SPECTR_LEVEL_PLANT=autogain-v2-stale-on-change  the first v2's transitions:
 //                                                   no change detection, no
 //                                                   level-drop rule, no Freeze
@@ -576,4 +581,126 @@ TEST_CASE("A restored estimate on different material converges no slower than a 
         worst_extra = std::max(worst_extra, tr.t1db - std::max(tc.t1db, 0.75));
     }
     CHECK(worst_extra <= 0.0);
+}
+
+namespace {
+double mean_applied(const Render& r, double from_s, double to_s) {
+    double sum = 0.0;
+    int count = 0;
+    for (std::size_t b = 0; b < r.block_end.size(); ++b) {
+        const double t = static_cast<double>(r.block_end[b]) / kRate;
+        if (t >= from_s && t < to_s) { sum += r.applied_db[b]; ++count; }
+    }
+    return count > 0 ? sum / count : 0.0;
+}
+} // namespace
+
+TEST_CASE("Auto Gain v2 follows a quieter section after a loud one",
+          "[level][autogain][v2][transient][audio]") {
+    // A quieter part after a loud one is where an energy-weighted estimate is
+    // slowest: the louder past outweighs it. When the level has fallen 3 dB
+    // below its slow average after louder material that lasted 3 s, a 2 dB
+    // gap between the fast and slow shapes counts as a change (a decay, whose
+    // level keeps falling, does not). Gate: T1dB <= 2 s and, 3-5 s after the
+    // change, the gain within 1 dB of what the quiet part gets alone.
+    // Without the path (autogain-v2-no-drop-path): verse after a chorus under
+    // the top octaves +24 glides for ~10 s; chorus -> verse under a tilt
+    // takes 3.8 s and settles 2.1 dB short.
+    const Shape tilt{"tilt -12..+12", [](std::size_t i, spectr::Band& b) {
+        b.gain_db = -12.0f + 24.0f * static_cast<float>(i) / 31.0f; }};
+    struct Case { const char* name; Stereo in; Shape shape; double change_s, end_s; };
+    const Case cases[] = {
+        {"verse, chorus 10-16 s, verse", concat(concat(verse(seconds(10.0)), chorus(seconds(6.0))),
+                                                verse(seconds(10.0))), kHighBoost, 16.0, 26.0},
+        {"chorus -> verse, tilt", concat(chorus(seconds(10.0)), verse(seconds(10.0))), tilt, 10.0, 20.0},
+        {"chorus -> verse, high +24", concat(chorus(seconds(10.0)), verse(seconds(10.0))), kHighBoost,
+         10.0, 20.0},
+    };
+    double worst_t1db = 0.0, worst_err = 0.0;
+    for (const auto& c : cases) {
+        const auto v2 = render(c.in, c.shape, Mode::v2);
+        const auto ref = render(c.in, kFlat, Mode::off);
+        const double correct = mean_applied(render(verse(seconds(12.0)), c.shape, Mode::v2), 10.0, 12.0);
+        const auto tr = transition(v2, ref, c.change_s, c.end_s, c.end_s - 0.1);
+        const double err = mean_applied(v2, c.change_s + 3.0, c.change_s + 5.0) - correct;
+        std::printf("[autogain-v2-transient] %-28s T1dB %.2f s, settled error %+.2f dB "
+                    "(verse alone %+.2f dB)\n", c.name, tr.t1db, err, correct);
+        worst_t1db = std::max(worst_t1db, tr.t1db);
+        worst_err = std::max(worst_err, std::abs(err));
+    }
+    std::printf("[autogain-v2-transient] quieter after louder: worst T1dB %.2f s, worst settled "
+                "error %.2f dB\n", worst_t1db, worst_err);
+    CHECK(worst_t1db <= 2.0);
+    CHECK(worst_err <= 1.0);
+}
+
+TEST_CASE("Switching AUTO on after the material changed while it was off",
+          "[level][autogain][v2][transient][audio]") {
+    // The estimator and its change detector keep listening while AUTO is
+    // off, so AUTO switched on after a change of material starts from the
+    // new material. v2c ran the detector only while AUTO was on
+    // (autogain-v2-detect-only-when-on): ~6.5 s to within 1 dB.
+    struct Case { const char* name; Stereo in; };
+    const Case cases[] = {
+        {"bass 3 s -> hats, on at 6 s", concat(bass_line(seconds(3.0)), hats(seconds(9.0)))},
+        {"verse 3 s -> hats, on at 6 s", concat(verse(seconds(3.0)), hats(seconds(9.0)))},
+    };
+    double worst = 0.0;
+    for (const auto& c : cases) {
+        RenderOptions late;
+        late.before = [](std::size_t pos, pulp::format::HeadlessHost& host, spectr::Spectr&) {
+            host.state().set_value(spectr::kParamAutoGain,
+                                   static_cast<double>(pos) / kRate >= 6.0 ? 1.0f : 0.0f);
+        };
+        const auto v2 = render(c.in, kHighBoost, Mode::v2, late);
+        const auto on = render(c.in, kHighBoost, Mode::v2);
+        const auto ref = render(c.in, kFlat, Mode::off);
+        const auto tr = transition(v2, ref, 6.0, 12.0, 11.9);
+        std::printf("[autogain-v2-transient] %-30s T1dB %.2f s after AUTO on, settles %+.2f dB "
+                    "(AUTO on throughout: %+.2f dB)\n", c.name, tr.t1db, tr.settled_db,
+                    mean_applied(on, 10.9, 11.9));
+        worst = std::max(worst, tr.t1db);
+        CHECK(std::abs(tr.settled_db - mean_applied(on, 10.9, 11.9)) <= 0.5);
+    }
+    std::printf("[autogain-v2-transient] AUTO switched on late: worst T1dB %.2f s\n", worst);
+    CHECK(worst <= kChangeT1dbGate);
+}
+
+TEST_CASE("Reopening a project on the same material holds its level",
+          "[level][autogain][v2][transient][state][audio]") {
+    // The restored estimate fades like a cold start's prior while the
+    // material disagrees with it, and three times as slowly while it agrees,
+    // so the first frames of the same song do not swing the gain away from
+    // where it was saved. Gate: the worst deviation from the saved level in
+    // the first 4 s <= 2.0 dB under the top octaves +24 (a 0.5 s fade, the
+    // fixed fade -- autogain-v2-restore-fixed-fade: 2.98 dB on the drum loop).
+    struct Case { const char* name; Stereo in; };
+    const auto n = seconds(12.0);
+    const Case cases[] = {{"drum loop", drum_loop(n)},
+                          {"dense mix", scaled(mixed(mixed(mixed(mixed(bass_line(n), drum_loop(n), 0.8),
+                                                                   pad(n), 1.5), vocal(n), 0.6),
+                                                       hats(n), 0.7), 0.6)}};
+    double worst = 0.0;
+    for (const auto& c : cases) {
+        std::vector<std::uint8_t> blob;
+        RenderOptions save;
+        save.finish = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+            blob = pulp::format::plugin_state_io::serialize(host.state(), plugin);
+        };
+        const auto first = render(c.in, kHighBoost, Mode::v2, save);
+        RenderOptions restore;
+        restore.setup = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+            REQUIRE(pulp::format::plugin_state_io::deserialize(blob, host.state(), plugin));
+        };
+        const auto again = render(c.in, kHighBoost, Mode::v2, restore);
+        const double saved = first.applied_db.back();
+        double dev = 0.0;
+        for (std::size_t b = 0; b < again.block_end.size(); ++b)
+            if (static_cast<double>(again.block_end[b]) / kRate < 4.0)
+                dev = std::max(dev, static_cast<double>(std::abs(again.applied_db[b] - saved)));
+        std::printf("[autogain-v2-transient] reopened on the same %-10s worst deviation from the "
+                    "saved %+.2f dB in 4 s: %.2f dB\n", c.name, saved, dev);
+        worst = std::max(worst, dev);
+    }
+    CHECK(worst <= 2.0);
 }

@@ -91,6 +91,9 @@ auto_gain_v2_config() noexcept {
     c.change_seconds = 0.7;
     c.change_huge_db = 12.0;
     c.change_huge_seconds = 0.4;
+    c.change_drop_threshold_db = 2.0;
+    c.change_drop_level_db = 3.0;
+    c.change_max_decay_db_per_second = 6.0;
     // The dry leg is the live input; the wet leg is what the mask shapes
     // (the held sound while Freeze holds). Their cross-spectrum tells the
     // estimator, sample-deterministically, how they combine at Mix.
@@ -154,6 +157,14 @@ public:
             config.level_weight_exponent = std::atof(g);
         if (const char* l = std::getenv("SPECTR_AUTOGAIN_LOCAL_S"))
             config.local_level_seconds = std::atof(l);
+        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_THRESHOLD_DB"))
+            config.change_drop_threshold_db = std::atof(t);
+        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_LEVEL_DB"))
+            config.change_drop_level_db = std::atof(t);
+        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_MIN_LOUD_S"))
+            config.change_drop_min_loud_seconds = std::atof(t);
+        if (const char* t = std::getenv("SPECTR_AUTOGAIN_MAX_DECAY_DB_S"))
+            config.change_max_decay_db_per_second = std::atof(t);
         if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
@@ -172,8 +183,15 @@ public:
         // The second v2's detector: three frames, no memory of the past.
         const bool short_plant = level_plant("autogain-v2-short-persistence");
         if (short_plant) config.memory_seconds = 0.0;
+        // v2c's detector: one threshold, whatever the level did.
+        if (short_plant || level_plant("autogain-v2-no-drop-path")) config.change_drop_threshold_db = 0.0;
         restore_as_warm_plant_ = level_plant("autogain-v2-restore-as-warm");
         reprepare_reset_plant_ = level_plant("autogain-v2-reprepare-reset");
+        // v2c: the detector ran only while AUTO was on.
+        off_detect_plant_ = level_plant("autogain-v2-detect-only-when-on");
+        restored_agree_fade_ = level_plant("autogain-v2-restore-fixed-fade") ? 1.0 : 3.0;
+        if (const char* f = std::getenv("SPECTR_AUTOGAIN_RESTORED_FADE"))
+            if (const double v = std::atof(f); v >= 1.0) restored_agree_fade_ = v;
         detector_.threshold_db = config.change_threshold_db;
         detector_.huge_db = config.change_huge_db;
         {
@@ -184,6 +202,13 @@ public:
             detector_.huge_frames = std::max(1, static_cast<int>(
                 std::ceil(config.change_huge_seconds / hop_s)));
             if (short_plant) detector_.frames = detector_.huge_frames = 3;
+            detector_.drop_threshold_db = config.change_drop_threshold_db;
+            detector_.drop_level_db = config.change_drop_level_db;
+            detector_.max_decay_db_per_frame = config.change_max_decay_db_per_second * hop_s;
+            detector_.drop_min_loud_frames = static_cast<int>(
+                std::ceil(config.change_drop_min_loud_seconds / hop_s));
+            detector_.level_fast_alpha = 1.0 - std::exp(-hop_s / config.fast_time_constant_seconds);
+            detector_.level_slow_alpha = 1.0 - std::exp(-hop_s / config.time_constant_seconds);
         }
         if (!reprepare_reset_plant_ && spectrum_.prepared_for(sample_rate, channels, config)
             && design_grid_ == std::max(64, design_grid)) {
@@ -229,6 +254,7 @@ public:
         clear_events_();
         stream_pos_ = 0;
         enabled_ = false;
+        restored_prior_ = false;
         export_countdown_ = 0;
     }
 
@@ -308,6 +334,7 @@ public:
         spectrum_.import_bands(pending_, restore_as_warm_plant_
             ? pulp_candidate::signal::LongTermSpectrum::Import::warm
             : pulp_candidate::signal::LongTermSpectrum::Import::prior);
+        restored_prior_ = !restore_as_warm_plant_;
         snapshot_.write(pending_);
         target_.reset();
         detector_.reset();
@@ -329,7 +356,10 @@ public:
         mix_ = std::clamp(static_cast<double>(mix), 0.0, 1.0);
         slice_start_ = stream_pos_;
         if (target_.primed() && !shape_changed) return false;
-        if (enabled) derive_response_(shape, mix, renderer);
+        // The response is derived whether AUTO is on or not: the change
+        // detector runs while AUTO is off too (on_frame_), so switching AUTO
+        // on after the material changed starts from the new material.
+        if (enabled || !off_detect_plant_) derive_response_(shape, mix, renderer);
         // Switching AUTO on (or any edit) is also when a material change
         // that happened while AUTO was off is noticed.
         if (enabled && !stale_plant_ && spectrum_.shape_frames() >= 2
@@ -475,21 +505,43 @@ private:
             spectrum_.export_bands(export_scratch_);
             if (export_scratch_.valid) snapshot_.write(export_scratch_);
         }
-        if (!enabled_ || !target_.primed()) return;
-        const auto& c = spectrum_.config();
+        // A restored estimate fades like a cold start's prior while the
+        // material disagrees with it (other material takes over as fast as
+        // from a cold start), and over kRestoredAgreeFade times as long while
+        // the material agrees (the same song reopened: the few frames the
+        // material's own estimate starts from no longer swing the gain).
+        if (restored_prior_) {
+            if (spectrum_.prior_weight() <= 0.0) {
+                restored_prior_ = false;
+                spectrum_.set_prior_fade_scale(1.0);
+            } else if (response_valid_ && spectrum_.last_frame_audible()
+                       && spectrum_.shape_frames() >= 1) {
+                const double gap = std::abs(
+                    static_cast<double>(target_db_for_(spectrum_.fast_shape_legs()))
+                    - target_db_for_(spectrum_.prior_legs()));
+                spectrum_.set_prior_fade_scale(
+                    gap <= detector_.threshold_db ? 1.0 / restored_agree_fade_ : 1.0);
+            }
+        }
         // The change detector (not during a cold or restored start, whose
-        // prior is still fading -- that IS the move to the material).
-        if (!stale_plant_ && spectrum_.last_frame_audible()
+        // prior is still fading -- that IS the move to the material). It runs
+        // while AUTO is off as well, so the estimate it keeps is the current
+        // material's when AUTO is switched on.
+        if ((enabled_ || !off_detect_plant_) && !stale_plant_ && response_valid_
+            && spectrum_.last_frame_audible()
             && spectrum_.shape_frames() >= 2 && spectrum_.prior_weight() <= 0.0) {
             using E = pulp_candidate::signal::MaterialChangeDetector::Event;
             const float fast = target_db_for_(spectrum_.fast_shape_legs());
-            switch (detector_.observe(fast, target_db_for_(spectrum_.slow_shape_legs()))) {
+            switch (detector_.observe(fast, target_db_for_(spectrum_.slow_shape_legs()),
+                                      spectrum_.last_frame_lufs())) {
             case E::run_started: spectrum_.begin_candidate(); break;
             case E::run_broken: spectrum_.cancel_candidate(); break;
             case E::confirmed: confirm_change_(fast); break;
             case E::none: break;
             }
         }
+        if (!enabled_ || !target_.primed()) return;
+        const auto& c = spectrum_.config();
         // Just restarted: hold the target until the new running mean spans
         // kRestartSettleSeconds (a beat of a groove), or its first frames --
         // one kick, one hat -- would swing the gain.
@@ -520,6 +572,11 @@ private:
     bool stale_plant_ = false;
     bool restore_as_warm_plant_ = false;
     bool reprepare_reset_plant_ = false;
+    bool off_detect_plant_ = false;
+    // A restored estimate is the prior now; how much longer it fades while
+    // the material agrees with it.
+    bool restored_prior_ = false;
+    double restored_agree_fade_ = 3.0;
     int export_countdown_ = 0;
     pulp_candidate::signal::SpectrumBands export_scratch_{};
     mutable pulp::runtime::TripleBuffer<pulp_candidate::signal::SpectrumBands> snapshot_{

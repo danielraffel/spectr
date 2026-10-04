@@ -210,10 +210,9 @@ block's parameter cursor. See `include/spectr/level_controls.hpp`.
   300 ms ramp; exactly 1.0 when off. This is Auto Gain v2; v1 (the same ratio
   weighted by a fixed K-weighted pink reference, clamped to -24...+12 dB) stays
   in the code for comparison only. Design, tuning and measurements:
-  [level-controls.md](level-controls.md). New instances default **Off**
+  [level-controls.md](level-controls.md). New instances default **On**
   (`kAutoGainDefaultForNewInstances`); a session saved without the
-  `level_controls` marker opens with it Off too; a session that saved it On
-  keeps it On. One saved On before v2 (no `auto_gain_model` member) keeps
+  `level_controls` marker opens with it Off; a session keeps the AUTO it saved. One saved On before v2 (no `auto_gain_model` member) keeps
   running v1 so its level does not change, until the user switches AUTO off and
   on; new instances and AUTO switched on fresh run v2. v2's estimate of the
   material is saved with the session (`auto_gain_estimate`) and kept across a

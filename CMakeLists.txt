@@ -1104,6 +1104,22 @@ add_test(NAME Spectr-level-autogain-v2-short-persistence-negative-control
         $<TARGET_FILE:Spectr-test> "Auto Gain v2 does not pump on sparse or alternating or decaying material")
 set_tests_properties(Spectr-level-autogain-v2-short-persistence-negative-control PROPERTIES
     TIMEOUT 600 PASS_REGULAR_EXPRESSION "CHECK\\( worst_excess <= 0\\.25 \\)")
+# Auto Gain v2, fourth round.
+add_test(NAME Spectr-level-autogain-v2-no-drop-path-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-no-drop-path
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a quieter section after a loud one")
+set_tests_properties(Spectr-level-autogain-v2-no-drop-path-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_t1db <= 2\\.0 \\)")
+add_test(NAME Spectr-level-autogain-v2-detect-only-when-on-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-detect-only-when-on
+        $<TARGET_FILE:Spectr-test> "Switching AUTO on after the material changed while it was off")
+set_tests_properties(Spectr-level-autogain-v2-detect-only-when-on-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kChangeT1dbGate \\)")
+add_test(NAME Spectr-level-autogain-v2-restore-fixed-fade-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-restore-fixed-fade
+        $<TARGET_FILE:Spectr-test> "Reopening a project on the same material holds its level")
+set_tests_properties(Spectr-level-autogain-v2-restore-fixed-fade-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst <= 2\\.0 \\)")
 # The Output LFO destination lands once per block (no ramp): its smoothness
 # gate must catch the per-block zipper.
 add_test(NAME Spectr-level-target-step-negative-control

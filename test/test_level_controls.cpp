@@ -578,7 +578,10 @@ TEST_CASE("Auto Gain off renders bit-identically to no Auto Gain",
 
 TEST_CASE("A session saved before Auto Gain opens with it off; new ones keep it",
           "[level][autogain][state]") {
+    // A new instance starts with AUTO on (v2 met the default-on bar).
+    static_assert(spectr::kAutoGainDefaultForNewInstances);
     Rig fresh;
+    CHECK(fresh.host.state().get_value(spectr::kParamAutoGain) == 1.0f);
     CHECK((fresh.host.state().get_value(spectr::kParamAutoGain) >= 0.5f)
           == spectr::kAutoGainDefaultForNewInstances);
 

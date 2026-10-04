@@ -140,6 +140,14 @@ struct LoudnessCompensationConfig {
     double change_seconds = 1.0;
     double change_huge_db = 12.0;
     double change_huge_seconds = 0.5;
+    /// Quieter after louder (MaterialChangeDetector::drop_threshold_db): a
+    /// gap above change_drop_threshold_db counts while the level is at least
+    /// change_drop_level_db below its slow average, for material whose level
+    /// does not fall faster than change_max_decay_db_per_second. <= 0: off.
+    double change_drop_threshold_db = 0.0;
+    double change_drop_level_db = 3.0;
+    double change_max_decay_db_per_second = 6.0;
+    double change_drop_min_loud_seconds = 3.0;
     /// Make-up range.
     float max_cut_db = 24.0f;
     float max_boost_db = 24.0f;
@@ -392,48 +400,131 @@ public:
     double huge_db = 12.0;
     int huge_frames = 6;
     int holdoff_frames = 6;
+    /// Quieter after louder. When the frames' level has fallen at least
+    /// drop_level_db below its slow average, a smaller gap -- drop_threshold_db
+    /// -- counts as a change too: a quieter section after a loud one is a new
+    /// part, and the energy-weighted estimate is slowest to give the louder
+    /// past up exactly then. A decay (a hit's tail, a fade) also falls in
+    /// level, so this path confirms only material whose level is steady over
+    /// the run: its fitted slope must not fall faster than max_decay_db_per_frame.
+    /// drop_threshold_db <= 0 turns the path off.
+    double drop_threshold_db = 0.0;
+    double drop_level_db = 3.0;
+    double max_decay_db_per_frame = 0.0;
+    /// ... and only after louder material that lasted: the level must have
+    /// stayed within half of drop_level_db of (or above) its slow average for
+    /// this many frames before it fell, so a short loud burst in a fast
+    /// alternation is left to the alternation memory.
+    int drop_min_loud_frames = 0;
+    /// Per-frame coefficients of the fast and slow level averages (power).
+    double level_fast_alpha = 0.3;
+    double level_slow_alpha = 0.03;
 
     enum class Event { none, run_started, run_broken, confirmed };
 
-    void reset() noexcept { run_ = 0; huge_run_ = 0; holdoff_ = 0; }
+    void reset() noexcept {
+        run_ = 0; huge_run_ = 0; holdoff_ = 0;
+        level_fast_ = level_slow_ = 0.0;
+        close_run_ = last_close_run_ = level_frames_ = 0;
+        clear_fit_();
+    }
     [[nodiscard]] int run() const noexcept { return run_; }
+    /// The fast level's fall below the slow one, dB (>= 0 while quieter).
+    [[nodiscard]] double level_drop_db() const noexcept {
+        return level_fast_ > 0.0 && level_slow_ > 0.0
+            ? 10.0 * std::log10(level_slow_ / level_fast_) : 0.0;
+    }
+    /// Whether the last confirmation came through the quieter-after-louder path.
+    [[nodiscard]] bool last_was_drop() const noexcept { return last_drop_; }
 
-    /// One audible frame.
-    Event observe(float fast_db, float slow_db) noexcept {
+    /// One audible frame: the make-up the fast and slow shapes give, and
+    /// (optional) the frame's loudness, for the quieter-after-louder path.
+    Event observe(float fast_db, float slow_db, double frame_lufs = kNoLevel) noexcept {
+        const bool levelled = frame_lufs > kNoLevel;
+        if (levelled) {
+            const double p = std::pow(10.0, frame_lufs / 10.0);
+            level_fast_ = level_fast_ > 0.0 ? level_fast_ + level_fast_alpha * (p - level_fast_) : p;
+            level_slow_ = level_slow_ > 0.0 ? level_slow_ + level_slow_alpha * (p - level_slow_) : p;
+            // The slow level means something only once it spans its own
+            // time constant (about drop_min_loud_frames).
+            if (++level_frames_ <= drop_min_loud_frames) {
+            } else if (level_drop_db() < 0.5 * drop_level_db) {
+                ++close_run_;
+            } else if (close_run_ > 0) {
+                last_close_run_ = close_run_;
+                close_run_ = 0;
+            }
+        }
         if (holdoff_ > 0) {
             --holdoff_;
             return end_run_();
         }
         const double gap = std::abs(static_cast<double>(fast_db) - slow_db);
-        if (!(gap > threshold_db)) {
+        const bool dropped = levelled && drop_threshold_db > 0.0
+            && level_drop_db() >= drop_level_db && last_close_run_ >= drop_min_loud_frames;
+        const double threshold = dropped ? std::min(threshold_db, drop_threshold_db) : threshold_db;
+        if (!(gap > threshold)) {
             if (run_ == 0) return Event::none;
             run_ = std::max(0, run_ - 2);
             huge_run_ = std::max(0, huge_run_ - 2);
+            if (run_ == 0) clear_fit_();
             return run_ == 0 ? Event::run_broken : Event::none;
         }
         const bool started = run_ == 0;
+        if (started) clear_fit_();
         ++run_;
+        if (levelled) fit_(frame_lufs);
         huge_run_ = gap > huge_db ? huge_run_ + 1 : std::max(0, huge_run_ - 2);
         if (run_ >= frames || huge_run_ >= huge_frames) {
+            // Below the ordinary threshold only through the quieter path,
+            // and only for steady material (not a decay).
+            const bool via_drop = !(gap > threshold_db) && huge_run_ < huge_frames;
+            if (via_drop && slope_() < -max_decay_db_per_frame) {
+                // A decay: keep the run, never confirm it on this path.
+                run_ = frames - 1;
+                return Event::none;
+            }
             run_ = 0;
             huge_run_ = 0;
+            clear_fit_();
             holdoff_ = holdoff_frames;
+            last_drop_ = via_drop;
             return Event::confirmed;
         }
         return started ? Event::run_started : Event::none;
     }
     void hold_off() noexcept { end_run_(); holdoff_ = holdoff_frames; }
 
+    static constexpr double kNoLevel = -1.0e300;
+
 private:
     Event end_run_() noexcept {
         const bool had = run_ > 0;
         run_ = 0;
         huge_run_ = 0;
+        clear_fit_();
         return had ? Event::run_broken : Event::none;
+    }
+    void clear_fit_() noexcept { fit_n_ = 0; fit_x_ = fit_y_ = fit_xx_ = fit_xy_ = 0.0; }
+    void fit_(double y) noexcept {
+        const double x = static_cast<double>(fit_n_++);
+        fit_x_ += x; fit_y_ += y; fit_xx_ += x * x; fit_xy_ += x * y;
+    }
+    // Least-squares slope of the run's frame loudness, dB per frame.
+    [[nodiscard]] double slope_() const noexcept {
+        if (fit_n_ < 3) return 0.0;
+        const double n = static_cast<double>(fit_n_);
+        const double den = n * fit_xx_ - fit_x_ * fit_x_;
+        return den > 0.0 ? (n * fit_xy_ - fit_x_ * fit_y_) / den : 0.0;
     }
     int run_ = 0;
     int huge_run_ = 0;
     int holdoff_ = 0;
+    double level_fast_ = 0.0, level_slow_ = 0.0;
+    int close_run_ = 0, last_close_run_ = 0, level_frames_ = 0;
+    int fit_n_ = 0;
+    double fit_x_ = 0.0, fit_y_ = 0.0, fit_xx_ = 0.0, fit_xy_ = 0.0;
+    bool last_drop_ = false;
 };
 
 class LongTermSpectrum {
@@ -544,6 +635,7 @@ public:
         std::fill(fast_shape_.begin(), fast_shape_.end(), 0.0);
         std::fill(slow_shape_.begin(), slow_shape_.end(), 0.0);
         prior_weight_ = 1.0;
+        prior_fade_scale_ = 1.0;
         level_local_ = 0.0;
         observed_frames_ = 0;
         gated_frames_ = 0;
@@ -867,6 +959,7 @@ public:
         slow_frames_ = static_cast<std::int64_t>(std::ceil(1.0 / std::max(alpha_, 1e-9)));
         fast_frames_ = fast_equivalent_frames_();
         rearm_shapes_();
+
         forget_memory_();
         candidate_frames_ = 0;
         candidate_active_ = false;
@@ -899,6 +992,17 @@ public:
     [[nodiscard]] double last_frame_lufs() const noexcept { return last_frame_lufs_; }
     /// The prior's remaining share of the estimate (1 until material is heard).
     [[nodiscard]] double prior_weight() const noexcept { return prior_weight_; }
+    /// The prior's per-bin share (sums to one), as legs.
+    [[nodiscard]] LegSpectra prior_legs() const noexcept {
+        return {prior_, prior_, prior_, zero_};
+    }
+    /// How fast the prior fades from the next frame on, as a multiple of
+    /// prior_seconds' rate (1: as configured). A caller that sees the
+    /// material agree with a RESTORED prior slows the fade, so the few
+    /// frames the material's own estimate starts from do not swing it.
+    void set_prior_fade_scale(double scale) noexcept {
+        prior_fade_scale_ = std::clamp(scale, 0.0, 1.0);
+    }
     /// Whether the last frame was audible (above the absolute gate).
     [[nodiscard]] bool last_frame_audible() const noexcept { return last_audible_; }
 
@@ -1124,7 +1228,7 @@ private:
             for (const double x : frame_dd_) dry_total += x;
         }
         level_drop_(total, dry_total);
-        prior_weight_ = std::max(0.0, prior_weight_ - prior_step_);
+        prior_weight_ = std::max(0.0, prior_weight_ - prior_step_ * prior_fade_scale_);
         publish_();
     }
 
@@ -1246,6 +1350,7 @@ private:
     double alpha_ = 0.0;
     double fast_alpha_ = 0.0;
     double prior_step_ = 1.0;
+    double prior_fade_scale_ = 1.0;
     double prior_weight_ = 1.0;
     double level_local_ = 0.0;
     double local_alpha_ = 1.0;

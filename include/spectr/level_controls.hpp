@@ -63,14 +63,14 @@ inline constexpr float kIntensityDefaultPercent = 100.0f;
 /// control always open with it Off (see Spectr::deserialize_plugin_state), so
 /// flipping this constant changes new instances only.
 ///
-/// Off. v1 compensated the drawn shape against a fixed K-weighted pink
+/// On. v1 compensated the drawn shape against a fixed K-weighted pink
 /// reference and missed the loudness actually lost or gained by up to ~20 LU
-/// on narrow material. v2 (auto_gain_material.hpp) weighs the material's own
-/// spectrum and meets the default-on bar on the corpus sweep
-/// (docs/level-controls.md), so the recommendation there is to flip this --
-/// a product decision, not made here. Sessions that saved AUTO on keep it on,
-/// and now run v2.
-inline constexpr bool kAutoGainDefaultForNewInstances = false;
+/// on narrow material, which is why AUTO used to start off. v2
+/// (auto_gain_material.hpp) weighs the material's own spectrum and meets the
+/// default-on bar on the corpus sweep and the transient and moving-material
+/// gates (docs/level-controls.md). Sessions keep whatever they saved: AUTO
+/// off stays off, AUTO on saved before v2 keeps v1 until toggled.
+inline constexpr bool kAutoGainDefaultForNewInstances = true;
 
 /// Full-scale (0 -> 100 %) Intensity slew. Longer than the LFO level's 60 ms
 /// because Intensity moves EVERY band at once and each step is a mask
@@ -267,7 +267,11 @@ private:
 /// session's estimate taken as the estimate rather than as a prior),
 /// `autogain-v2-reprepare-reset` (a host re-prepare forgets the estimate),
 /// `autogain-v2-legacy-composed-only` (the old-session AUTO toggle seen only
-/// on the composed path).
+/// on the composed path), `autogain-v2-no-drop-path` (the detector has one
+/// threshold whatever the level did: a quieter section after a loud one
+/// glides), `autogain-v2-detect-only-when-on` (no change detection while
+/// AUTO is off), `autogain-v2-restore-fixed-fade` (a restored estimate fades
+/// in 0.5 s even while the material agrees with it).
 /// Read once per process; unset in every shipping run. The Spectr constructor
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.
