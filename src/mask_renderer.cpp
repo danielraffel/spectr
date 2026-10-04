@@ -472,6 +472,7 @@ public:
     }
     [[nodiscard]] bool process(const float* const* input, float* const* output,
                                int num_samples) noexcept override {
+        PULP_TRACE_SCOPE_NAMED("dsp", "mixing.process");
         return processor_.process(input, output, num_samples);
     }
     void reset() noexcept override {
@@ -513,7 +514,7 @@ private:
         return disabled;
     }
 
-    pulp::signal::SpectralMaskProcessor processor_{};
+    pulp_candidate::signal::SpectralMaskProcessor processor_{};
     MaskRendererConfig                  config_{};
     std::atomic<unsigned long long>     generation_{0};
     WetSource*                          wet_source_ = nullptr;

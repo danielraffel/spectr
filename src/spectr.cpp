@@ -71,6 +71,7 @@ long callback_burst_plant() noexcept {
 void prime_negative_control_seams() noexcept {
     (void)callback_burst_plant();
     (void)FreezeSource::prime_plants();
+    AutoGainMaterial::prime_plants();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
     (void)level_plant("");

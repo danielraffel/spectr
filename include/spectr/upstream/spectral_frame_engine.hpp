@@ -1,0 +1,408 @@
+#pragma once
+
+/// UPSTREAM COPY of SDK 0.901's pulp/signal/spectral_frame_engine.hpp with
+/// process()'s resynthesis deferred into the hop of slack its latency
+/// already carries (proposed upstream; bit-identical output). Only the
+/// engine class is copied; its configuration and geometry are Pulp's.
+/// Delete with spectral_mask_processor.hpp here once the SDK carries it.
+
+/// @file spectral_frame_engine.hpp
+/// Streaming STFT analysis + weighted overlap-add (WOLA) synthesis for
+/// DSP-grade spectral processing — distinct from the visualization-only
+/// `Stft`, which has no synthesis path.
+///
+/// Channels are processed as a coherent group: every analysis callback
+/// delivers all channels' spectra for the same time index, so spectral
+/// modifications (pitch/time, formant, freeze) can make one decision per
+/// frame and apply it to the whole group.
+///
+/// Two usage levels:
+///   - `process()` — equal-hop analysis→modify→resynthesis streaming with a
+///     per-frame callback. Neutral (identity callback) reconstruction is
+///     exact up to float rounding for any COLA-satisfying window/hop.
+///   - `analyze()` / `synthesize_frame()` / `read_output()` — split API for
+///     processors that need a synthesis hop different from the analysis hop
+///     (time-scale modification). Output availability is tracked so callers
+///     can pull exactly what is final.
+///
+/// Reconstruction is normalized per-sample by the accumulated squared
+/// synthesis window, which keeps amplitude exact for any hop (including
+/// variable hops and stream edges) without hardcoded COLA constants.
+///
+/// Basis: Allen & Rabiner 1977 (unified STFT analysis/synthesis);
+/// Crochiere 1980 (weighted overlap-add). No allocation or locks after
+/// `prepare()`.
+
+#include <pulp/signal/checked_allocation.hpp>
+#include <pulp/signal/fft.hpp>
+#include <pulp/signal/windowing.hpp>
+#include <algorithm>
+#include <cassert>
+#include <complex>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <type_traits>
+#include <vector>
+
+namespace pulp_candidate::signal {
+
+// Everything but the engine itself is Pulp's own.
+using namespace pulp::signal;
+
+/// Streaming multichannel STFT/WOLA engine. Not thread-safe; one instance
+/// per audio stream.
+template <typename SampleType = float>
+class SpectralFrameEngineT {
+public:
+    SpectralFrameEngineT() = default;
+
+    /// RT contract: prepare() allocates FFT/window/ring/frame storage and is
+    /// not audio-thread safe. After prepare(), process(), analyze(),
+    /// synthesize_frame(), available_output(), read_output(), reset(), and
+    /// accessors are allocation-free for blocks no larger than max_block and
+    /// synthesis hops no larger than max_synthesis_hop. The callback must also
+    /// be RT-safe.
+    void prepare(const SpectralFrameEngineConfig& config) {
+        const auto geometry = checked_spectral_frame_engine_geometry<SampleType>(config);
+        assert(geometry.has_value());
+        if (!geometry) return;
+
+        config_ = config;
+        config_.max_synthesis_hop = geometry->max_synthesis_hop;
+        num_bins_ = geometry->num_bins;
+
+        fft_ = FftT<SampleType>(config_.fft_size);
+        window_ = WindowFunction::generate<SampleType>(config_.fft_size,
+                                                       config_.window);
+
+        // Steady-state OLA window-energy at a fully-overlapped sample for
+        // the analysis hop. Used to floor the per-sample normalization so
+        // partial-overlap samples at stream edges taper to zero instead of
+        // being amplified by division by a near-zero coverage (pulp #3975).
+        // The floor sits far below any real body coverage (down to a 4x
+        // sparser synthesis hop), so body samples normalize unchanged.
+        double steady = 0.0;
+        const int n = config_.fft_size, h = config_.analysis_hop;
+        const int center = n; // well inside the plateau
+        for (int j = -n / h - 1; j <= n / h + 1; ++j) {
+            const int idx = center - j * h - (n / 2);
+            if (idx >= 0 && idx < n) {
+                const SampleType w = window_[static_cast<size_t>(idx)];
+                steady += static_cast<double>(w) * w;
+            }
+        }
+        min_norm_ = std::max(static_cast<SampleType>(steady) * SampleType{0.25f},
+                             SampleType{1e-9f});
+
+        ring_size_ = geometry->ring_size;
+        ring_mask_ = ring_size_ - 1;
+
+        input_ring_.assign(static_cast<size_t>(geometry->input_ring_elements),
+                           SampleType{0.0f});
+        output_ring_.assign(static_cast<size_t>(geometry->output_ring_elements),
+                            SampleType{0.0f});
+        norm_ring_.assign(ring_size_, SampleType{0.0f});
+
+        frames_.assign(static_cast<size_t>(geometry->frame_elements),
+                       std::complex<SampleType>(SampleType{0.0f}, SampleType{0.0f}));
+        frame_ptrs_.resize(config_.channels);
+        for (int ch = 0; ch < config_.channels; ++ch)
+            frame_ptrs_[ch] = frames_.data() + static_cast<size_t>(ch) * num_bins_;
+
+        time_buf_.assign(config_.fft_size, SampleType{0.0f});
+        freq_buf_.assign(config_.fft_size,
+                         std::complex<SampleType>(SampleType{0.0f}, SampleType{0.0f}));
+
+        reset();
+    }
+
+    /// Fixed delay of the equal-hop `process()` path. A frame is only
+    /// final once every overlapping frame has been added, which trails the
+    /// input by up to fft_size + (analysis_hop - 1) samples depending on
+    /// block phase; the constant fft_size + analysis_hop bound makes the
+    /// reported latency exact and block-size independent.
+    int latency_samples() const { return config_.fft_size + config_.analysis_hop; }
+
+    int fft_size() const { return config_.fft_size; }
+    int analysis_hop() const { return config_.analysis_hop; }
+    int num_bins() const { return num_bins_; }
+    int channels() const { return config_.channels; }
+
+    /// Equal-hop streaming: push `num_samples` per channel, invoke
+    /// `on_frames(std::complex<SampleType>* const* frames, int num_bins)` once per
+    /// completed analysis frame (modify in place), resynthesize at the
+    /// analysis hop, and write exactly `num_samples` per channel to `out`
+    /// (the first `latency_samples()` of the stream are zeros).
+    template <typename Fn>
+    void process(const SampleType* const* in,
+                 SampleType* const* out,
+                 int num_samples,
+                 Fn&& on_frames) {
+        assert(num_samples <= config_.max_block);
+        // Deferred resynthesis. A frame that completes at input sample F is
+        // first read at output sample F + analysis_hop (the latency is
+        // fft_size + analysis_hop), so its inverse transforms and overlap-add
+        // can wait up to a hop. Each channel's runs in the first callback at
+        // or past its own due point inside that hop, spreading what used to
+        // land whole in the callback that completed the frame; whatever is
+        // still pending runs before the next frame (analyze() flushes).
+        // Same arithmetic in the same order: output is bit-identical.
+        run_due_synthesis_(samples_fed_ + num_samples);
+        analyze(in, num_samples, [&](std::complex<SampleType>* const* frames,
+                                     int bins) {
+            on_frames(frames, bins);
+            begin_deferred_synthesis_(frames);
+        });
+        run_due_synthesis_(samples_fed_);
+        // Fixed-latency read: the first latency_samples() outputs are zeros;
+        // afterwards every output pops exactly one final ring sample, so the
+        // input→output delay is constant regardless of block size or phase.
+        const auto lat = static_cast<std::int64_t>(latency_samples());
+        for (int i = 0; i < num_samples; ++i) {
+            if (out_count_ < lat) {
+                for (int ch = 0; ch < config_.channels; ++ch)
+                    out[ch][i] = SampleType{0.0f};
+            } else {
+                pop_one(out, i);
+            }
+            ++out_count_;
+        }
+    }
+
+    /// Samples that must still be fed before the next analysis frame
+    /// completes (>= 1). Lets a caller chunk its feed so each `analyze`
+    /// call ends exactly when a frame emits — making the in-block offset of
+    /// the completed frame known precisely (needed to evaluate per-frame
+    /// control trajectories, e.g. a smoothed pitch ratio, at the correct
+    /// position instead of the chunk end).
+    int samples_until_next_frame() const {
+        return static_cast<int>(next_frame_at_ - samples_fed_);
+    }
+
+    /// Split API — analysis only. Pushes `num_samples` per channel from
+    /// `in`, invoking `on_frames` once per completed frame. Runs are split
+    /// exactly at frame boundaries, so frames land at fft_size + k * hop
+    /// for ANY feed chunking — the analysis hop the callback observes is
+    /// constant regardless of host block size.
+    template <typename Fn>
+    void analyze(const SampleType* const* in, int num_samples, Fn&& on_frames) {
+        const int n = config_.fft_size;
+        int done = 0;
+        while (done < num_samples) {
+            const auto until_frame = static_cast<int>(
+                std::min<std::int64_t>(next_frame_at_ - samples_fed_,
+                                       static_cast<std::int64_t>(num_samples - done)));
+            const int run = std::max(until_frame, 1);
+            for (int ch = 0; ch < config_.channels; ++ch) {
+                SampleType* ring = input_ring_.data() + static_cast<size_t>(ch) * n;
+                for (int i = 0; i < run; ++i)
+                    ring[(input_pos_ + i) % n] = in[ch][done + i];
+            }
+            input_pos_ = (input_pos_ + run) % n;
+            samples_fed_ += run;
+            done += run;
+
+            if (samples_fed_ == next_frame_at_) {
+                flush_deferred_synthesis_();
+                next_frame_at_ += config_.analysis_hop;
+                emit_frame(on_frames);
+            }
+        }
+    }
+
+    /// Split API — overlap-add one spectral frame (all channels) at the
+    /// current synthesis position, then advance it by `synthesis_hop`.
+    /// `frames` must hold `channels()` pointers to `num_bins()` bins
+    /// (DC..Nyquist); the conjugate half is reconstructed internally.
+    void synthesize_frame(std::complex<SampleType>* const* frames, int synthesis_hop) {
+        assert(synthesis_hop > 0 && synthesis_hop <= config_.max_synthesis_hop);
+        for (int ch = 0; ch < config_.channels; ++ch) synthesize_channel_(frames, ch);
+        finish_synthesis_(synthesis_hop);
+    }
+
+    /// Split API — number of final (fully overlapped) output samples that
+    /// can be read right now.
+    int available_output() const {
+        return static_cast<int>(available_ - read_pos_);
+    }
+
+    /// Split API — pop exactly `num_samples` per channel into `out`.
+    /// Callers should not request more than `available_output()`; any
+    /// excess is filled with silence without advancing the read position
+    /// (the engine never invents a variable delay on its own).
+    void read_output(SampleType* const* out, int num_samples) {
+        for (int i = 0; i < num_samples; ++i) {
+            if (read_pos_ < available_) {
+                pop_one(out, i);
+            } else {
+                for (int ch = 0; ch < config_.channels; ++ch)
+                    out[ch][i] = SampleType{0.0f};
+            }
+        }
+    }
+
+    void reset() {
+        std::fill(input_ring_.begin(), input_ring_.end(), SampleType{0.0f});
+        std::fill(output_ring_.begin(), output_ring_.end(), SampleType{0.0f});
+        std::fill(norm_ring_.begin(), norm_ring_.end(), SampleType{0.0f});
+        std::fill(frames_.begin(), frames_.end(),
+                  std::complex<SampleType>(SampleType{0.0f}, SampleType{0.0f}));
+        input_pos_ = 0;
+        samples_fed_ = 0;
+        next_frame_at_ = config_.fft_size;
+        synth_pos_ = 0;
+        available_ = 0;
+        read_pos_ = 0;
+        out_count_ = 0;
+        deferred_frames_ = nullptr;
+        deferred_next_channel_ = 0;
+    }
+
+private:
+    // One channel of synthesize_frame(): inverse transform and overlap-add.
+    // Pre-stream samples of a frame that starts before position 0 are never
+    // read, so they are never written: the ring slots they would alias stay
+    // clean for the real stream.
+    void synthesize_channel_(std::complex<SampleType>* const* frames, int ch) {
+        const int n = config_.fft_size;
+        const int skip =
+            synth_pos_ < 0 ? static_cast<int>(std::min<std::int64_t>(-synth_pos_, n)) : 0;
+        for (int k = 0; k < num_bins_; ++k) {
+            freq_buf_[static_cast<size_t>(k)] = frames[ch][k];
+            if (k > 0 && k < n / 2)
+                freq_buf_[static_cast<size_t>(n - k)] = std::conj(frames[ch][k]);
+        }
+        fft_.inverse(freq_buf_.data());
+        SampleType* ring = output_ring_.data() + static_cast<size_t>(ch) * ring_size_;
+        for (int i = skip; i < n; ++i) {
+            const auto idx = static_cast<size_t>((synth_pos_ + i) & ring_mask_);
+            ring[idx] += freq_buf_[static_cast<size_t>(i)].real() * window_[static_cast<size_t>(i)];
+        }
+    }
+
+    // The rest of synthesize_frame(): the shared normalization ring, then
+    // advance the synthesis position.
+    void finish_synthesis_(int synthesis_hop) {
+        const int n = config_.fft_size;
+        const int skip =
+            synth_pos_ < 0 ? static_cast<int>(std::min<std::int64_t>(-synth_pos_, n)) : 0;
+        for (int i = skip; i < n; ++i) {
+            const auto idx = static_cast<size_t>((synth_pos_ + i) & ring_mask_);
+            norm_ring_[idx] += window_[static_cast<size_t>(i)] * window_[static_cast<size_t>(i)];
+        }
+        synth_pos_ += synthesis_hop;
+        // Samples before the start of the frame just written are final.
+        available_ = std::max(available_, synth_pos_ - synthesis_hop);
+    }
+
+    void begin_deferred_synthesis_(std::complex<SampleType>* const* frames) {
+        deferred_frames_ = frames;
+        deferred_next_channel_ = 0;
+        deferred_frame_at_ = samples_fed_;
+    }
+
+    // Run every deferred channel whose due point is before `fed`.
+    void run_due_synthesis_(std::int64_t fed) {
+        const int channels = config_.channels;
+        while (deferred_frames_ != nullptr) {
+            const std::int64_t due = deferred_frame_at_
+                + static_cast<std::int64_t>(config_.analysis_hop)
+                    * (deferred_next_channel_ + 1) / (channels + 1);
+            if (due > fed) return;
+            step_deferred_synthesis_();
+        }
+    }
+
+    void step_deferred_synthesis_() {
+        synthesize_channel_(deferred_frames_, deferred_next_channel_);
+        if (++deferred_next_channel_ == config_.channels) {
+            finish_synthesis_(config_.analysis_hop);
+            deferred_frames_ = nullptr;
+        }
+    }
+
+    void flush_deferred_synthesis_() {
+        while (deferred_frames_ != nullptr) step_deferred_synthesis_();
+    }
+
+    // Pop one final sample (all channels) into out[..][i], normalizing by
+    // the accumulated squared synthesis window and clearing the slot.
+    void pop_one(SampleType* const* out, int i) {
+        // A frame whose synthesis is deferred is final for its first hop
+        // before available_ (conservative by a hop) says so.
+        assert(read_pos_ < available_ + config_.analysis_hop);
+        const auto idx = static_cast<size_t>(read_pos_ & ring_mask_);
+        // Floor only the stream-start partial-overlap region. Once a full FFT
+        // window has elapsed, per-sample normalization must remain exact for
+        // non-COLA windows/hops whose valid body coverage can dip below the
+        // startup floor.
+        const bool startup_edge = read_pos_ < config_.fft_size;
+        const SampleType norm = startup_edge
+            ? std::max(norm_ring_[idx], min_norm_)
+            : norm_ring_[idx];
+        for (int ch = 0; ch < config_.channels; ++ch) {
+            SampleType* ring =
+                output_ring_.data() + static_cast<size_t>(ch) * ring_size_;
+            out[ch][i] =
+                norm > SampleType{1e-9f} ? ring[idx] / norm : SampleType{0.0f};
+            ring[idx] = SampleType{0.0f};
+        }
+        norm_ring_[idx] = SampleType{0.0f};
+        ++read_pos_;
+    }
+
+    // Window + transform the last fft_size samples of every channel's
+    // input ring and hand the frame group to the callback.
+    template <typename Fn>
+    void emit_frame(Fn&& on_frames) {
+        const int n = config_.fft_size;
+        for (int ch = 0; ch < config_.channels; ++ch) {
+            const SampleType* ring =
+                input_ring_.data() + static_cast<size_t>(ch) * n;
+            for (int i = 0; i < n; ++i)
+                time_buf_[static_cast<size_t>(i)] =
+                    ring[(input_pos_ + i) % n] * window_[static_cast<size_t>(i)];
+            fft_.forward_real(time_buf_.data(), freq_buf_.data());
+            std::copy(freq_buf_.begin(), freq_buf_.begin() + num_bins_,
+                      frames_.begin() + static_cast<size_t>(ch) * num_bins_);
+        }
+        on_frames(frame_ptrs_.data(), num_bins_);
+    }
+
+    SpectralFrameEngineConfig config_;
+    FftT<SampleType> fft_{2048};
+    std::vector<SampleType> window_;
+    int num_bins_ = 0;
+    int ring_size_ = 0;
+    int ring_mask_ = 0;
+    SampleType min_norm_ = SampleType{1e-9f}; // OLA coverage floor for edge taper.
+
+    std::vector<SampleType> input_ring_;  // channels * fft_size
+    std::vector<SampleType> output_ring_; // channels * ring_size
+    std::vector<SampleType> norm_ring_;   // ring_size (shared across channels)
+
+    std::vector<std::complex<SampleType>> frames_;      // channels * num_bins
+    std::vector<std::complex<SampleType>*> frame_ptrs_; // channels
+    std::vector<SampleType> time_buf_;                  // fft_size
+    std::vector<std::complex<SampleType>> freq_buf_;    // fft_size
+
+    int input_pos_ = 0;
+    std::int64_t samples_fed_ = 0;
+    std::int64_t next_frame_at_ = 0;
+    std::int64_t synth_pos_ = 0;   // next frame start (absolute samples)
+    std::int64_t available_ = 0;   // final samples high-water mark
+    std::int64_t read_pos_ = 0;    // absolute read position
+    std::int64_t out_count_ = 0;   // samples emitted by process()
+    // process()'s deferred resynthesis: the frame group awaiting it (the
+    // engine's own frame buffers, untouched until the next frame), the next
+    // channel to synthesize, and the input sample the frame completed at.
+    std::complex<SampleType>* const* deferred_frames_ = nullptr;
+    int deferred_next_channel_ = 0;
+    std::int64_t deferred_frame_at_ = 0;
+};
+
+using SpectralFrameEngine = SpectralFrameEngineT<float>;
+using SpectralFrameEngine64 = SpectralFrameEngineT<double>;
+
+} // namespace pulp_candidate::signal

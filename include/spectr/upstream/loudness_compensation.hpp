@@ -551,6 +551,9 @@ public:
         frame_in_.assign(static_cast<std::size_t>(fft_size_), 0.0f);
         wet_spectrum_.assign(static_cast<std::size_t>(fft_size_), {});
         dry_spectrum_.assign(static_cast<std::size_t>(fft_size_), {});
+        staged_in_.assign(static_cast<std::size_t>(legs * channels_ * fft_size_), 0.0f);
+        staged_spectra_.assign(static_cast<std::size_t>(legs * channels_ * fft_size_), {});
+        deferred_pending_ = false;
         for (auto* v : {&frame_ww_, &frame_dd_, &frame_re_, &frame_im_, &k_power_, &prior_})
             v->assign(nb, 0.0);
         slow_.assign(nb);
@@ -654,6 +657,7 @@ public:
     /// sample (so how the stream is chopped still cannot matter), and the
     /// estimate -- what the material sounds like -- is kept.
     void restart_grid() noexcept {
+        deferred_pending_ = false;
         std::fill(history_.begin(), history_.end(), 0.0f);
         write_pos_ = 0;
         filled_ = 0;
@@ -817,6 +821,62 @@ public:
             std::fill(e->im.begin(), e->im.end(), 0.0);
         }
         publish_();
+    }
+
+    /// Stage each frame's work over the `span` stream samples after it
+    /// completes instead of doing it all at once (0: at once, the default).
+    /// The window is captured when the frame completes, so the result is
+    /// identical; only push_at() honours it. An owner whose own state feeds
+    /// the frame's update must flush_deferred() before changing that state.
+    void set_frame_deferral(int span) noexcept { defer_span_ = std::max(0, span); }
+    [[nodiscard]] int frame_deferral() const noexcept { return defer_span_; }
+    [[nodiscard]] bool deferred_pending() const noexcept { return deferred_pending_; }
+
+    /// push() in stream coordinates: `base` is the stream position of the
+    /// first sample, and `on_frame_at(frame_end)` gets the absolute position
+    /// the frame completed at, possibly from a later call when deferred.
+    template <typename OnFrameAt>
+    void push_at(const float* const* wet, const float* const* dry, int channels, int num_samples,
+                 std::int64_t base, OnFrameAt&& on_frame_at) noexcept {
+        if (!prepared_ || wet == nullptr || num_samples <= 0) return;
+        run_due_(base + num_samples, on_frame_at);
+        const int count = std::min(channels, channels_);
+        const bool two = config_.track_dry_leg;
+        int done = 0;
+        while (done < num_samples) {
+            const int chunk = std::min(num_samples - done, hop_ - hop_pos_);
+            for (int leg = 0; leg < (two ? 2 : 1); ++leg) {
+                const float* const* x = leg == 0 ? wet : (dry != nullptr ? dry : wet);
+                for (int ch = 0; ch < count; ++ch)
+                    record_(ring_(leg, ch), x[ch], done, chunk);
+            }
+            write_pos_ = (write_pos_ + chunk) % fft_size_;
+            filled_ = std::min(fft_size_, filled_ + chunk);
+            hop_pos_ += chunk;
+            done += chunk;
+            if (hop_pos_ == hop_) {
+                hop_pos_ = 0;
+                if (filled_ == fft_size_) {
+                    if (defer_span_ > 0) {
+                        flush_deferred(on_frame_at);
+                        snapshot_all_();
+                        deferred_pending_ = true;
+                        deferred_stage_ = 0;
+                        deferred_at_ = base + done;
+                    } else {
+                        frame_();
+                        on_frame_at(base + done);
+                    }
+                }
+            }
+        }
+        run_due_(base + num_samples, on_frame_at);
+    }
+
+    /// Finish a deferred frame now.
+    template <typename OnFrameAt>
+    void flush_deferred(OnFrameAt&& on_frame_at) noexcept {
+        while (deferred_pending_) step_deferred_(on_frame_at);
     }
 
     /// Feed planar samples of the wet leg and, when tracking it, the dry leg
@@ -1098,16 +1158,6 @@ private:
             if (++pos == fft_size_) pos = 0;
         }
     }
-    void transform_(float* ring, std::vector<std::complex<float>>& out) noexcept {
-        PULP_TRACE_SCOPE_NAMED("dsp", "autogain.transform");
-        // Oldest sample first: write_pos_ is where the next one lands.
-        for (int i = 0; i < fft_size_; ++i) {
-            int at = write_pos_ + i;
-            if (at >= fft_size_) at -= fft_size_;
-            frame_in_[static_cast<std::size_t>(i)] = ring[at] * window_[static_cast<std::size_t>(i)];
-        }
-        fft_->forward_real(frame_in_.data(), out.data());
-    }
 
     void accumulate_(Estimate& e, double a) noexcept {
         const bool two = config_.track_dry_leg;
@@ -1122,19 +1172,86 @@ private:
         }
     }
 
+    // The frame, staged: the windows captured at once, each transform, then
+    // the update. frame_() runs them back to back; a deferred frame runs them
+    // at stream positions spread over the deferral span.
+    [[nodiscard]] int legs_() const noexcept { return config_.track_dry_leg ? 2 : 1; }
+    [[nodiscard]] float* staged_in_at_(int leg, int ch) noexcept {
+        return staged_in_.data() + static_cast<std::size_t>((leg * channels_ + ch) * fft_size_);
+    }
+    [[nodiscard]] std::complex<float>* staged_spectrum_at_(int leg, int ch) noexcept {
+        return staged_spectra_.data() + static_cast<std::size_t>((leg * channels_ + ch) * fft_size_);
+    }
+    void snapshot_all_() noexcept {
+        for (int ch = 0; ch < channels_; ++ch)
+            for (int leg = 0; leg < legs_(); ++leg) {
+                const float* ring = ring_(leg, ch);
+                float* out = staged_in_at_(leg, ch);
+                for (int i = 0; i < fft_size_; ++i) {
+                    int at = write_pos_ + i;
+                    if (at >= fft_size_) at -= fft_size_;
+                    out[i] = ring[at] * window_[static_cast<std::size_t>(i)];
+                }
+            }
+    }
+    void transform_staged_(int index) noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "autogain.transform");
+        const int ch = index / legs_(), leg = index % legs_();
+        fft_->forward_real(staged_in_at_(leg, ch), staged_spectrum_at_(leg, ch));
+    }
+    // Stages of a deferred frame: each transform, each channel's
+    // accumulation, the update, then the owner's callback -- spread evenly
+    // inside the span, the last well before its end.
+    [[nodiscard]] int deferred_stages_() const noexcept {
+        return legs_() * channels_ + channels_ + 2;
+    }
+    template <typename OnFrameAt>
+    void run_due_(std::int64_t limit, OnFrameAt& on_frame_at) noexcept {
+        const int stages = deferred_stages_();
+        while (deferred_pending_) {
+            const std::int64_t due = deferred_at_
+                + static_cast<std::int64_t>(deferred_stage_ + 1) * defer_span_ / (stages + 1);
+            if (due >= limit) return;
+            step_deferred_(on_frame_at);
+        }
+    }
+    template <typename OnFrameAt>
+    void step_deferred_(OnFrameAt& on_frame_at) noexcept {
+        const int transforms = legs_() * channels_;
+        const int k = deferred_stage_++;
+        if (k < transforms) {
+            transform_staged_(k);
+        } else if (k < transforms + channels_) {
+            accumulate_channel_(k - transforms);
+        } else if (k == transforms + channels_) {
+            update_frame_();
+        } else {
+            deferred_pending_ = false;
+            on_frame_at(deferred_at_);
+        }
+    }
+
     void frame_() noexcept {
+        snapshot_all_();
+        for (int k = 0; k < legs_() * channels_; ++k) transform_staged_(k);
+        for (int ch = 0; ch < channels_; ++ch) accumulate_channel_(ch);
+        update_frame_();
+    }
+
+    void accumulate_channel_(int ch) noexcept {
         const bool two = config_.track_dry_leg;
-        for (auto* v : {&frame_ww_, &frame_dd_, &frame_re_, &frame_im_})
-            std::fill(v->begin(), v->end(), 0.0);
-        for (int ch = 0; ch < channels_; ++ch) {
-            transform_(ring_(0, ch), wet_spectrum_);
-            if (two) transform_(ring_(1, ch), dry_spectrum_);
+        if (ch == 0)
+            for (auto* v : {&frame_ww_, &frame_dd_, &frame_re_, &frame_im_})
+                std::fill(v->begin(), v->end(), 0.0);
+        {
+            const std::complex<float>* wet_spectrum = staged_spectrum_at_(0, ch);
+            const std::complex<float>* dry_spectrum = two ? staged_spectrum_at_(1, ch) : nullptr;
             for (int b = 0; b < bins_; ++b) {
                 const auto i = static_cast<std::size_t>(b);
-                const std::complex<double> w(wet_spectrum_[i].real(), wet_spectrum_[i].imag());
+                const std::complex<double> w(wet_spectrum[i].real(), wet_spectrum[i].imag());
                 frame_ww_[i] += std::norm(w);
                 if (two) {
-                    const std::complex<double> d(dry_spectrum_[i].real(), dry_spectrum_[i].imag());
+                    const std::complex<double> d(dry_spectrum[i].real(), dry_spectrum[i].imag());
                     frame_dd_[i] += std::norm(d);
                     const auto x = w * std::conj(d);
                     frame_re_[i] += x.real();
@@ -1142,6 +1259,10 @@ private:
                 }
             }
         }
+    }
+
+    void update_frame_() noexcept {
+        const bool two = config_.track_dry_leg;
         double total = 0.0;
         for (int b = 0; b < bins_; ++b) {
             const auto i = static_cast<std::size_t>(b);
@@ -1363,6 +1484,14 @@ private:
     std::vector<float> frame_in_;
     std::vector<std::complex<float>> wet_spectrum_;
     std::vector<std::complex<float>> dry_spectrum_;
+    // A frame's windowed inputs and spectra, per leg and channel, held from
+    // when it completes until its update (see set_frame_deferral()).
+    std::vector<float> staged_in_;
+    std::vector<std::complex<float>> staged_spectra_;
+    int defer_span_ = 0;
+    bool deferred_pending_ = false;
+    int deferred_stage_ = 0;
+    std::int64_t deferred_at_ = 0;
     std::vector<double> frame_ww_, frame_dd_, frame_re_, frame_im_;
     Estimate slow_, fast_, published_, published_fast_;
     std::vector<double> k_power_;

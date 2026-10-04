@@ -655,6 +655,10 @@ add_test(NAME Spectr-deadline-negative-control
     COMMAND Spectr-test "Tracking keeps every callback inside a 32-sample deadline at 48 kHz")
 set_tests_properties(Spectr-deadline-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=150000 WILL_FAIL TRUE TIMEOUT 300)
+add_test(NAME Spectr-deadline-96k-negative-control
+    COMMAND Spectr-test "Both modes keep every callback inside a 32-sample deadline at 96 kHz")
+set_tests_properties(Spectr-deadline-96k-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=60000 WILL_FAIL TRUE TIMEOUT 300)
 
 # The product-independent loudness-compensation unit behind Auto Gain v2
 # (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
