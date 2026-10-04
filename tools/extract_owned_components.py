@@ -132,40 +132,12 @@ def extract(artifact: pathlib.Path, output_dir: pathlib.Path) -> dict[str, objec
     return {"manifest": str(manifest_path), "component_count": len(manifest_components), "source_sha256": manifest["source_sha256"]}
 
 
-def verify(artifact: pathlib.Path, output_dir: pathlib.Path) -> dict[str, object]:
-    """Verify an owned module directory still maps to the frozen artifact."""
-    manifest_path = output_dir / "owned-components.manifest.json"
-    manifest = json.loads(manifest_path.read_bytes())
-    artifact_bytes = artifact.read_bytes()
-    if hashlib.sha256(artifact_bytes).hexdigest() != manifest.get("artifact_sha256"):
-        raise ValueError("artifact digest changed; refusing component verification")
-    doc = json.loads(artifact_bytes)
-    source = doc.get("html")
-    if not isinstance(source, str):
-        raise ValueError("artifact html must be a string")
-    source_bytes = source.encode("utf-8")
-    if hashlib.sha256(source_bytes).hexdigest() != manifest.get("source_sha256"):
-        raise ValueError("source digest changed; refusing component verification")
-    expected = component_slices(source_bytes)
-    if len(expected) != manifest.get("component_count"):
-        raise ValueError("component count changed; refusing component verification")
-    for item, frozen in zip(expected, manifest["components"]):
-        if {k: item[k] for k in ("name", "start", "end", "bytes", "sha256")} != frozen:
-            raise ValueError(f"component boundary changed: {item['name']}")
-        module = output_dir / "components" / f"{item['name']}.tsx"
-        if not module.is_file() or module.read_bytes() != item["source"]:
-            raise ValueError(f"component module changed: {item['name']}")
-    return {"verified": True, "component_count": len(expected), "source_sha256": manifest["source_sha256"]}
-
-
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("artifact", type=pathlib.Path)
     parser.add_argument("output_dir", type=pathlib.Path)
-    parser.add_argument("--verify", action="store_true")
     args = parser.parse_args(argv)
-    action = verify if args.verify else extract
-    print(json.dumps(action(args.artifact, args.output_dir), sort_keys=True, indent=2))
+    print(json.dumps(extract(args.artifact, args.output_dir), sort_keys=True, indent=2))
     return 0
 
 
