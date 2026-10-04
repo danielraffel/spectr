@@ -63,14 +63,14 @@ inline constexpr float kIntensityDefaultPercent = 100.0f;
 /// control always open with it Off (see Spectr::deserialize_plugin_state), so
 /// flipping this constant changes new instances only.
 ///
-/// Off. v1 compensated the drawn shape against a fixed K-weighted pink
+/// On. v1 compensated the drawn shape against a fixed K-weighted pink
 /// reference and missed the loudness actually lost or gained by up to ~20 LU
-/// on narrow material. v2 (auto_gain_material.hpp) weighs the material's own
-/// spectrum and meets the default-on bar on the corpus sweep
-/// (docs/level-controls.md), so the recommendation there is to flip this --
-/// a product decision, not made here. Sessions that saved AUTO on keep it on,
-/// and now run v2.
-inline constexpr bool kAutoGainDefaultForNewInstances = false;
+/// on narrow material, which is why AUTO used to start off. v2
+/// (auto_gain_material.hpp) weighs the material's own spectrum and meets the
+/// default-on bar on the corpus sweep and the transient and moving-material
+/// gates (docs/level-controls.md). Sessions keep whatever they saved: AUTO
+/// off stays off, AUTO on saved before v2 keeps v1 until toggled.
+inline constexpr bool kAutoGainDefaultForNewInstances = true;
 
 /// Full-scale (0 -> 100 %) Intensity slew. Longer than the LFO level's 60 ms
 /// because Intensity moves EVERY band at once and each step is a mask

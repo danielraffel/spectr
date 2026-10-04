@@ -10264,14 +10264,18 @@ TEST_CASE("header level knobs record one host gesture per act and follow the hos
     CHECK(recorder.take() == "begin 5000, end 5000, begin 5000, set 5000=100, end 5000");
     pause_past_double_press();
 
-    // AUTO toggles Auto Gain, one complete gesture. New instances start off
-    // (kAutoGainDefaultForNewInstances, until Auto Gain v2).
-    REQUIRE(rig.store.get_value(spectr::kParamAutoGain) == 0.0f);
-    activate(rig, "[data-spectr-auto-gain]");
-    CHECK(recorder.take() == "begin 5001, set 5001=1, end 5001");
+    // AUTO toggles Auto Gain, one complete gesture. New instances start on
+    // (kAutoGainDefaultForNewInstances).
+    REQUIRE(rig.store.get_value(spectr::kParamAutoGain) == 1.0f);
     require_runtime_contract(rig,
         "document.querySelector('[data-spectr-auto-gain]')"
         "?.getAttribute('data-spectr-auto-gain-state') === 'on'",
+        "AUTO did not show it starts on");
+    activate(rig, "[data-spectr-auto-gain]");
+    CHECK(recorder.take() == "begin 5001, set 5001=0, end 5001");
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-auto-gain]')"
+        "?.getAttribute('data-spectr-auto-gain-state') === 'off'",
         "AUTO did not show its new state");
 
     // Host automation moves every knob and the pill.
@@ -10279,12 +10283,12 @@ TEST_CASE("header level knobs record one host gesture per act and follow the hos
     rig.store.set_value(spectr::kParamIntensity, 30.0f);
     rig.store.set_value(spectr::kMix, 70.0f);
     rig.store.set_value(spectr::kOutputTrim, -6.0f);
-    rig.store.set_value(spectr::kParamAutoGain, 0.0f);
+    rig.store.set_value(spectr::kParamAutoGain, 1.0f);
     settle_until_contract(rig,
         "document.querySelector('[data-spectr-intensity]')?.getAttribute('aria-valuenow') === '30'"
         " && document.querySelector('[data-spectr-mix]')?.getAttribute('aria-valuenow') === '70'"
         " && document.querySelector('[data-spectr-output-trim]')?.getAttribute('aria-valuenow') === '-6'"
-        " && document.querySelector('[data-spectr-auto-gain]')?.getAttribute('data-spectr-auto-gain-state') === 'off'",
+        " && document.querySelector('[data-spectr-auto-gain]')?.getAttribute('data-spectr-auto-gain-state') === 'on'",
         "the level knobs did not follow host automation");
     CHECK(recorder.take().find("begin") == std::string::npos);  // no echo gestures
     storage.require_unchanged();
