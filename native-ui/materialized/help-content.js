@@ -210,6 +210,8 @@ Spectr can realise the shape you draw in two ways, and they trade against each o
 
 **Mixing** looks at a large slice of audio at once, and cuts far deeper for it. How much deeper depends on how strictly you judge where one band ends and the next begins, and on any reading it is a wide margin: a muted band lands somewhere between about 45 and 90 dB lower than the same band in Tracking. That margin holds steady wherever you are working, whether you are looking at the whole spectrum or zoomed right into a narrow span. Mixing costs about 213 ms of latency at 48 kHz, which your DAW lines up automatically so playback stays in sync.
 
+**GPU processing** (Settings, under Latency, or the CPU/GPU chip at the top right) renders Mixing on the graphics processor instead. It sounds exactly the same and adds latency, which Settings shows before you switch and your DAW again lines up; it is off unless you turn it on. Tracking always runs on the CPU, so there the chip reads CPU and does nothing.
+
 Looking at that much audio at once has a second cost, and it is the reason Tracking is not just a lesser option. Mixing spreads a little of every sharp sound backwards in time, so a faint trace of a drum hit can arrive about a seventh of a second before the hit itself. That is not a fault waiting to be fixed. It is the price of the even, symmetrical way Mixing works, which is the same thing that makes it deep. Tracking spreads nothing backwards at all.
 
 Most of the time you will never hear it. It only becomes audible when you cut a narrow low band on percussive material, and that happens to be the case where Mixing's extra depth buys you the least.

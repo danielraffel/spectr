@@ -644,7 +644,13 @@ if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     spectr_configure_native_target(Spectr-shared-product-acceptance)
     target_compile_definitions(Spectr-shared-product-acceptance PRIVATE SPECTR_NATIVE_ASSETS=1)
     add_test(NAME Spectr-shared-product-acceptance COMMAND Spectr-shared-product-acceptance)
-    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
+    # The latency matrix with the reported figure planted one sample wrong:
+    # the measurement must reject it.
+    add_test(NAME Spectr-shared-latency-matrix-negative-control
+        COMMAND Spectr-shared-product-acceptance "[latency-matrix]")
+    set_tests_properties(Spectr-shared-latency-matrix-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
 endif()
 
 
@@ -711,6 +717,10 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     # Freeze's held wet source through the shared renderer, against the CPU
     # linear-phase renderer. The plant installs no source on the shared
     # renderer and must fail.
+    # Report-only: where and why the shared renderer falls back to its CPU
+    # path in a paced session (steady, transport reset, CPU load, late host).
+    add_executable(Spectr-shared-spectral-fallback-trace EXCLUDE_FROM_ALL test/test_shared_spectral_fallbacks.cpp)
+    target_link_libraries(Spectr-shared-spectral-fallback-trace PRIVATE SpectrSharedSpectralBridge)
     add_executable(Spectr-shared-spectral-freeze EXCLUDE_FROM_ALL test/test_shared_spectral_freeze.cpp)
     target_link_libraries(Spectr-shared-spectral-freeze PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-freeze COMMAND Spectr-shared-spectral-freeze)
@@ -4016,6 +4026,38 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --hold-check --mode tracking --block 128)
     set_tests_properties(Spectr-au-freeze-hold-check-negative-control PROPERTIES
         ENVIRONMENT SPECTR_PROBE_PLANT_STALE_CUSTOM=1 WILL_FAIL TRUE)
+    # The delay the built AU's audio has must equal kAudioUnitProperty_Latency,
+    # which is what a host's delay compensation applies: Tracking, Mixing on
+    # the CPU and Mixing on the GPU (paced, so the GPU worker delivers), at
+    # 44.1 and 48 kHz and two block sizes. The negative control plants the
+    # report one sample wrong and must fail.
+    add_test(NAME Spectr-au-latency-tracking-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode tracking --sr 44100 --block 128)
+    add_test(NAME Spectr-au-latency-mixing-cpu-48k-512
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512)
+    add_test(NAME Spectr-au-latency-mixing-cpu-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 44100 --block 128)
+    set(_spectr_au_latency_tests Spectr-au-latency-tracking-44k-128
+        Spectr-au-latency-mixing-cpu-48k-512 Spectr-au-latency-mixing-cpu-44k-128)
+    if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        add_test(NAME Spectr-au-latency-mixing-gpu-48k-512
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 48000 --block 512)
+        add_test(NAME Spectr-au-latency-mixing-gpu-44k-128
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 44100 --block 128)
+        list(APPEND _spectr_au_latency_tests Spectr-au-latency-mixing-gpu-48k-512
+            Spectr-au-latency-mixing-gpu-44k-128)
+    endif()
+    add_test(NAME Spectr-au-latency-negative-control
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512 --latency-plant 1)
+    set_tests_properties(Spectr-au-latency-negative-control PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(${_spectr_au_latency_tests} Spectr-au-latency-negative-control
+        PROPERTIES TIMEOUT 300 LABELS "au-host;latency" RESOURCE_LOCK pulp_gpu)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         Spectr-au-freeze-hold-tracking Spectr-au-freeze-hold-mixing
@@ -4228,6 +4270,12 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test SpectrWebViewReference_VST3)
     endif()
     catch_discover_tests(Spectr-artifact-test)
+    # The built CLAP/VST3 latency check with the report planted one sample
+    # wrong: the measurement must reject it.
+    add_test(NAME Spectr-artifact-latency-negative-control
+        COMMAND Spectr-artifact-test "[latency-artifact]")
+    set_tests_properties(Spectr-artifact-latency-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300)
 endif()
 
 # Third-party validators over the exact built bundles: clap-validator

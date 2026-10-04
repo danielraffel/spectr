@@ -1747,12 +1747,22 @@ int main(int argc, char** argv) {
                     + " text=\"" + painted_text(pill_q);
             };
 
-            pump_ms(1200);
-            std::printf("[gpu-status] before press: %s\n", status_line().c_str());
-            std::printf("[gpu-status] before press: %s\n", read_surface().c_str());
-            capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
-
-            // Press the indicator where it paints, through the host hit test.
+            // The latency chip's own text, wherever it paints: the label that
+            // starts "TRACKING" or "MIXING".
+            const auto latency_chip = [&]() -> std::string {
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v)) {
+                            const std::string t{label->text()};
+                            if (found.empty() && (t.rfind("TRACKING", 0) == 0 || t.rfind("MIXING", 0) == 0))
+                                found = t;
+                        }
+                        for (std::size_t i = 0; i < v.child_count(); ++i) walk(*v.child_at(i));
+                    };
+                walk(*rig.root);
+                return found.empty() ? "(absent)" : found;
+            };
             const std::string ind_id = js_value(std::string("const e=") + ind_q
                 + "; return e ? (e.__pulpId || e.id || '(no id)') : '(absent)';");
             auto* ind_view = find_by_id(*rig.root, ind_id);
@@ -1761,15 +1771,48 @@ int main(int argc, char** argv) {
                             ind_id.c_str());
                 return 1;
             }
-            float ix = 0.0f, iy = 0.0f;
-            root_origin(*ind_view, ix, iy);
-            const auto ib = ind_view->bounds();
-            std::printf("[gpu-status] pressing indicator id=%s at (%.1f,%.1f) size %.1fx%.1f\n",
-                        ind_id.c_str(), ix + ib.width * 0.5f, iy + ib.height * 0.5f,
-                        ib.width, ib.height);
-            rig.root->simulate_click(pulp::view::Point{ix + ib.width * 0.5f, iy + ib.height * 0.5f});
-            pump_ms(300);
-            std::printf("[gpu-status] after press: %s\n", read_surface().c_str());
+            // Press the indicator where it paints, through the host hit test.
+            const auto press_indicator = [&]() {
+                float ix = 0.0f, iy = 0.0f;
+                root_origin(*ind_view, ix, iy);
+                const auto ib = ind_view->bounds();
+                rig.root->simulate_click(pulp::view::Point{ix + ib.width * 0.5f, iy + ib.height * 0.5f});
+                pump_ms(300);
+            };
+            bool steps_ok = true;
+
+            pump_ms(1200);
+            std::printf("[gpu-status] tracking: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
+            // Tracking is CPU-only: the indicator is a disabled readout, and a
+            // press on it must change nothing.
+            press_indicator();
+            std::printf("[gpu-status] tracking after press: gpu_processing=%d mode=%s latency=%d\n",
+                        int(rig.processor.gpu_processing()),
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        rig.processor.latency_samples());
+            if (rig.processor.gpu_processing()
+                || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency) steps_ok = false;
+
+            // Mixing through the latency rail's own write path; GPU off.
+            rig.eval("spectrToggleLatencyMode();", "spectr-gpu-status-mixing");
+            pump_ms(600);
+            std::printf("[gpu-status] mixing cpu: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::linear_phase
+                || rig.processor.gpu_processing()) steps_ok = false;
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-1-mixing-cpu", backend, scale);
+
+            // The GPU toggle, pressed where it paints.
+            press_indicator();
+            std::printf("[gpu-status] after GPU press: gpu_processing=%d latency=%d | chip \"%s\"\n",
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples(),
+                        latency_chip().c_str());
+            if (!rig.processor.gpu_processing()) steps_ok = false;
 
             // Pace audio until the shared renderer reports GPU-selected output.
             bool delivered = false;
@@ -1794,9 +1837,10 @@ int main(int argc, char** argv) {
             }
             const auto surface = read_surface();
             std::printf("[gpu-status] live: %s\n", status_line().c_str());
-            std::printf("[gpu-status] live: %s\n", surface.c_str());
+            const auto chip_text = latency_chip();
+            std::printf("[gpu-status] live: %s | chip \"%s\"\n", surface.c_str(), chip_text.c_str());
             rig.root->layout_children();
-            capture(rig, dir, prefix + "gpu-status-1-mixing-gpu-live", backend, scale);
+            capture(rig, dir, prefix + "gpu-status-2-mixing-gpu-live", backend, scale);
             // Both surfaces must paint inside the design box: an absolute node
             // resolved against the wrong containing block lands off-screen and
             // still reads "live" from its attributes alone.
@@ -1814,7 +1858,14 @@ int main(int argc, char** argv) {
             const bool placed = on_screen(ind_q) && on_screen(pill_q);
             std::printf("[gpu-status] indicator and pill inside the design box: %s\n",
                         placed ? "yes" : "no");
-            const bool surface_live = placed
+            // The chip names the latency the host is told, in whole ms.
+            char expected_ms[32];
+            std::snprintf(expected_ms, sizeof expected_ms, "%d ms",
+                          int(std::lround(rig.processor.render_mode_latency_ms(
+                              spectr::MaskRenderMode::linear_phase))));
+            const bool chip_ok = chip_text.find(expected_ms) != std::string::npos;
+            std::printf("[gpu-status] chip shows the reported %s: %s\n", expected_ms, chip_ok ? "yes" : "no");
+            const bool surface_live = placed && steps_ok && chip_ok
                 && surface.find("pill state=gpu") != std::string::npos
                 && surface.find("text=\"GPU | ") != std::string::npos
                 && surface.find("ready=true") != std::string::npos;

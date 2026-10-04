@@ -605,10 +605,13 @@ bool Spectr::set_shared_product_force_cpu(bool force) noexcept {
 }
 #endif
 
-std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
+std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool gpu) {
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::unique_ptr<MaskRenderer> renderer;
-    if(mode==MaskRenderMode::linear_phase)
+    // GPU processing is a Mixing-only choice: Tracking is always the CPU
+    // minimum-phase renderer, and Mixing with GPU processing off is the CPU
+    // linear-phase renderer at its own (lower) latency.
+    if(mode==MaskRenderMode::linear_phase && gpu)
         renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>(
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
             shared_product_force_cpu_
@@ -616,6 +619,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
         );
     else renderer=make_mask_renderer(mode);
 #else
+    (void)gpu;
     auto renderer = make_mask_renderer(mode);
 #endif
     if (!renderer) return nullptr;
@@ -714,11 +718,28 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         render_mode_ = mode;
         return true;
     }
+    return switch_renderer_(mode, gpu_processing_);
+}
 
+bool Spectr::set_gpu_processing(bool enabled) {
+    if (enabled == gpu_processing_) return true;
+    // The choice only selects Mixing's renderer. Unprepared, or in Tracking,
+    // it is recorded for the next Mixing renderer and nothing moves now.
+    if (!processor_prepared_ || render_mode_ != MaskRenderMode::linear_phase) {
+        gpu_processing_ = enabled;
+        return true;
+    }
+    // In Mixing it changes the renderer and the latency the host is told:
+    // the same rebuild, publication and latency-changed path as a
+    // Tracking/Mixing switch.
+    return switch_renderer_(render_mode_, enabled);
+}
+
+bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
     // Build the replacement to completion BEFORE retiring the live one. A
     // switch that cannot be prepared must leave the running mode untouched
     // rather than drop the instance into silence.
-    auto replacement = build_renderer_(mode);
+    auto replacement = build_renderer_(mode, gpu);
     if (!replacement) return false;
 
     MaskRenderer* incoming = replacement.get();
@@ -735,6 +756,7 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
             renderer_=std::move(replacement);
         }
         render_mode_=mode;
+        gpu_processing_=gpu;
         last_published_layout_valid_=false;
         publish_processing_state_();
     }
@@ -745,6 +767,7 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         renderer_=std::move(replacement);
     }
     render_mode_=mode;
+    gpu_processing_=gpu;
 #endif
 
     // Publish to the audio thread. From here process() renders through the new
@@ -838,7 +861,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     drain_retired_renderers_();
 
     if (channels_ <= static_cast<int>(kMaximumChannels)) {
-        auto replacement=build_renderer_(render_mode_);
+        auto replacement=build_renderer_(render_mode_, gpu_processing_);
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
         renderer_=std::move(replacement);
     }
@@ -1232,11 +1255,21 @@ int Spectr::latency_samples() const {
     // and asks it for latency there; renderer_config_() reads the mix from
     // state(), which is not yet bound, and crashed the plug-in at
     // registration.
+    return render_mode_latency_samples(render_mode_);
+}
+
+int Spectr::render_mode_latency_samples(MaskRenderMode mode) const noexcept {
+    return render_mode_latency_samples(mode, gpu_processing_);
+}
+
+int Spectr::render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept {
     const auto config=latency_geometry_();
-    auto latency=mask_render_latency_samples(render_mode_,config);
+    auto latency=mask_render_latency_samples(mode,config);
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
-    if(render_mode_==MaskRenderMode::linear_phase)
+    if(mode==MaskRenderMode::linear_phase && gpu)
         latency+=int(experimental::SharedSpectralMaskRenderer::additional_latency(config));
+#else
+    (void)gpu;
 #endif
     return latency;
 }
@@ -2665,6 +2698,10 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // every project already saved. The blob says what it is.
     root.addMember("render_mode",
                    std::string(render_mode_token(render_mode_)));
+    // Mixing's GPU processing choice. Session state, not a host parameter.
+    // Absent in older projects, which load with it off (the CPU renderer they
+    // were mixed with).
+    root.addMember("gpu_processing", gpu_processing_);
 
 
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
@@ -2839,6 +2876,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         // Outside the lock, for the same reason as the main path below.
         (void)set_render_mode(kDefaultRenderMode);
+        (void)set_gpu_processing(false);
         // A bare parameter blob predates the level controls by construction:
         // it opens at the level it was mixed at.
         if (param_store_) param_store_->set_value(kParamAutoGain, 0.0f);
@@ -2997,6 +3035,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // absent case unambiguous for every version below: at v3 and under,
         // silence can only mean "written before more than one mode existed".
         return false;
+    }
+
+    bool new_gpu_processing = false;
+    if (root.hasObjectMember("gpu_processing")) {
+        const auto& flag = root["gpu_processing"];
+        if (!flag.isBool()) return false;
+        new_gpu_processing = flag.getBool();
     }
 
     bool new_morph_applies_viewport = true;
@@ -3240,10 +3285,16 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // renderer keeps the one it has rather than failing the whole project --
     // the bands are right either way, and a silent mode substitution is
     // reported through render_mode_unknown_on_load().
+    // The GPU choice first, so a project that restores into Mixing builds the
+    // renderer it was saved with once rather than twice.
+    if (render_mode_ != MaskRenderMode::linear_phase
+        || new_render_mode == MaskRenderMode::linear_phase)
+        (void)set_gpu_processing(new_gpu_processing);
     if (!set_render_mode(new_render_mode)) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         render_mode_unknown_on_load_ = true;
     }
+    if (gpu_processing_ != new_gpu_processing) (void)set_gpu_processing(new_gpu_processing);
     // A session saved before Intensity and Auto Gain existed was mixed at the
     // level it plays at; Auto Gain must not change that on reload, whatever
     // the new-instance default is. Its Intensity lane is absent and keeps the

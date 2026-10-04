@@ -7,6 +7,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <vector>
 #include <thread>
 
 TEST_CASE("Spectr actual processor selects shared output with matching fallback and PDC",
@@ -17,6 +20,10 @@ TEST_CASE("Spectr actual processor selects shared output with matching fallback 
     auto* g = static_cast<spectr::Spectr*>(gpu.processor());
     auto* c = static_cast<spectr::Spectr*>(cpu.processor());
     REQUIRE(c->set_shared_product_force_cpu(true));
+    // GPU processing is opt-in; both twins render Mixing through the shared
+    // renderer, one forced onto its CPU fallback.
+    REQUIRE(g->set_gpu_processing(true));
+    REQUIRE(c->set_gpu_processing(true));
     REQUIRE(g->set_render_mode(spectr::MaskRenderMode::linear_phase));
     REQUIRE(c->set_render_mode(spectr::MaskRenderMode::linear_phase));
     const int expected_latency = spectr::kSpectralLatency + (spectr::kSpectralAnalysisHop / 2) * 5;
@@ -99,6 +106,7 @@ TEST_CASE("Spectr actual output delay equals its pinned shared PDC",
         pulp::format::HeadlessHost host(spectr::create_spectr);
         auto* processor = static_cast<spectr::Spectr*>(host.processor());
         REQUIRE(processor->set_shared_product_force_cpu(force_cpu));
+        REQUIRE(processor->set_gpu_processing(true));
         REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
         host.state().set_value(spectr::kMix, 0.0f);
         host.state().set_value(spectr::kOutputTrim, 0.0f);
@@ -163,7 +171,10 @@ TEST_CASE("Spectr Freeze reaches the output through the shared GPU renderer",
     auto* c = static_cast<spectr::Spectr*>(cpu.processor());
     auto* l = static_cast<spectr::Spectr*>(live.processor());
     REQUIRE(c->set_shared_product_force_cpu(true));
-    for (auto* p : {g, c, l}) REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    for (auto* p : {g, c, l}) {
+        REQUIRE(p->set_gpu_processing(true));
+        REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    }
     gpu.prepare(48000, block);
     cpu.prepare(48000, block);
     live.prepare(48000, block);
@@ -245,4 +256,317 @@ TEST_CASE("Spectr Freeze reaches the output through the shared GPU renderer",
     gpu.release();
     cpu.release();
     live.release();
+}
+
+// The delay a host is told must be the delay it gets, on every path the
+// product can take, at more than one rate and block size: Mixing with the GPU
+// selected, Mixing forced onto its CPU fallback, and Tracking -- dry (Mix 0)
+// and wet (Mix 100). The figure the editor shows (render_mode_latency_samples)
+// must be the same number. SPECTR_LATENCY_PLANT_OFFSET adds an offset to the
+// reported figure before it is checked: the negative control, which must fail.
+TEST_CASE("Spectr reported latency equals measured delay on every path",
+          "[shared-product][installed-sdk][latency-matrix]") {
+    using namespace pulp::test::audio;
+    using namespace std::chrono;
+    const char* plant_env = std::getenv("SPECTR_LATENCY_PLANT_OFFSET");
+    const int plant = plant_env ? std::atoi(plant_env) : 0;
+    enum class Path { gpu, forced_cpu, mixing_cpu, tracking };
+    std::printf("latency-matrix: sr block path mix reported ui measured_ch0 measured_ch1 gpu_selected cpu_fallback\n");
+    for (const double sr : {44100.0, 48000.0})
+        for (const unsigned block : {512u, 128u})
+            for (const Path path : {Path::gpu, Path::forced_cpu, Path::mixing_cpu, Path::tracking})
+                for (const float mix : {0.0f, 100.0f}) {
+                    pulp::format::HeadlessHost host(spectr::create_spectr);
+                    auto* p = static_cast<spectr::Spectr*>(host.processor());
+                    const auto mode = path == Path::tracking ? spectr::MaskRenderMode::zero_latency
+                                                             : spectr::MaskRenderMode::linear_phase;
+                    REQUIRE(p->set_shared_product_force_cpu(path == Path::forced_cpu));
+                    REQUIRE(p->set_gpu_processing(path == Path::gpu || path == Path::forced_cpu));
+                    REQUIRE(p->set_render_mode(mode));
+                    host.state().set_value(spectr::kMix, mix);
+                    host.state().set_value(spectr::kOutputTrim, 0.0f);
+                    // Auto Gain matches the wet level to the input's running
+                    // level; an isolated impulse has none, so it is off here.
+                    host.state().set_value(spectr::kParamAutoGain, 0.0f);
+                    host.prepare(sr, block);
+                    const int reported = p->latency_samples();
+                    const int ui = p->render_mode_latency_samples(mode);
+                    const unsigned frames = ((reported + 4096 + block - 1) / block) * block;
+                    pulp::audio::Buffer<float> input(2, block), output(2, block);
+                    pulp::audio::Buffer<float> stimulus(2, frames), rendered(2, frames);
+                    stimulus.clear(); rendered.clear();
+                    constexpr unsigned marker[2]{13, 29};
+                    constexpr float level[2]{0.5f, -0.3f};
+                    const bool wet = mix > 0.0f;
+                    if (!wet) {
+                        for (unsigned ch = 0; ch < 2; ++ch) stimulus.channel(ch)[marker[ch]] = level[ch];
+                    } else {
+                        // The wet path is measured with a noise burst and the
+                        // lag of the input/output cross-correlation peak: the
+                        // spectral path does not carry an isolated impulse at
+                        // full height (it is spread over the analysis frame).
+                        std::uint32_t rng = 12345u;
+                        for (unsigned i = 0; i < 4096; ++i)
+                            for (unsigned ch = 0; ch < 2; ++ch) {
+                                rng = rng * 1664525u + 1013904223u;
+                                stimulus.channel(ch)[1000 + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+                            }
+                    }
+                    const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+                    pulp::audio::BufferView<const float> in(ptrs, 2, block);
+                    auto out = output.view();
+                    const auto start = steady_clock::now();
+                    for (unsigned offset = 0, b = 0; offset < frames; offset += block, ++b) {
+                        // Real-time pacing on the GPU path, so the shared
+                        // renderer's worker delivers GPU output.
+                        if (path == Path::gpu)
+                            std::this_thread::sleep_until(start + nanoseconds(
+                                std::uint64_t(b) * block * 1000000000ull / std::uint64_t(sr)));
+                        for (unsigned ch = 0; ch < 2; ++ch)
+                            std::copy_n(stimulus.channel(ch).data() + offset, block, input.channel(ch).data());
+                        host.process(out, in);
+                        CHECK(p->latency_samples() == reported);
+                        for (unsigned ch = 0; ch < 2; ++ch)
+                            std::copy_n(output.channel(ch).data(), block, rendered.channel(ch).data() + offset);
+                    }
+                    std::this_thread::sleep_for(milliseconds(20));
+                    const auto status = p->gpu_audio_status();
+                    const unsigned long long gpu = status.delivery ? status.delivery->gpu_selected : 0;
+                    const unsigned long long cpu = status.delivery ? status.delivery->cpu_fallback : 0;
+                    long long measured[2]{-1, -1};
+                    bool satisfied = true;
+                    if (wet) {
+                        for (unsigned ch = 0; ch < 2; ++ch) {
+                            const float* x = stimulus.channel(ch).data();
+                            const float* y = rendered.channel(ch).data();
+                            double best = -1.0; long long best_lag = -1;
+                            const long long lo = std::max(0LL, (long long)reported - 2048);
+                            const long long hi = (long long)reported + 2048;
+                            for (long long lag = lo; lag <= hi; ++lag) {
+                                double acc = 0.0;
+                                for (unsigned i = 1000; i < 1000 + 4096 && i + lag < frames; ++i)
+                                    acc += double(x[i]) * double(y[i + lag]);
+                                if (acc > best) { best = acc; best_lag = lag; }
+                            }
+                            measured[ch] = best_lag;
+                            satisfied = satisfied && best_lag == reported + plant;
+                        }
+                    }
+                    for (unsigned ch = 0; ch < 2 && !wet; ++ch) {
+                        pulp::audio::Buffer<float> mono_in(1, frames), mono_out(1, frames);
+                        std::copy_n(stimulus.channel(ch).data(), frames, mono_in.channel(0).data());
+                        std::copy_n(rendered.channel(ch).data(), frames, mono_out.channel(0).data());
+                        auto evidence = measure_marker_offset(mono_in, mono_out, reported + plant,
+                            {.input_marker_frame = marker[ch], .onset_threshold = 0.1});
+                        if (evidence.measured_samples) measured[ch] = *evidence.measured_samples;
+                        INFO(latency_evidence_summary(evidence));
+                        satisfied = satisfied && evidence.contract_outcome == LatencyContractOutcome::satisfied;
+                    }
+                    const char* name = path == Path::gpu ? "mixing-gpu"
+                        : path == Path::forced_cpu ? "mixing-gpu-forced-fallback"
+                        : path == Path::mixing_cpu ? "mixing-cpu" : "tracking";
+                    for (unsigned ch = 0; ch < 2 && wet; ++ch) {
+                        std::size_t at = 0; float peak = 0.0f;
+                        for (std::size_t i = 0; i < frames; ++i)
+                            if (std::abs(rendered.channel(ch)[i]) > peak) { peak = std::abs(rendered.channel(ch)[i]); at = i; }
+                        std::printf("latency-matrix-wet: ch%u output peak %.4f\n", ch, peak); (void)at;
+                    }
+                    std::printf("latency-matrix: %.0f %u %s %.0f %d %d %lld %lld %llu %llu\n",
+                                sr, block, name, mix, reported + plant, ui, measured[0], measured[1], gpu, cpu);
+                    INFO("sr=" << sr << " block=" << block << " path=" << name << " mix=" << mix);
+                    CHECK(satisfied);
+                    CHECK(ui == reported + plant);
+                    if (path == Path::gpu) CHECK(gpu > 0);
+                    if (path == Path::forced_cpu) CHECK((gpu == 0 && cpu > 0));
+                    if (path == Path::mixing_cpu || path == Path::tracking)
+                        CHECK(status.availability != spectr::GpuAudioStatus::Availability::Available);
+                    host.release();
+                }
+}
+
+// GPU processing is Mixing's renderer choice. Switching it must behave like a
+// Tracking/Mixing switch: the host is told exactly once, the reported latency
+// is already the new one when it is told, the audio stays bounded and keeps
+// playing, and the delay the audio then has is the delay reported. In
+// Tracking it records the choice and moves nothing. It round-trips with the
+// session, and a session saved without it opens on the CPU.
+TEST_CASE("GPU processing switches Mixing's renderer and latency like a mode switch",
+          "[shared-product][installed-sdk][gpu-processing]") {
+    using namespace pulp::test::audio;
+    constexpr unsigned block = 256;
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    auto* p = static_cast<spectr::Spectr*>(host.processor());
+    REQUIRE_FALSE(p->gpu_processing());   // off by default
+    REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    host.prepare(48000, block);
+    (void)p->consume_latency_changed_flag();
+    const int cpu_latency = p->latency_samples();
+    CHECK(cpu_latency == p->render_mode_latency_samples(spectr::MaskRenderMode::linear_phase, false));
+    CHECK(p->gpu_audio_status().availability == spectr::GpuAudioStatus::Availability::NonSharedRenderer);
+
+    pulp::audio::Buffer<float> input(2, block), output(2, block);
+    const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+    pulp::audio::BufferView<const float> in(ptrs, 2, block);
+    auto out = output.view();
+    std::uint64_t n = 0;
+    double worst = 0.0, tail = 0.0;
+    const auto run = [&](unsigned blocks, bool record_tail) {
+        int flags = 0, reported_at_flag = -1;
+        for (unsigned b = 0; b < blocks; ++b) {
+            for (unsigned i = 0; i < block; ++i, ++n) {
+                const float v = 0.4f * float(std::sin(6.283185307179586 * 440.0 * double(n) / 48000.0));
+                input.channel(0)[i] = v; input.channel(1)[i] = v;
+            }
+            host.process(out, in);
+            for (unsigned ch = 0; ch < 2; ++ch)
+                for (unsigned i = 0; i < block; ++i) {
+                    const double s = std::abs(double(output.channel(ch)[i]));
+                    worst = std::max(worst, s);
+                    if (record_tail && b + 16 >= blocks) tail = std::max(tail, s);
+                }
+            if (p->latency_change_pending()) {
+                if (reported_at_flag < 0) reported_at_flag = p->latency_samples();
+                if (p->consume_latency_changed_flag()) ++flags;
+            }
+        }
+        return std::pair{flags, reported_at_flag};
+    };
+    (void)run(120, false);
+    REQUIRE(p->set_gpu_processing(true));
+    const auto on = run(160, true);
+    const int gpu_latency = p->latency_samples();
+    INFO("cpu " << cpu_latency << " gpu " << gpu_latency << " flags " << on.first
+         << " reported at flag " << on.second << " worst " << worst << " tail " << tail);
+    CHECK(gpu_latency == p->render_mode_latency_samples(spectr::MaskRenderMode::linear_phase, true));
+    CHECK(gpu_latency > cpu_latency);
+    CHECK(on.first == 1);
+    CHECK(on.second == gpu_latency);
+    CHECK(worst <= 1.0);
+    CHECK(tail > 0.01);
+    CHECK(p->gpu_audio_status().availability == spectr::GpuAudioStatus::Availability::Available);
+
+    // Off again: back to the CPU renderer and its latency, told once.
+    tail = 0.0;
+    REQUIRE(p->set_gpu_processing(false));
+    const auto off = run(160, true);
+    CHECK(off.first == 1);
+    CHECK(off.second == cpu_latency);
+    CHECK(p->latency_samples() == cpu_latency);
+    CHECK(tail > 0.01);
+
+    // In Tracking the choice is recorded and nothing moves.
+    REQUIRE(p->set_render_mode(spectr::MaskRenderMode::zero_latency));
+    (void)run(4, false);
+    (void)p->consume_latency_changed_flag();
+    const int tracking = p->latency_samples();
+    REQUIRE(p->set_gpu_processing(true));
+    const auto tracking_run = run(8, false);
+    CHECK(tracking_run.first == 0);
+    CHECK(p->latency_samples() == tracking);
+    CHECK(p->gpu_processing());
+
+    // The session carries it: back into Mixing from a restore builds the GPU
+    // renderer at its latency.
+    REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+    const auto saved = host.save_state();
+    host.release();
+    pulp::format::HeadlessHost restored(spectr::create_spectr);
+    auto* r = static_cast<spectr::Spectr*>(restored.processor());
+    REQUIRE(restored.load_state(saved));
+    CHECK(r->gpu_processing());
+    restored.prepare(48000, block);
+    CHECK(r->latency_samples() == gpu_latency);
+    CHECK(r->gpu_audio_status().availability == spectr::GpuAudioStatus::Availability::Available);
+    restored.release();
+
+    // A session without the field (written before it existed) opens on the
+    // CPU: the plugin-state JSON is the processor's own serialization, so
+    // drop the field from it and restore that.
+    {
+        const auto plugin_state = r->serialize_plugin_state();
+        std::string text(plugin_state.begin(), plugin_state.end());
+        const auto at = text.find("\"gpu_processing\"");
+        INFO(text.substr(at == std::string::npos ? 0 : (at > 40 ? at - 40 : 0), 120));
+        REQUIRE(at != std::string::npos);
+        const auto value_end = text.find_first_of(",}", at);
+        REQUIRE(text.substr(at, value_end - at).find("true") != std::string::npos);
+        // Drop the member and the comma that separated it from the previous one.
+        const auto from = text.rfind(',', at);
+        text.erase(from, value_end - from);
+        pulp::format::HeadlessHost old(spectr::create_spectr);
+        auto* o = static_cast<spectr::Spectr*>(old.processor());
+        REQUIRE(o->set_gpu_processing(true));
+        REQUIRE(o->deserialize_plugin_state(std::vector<std::uint8_t>(text.begin(), text.end())));
+        CHECK_FALSE(o->gpu_processing());
+    }
+}
+
+// Report-only (hidden tag): the host-thread CPU each path costs per block and
+// what the whole process uses meanwhile (which includes the shared renderer's
+// GPU service worker), paced in real time, across band counts, rates and block
+// sizes. Run with: Spectr-shared-product-acceptance "[cpu-cost]"
+TEST_CASE("CPU cost of Mixing on the CPU, Mixing on the GPU and Tracking",
+          "[.][cpu-cost]") {
+    using namespace std::chrono;
+    const auto thread_ns = [] {
+        timespec t{}; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+        return std::int64_t(t.tv_sec) * 1000000000LL + t.tv_nsec;
+    };
+    const auto process_ns = [] {
+        timespec t{}; clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
+        return std::int64_t(t.tv_sec) * 1000000000LL + t.tv_nsec;
+    };
+    enum class Path { mixing_cpu, mixing_gpu, tracking };
+    std::printf("cpu-cost: path bands sr block | host_us_mean host_us_p99 host_%%core | process_%%cores | gpu_selected cpu_fallback\n");
+    for (const Path path : {Path::mixing_cpu, Path::mixing_gpu, Path::tracking})
+        for (const float bands : {32.0f, 64.0f})
+            for (const double sr : {44100.0, 48000.0})
+                for (const unsigned block : {128u, 512u}) {
+                    pulp::format::HeadlessHost host(spectr::create_spectr);
+                    auto* p = static_cast<spectr::Spectr*>(host.processor());
+                    REQUIRE(p->set_gpu_processing(path == Path::mixing_gpu));
+                    REQUIRE(p->set_render_mode(path == Path::tracking
+                        ? spectr::MaskRenderMode::zero_latency : spectr::MaskRenderMode::linear_phase));
+                    host.state().set_value(spectr::kParamBandCount, bands);
+                    host.prepare(sr, block);
+                    pulp::audio::Buffer<float> input(2, block), output(2, block);
+                    const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+                    pulp::audio::BufferView<const float> in(ptrs, 2, block);
+                    auto out = output.view();
+                    const unsigned warm = unsigned(1.0 * sr / block), total = unsigned(4.0 * sr / block);
+                    std::vector<double> host_us;
+                    std::int64_t proc0 = 0;
+                    steady_clock::time_point wall0{};
+                    std::uint64_t n = 0;
+                    const auto start = steady_clock::now();
+                    for (unsigned b = 0; b < total; ++b) {
+                        std::this_thread::sleep_until(start + nanoseconds(
+                            std::uint64_t(b) * block * 1000000000ull / std::uint64_t(sr)));
+                        for (unsigned i = 0; i < block; ++i, ++n) {
+                            const float v = 0.3f * float(std::sin(6.283185307179586 * 997.0 * double(n) / sr))
+                                + 0.05f * float(std::sin(6.283185307179586 * 5011.0 * double(n) / sr));
+                            input.channel(0)[i] = v; input.channel(1)[i] = -v;
+                        }
+                        if (b == warm) { proc0 = process_ns(); wall0 = steady_clock::now(); }
+                        const auto t0 = thread_ns();
+                        host.process(out, in);
+                        const auto t1 = thread_ns();
+                        if (b >= warm) host_us.push_back(double(t1 - t0) / 1000.0);
+                    }
+                    const double wall_s = duration<double>(steady_clock::now() - wall0).count();
+                    const double proc_s = double(process_ns() - proc0) / 1e9;
+                    std::sort(host_us.begin(), host_us.end());
+                    double mean = 0; for (double v : host_us) mean += v; mean /= double(host_us.size());
+                    const double p99 = host_us[std::size_t(0.99 * double(host_us.size() - 1))];
+                    const double block_us = 1e6 * block / sr;
+                    const auto status = p->gpu_audio_status();
+                    const char* name = path == Path::mixing_cpu ? "mixing-cpu"
+                        : path == Path::mixing_gpu ? "mixing-gpu" : "tracking";
+                    std::printf("cpu-cost: %s %.0f %.0f %u | %.1f %.1f %.2f%% | %.1f%% | %llu %llu\n",
+                                name, double(bands), sr, block, mean, p99, 100.0 * mean / block_us,
+                                100.0 * proc_s / wall_s,
+                                status.delivery ? (unsigned long long)status.delivery->gpu_selected : 0ull,
+                                status.delivery ? (unsigned long long)status.delivery->cpu_fallback : 0ull);
+                    host.release();
+                }
 }
