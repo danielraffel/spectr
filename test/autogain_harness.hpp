@@ -304,6 +304,16 @@ inline Stereo dense_breakdown() {
     return concat(x, dense(n8, 23u));
 }
 
+// Arrangement sections: a quiet bass-heavy verse and a full chorus about
+// 6 dB louder.
+inline Stereo verse(std::size_t n) {
+    return scaled(mixed(mixed(bass_line(n), pad(n), 1.2), kick_only(n), 0.6), 0.5);
+}
+inline Stereo chorus(std::size_t n, unsigned seed = 23u) {
+    return scaled(scaled(mixed(mixed(mixed(mixed(bass_line(n), drum_loop(n, seed), 0.8), pad(n), 1.5),
+                                     vocal(n), 0.6), hats(n, seed + 5), 0.7), 0.6), 1.6);
+}
+
 // A drum loop whose level swells +-12 dB over 4 s.
 inline Stereo drum_swell(std::size_t n) {
     return with_envelope(drum_loop(n), [](double t) {

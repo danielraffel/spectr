@@ -267,7 +267,11 @@ private:
 /// session's estimate taken as the estimate rather than as a prior),
 /// `autogain-v2-reprepare-reset` (a host re-prepare forgets the estimate),
 /// `autogain-v2-legacy-composed-only` (the old-session AUTO toggle seen only
-/// on the composed path).
+/// on the composed path), `autogain-v2-no-drop-path` (the detector has one
+/// threshold whatever the level did: a quieter section after a loud one
+/// glides), `autogain-v2-detect-only-when-on` (no change detection while
+/// AUTO is off), `autogain-v2-restore-fixed-fade` (a restored estimate fades
+/// in 0.5 s even while the material agrees with it).
 /// Read once per process; unset in every shipping run. The Spectr constructor
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.

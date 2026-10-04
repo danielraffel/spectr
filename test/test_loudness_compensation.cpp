@@ -12,6 +12,7 @@
 #include <atomic>
 #include <complex>
 #include <cstdio>
+#include <functional>
 #include <span>
 #include <cmath>
 #include <cstdlib>
@@ -372,6 +373,69 @@ TEST_CASE("LongTermSpectrum: a locate keeps the estimate, a saved one restores w
                 "100 Hz of 3 kHz (saved %.3f)\n", t.weight(2900.0, 3100.0), before);
     CHECK(t.weight(2900.0, 3100.0) > 0.9);
     CHECK(t.prior_weight() == 0.0);
+}
+
+TEST_CASE("MaterialChangeDetector: a smaller gap counts after a lasting loud part falls",
+          "[loudness-compensation][state]") {
+    using E = MaterialChangeDetector::Event;
+    const auto make = [] {
+        MaterialChangeDetector d;
+        d.threshold_db = 4.0;
+        d.frames = 8;
+        d.huge_db = 12.0;
+        d.huge_frames = 6;
+        d.drop_threshold_db = 2.0;
+        d.drop_level_db = 3.0;
+        d.drop_min_loud_frames = 10;
+        d.max_decay_db_per_frame = 0.5;
+        d.level_fast_alpha = 0.5;
+        d.level_slow_alpha = 0.05;
+        return d;
+    };
+    // `loud` frames at -10 LUFS with no gap, then frames at `level(k)` with a
+    // 3 dB gap (under the ordinary 4 dB threshold): confirmed within `limit`?
+    const auto run = [](MaterialChangeDetector d, int loud, const std::function<double(int)>& level,
+                        int limit) {
+        for (int k = 0; k < loud; ++k) (void)d.observe(0.0f, 0.0f, -10.0);
+        for (int k = 0; k < limit; ++k)
+            if (d.observe(0.0f, 3.0f, level(k)) == E::confirmed) return k + 1;
+        return -1;
+    };
+    const int steady = run(make(), 60, [](int) { return -17.0; }, 30);
+    std::printf("[loudness-compensation] 7 dB quieter, steady, 3 dB gap: confirmed after %d frames\n",
+                steady);
+    CHECK(steady > 0);
+    CHECK(steady <= 12);
+    // A decay (1 dB per frame) is not a change of material.
+    CHECK(run(make(), 60, [](int k) { return -12.0 - 1.0 * k; }, 30) == -1);
+    // A loud part shorter than drop_min_loud_frames (after the warm-up) does
+    // not arm the path: quiet, a 4-frame loud burst, quiet again; a 12-frame
+    // loud part does.
+    for (const int burst : {4, 12}) {
+        auto d = make();
+        for (int k = 0; k < 11; ++k) (void)d.observe(0.0f, 0.0f, -17.0);
+        for (int k = 0; k < burst; ++k) (void)d.observe(0.0f, 0.0f, 0.0);
+        int confirmed = -1;
+        for (int k = 0; k < 30 && confirmed < 0; ++k)
+            if (d.observe(0.0f, 3.0f, -17.0) == E::confirmed) confirmed = k + 1;
+        std::printf("[loudness-compensation] after a %d-frame loud part: confirmed after %d\n",
+                    burst, confirmed);
+        if (burst == 4) CHECK(confirmed == -1);
+        else CHECK(confirmed > 0);
+    }
+    // Control: without the path the same steady drop is never confirmed.
+    auto off = make();
+    off.drop_threshold_db = 0.0;
+    CHECK(run(off, 60, [](int) { return -17.0; }, 30) == -1);
+    // The ordinary path is unchanged: a 6 dB gap at a steady level confirms.
+    {
+        auto d = make();
+        int k = 0;
+        for (; k < 30; ++k)
+            if (d.observe(0.0f, 6.0f, -10.0) == E::confirmed) break;
+        CHECK(k + 1 == 8);
+        CHECK_FALSE(d.last_was_drop());
+    }
 }
 
 TEST_CASE("LongTermSpectrum: a level drop rescales the level, never the spectrum",

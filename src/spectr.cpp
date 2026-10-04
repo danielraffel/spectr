@@ -2211,8 +2211,10 @@ void Spectr::process(
                             auto_gain_model_.load(std::memory_order_relaxed);
                         const float auto_mix = std::clamp(
                             cursor.value(kMix) / 100.0f, 0.0f, 1.0f);
+                        // The drawn shape whether AUTO is on or not: v2's
+                        // change detector runs while AUTO is off too.
                         pulp::signal::SpectralBandLayout shape = automated;
-                        if (auto_on) {
+                        {
                             for (std::size_t band = 0;
                                  band < shape.active_bands; ++band) {
                                 shape.bands[band].gain_db =
@@ -2224,20 +2226,23 @@ void Spectr::process(
                         }
                         float target_db = 0.0f;
                         bool retarget = false;
+                        const bool changed = !auto_gain_last_valid_
+                            || auto_on != auto_gain_last_enabled_
+                            || auto_model != auto_gain_last_model_
+                            || auto_mix != auto_gain_last_mix_
+                            || renderer != auto_gain_last_renderer_
+                            || !same_mask_layout_(auto_gain_last_shape_, shape);
                         if (auto_model == static_cast<int>(AutoGainModel::reference_v1)) {
                             if (auto_on)
                                 target_db = auto_gain_reference_.compensation_db(
                                     shape, auto_mix);
                             retarget = target_db != auto_gain_target_db_;
+                            // v1 runs the make-up; v2's estimator and change
+                            // detector keep listening, so switching AUTO off
+                            // and on (which converts to v2) starts current.
                             (void)auto_gain_material_.begin_slice(
-                                shape, auto_mix, /*enabled=*/false, true, nullptr);
+                                shape, auto_mix, /*enabled=*/false, changed, renderer);
                         } else {
-                            const bool changed = !auto_gain_last_valid_
-                                || auto_on != auto_gain_last_enabled_
-                                || auto_model != auto_gain_last_model_
-                                || auto_mix != auto_gain_last_mix_
-                                || renderer != auto_gain_last_renderer_
-                                || !same_mask_layout_(auto_gain_last_shape_, shape);
                             auto_gain_material_.set_latency(renderer->latency_samples());
                             retarget = auto_gain_material_.begin_slice(
                                 shape, auto_mix, auto_on, changed, renderer);
