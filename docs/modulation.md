@@ -74,7 +74,8 @@ section).
 ## Intensity, Mix and Output
 
 These move a level control around the user's setting and never write it: the
-knob keeps showing its own value, its host lane keeps its automation.
+knob shows its own value and, over it, the value playing; its host lane keeps
+its automation.
 
 - **Intensity** and **Mix** are unipolar pulls, in proportion to the knob:
   `effective = knob x (1 - c)`, `c = (wave + 1) / 2 x Depth` (summed over
@@ -118,16 +119,44 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 `SPECTR_MODULATION_PLANT=level-target-step` (the Output gain lands once per
 block) and must fail on its gate.
 
-**The knobs.** MIX, INTENSITY and OUTPUT show the base value, never the
-modulated one: the value under the pointer is the value a drag starts from,
-and a needle that moved on its own would make every grab look like a jump.
-While an LFO drives one, its track ring and rim are tinted violet (existing
-nodes recoloured; no animation, so it costs nothing per frame; the rim because
-at 100 % the value arc covers the whole track). Grabbing a driven
-knob -- a drag, a wheel notch or an arrow key -- asks the override question
-(below) on the release of the press; **Keep modulating** lets the knob turn
-from then on without asking until the set of LFOs driving it changes, and the
-user's new value is the new centre.
+**The knobs.** MIX, INTENSITY and OUTPUT move while an LFO drives them. Each
+shows two things: the **base** -- the white needle, the blue value arc and the
+readout, the value the user set (or host automation is playing) -- and the
+**value playing**, drawn over it in violet: an arc from the base to the played
+value and a violet needle at the played value, moving at the display rate.
+The base is the only thing a drag, a wheel notch or an arrow key edits and the
+only thing the host records; the violet marker is display only. While an LFO
+drives a knob its track ring and rim are tinted violet as well. Grabbing a
+driven knob -- a drag, a wheel notch or an arrow key -- asks the override
+question (below) on the release of the press; **Keep modulating** lets the
+knob turn from then on without asking until the set of LFOs driving it
+changes, and the user's new value is the new centre.
+
+The processor sends the driven targets' coordinates (`modulation_controls`:
+the Intensity and Mix pulls, the Output offset in dB, the Morph offset) once
+per display frame in which a value moved by more than 1/2048 of a knob's
+range; the editor applies each to the base the control is showing, so a knob
+host automation is moving shows the automated base and the LFO's swing
+around it in the same frame (`tools/patch_materialized_modulation_controls_follow.py`).
+
+**The MORPH slider** works the same way: the white thumb is the base (what a
+drag moves and the Morph lane records); while an LFO drives Morph and both
+snapshots exist, a violet bar on the track marks the morph position playing,
+with a violet segment back to the thumb.
+
+### Modulated controls, measured
+
+`SPECTR_MODULATION_CONTROLS=1 Spectr-native-shot` drives LFO 1 at 1 beat (2 Hz
+at 120 BPM) on the controls, captures six frames across a cycle (with Freeze
+off and on), and holds the editor's display tick to a budget with Pulp's
+`FrameCostProbe` (`tools/shim/pulp_frame_cost_probe.hpp` until the pinned SDK
+ships `pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
+requested, the layout passes run, React commits, and wall time against an
+unmodulated baseline. The knobs scenario must run no layout pass, make no
+commit, keep its damage inside the controls' boxes (on an SDK whose SVG paths
+and canvases request bounded repaints) and add at most 1.5 ms to the p95 tick.
+`SPECTR_MODCTL_PLANT=full-invalidate` re-lays the document on every
+modulation frame and must fail the gate.
 
 ### Changes against 1.0.6
 
@@ -253,9 +282,14 @@ preset label show what their LFO plays").
 
 The user's BANDS is the centre. `round(coordinate x 4)` steps through the
 band-count list (32, 40, 48, 56, 64), clamped (`modulated_band_count`); at
-Depth 100 % a full swing covers the whole list from 48. The plot keeps drawing
-the user's band count (like Band shift, the target is audio only); the closed
-BANDS control shows the count playing, in violet.
+Depth 100 % a full swing covers the whole list from 48. The plot draws the
+count playing: band i keeps its gain (the mask re-lays the same gains over the
+new count) and slots past the user's count draw flat, as they play. A press
+addresses the slot under the pointer -- band i is the band drawn i-th -- and a
+press on a slot past the user's count edits nothing. The closed BANDS control
+shows the count playing, in violet. A count step repaints the plot and paints
+the BANDS label's text directly; it renders nothing in React (a step used to
+re-render the whole toolbar, ~30 ms a step).
 
 A band-count change is structural: it re-lays the drawn slots over the
 spectrum. A switch straight across -- what a host's Band Count lane does --

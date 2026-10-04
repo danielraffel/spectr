@@ -619,6 +619,20 @@ inline ModulationCoordinates modulation_coordinates(const ModulationSettings& se
     return coords;
 }
 
+/// Whether an LFO in @p settings drives @p target right now: the LFO on (its
+/// level above zero, on the audio owner the slewed level) and the route on
+/// with a non-zero Depth. What decides whether a header control is drawn at
+/// its modulated value.
+inline bool modulation_drives(const ModulationSettings& settings,
+                              ModulationTarget target) noexcept {
+    const auto t = static_cast<std::size_t>(target);
+    const auto& r1 = settings.routes[0][t];
+    const auto& r2 = settings.routes[1][t];
+    return (settings.enabled && settings.depth > 0.0f && r1.enabled && r1.amount > 0.0f)
+        || (settings.lfo2_enabled && settings.lfo2_depth > 0.0f
+            && r2.enabled && r2.amount > 0.0f);
+}
+
 inline ComposedModulation compose_internal_modulation(const BandField& canonical,
                                                       const SnapshotBank& snapshots,
                                                       float host_morph,

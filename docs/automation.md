@@ -68,6 +68,31 @@ that can change at any sample:
   crest fades it in. Measurements and the fail-before numbers are in
   [modulation.md](modulation.md#smoothness).
 
+## Modulation and automation
+
+The internal LFOs and host automation act on different things, and never on
+each other:
+
+- **Automation writes and plays the base.** A drag, wheel notch or key on a
+  knob, the MORPH slider or a menu sends one gesture bracket, so a host in
+  Write, Latch or Touch records it, and plays it back into the same lane: the
+  control's base (white needle, blue arc, readout, slider thumb) follows the
+  lane.
+- **Modulation offsets around the base and writes nothing.** The value an LFO
+  plays is computed on the audio thread from the base the lane delivers, and
+  is drawn over the control in violet (see [modulation.md](modulation.md#intensity-mix-and-output)).
+  No processor-side write ever reaches a host lane, so a host recording in
+  Touch or Latch while an LFO runs records nothing it was not given by a
+  person.
+- **Both at once** is the normal case: with a lane playing and an LFO on, the
+  base walks the lane and the violet marker swings around it.
+
+Verified in REAPER (`tools/reaper_modulation_automation.py`, VST3, CLAP and
+AU): a scripted knob gesture in Touch records Intensity points; Read plays
+them back and the editor's knob follows; with LFO 1 on Intensity in Touch the
+knob's base follows the lane, its violet marker moves, and the envelope's
+point count does not change.
+
 ## Editor protocol (for anyone adding a control)
 
 A control whose parameter is its whole state (Mix, Output trim, the LFO lanes)

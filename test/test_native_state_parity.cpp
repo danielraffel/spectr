@@ -11699,6 +11699,76 @@ TEST_CASE("LENGTH, BANDS and the preset label show what their LFO plays",
     storage.require_unchanged();
 }
 
+TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO plays",
+          "[native-n1][state-parity][modulation][modulated-controls]") {
+    // The base each control shows stays the user's (and the host's): the
+    // played value is drawn over it and never written. BANDS re-lays the plot
+    // at the count playing, without a React commit.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // A square at 16 beats (8 s at 120 BPM): +1 for the first 4 s, where
+    // Intensity and Mix are pulled all the way down, Output is +6 dB and
+    // Bands plays 64.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, 2.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 16.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    for (const unsigned t : {8u, 9u, 10u, 11u}) {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+        rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), 1.0f);
+    }
+    REQUIRE(rig.processor.apply_surface_params(false));
+    const float intensity_before = rig.store.get_value(spectr::kParamIntensity);
+    const float mix_before = rig.store.get_value(spectr::kMix);
+    const float output_before = rig.store.get_value(spectr::kOutputTrim);
+    const auto commits = [&] {
+        return runtime_value(rig, "String(globalThis.__pulpCommitStats__ ? "
+                                  "globalThis.__pulpCommitStats__.commits : -1)", "spectr-commits");
+    };
+    feed_audio_blocks(rig, 375);
+    settle(rig.clock, 12);
+    const auto state = [&](const char* expr) { return runtime_value(rig, expr, "spectr-modctl"); };
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.mixOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.outputOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityPull > 0.99)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.outputDb > 5.9)") == "true");
+    // Each knob paints a played marker...
+    for (const char* name : {"intensity", "mix", "output-trim"})
+        CHECK(state((std::string("String((globalThis.__spectrModControls.drawn['") + name
+                     + "'] || '').length > 0)").c_str()) == "true");
+    // ...over the base, which neither the knob nor the host lane moved.
+    CHECK(state("String(document.querySelector('[data-spectr-knob=\"intensity\"]').getAttribute('aria-valuenow'))") == "100");
+    CHECK(rig.store.get_value(spectr::kParamIntensity) == intensity_before);
+    CHECK(rig.store.get_value(spectr::kMix) == mix_before);
+    CHECK(rig.store.get_value(spectr::kOutputTrim) == output_before);
+    // BANDS: the plot draws the 64 slots playing; the label says so.
+    CHECK(state("String(spectrDrawnBandCount(32))") == "64");
+    CHECK(state("String(document.querySelector('[data-spectr-bands-shown]').getAttribute('data-spectr-bands-shown'))") == "64");
+
+    // The square flips: the count steps back to 32 with no React commit.
+    const auto before_flip = commits();
+    feed_audio_blocks(rig, 470);
+    settle(rig.clock, 12);
+    CHECK(state("String(spectrDrawnBandCount(32))") == "32");
+    CHECK(state("String(document.querySelector('[data-spectr-bands-shown]').getAttribute('data-spectr-bands-shown'))") == "32");
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityPull < 0.01)") == "true");
+    CHECK(commits() == before_flip);
+
+    // Control: the routes off, nothing is drawn over any knob.
+    for (const unsigned t : {8u, 9u, 10u, 11u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 40);
+    settle(rig.clock, 12);
+    for (const char* name : {"intensity", "mix", "output-trim"})
+        CHECK(state((std::string("String(globalThis.__spectrModControls.drawn['") + name
+                     + "'] || '')").c_str()) == "");
+    CHECK(state("String(spectrDrawnBandCount(32))") == "32");
+    storage.require_unchanged();
+}
+
 TEST_CASE("Hold for Length is a switch under the Freeze target in the menu and Settings",
           "[native-n1][state-parity][modulation][hold-for-length]") {
     PatternStoragePoison storage;
