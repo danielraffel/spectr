@@ -46,7 +46,7 @@ EDITS = [
     ('return React.createElement(React.Fragment, null, indicator, pill);',
      'const notice = trackingNotice && !mixing ? React.createElement("div", {\n'
      '    "' + MARKER + '": true, role: "status", "aria-live": "polite",\n'
-     '    style: { position: "absolute", right: 12, top: 34, width: 236, boxSizing: "border-box",\n'
+     '    style: { position: "absolute", right: 12, top: 34, width: 276, boxSizing: "border-box",\n'
      '      zIndex: 8, pointerEvents: "none", padding: "6px 9px", borderRadius: 3,\n'
      '      border: "1px solid " + neutral, background: "rgba(8,12,18,0.94)", color: "rgba(214,222,235,0.92)",\n'
      '      fontFamily: "var(--mono)", fontSize: 9.5, lineHeight: 1.35, letterSpacing: 0.4,\n'

@@ -9,6 +9,11 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <cmath>
+#include <string>
+#include <vector>
+#include <pulp/audio/buffer.hpp>
+#include <pulp/midi/buffer.hpp>
 
 namespace {
 void require(bool condition,const char* message) {
@@ -152,5 +157,72 @@ void gpu_processing_bridge_controls() {
 #endif
     rig.processor.release();
 }
-int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();std::cout<<"GPU audio status controls passed\n";return 0;}
+// Tracking always runs on the CPU, so a GPU choice made there must be inert
+// for the audio: no renderer is built, nothing is crossfaded, and the output
+// is sample-identical to a run in which nobody touched the choice. The
+// control turns the same choice in Mixing, where it must rebuild.
+std::vector<float> render_tracking(bool toggle_gpu, std::uint64_t& builds, bool in_mixing=false) {
+    Rig rig;
+    pulp::view::EditorBridge bridge;
+    spectr::register_spectr_editor_handlers(bridge,rig.processor,rig.processor.patterns(),
+        rig.processor.editor_authority(),[](std::string_view){return true;});
+    constexpr int block=256;
+    rig.processor.prepare({48000.0,block,2,2});
+    if(in_mixing)require(rig.processor.set_render_mode(spectr::MaskRenderMode::linear_phase),"Mixing failed");
+    const auto before=rig.processor.renderer_build_count();
+    std::vector<float> l(block),r(block),ol(block),orr(block),out;
+    const float* in[2]{l.data(),r.data()};
+    float* o[2]{ol.data(),orr.data()};
+    pulp::midi::MidiBuffer mi,mo;
+    pulp::format::ProcessContext ctx;
+    ctx.sample_rate=48000.0;ctx.num_samples=block;ctx.tempo_bpm=120.0;
+    bool on=false;
+    for(int b=0;b<600;++b){
+        for(int i=0;i<block;++i){
+            const double t=double(b*block+i)/48000.0;
+            l[std::size_t(i)]=r[std::size_t(i)]=float(0.3*std::sin(2*3.141592653589793*220.0*t)
+                +0.2*std::sin(2*3.141592653589793*1375.0*t));
+        }
+        if(toggle_gpu&&b%60==30){
+            on=!on;
+            const auto reply=choc::json::parse(bridge.dispatch_json(std::string(
+                R"({"type":"gpu_processing_set","payload":{"enabled":)")+(on?"true":"false")+"}}"));
+            require(reply["ok"].getBool(),"GPU processing write refused");
+        }
+        pulp::audio::BufferView<const float> iv(in,2,block);
+        pulp::audio::BufferView<float> ov(o,2,block);
+        rig.processor.process(ov,iv,mi,mo,ctx);
+        out.insert(out.end(),ol.begin(),ol.end());
+    }
+    builds=rig.processor.renderer_build_count()-before;
+    rig.processor.release();
+    return out;
+}
+void tracking_gpu_choice_is_inert() {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    std::uint64_t untouched_builds=0,again_builds=0,toggled_builds=0,mixing_builds=0;
+    const auto untouched=render_tracking(false,untouched_builds);
+    const auto again=render_tracking(false,again_builds);
+    const auto toggled=render_tracking(true,toggled_builds);
+    const auto worst_between=[](const std::vector<float>& a,const std::vector<float>& b){
+        double w=0.0;
+        for(std::size_t i=0;i<a.size();++i)w=std::max(w,double(std::abs(a[i]-b[i])));
+        return w;
+    };
+    // Two untouched instances agree only to float rounding (worker-designed
+    // impulses); that floor, not zero, is what "unchanged" means here. An
+    // interruption is a dropout or a renderer restart: orders above it.
+    const double floor_=worst_between(untouched,again);
+    const double worst=worst_between(untouched,toggled);
+    std::cout<<"tracking GPU toggles: renderer builds "<<toggled_builds<<", worst sample difference "
+             <<worst<<" (two untouched runs: "<<floor_<<")\n";
+    require(toggled_builds==0,"a GPU choice in Tracking built a renderer");
+    require(worst<=std::max(4.0*floor_,1.0e-6),"a GPU choice in Tracking changed the audio");
+    // Control: the same toggles in Mixing do rebuild -- the counter can see it.
+    (void)render_tracking(true,mixing_builds,true);
+    std::cout<<"mixing GPU toggles (control): renderer builds "<<mixing_builds<<'\n';
+    require(mixing_builds>0,"control: Mixing GPU toggles built nothing, so the counter is blind");
+#endif
+}
+int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();tracking_gpu_choice_is_inert();std::cout<<"GPU audio status controls passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

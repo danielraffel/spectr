@@ -1239,6 +1239,19 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
+# The CPU/GPU chip through the host hit test: in Tracking a press shows the
+# "Mixing only" notice and changes nothing in the processor (no renderer
+# built, mode, GPU choice and latency unchanged, Settings' GPU choice inert);
+# in Mixing it switches to GPU and the shared renderer delivers.
+if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    add_test(NAME Spectr-native-gpu-status
+        COMMAND $<TARGET_FILE:Spectr-native-shot> --backend=skia
+            --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-gpu-status)
+    set_tests_properties(Spectr-native-gpu-status PROPERTIES
+        ENVIRONMENT "SPECTR_GPU_STATUS_PROBE=1;PULP_AUDIO_DEVICE=null"
+        TIMEOUT 240 SKIP_RETURN_CODE 77
+        RESOURCE_LOCK "spectr_native_materialized_editor;pulp_gpu")
+endif()
 
 # The menus whose key hints follow the keyboard policy (EDIT MODE, ANALYZER,
 # SHORTCUTS), captured as a plug-in -- where the plain-key shortcuts go to the

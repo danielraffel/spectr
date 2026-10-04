@@ -1786,15 +1786,48 @@ int main(int argc, char** argv) {
                         read_surface().c_str(), latency_chip().c_str(),
                         int(rig.processor.gpu_processing()), rig.processor.latency_samples());
             capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
-            // Tracking is CPU-only: the indicator is a disabled readout, and a
-            // press on it must change nothing.
+            // Tracking is CPU-only: a press on the indicator answers with a
+            // notice saying why, and changes nothing in the processor -- no
+            // renderer is built, the mode, the GPU choice and the latency the
+            // host is told all stay where they were.
+            const auto builds_before = rig.processor.renderer_build_count();
+            const int latency_before = rig.processor.latency_samples();
+            const char* notice_q = "document.querySelector('[data-spectr-gpu-tracking-notice]')";
+            const std::string notice_before = painted_text(notice_q);
             press_indicator();
-            std::printf("[gpu-status] tracking after press: gpu_processing=%d mode=%s latency=%d\n",
+            const std::string notice = painted_text(notice_q);
+            const std::string title = js_value(std::string("const e=") + ind_q
+                + "; return e ? e.getAttribute('title') : '(absent)';");
+            std::printf("[gpu-status] tracking after press: gpu_processing=%d mode=%s latency=%d builds +%llu\n"
+                        "[gpu-status] tracking notice before press: \"%s\n"
+                        "[gpu-status] tracking notice after press: \"%s\n"
+                        "[gpu-status] tracking chip title: %s\n",
                         int(rig.processor.gpu_processing()),
                         rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
-                        rig.processor.latency_samples());
+                        rig.processor.latency_samples(),
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before),
+                        notice_before.c_str(), notice.c_str(), title.c_str());
+            capture(rig, dir, prefix + "gpu-status-0b-tracking-notice", backend, scale);
             if (rig.processor.gpu_processing()
-                || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency) steps_ok = false;
+                || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.latency_samples() != latency_before
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
+            // The notice was not there before the press and is after it, and
+            // the hover tooltip says the same.
+            if (notice_before != "(absent)"
+                || notice.find("available in Mixing only") == std::string::npos
+                || title.find("available in Mixing only") == std::string::npos) steps_ok = false;
+            // The Settings GPU choice in Tracking is recorded for Mixing and is
+            // otherwise inert: no renderer, no mode change.
+            rig.eval("spectrSetGpuProcessing(true);", "spectr-gpu-status-tracking-settings-on");
+            pump_ms(300);
+            rig.eval("spectrSetGpuProcessing(false);", "spectr-gpu-status-tracking-settings-off");
+            pump_ms(300);
+            std::printf("[gpu-status] tracking after Settings GPU on/off: mode=%s builds +%llu\n",
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before));
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
 
             // Mixing through the latency rail's own write path; GPU off.
             rig.eval("spectrToggleLatencyMode();", "spectr-gpu-status-mixing");
