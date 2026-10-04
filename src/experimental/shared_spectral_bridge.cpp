@@ -45,6 +45,8 @@ bool SharedSpectralBridge::prepare(const Config& c) {
     if(!cpu || !cpu->prepare(c.renderer) || !cpu->publish_layout(c.immutable_layout))return false;
     const auto base=reserve_epochs();if(!base)return false;
     config_=c;cpu_=std::move(cpu);epoch_=base;epoch_limit_=base+(std::uint64_t{1}<<32)-1;
+    prime_hops_=c.renderer.prime_stream_start
+        ? std::uint64_t(c.renderer.design_grid_size/c.renderer.analysis_hop-1) : 0;
     const auto samples=c.host_block*c.renderer.channels;
     cpu_block_.assign(samples,0);fallback_.assign(slots*samples,0);
     hop_input_.assign(c.renderer.analysis_hop*c.renderer.channels,0);
@@ -163,7 +165,7 @@ bool SharedSpectralBridge::prepare_worker(std::uint64_t requested) noexcept {
     observe(ServicePoint::BeforeRelease);
     if(gpu_ && !gpu_->release()){fail_worker(FenceReason::ProviderRelease,requested);return false;}
     gpu_.reset();worker_epoch_=requested;
-    worker_sequence_=hop_sequence_=0;accumulated_=0;hop_pending_=false;hop_gains_loaded_=false;serviced_=0;completed_=0;
+    worker_sequence_=hop_sequence_=0;primed_hops_=0;accumulated_=0;hop_pending_=false;hop_gains_loaded_=false;serviced_=0;completed_=0;
     progress_epoch_.store(requested,std::memory_order_release);
     if(requested_epoch_.load(std::memory_order_acquire)!=requested)return false;
     if(config_.force_cpu_only){fail_worker(FenceReason::ForcedCpu,requested);return false;}
@@ -215,9 +217,11 @@ bool SharedSpectralBridge::load_hop_gains() noexcept {
 void SharedSpectralBridge::collect_completed() noexcept {
     while(auto result=gpu_->receive(hop_output_)){
         if(result->epoch!=physical_epoch_ || !result->delivered || result->late){fail_worker(FenceReason::ProviderResult,worker_epoch_);continue;}
+        // A priming hop's output precedes the stream; nothing delivers it.
+        if(result->sequence<prime_hops_)continue;
         const unsigned b=config_.host_block,h=config_.renderer.analysis_hop,c=config_.renderer.channels;
         for(unsigned part=0;part<h/b;++part){
-            const auto sequence=result->sequence*(h/b)+part;
+            const auto sequence=(result->sequence-prime_hops_)*(h/b)+part;
             if(requested_epoch_.load(std::memory_order_acquire)!=worker_epoch_ || fenced() ||
                callback_count_.load(std::memory_order_acquire)>sequence+config_.lead_host_blocks)continue;
             auto& slot=outputs_[sequence%slots];
@@ -246,6 +250,15 @@ void SharedSpectralBridge::service() noexcept {
         slot.state.store(obsolete?empty:ready,std::memory_order_release);
     }
     if(fenced())return;
+    while(primed_hops_<prime_hops_){
+        if(requested_epoch_.load(std::memory_order_acquire)!=worker_epoch_)return;
+        std::fill(hop_input_.begin(),hop_input_.end(),0.f);
+        if(!gpu_->submit_hop_with_gains(hop_input_,hop_sequence_,hop_gains_)){
+            if(!gpu_->prepared())fail_worker(FenceReason::ProviderSubmit,worker_epoch_);
+            return;
+        }
+        ++hop_sequence_;++primed_hops_;
+    }
     const unsigned b=config_.host_block,h=config_.renderer.analysis_hop,c=config_.renderer.channels;
     for(unsigned budget=0;budget<slots;++budget){
         if(requested_epoch_.load(std::memory_order_acquire)!=worker_epoch_)return;

@@ -130,6 +130,12 @@ private:
     ServiceObserver observer_=nullptr;
     void* observer_context_=nullptr;
     std::uint64_t epoch_=0, callback_sequence_=0, worker_sequence_=0, hop_sequence_=0, input_count_=0, next_terminal_=0;
+    // Silent hops the GPU session analyses before the stream's first real hop,
+    // matching the CPU reference's stream-start priming
+    // (MaskRendererConfig::prime_stream_start): its first frame then ends one
+    // hop into the stream, as the CPU's does, and both give the stream's first
+    // samples the full window overlap. Their results are discarded.
+    std::uint64_t prime_hops_=0, primed_hops_=0;
     unsigned accumulated_=0;
     bool prepared_=false, finishing_=false, hop_pending_=false, hop_gains_loaded_=false, offline_=false;
 };

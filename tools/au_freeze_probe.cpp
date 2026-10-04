@@ -936,6 +936,51 @@ int latency_check(Options o, int plant) {
     }
     std::printf("%s: reported latency %s the measured delay\n", bad ? "FAIL" : "OK",
                 bad ? "does NOT equal" : "equals");
+// ── The first samples of a stream ──────────────────────────────────────────
+//
+// A fresh unit at Mix 100 with a flat shape must pass the first samples it is
+// given at full level: an impulse at a few positions near the start, and a
+// kick-drum-like hit at sample 0, each found at the reported latency. A fade
+// at the head of the stream is what a drum hit at playback start loses.
+int stream_start_check(Options o) {
+    o.mix = 100.0f;
+    int bad = 0;
+    for (const std::size_t at : {std::size_t(0), std::size_t(13), std::size_t(512),
+                                 std::size_t(1024), std::size_t(2048), std::size_t(6000)}) {
+        Stereo input; input.resize(std::size_t(1.0 * o.sr));
+        input.l[at] = input.r[at] = 0.5f;
+        const auto r = render(o, input, nullptr);
+        const float got = r.out.l[at + std::size_t(r.latency)];
+        const bool ok = std::abs(got - 0.5f) < 1e-3f;
+        if (!ok) ++bad;
+        std::printf("stream start mode=%s: impulse at %5zu -> %.6f (%+.1f dB)  %s\n", o.mode.c_str(), at,
+                    double(got), 20.0 * std::log10(std::max(double(std::abs(got)) / 0.5, 1e-15)),
+                    ok ? "OK" : "LOST");
+    }
+    Stereo kick; kick.resize(std::size_t(1.0 * o.sr));
+    for (std::size_t i = 0; i < std::size_t(0.2 * o.sr); ++i) {
+        const double t = double(i) / o.sr, f = 50.0 + 100.0 * std::exp(-t * 40.0);
+        kick.l[i] = kick.r[i] = float(0.8 * std::exp(-t * 18.0) * std::sin(2.0 * kPi * f * t));
+    }
+    const auto r = render(o, kick, nullptr);
+    double energy = 0.0, residual = 0.0, peak_in = 0.0, peak_out = 0.0;
+    for (std::size_t i = 0; i < std::size_t(0.2 * o.sr); ++i) {
+        const double y = r.out.l[i + std::size_t(r.latency)];
+        energy += double(kick.l[i]) * kick.l[i];
+        residual += (y - kick.l[i]) * (y - kick.l[i]);
+        if (i < std::size_t(0.03 * o.sr)) {
+            peak_in = std::max(peak_in, double(std::abs(kick.l[i])));
+            peak_out = std::max(peak_out, std::abs(y));
+        }
+    }
+    const double null_db = 10.0 * std::log10(std::max(residual, 1e-30) / energy);
+    const bool kick_ok = null_db < -80.0;
+    if (!kick_ok) ++bad;
+    std::printf("stream start mode=%s: kick at sample 0 -> first 30 ms peak %+.1f dB vs input, "
+                "null residual %.1f dB  %s\n", o.mode.c_str(),
+                20.0 * std::log10(std::max(peak_out, 1e-15) / peak_in), null_db, kick_ok ? "OK" : "LOST");
+    std::printf("%s: the first samples of a stream %s the output at full level\n",
+                bad ? "FAIL" : "OK", bad ? "do NOT reach" : "reach");
     return bad ? 1 : 0;
 }
 
@@ -945,7 +990,8 @@ int main(int argc, char** argv) {
     double max_cost_ratio = 0.0;
     bool forbid_notifications = false;
     double deadline = 0.0;
-    bool check_hold = false, check_presence = false, check_latency = false;
+    bool check_hold = false, check_presence = false, check_latency = false,
+         check_stream_start = false;
     int latency_plant = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -974,6 +1020,7 @@ int main(int argc, char** argv) {
         else if (a == "--latency-plant") latency_plant = std::atoi(next().c_str());
         else if (a == "--paced") o.paced = true;
         else if (a == "--gpu") o.gpu = true;
+        else if (a == "--stream-start-check") check_stream_start = true;
         else if (a == "--length") o.length = next();
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
@@ -981,6 +1028,7 @@ int main(int argc, char** argv) {
     if (check_hold) return hold_check(o);
     if (check_presence) return hold_presence(o);
     if (check_latency) return latency_check(o, latency_plant);
+    if (check_stream_start) return stream_start_check(o);
 
     // Taps: press, hold 0.7-1.6 s, release, rest 0.8-1.5 s. The first press
     // waits for the capture window to fill.

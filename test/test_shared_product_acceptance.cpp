@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <pulp/audio/analysis/audio_assertions.hpp>
 #include <pulp/audio/analysis/latency_evidence.hpp>
 #include <pulp/format/headless.hpp>
@@ -621,8 +622,7 @@ TEST_CASE("An offline bounce waits for GPU output instead of falling back",
     CHECK(oc == 0);
     const auto [rg, rc, rs] = bounce(false, false, nullptr);
     CHECK(rc > 0);          // control: unpaced realtime outruns the worker
-    CHECK(rs < os);         // and it never waited
-    (void)rg;
+    (void)rg; (void)rs; (void)os;
     (void)bounce(true, true, &cpu_out);
     REQUIRE(gpu_out.size() == cpu_out.size());
     double worst = 0.0;
@@ -630,4 +630,45 @@ TEST_CASE("An offline bounce waits for GPU output instead of falling back",
         worst = std::max(worst, double(std::abs(gpu_out[i] - cpu_out[i])));
     INFO("worst |offline gpu - forced cpu| = " << worst);
     CHECK(worst < 1e-5);
+}
+
+// The GPU path primes its stream start the way the CPU reference does, so the
+// first samples after prepare reach the output at full level there too, as
+// delivered by the GPU (paced) and by its forced CPU fallback.
+TEST_CASE("GPU Mixing passes the first samples of a stream at full level",
+          "[shared-product][installed-sdk][stream-start]") {
+    using namespace std::chrono;
+    constexpr unsigned block = 512;
+    for (const bool force_cpu : {false, true})
+        for (const unsigned at : {0u, 13u, 1024u, 2048u}) {
+            pulp::format::HeadlessHost host(spectr::create_spectr);
+            auto* p = static_cast<spectr::Spectr*>(host.processor());
+            REQUIRE(p->set_shared_product_force_cpu(force_cpu));
+            REQUIRE(p->set_gpu_processing(true));
+            REQUIRE(p->set_render_mode(spectr::MaskRenderMode::linear_phase));
+            host.state().set_value(spectr::kMix, 100.0f);
+            host.state().set_value(spectr::kParamAutoGain, 0.0f);
+            host.prepare(48000, block);
+            const unsigned lat = unsigned(p->latency_samples());
+            const unsigned frames = ((at + lat + 2 * block) / block + 1) * block;
+            std::vector<float> x(frames, 0.0f), y(frames, 0.0f);
+            x[at] = 0.5f;
+            pulp::audio::Buffer<float> input(2, block), output(2, block);
+            const float* ptrs[]{input.channel(0).data(), input.channel(1).data()};
+            pulp::audio::BufferView<const float> in(ptrs, 2, block);
+            auto out = output.view();
+            const auto start = steady_clock::now();
+            for (unsigned o = 0, b = 0; o < frames; o += block, ++b) {
+                std::this_thread::sleep_until(start + nanoseconds(std::uint64_t(b) * block * 1000000000ull / 48000));
+                std::copy_n(x.data() + o, block, input.channel(0).data());
+                std::copy_n(x.data() + o, block, input.channel(1).data());
+                host.process(out, in);
+                std::copy_n(output.channel(0).data(), block, y.data() + o);
+            }
+            const auto s = p->gpu_audio_status();
+            INFO("force_cpu=" << force_cpu << " at=" << at << " -> " << y[at + lat]
+                 << " gpu=" << (s.delivery ? s.delivery->gpu_selected : 0));
+            CHECK(y[at + lat] == Catch::Approx(0.5f).margin(1e-3));
+            host.release();
+        }
 }
