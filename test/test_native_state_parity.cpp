@@ -10898,14 +10898,15 @@ TEST_CASE("operating a modulated Freeze asks, and both answers do what they say"
     CHECK(prompt == "Freeze is being modulated by LFO 1. Turn off its Freeze target?");
     CHECK(recorder.take().empty());
 
-    // KEEP MODULATING: the press applies, the target stays on.
+    // KEEP MODULATING: the LFO stays in charge of Freeze -- the press is
+    // set aside (it would override the gate the user chose to keep), and the
+    // target stays on.
     activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
     CHECK_FALSE(dialog_open());
     {
         const auto log = recorder.take();
         INFO(log);
-        CHECK(has(log, "begin 3, set 3="));
-        CHECK(has(log, "end 3"));
+        CHECK_FALSE(has(log, "set 3="));
         CHECK_FALSE(has(log, "4026"));
     }
     CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 1.0f);
@@ -10965,6 +10966,140 @@ TEST_CASE("operating a modulated Freeze asks, and both answers do what they say"
     settle(fresh.clock, 8);
     CHECK(runtime_value(fresh, "String(globalThis.__spectrAskBeforeOverride)",
                         "fresh-setting") == "true");
+    storage.require_unchanged();
+}
+
+TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
+          "[native-n1][state-parity][modulation][freeze-target][hold-for-length][override]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // A current preset, so the Preset target has neighbours.
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
+    settle(rig.clock, 8);
+    // LFO 1, square at 4 beats (2 s): Freeze 50 %, Length 25 %, Bands 100 %,
+    // Preset 25 %, and the three level targets.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, static_cast<float>(spectr::LfoShape::Square));
+    rig.store.set_value(spectr::kParamLfoRate, 4.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    const std::pair<unsigned, float> routes[] = {
+        {6u, 0.5f}, {7u, 0.25f}, {8u, 0.5f}, {9u, 0.5f}, {10u, 0.5f}, {11u, 1.0f}, {12u, 0.25f}};
+    for (const auto& [t, depth] : routes) {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+        rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+    }
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 375);  // 2 s: history for the freeze, fades done
+    settle(rig.clock, 12);
+    const auto dialog_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-override-dialog]'))", "dialog") == "true";
+    };
+    const auto keep = [&] {
+        REQUIRE(dialog_open());
+        activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+        CHECK_FALSE(dialog_open());
+    };
+    const auto still_driven = [&](unsigned t) {
+        INFO("target " << t);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 1.0f);
+        CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, t)) == 1.0f);
+        CHECK(rig.processor.modulation_settings().routes[0][t].enabled);
+    };
+    // The values a reading takes over the next `seconds` of audio.
+    const auto readings = [&](double seconds, const std::function<int()>& read) {
+        std::vector<int> seen;
+        for (int step = 0; step < int(seconds * 4.0); ++step) {
+            feed_audio_blocks(rig, 47);  // ~0.25 s
+            settle(rig.clock, 2);
+            seen.push_back(read());
+        }
+        return seen;
+    };
+    const auto distinct = [](std::vector<int> v) {
+        std::sort(v.begin(), v.end());
+        return static_cast<std::size_t>(std::unique(v.begin(), v.end()) - v.begin());
+    };
+
+    // FREEZE, as a gate: the press is set aside, so LIVE / FROZEN is the
+    // gate's own state straight after Keep and keeps switching with it.
+    {
+        const bool before = rig.processor.freeze_effective();
+        activate(rig, "[data-spectr-freeze-toggle]");
+        keep();
+        feed_audio_blocks(rig, 2);
+        settle(rig.clock, 4);
+        CHECK(rig.processor.freeze_effective() == before);
+        CHECK(freeze_face(rig) == (before ? "frozen" : "live"));
+        still_driven(6u);
+        const auto seen = readings(4.0, [&] { return int(rig.processor.freeze_effective()); });
+        CHECK(std::count(seen.begin(), seen.end(), 1) >= 4);
+        CHECK(std::count(seen.begin(), seen.end(), 0) >= 4);
+    }
+    // FREEZE with Hold for Length (1 bar at 4 beats: back-to-back holds):
+    // Keep leaves every hold its own fresh freeze.
+    {
+        rig.store.set_value(spectr::kParamFreezeHoldForLength, 1.0f);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        feed_audio_blocks(rig, 375);
+        settle(rig.clock, 8);
+        activate(rig, "[data-spectr-freeze-toggle]");
+        keep();
+        const auto holds = rig.processor.freeze_hold_latch_count();
+        const auto fresh = rig.processor.freeze_source().latch_count();
+        (void)readings(6.0, [&] { return int(rig.processor.freeze_effective()); });
+        CHECK(rig.processor.freeze_hold_latch_count() >= holds + 2);
+        CHECK(rig.processor.freeze_source().latch_count() >= fresh + 2);
+        still_driven(6u);
+        rig.store.set_value(spectr::kParamFreezeHoldForLength, 0.0f);
+        REQUIRE(rig.processor.apply_surface_params(false));
+    }
+    // LENGTH: the pick is the new centre; the LFO goes on stepping it.
+    {
+        rig.bridge().load_script("window.spectrCommitFreezeLength(2, '0');", "length-pick");
+        settle(rig.clock, 8);
+        keep();
+        CHECK(rig.processor.freeze_length_preset() == 17);
+        still_driven(7u);
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.freeze_modulated_length_index(); })) >= 2);
+    }
+    // BANDS: the pick is the new centre; the LFO goes on stepping it.
+    {
+        activate(rig, "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-band-count=\"40\"]");
+        keep();
+        settle(rig.clock, 8);
+        CHECK(rig.processor.layout() == spectr::Layout::Bands40);
+        still_driven(11u);
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.modulated_band_count_shown(); })) >= 2);
+    }
+    // PRESET: the pick is the new centre; the LFO goes on stepping it.
+    {
+        const auto other = runtime_value(rig,
+            "String(window.Spectr.FACTORY_PATTERNS.find((p) => p.id !== 'factory:flat').id)",
+            "spectr-other-preset");
+        activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-pattern-menu-id=\"" + other + "\"]");
+        keep();
+        settle(rig.clock, 8);
+        CHECK(rig.processor.preset_modulation_centre_id() == other);
+        still_driven(12u);
+        CHECK(rig.processor.preset_modulation_driven());
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.preset_modulation_step_shown(); })) >= 2);
+    }
+    // MIX, INTENSITY and OUTPUT: the knob is acknowledged, the targets stay on.
+    {
+        activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        activate(rig, "[data-spectr-intensity]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        activate(rig, "[data-spectr-output-trim]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        for (const unsigned t : {8u, 9u, 10u}) still_driven(t);
+    }
+    CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }
 

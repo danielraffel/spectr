@@ -925,36 +925,32 @@ double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
     return length_seconds(freeze_length(), tempo_bpm, numerator, denominator);
 }
 
-double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
-                                         int denominator) noexcept {
+double Spectr::freeze_length_at_phases_(double tempo_bpm, int numerator, int denominator,
+                                        const double phases[2], int* index,
+                                        double* reach_seconds) const noexcept {
     const double base = freeze_hold_seconds_at_(tempo_bpm, numerator, denominator);
+    *index = -1;
+    if (reach_seconds) *reach_seconds = base;
     auto* store = param_store_;
     constexpr auto kLength = static_cast<std::size_t>(ModulationTarget::Length);
-    if (!store || freeze_seconds_override_.load(std::memory_order_relaxed) >= 0.0) {
-        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+    if (!store || freeze_seconds_override_.load(std::memory_order_relaxed) >= 0.0)
         return base;
-    }
-    // The Length target's coordinate at this moment: each LFO that is on and
-    // routed to Length adds wave x Depth. The engage this block may perform
-    // takes the length the LFOs reach now; a hold already playing keeps its
-    // own (FreezeSource::set_hold_seconds only shapes the NEXT latch).
+    // The Length target's coordinate at these phases: each LFO that is on and
+    // routed to Length adds wave x Depth.
     const pulp::state::ParamID enabled_ids[2] = {kParamLfoEnabled, kParamLfo2Enabled};
     const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_, &audio_lfo_2_shape_fade_};
-    const double phases[2] = {audio_modulation_phase_, audio_modulation_phase_2_};
     bool driven = false;
-    float coordinate = 0.0f;
+    float coordinate = 0.0f, reach = 0.0f;
     for (std::size_t lfo = 0; lfo < 2; ++lfo) {
         if (store->get_value(enabled_ids[lfo]) < 0.5f) continue;
         if (store->get_value(lfo_route_enabled_param_id(lfo, kLength)) < 0.5f) continue;
         driven = true;
-        coordinate += lfo_value(*fades[lfo], phases[lfo])
-            * std::clamp(store->get_value(lfo_route_amount_param_id(lfo, kLength)),
-                         0.0f, 1.0f);
+        const float depth = std::clamp(
+            store->get_value(lfo_route_amount_param_id(lfo, kLength)), 0.0f, 1.0f);
+        coordinate += lfo_value(*fades[lfo], phases[lfo]) * depth;
+        reach += depth;
     }
-    if (!driven) {
-        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
-        return base;
-    }
+    if (!driven) return base;
     // The user's LENGTH is the centre: its list index, or for a custom length
     // the list entry nearest it.
     int centre = freeze_length_preset();
@@ -966,10 +962,29 @@ double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
                 < std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(centre)]) - bars))
                 centre = i;
     }
-    const int index = modulated_length_index(centre, coordinate, kLengthPresetCustom);
-    freeze_modulated_length_index_.store(index, std::memory_order_relaxed);
-    return length_seconds(kLengthPresets[static_cast<std::size_t>(index)],
+    *index = modulated_length_index(centre, coordinate, kLengthPresetCustom);
+    // The longest length the routes can step to (the wave's crest).
+    if (reach_seconds)
+        *reach_seconds = std::max(base, length_seconds(
+            kLengthPresets[static_cast<std::size_t>(
+                modulated_length_index(centre, reach, kLengthPresetCustom))],
+            tempo_bpm, numerator, denominator));
+    return length_seconds(kLengthPresets[static_cast<std::size_t>(*index)],
                           tempo_bpm, numerator, denominator);
+}
+
+double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                         int denominator) noexcept {
+    // The engage this block may perform takes the length the LFOs reach now;
+    // a hold already playing keeps its own (FreezeSource::set_hold_seconds
+    // only shapes the NEXT latch).
+    const double phases[2] = {audio_modulation_phase_, audio_modulation_phase_2_};
+    int index = -1;
+    const double seconds = freeze_length_at_phases_(tempo_bpm, numerator, denominator,
+                                                    phases, &index,
+                                                    &audio_freeze_reach_seconds_);
+    freeze_modulated_length_index_.store(index, std::memory_order_relaxed);
+    return seconds;
 }
 
 double Spectr::freeze_length_seconds() const noexcept {
@@ -1435,13 +1450,23 @@ void Spectr::process(
         transport_time_sig_numerator_.store(numerator, std::memory_order_relaxed);
         transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
         const double seconds = modulated_freeze_seconds_(tempo, numerator, denominator);
-        freeze_source_.set_hold_seconds(seconds);
+        // While a Hold for Length hold plays, its loop is the length the hold
+        // is timed for: the Length target keeps moving (and the label shows
+        // where it is going), but the latch the source makes a hop or a
+        // release fade after the trigger takes the trigger's length.
+        freeze_source_.set_hold_seconds(
+            freeze_hold_remaining_ > 0 && freeze_hold_seconds_ > 0.0
+                ? freeze_hold_seconds_ : seconds);
         audio_freeze_length_seconds_ = seconds;
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at
-        // a hop boundary.
-        if (freeze_source_.wants_loop_storage(seconds)
-            && !freeze_storage_lane_.try_spawn(FreezeStorageTask{seconds}))
+        // a hop boundary. While the Length target drives it, for the longest
+        // length it can reach: rings grown at the trigger that first needs
+        // them would be adopted only after that hold, so it would loop
+        // what fit in the old ones.
+        const double storage_seconds = std::max(seconds, audio_freeze_reach_seconds_);
+        if (freeze_source_.wants_loop_storage(storage_seconds)
+            && !freeze_storage_lane_.try_spawn(FreezeStorageTask{storage_seconds}))
             freeze_source_.forget_loop_storage_request();
         // ...and hand back the rings it let go of, to be freed there.
         if (freeze_source_.retired_loop_storage_pending()) {
@@ -1763,33 +1788,94 @@ void Spectr::process(
                                                            route.amount);
                         }
                         // Hold for Length: a rising edge of the gate latches
-                        // the freeze for exactly the effective Length (the
-                        // length this freeze takes), then releases; the
-                        // LFO's off-phase is ignored meanwhile, and the next
-                        // rising edge after the release latches again. The
-                        // release lands on the slice boundary at or after the
-                        // Length (at most one slice late).
+                        // the freeze for exactly the effective Length at that
+                        // edge (the Length target's step included), then
+                        // releases; the LFO's off-phase is ignored meanwhile,
+                        // and the next rising edge after the release latches
+                        // again for the Length in effect then. The release
+                        // lands on the slice boundary at or after the Length
+                        // (at most one slice late).
+                        //
+                        // Every latch is a RETRIGGER of the freeze source.
+                        // A rising edge on the slice a hold ends (a Length
+                        // that is a whole number of LFO cycles: the default
+                        // 1 bar at the default 4 beats), or a slice or two
+                        // after it, inside one hop, never shows the source a
+                        // fallen request; it would play the first loop for
+                        // ever. The retrigger releases the old hold and
+                        // latches fresh audio at the new Length; the LENGTH
+                        // label takes the new length, and a press held over
+                        // the old hold ends.
+                        //
+                        // ONE LFO ON BOTH. An LFO that drives Freeze and
+                        // Length rises at the same phase every cycle, so read
+                        // at the trigger every hold would take one length.
+                        // Its Length route is read freeze_hold_walk_ eighths
+                        // of a cycle further along instead: successive holds
+                        // step through the wave's shape, an eight-hold cycle
+                        // of lengths that follows its shape and Depth. The
+                        // walk counts latches since Hold for Length (or its
+                        // Freeze drive) came on, a transport start or stop, a
+                        // stream reset or a state load -- all stream events,
+                        // so a bounce and real-time playback walk alike. A
+                        // Length route on the other LFO is read at the
+                        // trigger: its phase already differs freeze to freeze.
+                        bool latched = false;
+                        int latched_index = -1;
                         {
                             const bool hold_mode = driven
                                 && cursor.value(kParamFreezeHoldForLength) >= 0.5f;
+                            if (!hold_mode || should_reset_stream_history
+                                || ctx.is_playing != freeze_hold_playing_last_
+                                || freeze_hold_walk_reset_.exchange(
+                                       false, std::memory_order_relaxed))
+                                freeze_hold_walk_ = 0;
+                            freeze_hold_playing_last_ = ctx.is_playing;
                             const bool rising = gate && !freeze_hold_gate_last_;
                             freeze_hold_gate_last_ = gate;
                             const auto slice = static_cast<std::int64_t>(
                                 out_slice.num_samples());
                             if (!hold_mode) {
                                 freeze_hold_remaining_ = 0;
+                                freeze_hold_seconds_ = 0.0;
                             } else if (freeze_hold_remaining_ > 0) {
                                 gate = true;
                                 freeze_hold_remaining_ -= slice;
                             } else if (rising) {
                                 const double rate = ctx.sample_rate > 0.0
                                     ? ctx.sample_rate : sample_rate_;
+                                constexpr auto kLength =
+                                    static_cast<std::size_t>(ModulationTarget::Length);
+                                double length_phases[2] = {audio_modulation_phase_,
+                                                           audio_modulation_phase_2_};
+                                for (std::size_t lfo = 0; lfo < 2; ++lfo)
+                                    if (lfo_on[lfo]
+                                        && modulation_settings.routes[lfo][kFreeze].enabled
+                                        && modulation_settings.routes[lfo][kLength].enabled)
+                                        length_phases[lfo] += kFreezeHoldWalkStep
+                                            * static_cast<double>(freeze_hold_walk_);
+                                freeze_hold_walk_ = (freeze_hold_walk_ + 1) % kFreezeHoldWalkCycle;
+                                // The hold and the loop it plays take one
+                                // length: this one, handed to the source now
+                                // (its latch may land later in this callback)
+                                // and pinned there until the hold ends (see
+                                // the preamble).
+                                freeze_hold_seconds_ = freeze_length_at_phases_(
+                                    transport_tempo_bpm(), transport_time_sig_numerator(),
+                                    transport_time_sig_denominator(), length_phases,
+                                    &latched_index, nullptr);
+                                freeze_source_.set_hold_seconds(freeze_hold_seconds_);
+                                freeze_hold_latched_seconds_.store(
+                                    freeze_hold_seconds_, std::memory_order_relaxed);
+                                freeze_hold_latch_count_.fetch_add(1, std::memory_order_relaxed);
                                 freeze_hold_remaining_ = std::max<std::int64_t>(1,
-                                    std::llround(audio_freeze_length_seconds_ * rate))
+                                    std::llround(freeze_hold_seconds_ * rate))
                                     - slice;
                                 if (freeze_hold_remaining_ < 0) freeze_hold_remaining_ = 0;
+                                latched = true;
                                 gate = true;
                             } else {
+                                freeze_hold_seconds_ = 0.0;
                                 gate = false;
                             }
                         }
@@ -1808,7 +1894,7 @@ void Spectr::process(
                                 freeze_user_override_ = true;
                                 freeze_user_value_ = press == 1;
                             }
-                            if (gate != freeze_gate_last_)
+                            if (gate != freeze_gate_last_ || latched)
                                 freeze_user_override_ = false;
                             frozen = freeze_user_override_ ? freeze_user_value_ : gate;
                         } else {
@@ -1817,13 +1903,17 @@ void Spectr::process(
                         freeze_gate_last_ = gate;
                         freeze_param_last_ = param_frozen;
                         freeze_source_.set_frozen(frozen);
+                        if (latched && frozen) freeze_source_.retrigger();
                         freeze_effective_.store(frozen, std::memory_order_relaxed);
                         freeze_gate_driven_.store(driven, std::memory_order_relaxed);
                         // The length this engage takes is the one the LENGTH
-                        // label shows while it holds.
-                        if (frozen && !freeze_engage_last_)
+                        // label shows while it holds; a retrigger is a new
+                        // engage.
+                        if (frozen && (!freeze_engage_last_ || latched))
                             freeze_engaged_length_index_.store(
-                                freeze_modulated_length_index_.load(std::memory_order_relaxed),
+                                latched ? latched_index
+                                        : freeze_modulated_length_index_.load(
+                                              std::memory_order_relaxed),
                                 std::memory_order_relaxed);
                         freeze_engage_last_ = frozen;
                     }
@@ -2403,6 +2493,10 @@ void Spectr::process(
             audio_preset_driven_.store(false, std::memory_order_relaxed);
             freeze_param_last_ = frozen;
             freeze_user_override_ = false;
+            // Nor does any Hold for Length hold play on.
+            freeze_hold_remaining_ = 0;
+            freeze_hold_seconds_ = 0.0;
+            freeze_hold_walk_ = 0;
         }
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
@@ -2772,6 +2866,9 @@ bool read_snapshot_(const choc::value::ValueView& obj, FieldSnapshot& dst) {
 } // namespace
 
 bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
+    // A loaded session starts the one-LFO Length walk again (see the Hold
+    // for Length latch).
+    freeze_hold_walk_reset_.store(true, std::memory_order_relaxed);
     // Empty span = legacy blob or caller signalling "reset to defaults"
     // per the pulp#625 hook contract.
     if (bytes.empty()) {
