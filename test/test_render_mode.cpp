@@ -709,13 +709,14 @@ TEST_CASE("Reported latency is the latency the audio actually has",
 TEST_CASE("A mode switch is bounded, raises exactly one latency flag, and "
           "leaves modulation running",
           "[render-mode][audio][modulation]") {
-    // What a switch guarantees, stated honestly. It is NOT click-free and this
-    // does not test for that: the two modes differ by thousands of samples of
-    // delay, so the stream jumps in time and the host re-aligns compensation
-    // on top of that. Both are discontinuities no fade can remove, which is
-    // why the switch is a setup decision rather than a musical gesture.
+    // The bookkeeping of a switch. The two modes differ by thousands of
+    // samples of delay, so the material moves in time and the host re-aligns
+    // compensation on top of that; what the switch must not do -- drop out
+    // while the new renderer fills its delay line, or cut between waveforms
+    // -- is measured in test_audio_glitches.cpp ("A Latency switch neither
+    // drops out nor clicks in either direction").
     //
-    // What it does guarantee, and what is pinned here:
+    // What is pinned here:
     //   1. amplitude stays bounded through the switch -- no full-scale blast;
     //   2. the host is told exactly once, never zero times and never twice;
     //   3. the reported latency is the new mode's the moment it is told;
