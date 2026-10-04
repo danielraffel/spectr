@@ -11602,7 +11602,7 @@ TEST_CASE("right-clicking a header control opens its own reset and modulation me
     settle(rig.clock, 8);
     right_click("[data-spectr-intensity]");
     REQUIRE(menu_for("intensity") == "intensity");
-    const depth1_shown = [&] {
+    const auto depth1_shown = [&] {
         return runtime_value(rig, "String(document.querySelector('[data-spectr-control-route-children=\"1\"]')"
                              "?.getAttribute('data-spectr-disclosed'))", "spectr-depth1-shown");
     };
@@ -11708,7 +11708,7 @@ TEST_CASE("a header control's menu shows and toggles only its own LFO target",
                           "?.getAttribute('data-spectr-control-menu'))", "menu") == control.name);
             CHECK(inside_box("[data-spectr-control-menu]") == "inside");
             for (const char* lfo : {"1", "2"}) {
-                const auto row = std::string("[data-spectr-control-action=\"lfo") + lfo + "\"]";
+                const auto row = std::string("[data-spectr-control-route-lfo=\"") + lfo + "\"]";
                 CHECK(query("String(document.querySelector('" + row
                             + "')?.getAttribute('data-spectr-control-target'))", "target")
                       == control.key);
@@ -11820,48 +11820,54 @@ TEST_CASE("a header control's menu carries the Modulation head and nests its rou
     const auto in_menu = [](const std::string& inner) {
         return std::string("[data-spectr-control-menu] ") + inner;
     };
+    int round = 0;
     for (const auto& control : controls) {
         CAPTURE(control.name);
-        rig.store.set_value(spectr::kParamLfoEnabled, 0.0f);
-        rig.store.set_value(spectr::kParamLfo2Enabled, 0.0f);
-        rig.store.set_value(spectr::kParamLfoShape, 0.0f);
-        rig.store.set_value(spectr::kParamLfo2Shape, 0.0f);
-        rig.store.set_value(spectr::kParamLfoRate, 4.0f);
-        rig.store.set_value(spectr::kParamLfo2Rate, 4.0f);
-        REQUIRE(rig.processor.apply_surface_params(false));
-        settle(rig.clock, 8);
+        ++round;
         activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
         settle(rig.clock, 8);
         REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]')"
                       "?.getAttribute('data-spectr-control-menu'))") == control.name);
-        // The LFO switches turn the LFO itself on and off.
-        activate(rig, in_menu("[data-spectr-control-action=\"lfo1-enable\"]"));
-        settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 1.0f);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Enabled) == 0.0f);
-        activate(rig, in_menu("[data-spectr-control-action=\"lfo2-enable\"]"));
-        settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Enabled) == 1.0f);
+        // The LFO switches turn the LFO itself on and off -- each its own.
+        for (const auto [action, mine, other] :
+             {std::tuple{"lfo1-enable", spectr::kParamLfoEnabled, spectr::kParamLfo2Enabled},
+              std::tuple{"lfo2-enable", spectr::kParamLfo2Enabled, spectr::kParamLfoEnabled}}) {
+            CAPTURE(action);
+            const float was = rig.store.get_value(mine), other_was = rig.store.get_value(other);
+            activate(rig, in_menu(std::string("[data-spectr-control-action=\"") + action + "\"]"));
+            settle(rig.clock, 8);
+            CHECK(rig.store.get_value(mine) == 1.0f - was);
+            CHECK(rig.store.get_value(other) == other_was);
+            activate(rig, in_menu(std::string("[data-spectr-control-action=\"") + action + "\"]"));
+            settle(rig.clock, 8);
+            CHECK(rig.store.get_value(mine) == was);
+        }
         // Nothing drives the control, so the EDIT tab is LFO 1; Shape writes LFO 1.
         CHECK(query("String(document.querySelector('[data-spectr-control-menu] "
-                    "[data-spectr-modulation-source-action=\"1\"]')?.getAttribute('aria-pressed'))") == "true");
-        activate(rig, in_menu("[data-spectr-shape-option=\"2\"]"), "pointerdown");
+                    "[data-spectr-modulation-source]')?.getAttribute('data-spectr-modulation-source'))") == "1");
+        const int shape1 = round % 4, shape2 = (round + 2) % 4;
+        const float lfo2_shape_was = rig.store.get_value(spectr::kParamLfo2Shape);
+        activate(rig, in_menu("[data-spectr-shape-option=\"" + std::to_string(shape1) + "\"]"), "pointerdown");
         settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfoShape) == 2.0f);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == 0.0f);
+        CHECK(rig.store.get_value(spectr::kParamLfoShape) == static_cast<float>(shape1));
+        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == lfo2_shape_was);
         // EDIT LFO 2: Shape and Rate write LFO 2 and leave LFO 1 alone.
         activate(rig, in_menu("[data-spectr-modulation-source-action=\"2\"]"));
         settle(rig.clock, 8);
-        activate(rig, in_menu("[data-spectr-shape-option=\"3\"]"), "pointerdown");
+        CHECK(query("String(document.querySelector('[data-spectr-control-menu] "
+                    "[data-spectr-modulation-source]')?.getAttribute('data-spectr-modulation-source'))") == "2");
+        activate(rig, in_menu("[data-spectr-shape-option=\"" + std::to_string(shape2) + "\"]"), "pointerdown");
         settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == 3.0f);
-        CHECK(rig.store.get_value(spectr::kParamLfoShape) == 2.0f);
+        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == static_cast<float>(shape2));
+        CHECK(rig.store.get_value(spectr::kParamLfoShape) == static_cast<float>(shape1));
+        const float lfo1_rate_was = rig.store.get_value(spectr::kParamLfoRate);
+        const bool low = round % 2 == 0;
         const auto rate_track = in_menu("[data-spectr-menu-slider-track=\"lfo2-rate\"]");
-        activate(rig, rate_track, "pointerdown", slider_press_at(0.0, rate_track));
-        activate(rig, rate_track, "pointerup", slider_press_at(0.0, rate_track));
+        activate(rig, rate_track, "pointerdown", slider_press_at(low ? 0.0 : 1.0, rate_track));
+        activate(rig, rate_track, "pointerup", slider_press_at(low ? 0.0 : 1.0, rate_track));
         settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Rate) == Catch::Approx(0.25f));
-        CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(4.0f));
+        CHECK(rig.store.get_value(spectr::kParamLfo2Rate) == Catch::Approx(low ? 0.25f : 16.0f));
+        CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(lfo1_rate_was));
         // The route's settings are nested under it and disclosed with it.
         const auto children = std::string("[data-spectr-control-route-children=\"1\"]");
         CHECK(query("String(document.querySelector('" + children + "')?.getAttribute('data-spectr-disclosed'))") == "0");
@@ -11882,11 +11888,15 @@ TEST_CASE("a header control's menu carries the Modulation head and nests its rou
         CHECK(query("String(document.querySelectorAll('[data-spectr-control-menu] [data-spectr-control-target]').length)") == "2");
         // The keyboard: Home lands on the first row (Reset, if any), Down on
         // LFO 1's switch, Return presses it.
+        const float lfo1_was = rig.store.get_value(spectr::kParamLfoEnabled);
         CHECK(press_key(rig, pulp::view::KeyCode::home));
         if (control.reset) CHECK(press_key(rig, pulp::view::KeyCode::down));
         CHECK(press_key(rig, pulp::view::KeyCode::enter));
         settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 0.0f);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 1.0f - lfo1_was);
+        CHECK(press_key(rig, pulp::view::KeyCode::enter));  // and back
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == lfo1_was);
         // The route back off; the menu closed.
         activate(rig, in_menu("[data-spectr-control-action=\"lfo1\"]"));
         settle(rig.clock, 8);
