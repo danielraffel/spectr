@@ -244,6 +244,8 @@ struct Run {
     /// fixed), as a host that splits its buffer at automation and loop
     /// points does.
     unsigned random_blocks = 0;
+    /// Mark this stream sample's block as a host reset (0: never).
+    std::size_t reset_at = 0;
     /// Draw a shape before the stream: a deep cut, a boost and a mute, the
     /// kind of field a user plays a Freeze through.
     bool shaped = false;
@@ -304,6 +306,7 @@ Stereo render(const Stereo& input, const Run& run, Spectr** out_plugin = nullptr
         ctx.sample_rate = run.rate;
         ctx.tempo_bpm = run.tempo;
         ctx.is_playing = true;
+        ctx.reset_requested = run.reset_at != 0 && run.reset_at >= pos && run.reset_at < pos + n;
         if (run.before) run.before(*plugin, *host, pos, int(n), events);
         pulp::audio::Buffer<float> inb(2, n), outb(2, n);
         std::copy(input.l.begin() + long(pos), input.l.begin() + long(pos + n), inb.channel(0).begin());
@@ -569,6 +572,45 @@ TEST_CASE("A Latency switch keeps a playing hold and lands in the new mode",
                 s.spike_db, s.control_db, s.min_level_db, s.gap_ms);
     CHECK(s.gap_ms == 0.0);
     CHECK(s.spike_db <= s.control_db + 6.0);
+}
+
+TEST_CASE("A host reset during a Latency switch completes it instead of warming again",
+          "[render-mode][render-switch]") {
+    // A host that answers the latency change by resetting the plugin (a
+    // transport re-sync) resets the OLD renderer too. Warming again from
+    // there would hold the old Mixing renderer -- silent for its own 213 ms
+    // latency after a reset -- in the output. The switch completes at the
+    // reset instead: the new renderer starts as a reset starts any renderer.
+    const double rate = 48000.0;
+    const auto material = chord(3.0, rate);
+    Run run;
+    run.rate = rate;
+    run.block = 256;
+    run.mode = MaskRenderMode::linear_phase;
+    const std::size_t switch_at = at(1.6, rate);
+    run.reset_at = switch_at + 2 * 256 + 5;
+    bool switched = false;
+    std::size_t switched_at = 0;
+    Spectr* plugin = nullptr;
+    std::unique_ptr<pulp::format::HeadlessHost> keep;
+    run.before = [&](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int,
+                     pulp::state::ParameterEventQueue&) {
+        if (!switched && pos >= switch_at) {
+            REQUIRE(p.set_render_mode(MaskRenderMode::zero_latency));
+            switched = true;
+            switched_at = pos;
+        }
+    };
+    const auto out = render(material, run, &plugin, &keep);
+    REQUIRE(switched);
+    const auto s = score_event(out.l, rate, switched_at - at(0.5, rate), switched_at,
+                               switched_at + at(0.4, rate), at(0.6, rate));
+    std::printf("\nLatency switch Mixing -> Tracking with a host reset 2 blocks in: "
+                "min level %.1f dB, gap %.1f ms\n", s.min_level_db, s.gap_ms);
+    // Tracking's own reset latency is one 64-sample render block: under a
+    // 5 ms window. Warming again would leave ~210 ms of silence.
+    CHECK(s.gap_ms <= 5.0);
+    REQUIRE_FALSE(plugin->render_switch_in_flight());
 }
 
 // ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
