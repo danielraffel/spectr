@@ -3365,6 +3365,16 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    # Fixed-base browser fidelity gate for the real design source. The runner
+    # records load/render/console/network evidence, a deterministic DOM marker
+    # and a screenshot, then rejects a planted broken-editor control.
+    add_test(NAME Spectr-browser-editor-fidelity
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_browser_fidelity.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/browser-fidelity-artifacts)
+    set_tests_properties(Spectr-browser-editor-fidelity PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
