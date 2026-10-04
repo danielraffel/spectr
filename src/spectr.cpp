@@ -56,7 +56,20 @@ bool modulation_plants_level_target_step() noexcept {
 
 // Every negative-control seam the audio thread reads. Called from the
 // constructor and from prepare(), never from process().
+// SPECTR_PLANT_CALLBACK_BURST=<iterations>: once every 512 samples, burn a
+// fixed amount of arithmetic in the callback -- the bursty per-hop work a
+// deadline gate exists to catch. Negative control only; read once, on the
+// control thread (prepare primes it).
+long callback_burst_plant() noexcept {
+    static const long iterations = [] {
+        const char* v = std::getenv("SPECTR_PLANT_CALLBACK_BURST");
+        return v ? std::atol(v) : 0L;
+    }();
+    return iterations;
+}
+
 void prime_negative_control_seams() noexcept {
+    (void)callback_burst_plant();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
     (void)level_plant("");
@@ -1612,6 +1625,11 @@ void Spectr::process(
     PULP_TRACE_SCOPE_NAMED_ARGS("dsp", "process",
         "stream_pos", trace_stream_pos_,
         "frames", static_cast<std::int64_t>(output.num_samples()));
+    if (const long burst = callback_burst_plant(); burst > 0
+        && (trace_stream_pos_ % 512) < static_cast<std::int64_t>(output.num_samples())) {
+        volatile double sink = 0.0;
+        for (long i = 0; i < burst; ++i) sink = sink + std::sqrt(static_cast<double>(i));
+    }
     trace_stream_pos_ += static_cast<std::int64_t>(output.num_samples());
     MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
     // A mode switch in flight: this block renders both renderers and
