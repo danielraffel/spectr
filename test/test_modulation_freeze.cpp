@@ -683,7 +683,7 @@ TEST_CASE("Hold for Length: one LFO on Freeze and Length walks its lengths, ever
     setup.freeze_rate = 4.0f;
     setup.freeze_depth = 0.18f;
     setup.length_depth_lfo1 = 0.69f;
-    setup.seconds = 140.0;
+    setup.seconds = 150.0;
     const auto log = run_hold_log(setup);
     check_holds_each_their_own(log, 9);
     // The trigger phase is the same every cycle (the gate's threshold), so
