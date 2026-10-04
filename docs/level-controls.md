@@ -54,9 +54,10 @@ input's while the loudness matches (the reviewer's pink / low +12 case: 0.0 LU,
 
 - Nothing reads the output. A static shape over steady material is a constant
   target.
-- `P` is an energy-weighted exponential average with a **3 s** time constant
-  over 170 ms Hann frames (8192 points, hop 4096 at 48 kHz). A hit does not move
-  it; a change of spectral balance that lasts for seconds does.
+- `P` is an exponential average with a **3 s** time constant over 170 ms Hann
+  frames (8192 points, hop 4096 at 48 kHz), each frame weighted by its energy
+  relative to the local level (below). A hit does not move it; a change of
+  spectral balance that lasts does.
 - **Silence gate:** a frame quieter than **-60 LUFS** (K-weighted, channels
   summed) is not material; the estimate holds through it instead of drifting
   toward the noise floor or resetting.
@@ -66,43 +67,59 @@ input's while the loudness matches (the reviewer's pink / low +12 case: 0.0 LU,
   rides a one-hop ramp. A shape edit (or switching AUTO on, or Mix) retargets at
   once, because that is the user asking for it.
 
-## Following the material: changes, Freeze, locates
+## Following the material: changes, Freeze, locates, re-prepares
 
-The first v2 followed the material only through its 3 s average and a fixed
-6 dB/s, and forgot it at every locate. The independent review measured what
-that cost: a bass line under +24 dB on the top octaves started 20.6 dB low after
-every play-from-locate and took 3.7 s to recover; a Freeze release jumped to the
-AUTO-off level and took ~14 s; a change to quieter material was ignored for
-~3.5 s (the relative gate measured it against the louder past) and took ~16 s.
-v2 now:
+Two independent reviews shaped this. The first found the original v2 forgot the
+material at every locate (a bass line under +24 dB on the top octaves restarted
+20.6 dB low and took 3.7 s), took ~14 s after a Freeze release, and ignored a
+quieter new part for ~3.5 s. The second found the fix for that too eager on
+material that moves by itself (kick-only and full-drum bars alternating: 7
+restarts and 0 <-> -15.5 dB swings; a decaying piano or drum tail restarting
+the estimate every hit), a restored session's estimate slower than a cold start
+on different material, and a host re-prepare forgetting everything. v2 now:
 
-- **Keeps the material across a locate or host Reset.** Only the estimator's
-  frame grid restarts (so the block size still cannot matter); the estimate and
-  the target are kept, so playback from a locate starts at the level it had.
+- **Weighs frames by energy relative to the local level.** Each frame's power
+  is divided by a 2 s average of frame power before it is averaged: inside a
+  groove that level hardly moves, so a kick outweighs its tail exactly as
+  integrated loudness weighs it; a swell or a quieter part no longer lets the
+  loud past dominate for seconds.
+- **Keeps the material across a locate, a host Reset and a re-prepare.** A
+  locate restarts only the frame grid (so the block size still cannot matter).
+  A re-prepare at the same geometry keeps the estimate whole; at a new rate or
+  channel count it is carried across band-compressed and restored as the
+  estimate (warm). The re-prepare the host does before a bounce therefore
+  changes nothing.
 - **Saves the estimate with the session** (`auto_gain_estimate`: 160 log bands,
   10 Hz-24 kHz, float32, base64 -- 3.4 KB). A reopened project, an offline bounce
-  and a play from the start all start warm and the same; a bounce from a saved
-  state renders sample-identically however the host blocks it.
-- **Detects a change of material.** Beside the energy-weighted estimates it
-  keeps fast (0.4 s) and slow (3 s) averages of each frame's SHAPE -- every
-  audible frame weighing the same, so a quieter new part shows within a few
-  frames. When the make-up those two give the current shape differs by more than
-  **4 dB for 3 frames**, the estimate restarts as a running mean of what comes
-  next; the target holds for the first 0.5 s of it (one beat of a groove, so the
-  first kick or hat cannot swing it), then follows fast.
-- **Level-drop rule:** when no frame of the last 0.6 s comes within 10 dB of the
-  estimate's level, the material got genuinely quieter and the estimate restarts
-  from it. (The BS.1770 relative gate of the first v2 is gone: its own record
-  showed it inside the noise, and it was what ignored quieter new material.)
-- **Freeze edges.** The estimator keeps the live (dry) leg's spectrum warm
-  through a hold. On release the wet estimate becomes the live one at once and
-  the gain jumps with the release crossfade (20 ms ramp) instead of slewing after
-  it; on engage the legs are treated as uncorrelated. The renderer's latency is
-  added to every material event, so the gain moves with the audio the frame
-  described.
+  and a play from the start all start at the saved level; two renders from one
+  saved state are sample-identical at any block size. A RESTORED estimate is a
+  prior, not the estimate: the reopened project may play other material, so the
+  material's own estimate takes over exactly as from a cold start (the same
+  0.5 s fade), never slower.
+- **Detects a change of material, and only a lasting one.** Beside the
+  estimates it keeps fast (0.25 s) and slow (3 s) averages of each frame's
+  SHAPE (level-independent, so a quieter new part shows at once). The gap
+  between the make-up those two give the current shape must PERSIST: a leaky
+  count -- up one per audible frame above 4 dB, down two per frame below -- must
+  reach 0.7 s (0.4 s while the gap is above 12 dB). A fill, a hit, a decay
+  drains away and is forgotten. A confirmed change restarts the estimate from
+  the CANDIDATE -- the new material's own average since the gap was first seen,
+  minus the frames whose windows straddle the change -- so it is right at once.
+- **Recognises alternation.** It remembers the material before the last change
+  and the material the last change went to (12 s). Material that goes back to
+  either is not new: the halves are merged, and the slow estimate averages over
+  12 s from then on, so kick-only / full bars stop being chased after one cycle.
+- **Level-drop rule rescales level only, never the spectrum** (no frame within
+  10 dB of the estimate's level for 4 s; 0.6 s for the live leg under a hold or
+  a Mix, which has no change detector). A decay is not a change of material.
+- **Freeze edges.** The live (dry) leg's spectrum is kept warm through a hold.
+  On release the wet estimate becomes the live one at once and the gain jumps
+  with the release crossfade (20 ms) instead of slewing after it; on engage the
+  legs are treated as uncorrelated. The renderer's latency is added to every
+  material event, so the gain moves with the audio the frame described.
 - **Cold start** (a new instance, no saved estimate) begins at v1's estimate,
   whose weight falls linearly to zero over the first 0.5 s of audible material,
-  and converges within about 0.9 s.
+  and converges within about 0.75 s.
 
 ## Determinism
 
@@ -140,9 +157,10 @@ All loudness is BS.1770 (Pulp's `MultiChannelMeter`), at 48 kHz, through
 HeadlessHost renders of the real plug-in in its default (Tracking) mode.
 "Error" is the output's integrated loudness with AUTO on minus the input's;
 Freeze rows measure against the same frozen render with a flat shape at the same
-Mix. Evidence for every number below is under
-`spectr-specs/auto-gain-v2/v2b/` (sweep report, raw rows, transient rows, ctest
-logs, and the independent review's own probes re-run on this code).
+Mix. "Steady" means steady K-weighted loudness, not RMS. Evidence for every
+number below is under `spectr-specs/auto-gain-v2/v2c/` (sweep report, raw,
+transient and dynamic rows, ctest logs, and both independent reviews' own probes
+rebuilt and re-run on this code).
 
 ### The corpus sweep (advisory)
 
@@ -158,62 +176,43 @@ from 4 s; "from 0 s" is the whole render, start-up included.
 | model | renders | median abs LU | p95 abs LU | worst abs LU | p95 from 0 s | worst from 0 s |
 |---|---|---|---|---|---|---|
 | v1 | 492 | 1.15 | 14.00 | 22.22 | 14.02 | 22.19 |
-| v2 | 492 | 0.00 | **0.21** | **2.46** | 0.37 | 3.14 |
+| v2 | 492 | 0.00 | **0.18** | **2.21** | 0.35 | 2.49 |
 
-(The first v2, steady: p95 0.28, worst 2.62.) Target: p95 <= 1.5 LU and worst
-<= 3 LU steady -- met. On narrow material (bass, vocal, hats, pads, sine, the
-Freeze case) v2 is better than v1 in **225 of 225** cases where v1 is off by
-more than 0.5 LU (narrow-material p95: v1 14.94 LU, v2 0.03 LU).
+(Earlier rounds, steady / from 0 s worst: the first v2 0.28 / 2.62; the second
+0.21 / 2.46 and 3.14.) Target: p95 <= 1.5 LU and worst <= 3 LU -- met, from 0 s
+as well. On narrow material v2 is better than v1 in **225 of 225** cases where
+v1 is off by more than 0.5 LU (narrow p95: v1 14.94 LU, v2 0.03 LU).
 
 | material | v1 p95 | v1 worst | v2 p95 | v2 worst | v2 worst from 0 s |
 |---|---|---|---|---|---|
-| pink | 0.21 | 0.42 | 0.02 | 0.07 | 0.09 |
-| bass_line | 13.83 | 20.60 | 0.05 | 0.16 | 0.75 |
+| pink | 0.21 | 0.42 | 0.02 | 0.07 | 0.10 |
+| bass_line | 13.83 | 20.60 | 0.05 | 0.17 | 0.76 |
 | vocal_buzz | 15.62 | 20.60 | 0.01 | 0.01 | 0.32 |
-| hats | 14.56 | 18.18 | 0.01 | 0.01 | 0.15 |
-| synth_pad | 14.54 | 18.97 | 0.04 | 0.13 | 0.15 |
-| drum_loop_synth | 8.80 | 14.21 | 1.05 | 1.10 | 2.48 |
+| hats | 14.56 | 18.18 | 0.01 | 0.02 | 0.15 |
+| synth_pad | 14.54 | 18.97 | 0.05 | 0.16 | 0.16 |
+| drum_loop_synth | 8.80 | 14.21 | 1.06 | 1.11 | 2.49 |
 | sine_1k | 16.95 | 22.22 | 0.04 | 0.48 | 1.05 |
-| pink_with_gaps | 0.24 | 0.44 | 0.11 | 0.16 | 0.15 |
-| freeze_bass_then_hats | 13.78 | 20.60 | 0.05 | 0.14 | 0.57 |
-| ql_drum_break | 6.63 | 10.87 | 0.58 | 2.46 | 3.14 |
+| pink_with_gaps | 0.24 | 0.44 | 0.10 | 0.16 | 0.14 |
+| freeze_bass_then_hats | 13.78 | 20.60 | 0.04 | 0.14 | 0.56 |
+| ql_drum_break | 6.63 | 10.87 | 0.61 | 2.21 | 2.47 |
 | ql_tonal | 14.57 | 20.60 | 0.01 | 0.02 | 0.19 |
-| ql_stereo_pad | 5.13 | 14.24 | 0.01 | 0.05 | 0.14 |
-
-| material | shape | AUTO off change | v1 error | v2 error |
-|---|---|---|---|---|
-| bass_line | high broad +24 | +0.00 | -20.60 | -0.00 |
-| bass_line | low broad +12 | +11.64 | +7.43 | +0.01 |
-| hats | high broad -24 | -20.81 | -18.18 | -0.00 |
-| sine_1k | mid narrow -12 | -8.53 | -8.42 | -0.14 |
-| vocal_buzz | high broad +24 | +0.00 | -20.60 | -0.00 |
-| drum_loop_synth | low broad +24 | +23.36 | +8.80 | -0.02 |
-| freeze_bass_then_hats | high broad +24 | +0.00 | -20.60 | -0.00 |
-| freeze_bass_then_hats | low broad -24 @mix50 | -9.40 | -9.05 | -0.05 |
-| ql_drum_break | low broad +24 | +16.77 | +2.21 | +2.46 |
+| ql_stereo_pad | 5.13 | 14.24 | 0.02 | 0.06 | 0.14 |
 
 What is left is transient material under large low boosts (the drum break,
-+24 dB below 170 Hz: +2.46 LU, where v1 lands at +2.21). The estimator weighs
-energy; integrated loudness gates 400 ms blocks against their own mean, and
-boosting the kick by 24 dB changes which blocks pass that gate, which no
-estimate of the input's spectrum can see. From 0 s the worst is 3.14 LU on the
-same case: its first 0.5 s start from v1's estimate.
++24 dB below 170 Hz: +2.21 LU, as v1). Integrated loudness gates 400 ms blocks
+against their own mean, and boosting the kick by 24 dB changes which blocks pass
+that gate, which no estimate of the input's spectrum can see.
 
 ### Transients
 
 Measured from the event: T1dB is the time for the applied gain to come within
 1 dB of where it settles (its mean over the last second of the window); max
 momentary is the largest error of the output's momentary (400 ms) loudness
-against a flat AUTO-off render of the same scenario -- what a perfect Auto Gain
-would sound like -- and "s > 6 LU" how long it stays above 6 LU. "v2a" re-creates
-the first v2's transient behaviour in this build (`SPECTR_LEVEL_PLANT=autogain-v2a`:
-reset at every locate, no change detector, no level-drop rule, no Freeze leg
-switch, fixed 6 dB/s); the independent review's own probes, re-run on this code,
-agree (bass line + top octaves +24 after a cold start: T1dB 3.71 s -> 0.74 s;
-reset every 3 s: -10.98 LU integrated -> -0.01 LU; Freeze release: 13.95 s ->
-0.01 s; bass -> hats 15 dB quieter: 15.93 s -> 1.04 s).
+against a flat AUTO-off render of the same scenario -- a perfect Auto Gain --
+and "s > 6 LU" how long it stays above 6 LU. "first v2" re-creates the first
+v2's transient behaviour in this build (`SPECTR_LEVEL_PLANT=autogain-v2a`).
 
-| scenario | event | v2a (first v2, plant) T1dB / max mom / s>6 LU | v2 T1dB / max mom / s>6 LU |
+| scenario | event | first v2 (v2a plant) T1dB / max mom / s>6 LU | v2 T1dB / max mom / s>6 LU |
 |---|---|---|---|
 | cold start: bass line, high +24 | start | 3.44 s / 20.1 LU / 2.40 s | **0.74 s** / 19.8 LU / 0.40 s |
 | cold start: vocal, high +24 | start | 3.44 s / 20.2 LU / 2.40 s | **0.74 s** / 19.9 LU / 0.40 s |
@@ -222,98 +221,114 @@ reset every 3 s: -10.98 LU integrated -> -0.01 LU; Freeze release: 13.95 s ->
 | cold start: drum loop, low +24 | start | 1.46 s / 9.3 LU / 0.70 s | **0.52 s** / 9.2 LU / 0.20 s |
 | cold start: pink, low +12 | start | 0.00 s / 0.5 LU / 0.00 s | **0.00 s** / 0.5 LU / 0.00 s |
 | locate every 3 s: bass line, high +24 | each locate (worst) | 2.91 s / 19.8 LU / 2.70 s | **0.00 s** / 0.4 LU / 0.00 s |
-| locate every 3 s: drum loop, low +24 | each locate (worst) | 1.47 s / 9.3 LU / 1.00 s | **0.00 s** / 0.6 LU / 0.00 s |
+| locate every 3 s: drum loop, low +24 | each locate (worst) | 1.47 s / 9.3 LU / 1.00 s | **0.00 s** / 0.7 LU / 0.00 s |
 | locate every 3 s: vocal, mid narrow -12 | each locate (worst) | 0.00 s / 0.8 LU / 0.00 s | **0.00 s** / 0.0 LU / 0.00 s |
 | host reset mid-hold: bass held, hats live, high +24 | reset at 7 s | 3.44 s / 19.8 LU / 2.50 s | **0.00 s** / 0.0 LU / 0.00 s |
 | Freeze: bass held at 4.5 s, hats live from 5 s, high +24 | engage | 0.00 s / 0.0 LU / 0.00 s | **0.00 s** / 0.0 LU / 0.00 s |
-| Freeze: bass held at 4.5 s, hats live from 5 s, high +24 | release at 9 s | 9.35 s / 23.5 LU / 8.50 s | **0.01 s** / 5.5 LU / 0.00 s |
-| change at 8 s: bass -> hats, high +24 | change | 6.64 s / 23.1 LU / 7.80 s | **1.00 s** / 22.9 LU / 1.10 s |
-| change at 8 s: bass -> hats -15 dB (quieter after loud) | change | 6.37 s / 24.0 LU / 7.59 s | **1.11 s** / 24.0 LU / 1.00 s |
-| change at 8 s: hats -> bass -15 dB | change | 6.72 s / 23.8 LU / 7.69 s | **1.44 s** / 23.8 LU / 1.29 s |
-| change at 8 s: hats -15 dB -> bass (loud after quiet) | change | 3.90 s / 23.5 LU / 3.20 s | **1.20 s** / 22.3 LU / 0.50 s |
-| change at 8 s: pink -> vocal -15 dB | change | 3.88 s / 20.8 LU / 7.59 s | **1.42 s** / 20.8 LU / 1.10 s |
-| switch every 4 s, high +24: bass -> hats | switch | 2.91 s / 23.0 LU / 3.70 s | **0.99 s** / 22.9 LU / 1.10 s |
-| switch every 4 s, high +24: hats -> vocal | switch | 2.67 s / 12.8 LU / 2.10 s | **1.35 s** / 20.2 LU / 1.30 s |
-| switch every 4 s, high +24: vocal -> drums | switch | 2.73 s / 13.4 LU / 1.91 s | **1.47 s** / 15.9 LU / 1.10 s |
-| switch every 4 s, high +24: drums -> bass | switch | 2.70 s / 11.5 LU / 3.70 s | **1.38 s** / 14.6 LU / 1.40 s |
+| Freeze: bass held at 4.5 s, hats live from 5 s, high +24 | release at 9 s | 7.68 s / 23.5 LU / 4.80 s | **0.01 s** / 5.5 LU / 0.00 s |
+| change at 8 s: bass -> hats, high +24 | change | 6.49 s / 23.1 LU / 4.80 s | **0.98 s** / 22.7 LU / 1.00 s |
+| change at 8 s: bass -> hats -15 dB (quieter after loud) | change | 7.90 s / 24.0 LU / 7.59 s | **1.11 s** / 24.0 LU / 1.00 s |
+| change at 8 s: hats -> bass -15 dB | change | 6.68 s / 23.9 LU / 7.69 s | **1.17 s** / 23.9 LU / 0.99 s |
+| change at 8 s: hats -15 dB -> bass (loud after quiet) | change | 6.44 s / 23.5 LU / 7.89 s | **1.15 s** / 23.1 LU / 1.20 s |
+| change at 8 s: pink -> vocal -15 dB | change | 7.90 s / 20.8 LU / 7.59 s | **1.25 s** / 20.8 LU / 1.00 s |
+| switch every 4 s, high +24: bass -> hats | switch | 3.90 s / 23.0 LU / 3.70 s | **0.97 s** / 22.7 LU / 1.00 s |
+| switch every 4 s, high +24: hats -> vocal | switch | 2.52 s / 15.8 LU / 3.81 s | **1.08 s** / 19.5 LU / 1.10 s |
+| switch every 4 s, high +24: vocal -> drums | switch | 2.73 s / 10.5 LU / 1.72 s | **1.04 s** / 16.1 LU / 1.00 s |
+| switch every 4 s, high +24: drums -> bass | switch | 2.62 s / 12.3 LU / 3.70 s | **1.10 s** / 14.7 LU / 1.10 s |
 
 Targets: T1dB <= 1.0 s after a locate (warm) -- 0.00 s; <= 1.5 s after a change
-of material or a Freeze release -- worst 1.47 s and 0.01 s; max momentary error
-<= 6 LU through locates, host resets and Freeze engage / release -- worst 5.5 LU.
-An ABRUPT change of material cannot meet 6 LU momentary with any causal Auto
-Gain: when the needed gain jumps by 24 dB, even a perfect compensator that
-reacted 10 ms after the switch would leave the 400 ms window
+of material or a Freeze release -- worst 1.25 s and 0.01 s; max momentary error
+<= 6 LU through locates, host resets, re-prepares and Freeze engage / release --
+worst 5.5 LU. An ABRUPT change of material cannot meet 6 LU momentary with any
+causal Auto Gain: when the needed gain jumps by 24 dB, even a perfect
+compensator that reacted 10 ms after the switch would leave the 400 ms window
 10 log10((0.01 x 251 + 0.39) / 0.4) = 8.6 LU over, and one that needs a single
-170 ms analysis window 20.3 LU. Those cases are gated instead on T1dB and on the
-time above 6 LU (<= 1.5 s; worst 1.40 s, against 3.2-8.5 s for the first v2 and
-for ever with AUTO off). A cold start (no saved estimate) begins at v1's answer:
-up to ~20 LU for its first 0.4-0.5 s, T1dB <= 0.74 s.
+170 ms analysis window 20.3 LU. Those cases are gated on T1dB and on the time
+above 6 LU (<= 1.6 s; worst 1.20 s).
+
+### Material that moves by itself
+
+The second review's probes, and the same cases in the gates and the sweep: a
+constant gain leaves the spread (sd) of momentary error against the flat AUTO-off
+render exactly where AUTO off has it, so "excess" is how much v2's movement adds
+(from 3 s). The review's own `dynamic` probe, rebuilt on this code (60 material x
+shape rows):
+
+| material | shape | second v2: restarts, sd v2 / off | now: restarts, sd v2 / off |
+|---|---|---|---|
+| kick-only / full drums alternating | high broad +24 | 7, 9.22 / 6.82 | 2, 7.80 / 6.82 |
+| kick-only / full drums alternating | tilt -12..+12 | 5, 6.12 / 4.67 | 2, 5.34 / 4.67 |
+| piano hits every 3 s | high broad +24 | 6, 1.80 / 1.19 (range 6.8 dB) | 0, 1.42 / 1.19 (3.2 dB) |
+| drum hit + darkening tail / 3 s | high broad +24 | 6, 2.11 / 1.85 (range 4.2 dB) | 0, 1.83 / 1.85 (0.1 dB) |
+| pink fade-out 45 dB / 8 s | low broad +12 | 2, 0.28 / 0.23 | 0, 0.23 / 0.23 |
+| dense -> pad breakdown -> dense | low broad +12 | 2, 2.70 / 3.65 | 1, 2.56 / 3.65 |
+
+Over all 60 rows the worst excess is now +0.23 LU except the kick-only /
+full-drum alternation under the two most extreme shapes (+0.98 and +0.67 LU from
+3 s). That is the cost of the alternation's first cycle: until a pattern has
+come back once it cannot be told from a real change of material, which must be
+followed within 1.5 s. From the point it is recognised (10 s on) the excess is
+at most +0.22 LU. Gates (`Auto Gain v2 does not pump on sparse or alternating or
+decaying material`): excess <= 0.25 LU (the alternation from 10 s), at most two
+restarts on the alternation, the swell's applied gain within 1.5 dB.
+
+The drum loop swelling +-12 dB under +24 dB on the top octaves moves the applied
+gain 1.44 dB (0.65 dB without the swell; the first v2's behaviour on this same
+case, 1.68 dB).
 
 ### The ctest gates (fast, deterministic)
 
-`test/test_auto_gain_v2.cpp` and `test/test_auto_gain_v2_transients.cpp`, all in
-the default ctest:
+`test/test_auto_gain_v2.cpp` and `test/test_auto_gain_v2_transients.cpp` (all in
+the default ctest), with a re-creation of each fixed defect registered as a
+negative control that must fail its gate:
 
-| gate | result | negative control |
+| gate | result | negative control (must fail) |
 |---|---|---|
-| accuracy: 6 materials x 6 shapes, v2 p95 <= 1.5, worst <= 3, better than v1 on every narrow case | p95 0.16 LU, worst 0.55 LU, 22/22 | `autogain-v2-unweighted`: p95 23.3 LU, fails; v1 on bass + top octaves +24: -20.6 LU (in-test control) |
-| pumping: steady drum loop / pink / bass under a static shape; applied-gain spread <= 0.5 dB, extra momentary sd vs AUTO off <= 0.05 LU, no change-detector restart | 0.144 dB, 0.013 LU, 0 restarts | `autogain-v2-no-smoothing`: 4.0 dB and 0.057 LU, fails |
-| chunking: 8 host chunkings (1 ... 4096), material changing mid-render | Mixing 0 mismatching samples; Tracking <= 8.4e-9 | a different shape differs by > 1e-4; the gain really moved 4.2 dB |
-| locate every 3 s (bass, drums, vocal) | T1dB 0.00 s, max momentary 0.65 LU | `autogain-v2-reset-on-seek`: 19.8 LU, fails |
-| host reset mid-hold | T1dB 0.00 s, 0.0 LU | |
-| Freeze engage and release | engage 0.00 s / 0.0 LU; release 0.01 s / 5.5 LU | `autogain-v2-stale-on-change`: release 9.35 s / 23.5 LU, fails |
-| change of material (5 cases, +-15 dB) | T1dB <= 1.44 s, <= 1.29 s over 6 LU | `autogain-v2-stale-on-change`: 6.7 s, 7.8 s, fails |
-| switches every 4 s | T1dB <= 1.47 s, <= 1.40 s over 6 LU | |
-| cold start | T1dB <= 0.74 s | |
-| warm restore from a saved session | first block within 0.01 dB of where the saved session ended; two renders from one saved state (different block sizes) identical | a cold start begins 20.6 dB away |
-| pre-v2 session with AUTO on keeps v1 until AUTO is toggled | v1 (-20.6 dB) until off/on, then v2 (0.0 dB); a re-save keeps v1 | |
-| silence, start-up, Freeze weighting, shape edit (unchanged from the first v2) | pass | |
+| accuracy: 6 materials x 6 shapes | p95 0.16 LU, worst 0.63 LU, 22/22 better than v1 | `autogain-v2-unweighted` |
+| pumping: steady drums / pink / bass | spread 0.144 dB, +0.013 LU, 0 restarts | `autogain-v2-no-smoothing` |
+| chunking (8 chunkings, gain moving) | Mixing 0 samples differ; Tracking <= 8.4e-9 | -- |
+| locate every 3 s | T1dB 0.00 s, 0.66 LU | `autogain-v2-reset-on-seek` |
+| Freeze engage / release | 0.00 s / 0.01 s, <= 5.5 LU | `autogain-v2-stale-on-change` |
+| change of material (5 cases) / switches every 4 s | T1dB <= 1.25 s / <= 1.10 s | `autogain-v2-stale-on-change` |
+| sparse / alternating / decaying / breakdown / swell | excess <= 0.23 LU; swell 1.44 dB; 2 restarts | `autogain-v2-short-persistence` (the second v2's 3-frame detector, no memory): the alternation's excess +1.58 LU from 10 s (sweep) |
+| host re-prepare (same, other block size, 44.1 kHz; after a restore) | T1dB 0.00 s, <= 0.08 LU | `autogain-v2-reprepare-reset` |
+| restored estimate on other material | T1dB <= max(cold, 0.75 s) | `autogain-v2-restore-as-warm` |
+| warm restore / two renders from one state | first block within 0.01 dB; 0 samples differ | -- |
+| pre-v2 session keeps v1 until toggled, also with a flat shape | v1 -> v2 on off/on | `autogain-v2-legacy-composed-only` |
+
+The loudness-compensation unit's own tests (`test/test_loudness_compensation.cpp`)
+cover the detector's persistence, the candidate restart and the merge, the
+rescale-only level-drop rule, prior vs warm import -- including that a warm
+import's slow shape is armed on the carried material (the second review's
+ordering bug; re-introducing it fails that test: slow shape 1.00 above 2 kHz
+after 0.5 s against a bound of 0.4).
 
 Through the built AU, `Spectr-au-offline-bounce-equivalence-auto-gain`: paced
 render vs OfflineRender bounce with AUTO on and a change of material,
-`max |paced - bounce| = 0` (MATCH); without the offline flag it differs.
-
-### Pumping on the full corpus
-
-Extra momentary-loudness standard deviation of v2 over AUTO off, same static
-shape, steady window, over all 41 shapes: at most +0.128 LU (the first v2:
-+0.147). For the two pumping shapes (low +12 / high -12): at most +0.017 LU
-(pink). Applied-gain spread is at most 1.54 dB (drum break, low narrow +24;
-the first v2: 1.02 dB there) -- the gain follows the 3 s estimate of a sparse
-break more closely now, and the loudness it produces fluctuates no more than
-with AUTO off (+0.045 LU).
-
-### Cost
-
-Rendering 48 s of stereo audio (quick shape set) took 1.94 s with AUTO off and
-2.06 s with v2 (user CPU, HeadlessHost, Tracking): about 0.25 % of real time
-for the estimator, the change detector and the tap.
+`max |paced - bounce| = 0`.
 
 ### Decisions
 
 | decision | value | evidence |
 |---|---|---|
-| time constant | 3 s | quick subset (drums, pink, bass, vocal, hats, drum break x 4 shapes): 1 s: p95 0.59 LU, worst applied spread 2.58 dB; **3 s: 0.29 LU, 0.77 dB**; 6 s: 0.26 LU, 0.51 dB -- 6 s buys 0.03 LU for twice the time to follow the material |
-| response | realised (renderer's own magnitude, minimum phase where it designs one) | p95 0.29 vs 0.32 LU for the drawn steps; the Mix 50 % phase-interference cases fall from ~1.0 LU (v1 0.7) to 0.02 LU |
-| two legs (wet vs live, cross-spectrum) | on | Freeze + Mix 50 %, low -24: -4.82 LU with one leg, -0.05 LU now |
-| relative gate | removed | it measured quieter new material against the louder past and ignored it for ~3.5 s; its effect on steady accuracy was inside the noise (0.38 vs 0.31 LU p95) |
-| locate / host reset | keep the estimate; restart only the frame grid | T1dB 2.9 s -> 0.00 s; integrated error with a reset every 3 s -10.98 LU -> -0.01 LU |
-| session state | save the estimate (160 bands, 3.4 KB) | warm restore: first block within 0.01 dB of the saved session's end; a cold start is 20.6 dB away |
-| change detector | fast 0.4 s vs slow 3 s SHAPE averages, 4 dB for 3 frames; restart; hold 0.5 s | level-independent, so quieter new material is seen within frames; 0 restarts on steady material; the 0.5 s hold keeps the first frames of a groove (one kick) from swinging the gain (without it: vocal -> drums swung +/-4 dB, T1dB 2.6 s) |
-| level-drop rule | no frame within 10 dB of the estimate's level for 0.6 s -> restart | bass -> hats 15 dB quieter: T1dB 1.11 s (first v2: 6.4 s) |
-| Freeze release | wet := live (dry) estimate; jump over 20 ms; skip the frames straddling the release | T1dB 9.35 s -> 0.01 s, max momentary 23.5 -> 5.5 LU |
-| events | at their own stream sample plus the renderer's latency | otherwise the gain moves before the audio it describes (Mixing: 213 ms early) |
-| slew | 6 dB/s near, + 10/s x distance far (<= 120 dB/s); 0.3 s ramp for <= 0.5 dB steps, one hop otherwise | cold start T1dB 3.44 s -> 0.74 s with no change in steady pumping |
-| prior | v1's estimate, weight falling linearly to 0 over 0.5 s of audible material | an exponential fade left a +24 boost where the material has nothing 20 dB off for seconds |
-| silence gate | -60 LUFS per frame | holds the gain through 2 s gaps within 0.007 dB |
-| range | +-24 dB | v1's +12 dB boost cap would leave a -24 dB cut of what is playing 12 dB short |
+| frame weighting | energy relative to a 2 s local level | equal-frame or sqrt weighting calmed the swell (0.90 dB) but cost drum accuracy (drum loop p95 1.69 vs 1.06 LU); without the local level a quieter part waits for energy to decay |
+| change detector | shape gap > 4 dB, leaky count to 0.7 s (0.4 s above 12 dB) | 3 frames: 7 restarts on kick/full bars and every piano or drum-tail decay; 1 s: switches T1dB up to 1.7 s |
+| restart seed | the candidate (since the gap was first seen, minus straddling frames) | from empty: a 0.5 s hold was needed and T1dB rose; with straddling frames: a 1 dB tail on bass -> hats |
+| alternation memory | the material before the last change and the one it went to, 12 s; merged halves average over 12 s | kick/full: 7 -> 2 restarts, excess from 10 s +0.17 LU |
+| level-drop rule | rescale only; 4 s wet, 0.6 s live leg | restarting on a level drop restarted every decay; the live leg needs the short window (Freeze + Mix 50 %, low -24: -2.28 LU with 4 s, -0.04 LU with 0.6 s) |
+| restored estimate | a prior (same 0.5 s fade as a cold start) | as the estimate itself, other material took 1.2-3 s (the review: pink still -18.8 dB at 3 s) |
+| re-prepare | keep the estimate (same geometry) or carry it band-compressed (new rate) | otherwise a -19.9 dB dip on every host re-prepare |
+| slew | 6 dB/s near, + 10/s x distance far (<= 120 dB/s) | unchanged from the second v2 |
+| time constant | 3 s | quick subset: 1 s p95 0.58 LU, spread 2.47 dB; 3 s 0.22 LU, 0.65 dB; 6 s 0.16 LU, 0.42 dB, twice as slow to follow |
 
 ### Recommendation
 
-Steady accuracy, pumping and every transient target are met (abrupt material
-switches on their physically achievable gate, as above). **Recommend AUTO on for
-new instances** (`kAutoGainDefaultForNewInstances`); not flipped here -- that is
-a product call, pending the independent re-review.
+Steady accuracy improved again, transients meet their targets (abrupt switches
+on their physically achievable gate), and on material that moves by itself v2
+now adds at most +0.23 LU of momentary spread over a constant gain -- except the
+first cycle of an alternation of very different halves under the most extreme
+shapes. **Recommend AUTO on for new instances** (`kAutoGainDefaultForNewInstances`);
+not flipped here, pending the independent re-review.
 
 ## Old sessions and the default
 
