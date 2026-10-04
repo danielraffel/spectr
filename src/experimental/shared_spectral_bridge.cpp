@@ -184,9 +184,13 @@ void SharedSpectralBridge::capture_frame(const MaskRenderer::Table& table,std::u
     slot.state.store(ready,std::memory_order_release);
 }
 bool SharedSpectralBridge::load_hop_gains() noexcept {
-    const auto first_frame=std::uint64_t(config_.renderer.design_grid_size/config_.renderer.analysis_hop-1);
-    if(hop_sequence_<first_frame){hop_gains_loaded_=true;return true;}
-    const auto frame=hop_sequence_-first_frame;
+    // Pulp 0.907's full-overlap stream grid starts at frame zero. The CPU
+    // renderer's effective-frame observer and the GPU session therefore use
+    // the same hop ordinal from the first submitted hop. Older Pulp versions
+    // began observing after the priming hops and required an offset here;
+    // retaining that offset skips the first control frames and diverges from
+    // the CPU path at every stream start.
+    const auto frame=hop_sequence_;
     auto& slot=controls_[frame%slots];unsigned expected=ready;
     if(!slot.state.compare_exchange_strong(expected,busy,std::memory_order_acquire)){
         fail_worker(FenceReason::MissingControl,worker_epoch_);return false;
