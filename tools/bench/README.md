@@ -14,3 +14,9 @@ python3 tools/bench/ui_bench.py \
 The existing native probe should be wrapped by a small adapter that maps its
 `factory_ms`/`first_present_ms` fields to `open_ms`/`first_frame_ms`.
 `--self-test` includes a planted missing-metric negative control.
+
+For the existing Cocoa open probe, adapt its JSON with:
+
+```sh
+--command 'open=python3 tools/bench/editor_open_adapter.py build/open-{run}.json'
+```
