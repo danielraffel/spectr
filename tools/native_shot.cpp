@@ -82,6 +82,14 @@ constexpr float kHeaderGapX = 1038.0f;
 
 int g_failures = 0;
 
+// Whether the SDK's bounded repaints survive a transform and a script
+// dispatch: it then exports View::damage_request_count(). A template so a
+// missing member reads as false rather than as a compile error.
+template <typename V>
+constexpr bool sdk_bounds_script_repaints() {
+    return requires { V::damage_request_count(); };
+}
+
 void settle(pulp::view::FrameClock& clock, int frames) {
     for (int frame = 0; frame < frames; ++frame) clock.tick(1.0f / 60.0f);
 }
@@ -2114,6 +2122,31 @@ int main(int argc, char** argv) {
                          " flip = !flip; const el = document.querySelector('[data-spectr-knob=intensity]');"
                          " if (el) el.style.width = flip ? '27px' : '26px'; }); })();",
                          "spectr-modctl-plant");
+            // SPECTR_MODCTL_ESCALATION=1: why a control's bounded repaint
+            // escalates to the whole surface -- every ancestor of the knob's
+            // played-value path and the View::request_repaint(Rect) rule it
+            // trips (render transform, filter, scrolling parent).
+            if (std::getenv("SPECTR_MODCTL_ESCALATION") != nullptr) {
+                const auto id = read_js("(() => { const el = document.querySelector("
+                                        "'[data-spectr-knob-played=intensity]');"
+                                        " return el ? (el.__pulpId || el._id || el.id || '(no id)') : '(absent)'; })()");
+                std::printf("[modctl-esc] knob path id=%s\n", id.c_str());
+                const pulp::view::View* v = find_by_id(*rig.root, id);
+                for (int depth = 0; v != nullptr; v = v->parent(), ++depth) {
+                    if (v->has_render_transform() || v->has_filter_effect()
+                        || (depth > 0 && v->applies_child_paint_offset()))
+                        std::printf("[modctl-esc] depth %d id=%s kind=%s transform=%d filter=%d "
+                                    "child_offset=%d bounds=(%.1f,%.1f %.1fx%.1f)\n",
+                                    depth, v->id().c_str(), typeid(*v).name(),
+                                    v->has_render_transform() ? 1 : 0,
+                                    v->has_filter_effect() ? 1 : 0,
+                                    v->applies_child_paint_offset() ? 1 : 0,
+                                    v->bounds().x, v->bounds().y, v->bounds().width,
+                                    v->bounds().height);
+                }
+                std::printf("[modctl-esc] walk done\n");
+                return 0;
+            }
             using Probe = spectr::shim::FrameCostProbe;
             const bool paint_frames = std::getenv("SPECTR_MODCTL_PAINT") != nullptr;
             // SPECTR_MODCTL_TRACE=FILE.pftrace: a Perfetto capture of the
@@ -2214,6 +2247,13 @@ int main(int argc, char** argv) {
             run("morph-quiet", {MT::Morph}, false, 0.0f);
             run("bands+freeze-quiet", {MT::Bands}, true, 0.0f);
             run("all-quiet", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.0f);
+            // Length and Preset step labels in the header (LENGTH, the preset
+            // name); Preset needs a chosen preset to have neighbours.
+            run("length-quiet", {MT::Length}, false, 0.0f);
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-pattern-menu-id=\"factory:flat\"]");
+            rig.service_runtime();
+            run("preset-quiet", {MT::Preset}, false, 0.0f);
             run("bank-tone", {MT::WholeBank}, false, 0.3f);
             run("all-tone", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.3f);
             if (modctl_tracing) {
@@ -2229,26 +2269,30 @@ int main(int argc, char** argv) {
             // to the controls' boxes (under 1 % of the editor; four 30 x 30
             // knobs and a 90 x 16 slider are ~0.4 %) and grew the p95 tick by
             // at most kModCtlBudgetMs.
-            // Damage is REPORTED, not gated. In this editor every frame that
-            // runs script still requests a whole-surface repaint whatever a
-            // control does: the bridge's own repaint request after a native
-            // dispatch or an animation frame is rect-less, and a bounded
-            // request under the design viewport's render transform escalates
-            // to the whole surface (View::request_repaint(Rect)). The macOS
-            // plug-in host repaints in full every frame regardless, so what a
-            // modulated control can cost is layout, commits and time, and
-            // those are gated.
-            constexpr bool kSdkBoundsAnimatedPaints = false;
+            // Damage is gated on an SDK whose bounded repaints survive the
+            // design-viewport transform and a script dispatch (it exports
+            // View::damage_request_count()). On an older one every frame
+            // that runs script requests the whole surface whatever a control
+            // does, so the numbers are reported, not gated.
+            constexpr bool kSdkBoundsAnimatedPaints =
+                sdk_bounds_script_repaints<pulp::view::View>();
+            if (!kSdkBoundsAnimatedPaints)
+                std::printf("[modctl-gate] damage NOT gated: this SDK predates bounded "
+                            "script/transform repaints\n");
             (void)SPECTR_SDK_HAS_FRAME_COST_PROBE;
             Probe::Budget budget;
             budget.max_p95_ms = kModCtlBudgetMs;
             // Whatever the idle editor already repaints whole (none, on an SDK
             // that bounds them) is the floor; modulation may add none.
+            // (a few frames of slack: the idle editor's own requests land on
+            // whichever frame the analyzer clock puts them in).
             budget.max_full_damage_frames = kSdkBoundsAnimatedPaints
-                ? results[0].s.full_damage_frames : 1 << 30;
+                ? results[0].s.full_damage_frames + 4 : 1 << 30;
             budget.max_layout_frames = 0;
+            // The knobs' own boxes: MIX, INTENSITY and OUTPUT sit in one 300 x
+            // 44 strip of the header, 1.2 % of the editor.
             budget.max_mean_damage_area = kSdkBoundsAnimatedPaints
-                ? 0.01 * kDesignWidth * kDesignHeight
+                ? 0.02 * kDesignWidth * kDesignHeight
                 : std::numeric_limits<double>::infinity();
             budget.min_painted_frames = 100;
             if (results.size() < 2 || results[1].name != "knobs-quiet") {
@@ -2267,15 +2311,20 @@ int main(int argc, char** argv) {
                                        + " windows made a React commit");
             // Morph and Bands redraw the plot, which is a canvas the size of
             // most of the editor, so their damage is that canvas's box -- not
-            // the whole surface -- and their frames stay inside the budget.
+            // the whole surface. A BANDS / LENGTH / preset step still rewrites
+            // a label (a whole-surface request), so at most half the frames
+            // may; the headless rig draws no plot frames of its own, so the
+            // knobs scenario above is the positive control.
             for (const auto& r : results) {
                 if (r.name == "idle-quiet" || r.name == "knobs-quiet") continue;
                 Probe::Budget plot = budget;
                 plot.max_mean_damage_area = kSdkBoundsAnimatedPaints
                     ? 0.85 * kDesignWidth * kDesignHeight
                     : std::numeric_limits<double>::infinity();
-                plot.max_layout_frames = r.s.frames / 8;  // a band-count step re-lays one label
-                plot.min_painted_frames = 1;
+                plot.max_full_damage_frames = kSdkBoundsAnimatedPaints
+                    ? r.s.frames / 2 : 1 << 30;
+                plot.max_layout_frames = 0;
+                plot.min_painted_frames = 0;
                 for (const auto& line : Probe::check(r.s, plot, &base.s))
                     breaches.push_back(r.name + ": " + line);
             }
