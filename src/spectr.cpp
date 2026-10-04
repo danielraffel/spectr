@@ -769,6 +769,7 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
     // Build the replacement to completion BEFORE retiring the live one. A
     // switch that cannot be prepared must leave the running mode untouched
     // rather than drop the instance into silence.
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_build_renderer (control)");
     auto replacement = build_renderer_(mode, gpu);
     if (!replacement) return false;
 
@@ -936,6 +937,7 @@ MaskRenderer* Spectr::claim_render_switch_(MaskRenderer* outgoing) noexcept {
         return nullptr;
     MaskRenderer* incoming = switch_incoming_;
     if (claimed == kSwitchPending) {
+        PULP_TRACE_INSTANT("dsp", "render_switch_begin");
         // Nothing has been heard since prepare or a reset (a host restoring a
         // session's mode before it starts the stream): the new renderer
         // starts the stream itself, as it would after a prepare.
@@ -966,6 +968,7 @@ void Spectr::release_render_switch_(MaskRenderer* incoming) noexcept {
         audio_applied_surface_valid_ = false;
         active_renderer_.store(incoming, std::memory_order_release);
         render_switch_state_.store(kSwitchDone, std::memory_order_release);
+        PULP_TRACE_INSTANT("dsp", "render_switch_done");
         // Lock-free: the worker frees the outgoing renderer off this thread.
         (void)switch_reclaim_lane_.try_spawn(SwitchReclaimTask{});
     } else {
@@ -978,6 +981,9 @@ bool Spectr::render_through_(MaskRenderer* renderer, MaskRenderer* incoming,
                              int num_samples) noexcept {
     if (incoming == nullptr || !switch_xfade_.active())
         return renderer->process(input, output, num_samples);
+    PULP_TRACE_SCOPE_NAMED_ARGS("dsp", "render_switch",
+        "position", static_cast<std::int64_t>(switch_xfade_.position()),
+        "warming", static_cast<std::int64_t>(switch_xfade_.warming() ? 1 : 0));
     const int channels = channels_;
     // The outgoing renderer may run in place, so both read a copy.
     for (int ch = 0; ch < channels; ++ch) {
@@ -1063,6 +1069,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     switch_reclaim_lane_.stop();
     abandon_render_switch_();
     stream_rendered_ = false;
+    trace_stream_pos_ = 0;
     active_renderer_.store(nullptr, std::memory_order_release);
     (void)switch_reclaim_lane_.start(&Spectr::switch_reclaim_trampoline_, this,
                                      pulp::format::BackgroundTaskPolicy::Latest);
@@ -1606,7 +1613,7 @@ bool Spectr::await_param_sync_(std::chrono::steady_clock::time_point deadline) n
 }
 
 void Spectr::await_offline_work_(MaskRenderer* renderer) noexcept {
-    PULP_TRACE_SCOPE_NAMED("audio", "offline: await design workers");
+    PULP_TRACE_SCOPE_NAMED("dsp", "offline: await design workers");
     // One budget for the whole block. Parameter sync first: it can publish a
     // new mask, which the renderer then has to have designed.
     const auto deadline = std::chrono::steady_clock::now() + kOfflineBlockWaitBudget;
@@ -1655,6 +1662,14 @@ void Spectr::process(
     // through a single realisation, so no output sample is half of one mode
     // and half of the other.
     const RenderEpochScope epoch_scope{render_epoch_};
+    // One span per host block, stamped with the stream position of its first
+    // sample and its length: a click found at sample N of a render is the
+    // block whose [stream_pos, stream_pos + frames) holds N. A no-op unless
+    // the SDK is built with tracing and a session is running.
+    PULP_TRACE_SCOPE_NAMED_ARGS("dsp", "process",
+        "stream_pos", trace_stream_pos_,
+        "frames", static_cast<std::int64_t>(output.num_samples()));
+    trace_stream_pos_ += static_cast<std::int64_t>(output.num_samples());
     MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
     // A mode switch in flight: this block renders both renderers and
     // crossfades (render_through_). Released last, after every other use of
