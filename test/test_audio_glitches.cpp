@@ -701,6 +701,41 @@ TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
 
 // ── 2/3. Reports// ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
 
+TEST_CASE("A loop Length suspends the spectral capture and a switch to a short Length still freezes",
+          "[freeze][deadline]") {
+    // At a loop Length the hold never reads the spectral capture, so it is
+    // suspended while nothing can need it. Switching to a short (spectral)
+    // Length resumes it with a fresh window: a press right after the switch
+    // arms and engages once that window is full, and the hold sounds.
+    const double rate = 48000.0;
+    const auto material = chord(4.0, rate);
+    Run run;
+    run.rate = rate;
+    run.block = 32;
+    run.mode = MaskRenderMode::zero_latency;
+    const std::size_t switch_at = at(2.0, rate), press = switch_at + 64;
+    Spectr* plugin = nullptr;
+    std::unique_ptr<pulp::format::HeadlessHost> keep;
+    bool suspended_before = false;
+    run.before = [&](Spectr& p, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                     pulp::state::ParameterEventQueue& ev) {
+        if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, float(spectr::kDefaultLengthPreset));
+        if (pos + std::size_t(n) == switch_at) {
+            suspended_before = p.freeze_source_suspended_for_test();
+            h.state().set_value(spectr::kParamFreezeLength, 2.0f);  // 1/12 bar: spectral
+        }
+        if (press >= pos && press < pos + std::size_t(n))
+            (void)ev.push({spectr::kParamFreeze, std::int32_t(press - pos), 1.0f, 0});
+    };
+    const auto out = render(material, run, &plugin, &keep);
+    CHECK(suspended_before);
+    REQUIRE(plugin->freeze_engaged_for_test());
+    const double held = rms(out.l, out.size() - at(0.5, rate), at(0.5, rate));
+    const double live = rms(out.l, switch_at - at(0.5, rate), at(0.5, rate));
+    INFO("held rms " << held << ", live rms " << live);
+    CHECK(held > 0.3 * live);
+}
+
 TEST_CASE("Glitch report: Freeze engage and release in Tracking",
           "[.][glitch-report]") {
     std::printf("\nFreeze engage/release, Tracking (spike dB over control)\n"
@@ -1385,7 +1420,7 @@ TEST_CASE("Null hash: a spectral Freeze hold through the product", "[.][null-has
     // two builds can be compared bit for bit: an optimisation that claims
     // to change no sample must print the same hashes.
     for (const double rate : {48000.0, 96000.0}) {
-        for (const int length_index : {0, 1, 2}) {
+        for (const int length_index : {0, 1, 2, 6, spectr::kDefaultLengthPreset}) {
             const auto material = chord(3.0, rate);
             Run run;
             run.rate = rate;
