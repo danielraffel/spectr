@@ -177,20 +177,57 @@ carries on. Host automation of the Freeze lane behaves the same way.
 
 ### Hold for Length
 
-**Hold for Length** (lane 4140, off by default; under the Freeze target in the
-band menu, in Settings > MODULATION and in the LIVE / FROZEN context menu)
-changes what a gate means: each **rising edge** latches the freeze for exactly
-the effective Length -- the length that engage takes, Length target included --
-then releases it, ignoring the LFO's off-phase meanwhile; the next rising edge
-after the release latches again. A rising edge during a hold is ignored. The
-release lands on the audio slice at or after the Length (at most one block
-late; the gate is evaluated per block). Off, the gate follows the LFO as
-above. Measured (`test/test_modulation_freeze.cpp`, "Hold for Length latches
-each Freeze-target engage for exactly the Length"): 1 bar at 120 and 90 BPM and
-a fraction of a bar at 150 BPM, every hold within one 256-sample block of the
-Length, re-latched one LFO cycle later; the same render with the switch off
-holds only the gate's own 10 % window. The editor's switch follows a host
-playing this lane at the next live projection.
+**Hold for Length = keep Freeze enabled for the length of the modulated
+Length.** Lane 4140, **off by default** (in a new instance and in a session
+saved before the lane existed); under the Freeze target in the band menu, in
+Settings > MODULATION and in the LIVE / FROZEN context menu.
+
+On, each **rising edge** of the Freeze target's gate is one trigger, played to
+the end like a sampler's one-shot: Freeze engages on fresh audio and holds for
+exactly the Length in effect at that trigger -- the user's LENGTH with the
+Length target's step at that moment -- then releases, whatever the LFO does
+meanwhile. The next trigger takes the Length in effect then, so successive
+freezes can be 2 bars, then 1/4 bar, then 1/8 bar, each held to its own end.
+A rising edge during a hold is ignored; one that lands on the slice a hold ends
+(a Length that is a whole number of LFO cycles, such as the default 1 bar at
+the default 4 beats) is a new trigger: the old hold releases and a new one
+latches fresh audio (`FreezeSource::retrigger`). The release lands on the
+audio slice at or after the Length (at most one block late; the gate is
+evaluated per block). Off, Freeze is a gate: frozen while the gate is high
+(Depth is the duty), released when it falls.
+
+The Length target keeps running during a hold but never resizes it: the hold's
+timer and the loop the freeze source latches both take the trigger's Length
+(the source's hold length is pinned to it until the hold ends). While a hold
+plays, the LENGTH label shows that hold's length; between holds it tracks the
+Length target again. The loop rings are grown ahead of time for the longest
+Length the routes can reach, so a long hold never loops a shorter ring.
+
+**One LFO on both Freeze and Length.** Its gate rises at the same phase every
+cycle, so read at the trigger every hold would take one length. Instead, each
+freeze reads the Length a step further along the LFO: the n-th hold reads that
+LFO's Length route `n / 8` of a cycle past its trigger (n counts holds since
+Hold for Length or its Freeze drive came on, the transport started or stopped,
+the stream was reset or a session was loaded; it wraps at 8). The lengths
+follow the wave's shape and Depth in an eight-hold cycle, deterministically, so
+an offline bounce plays the same lengths as real-time playback. A Length route
+on the other LFO is read at the trigger: its phase already differs from freeze
+to freeze. To vary the lengths independently of the trigger, modulate Length
+with the other LFO.
+
+Measured (`test/test_modulation_freeze.cpp`, 256-sample blocks at 48 kHz,
+120 BPM): with the defaults (1 bar, 4 beats) every hold is 2 s and re-latches
+fresh audio although Freeze never visibly drops ("Hold for Length releases
+every hold even when the next trigger lands on its end"); LFO 1 Sine at
+4 beats on Freeze (18 %) and Length (69 %) gives holds of 8 bars, 15/16, 2/3,
+5/6 and 2 bars, each released at its own end and each matching an independent
+`sin` oracle of the walked phase; LFO 2 Saw at 7 beats on Length gives
+lengths from 1/2 to 2 bars, each loop exactly its hold; off, the same
+single-LFO render freezes for the gate's own 18 % window. The editor's switch
+follows a host playing this lane at the next live projection.
+
+Not built: Depth as a trigger probability in Hold mode, and a "Chain" mode
+that starts the next hold at the end of the previous one.
 
 ## Length
 
@@ -283,15 +320,21 @@ One overlay: an outside press, Escape or a press on its control closes it.
 
 ## Touching a modulated control
 
-Modulation keeps running. A Freeze press holds until the gate's next change; a
+Modulation keeps running. A Freeze press holds until the gate's next change (with
+Hold for Length, the end of the hold or the next trigger); a
 LENGTH, BANDS or preset pick becomes the new centre. With **Ask before overriding modulation**
 on (Settings > MODULATION, default on) Spectr asks first, in the preset
 dialogs' style: "Freeze is being modulated by LFO 1. Turn off its Freeze
-target?" -- **Keep modulating** applies the action and leaves the LFO running;
-**Turn off** writes that LFO's target lane off (a recorded host gesture) and
-then applies it. Return = Turn off, Escape = Keep modulating, and **Don't ask
+target?" -- **Keep modulating** keeps the LFO in charge: a LENGTH, BANDS,
+preset or knob change still applies (it becomes the centre the LFO moves
+around), but a Freeze press is dropped, because it would override the very gate
+the user chose to keep -- LIVE / FROZEN goes on following the LFO
+(`tools/patch_materialized_freeze_keep_modulating.py`). **Turn off** writes
+that LFO's target lane off (a recorded host gesture) and then applies the
+action, the Freeze press included. Return = Turn off, Escape = Keep modulating, and **Don't ask
 again** turns the Setting off. The dialog is generic
-(`window.spectrOverrideModulated(control, target, lfos, action)`); the Mix,
+(`window.spectrOverrideModulated(control, target, lfos, action, options)`;
+`options.keepApplies === false` drops the action on Keep); the Mix,
 Intensity and Output knobs ask it in their own names.
 
 ## Smoothness

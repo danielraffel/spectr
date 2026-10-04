@@ -466,6 +466,7 @@ public:
         phase_ = Phase::live;
         weight_step_ = 0;
         pending_engage_ = false;
+        retrigger_ = false;
         loop_mode_ = false;
         fade_rho_ = 0.0f;
         if (storage_) std::fill(storage_->record.begin(), storage_->record.end(), 0.0f);
@@ -492,6 +493,15 @@ public:
 
     /// Freeze request. Takes effect at the next hop boundary.
     void set_frozen(bool frozen) noexcept { requested_ = frozen; }
+    /// A new freeze that starts while the previous one may still be heard:
+    /// at the next hop boundary a hold that is engaging or held releases and
+    /// the source latches again once the release is done -- fresh audio, at
+    /// the hold length requested then. A request that stays on across the
+    /// end of one hold and the start of the next is otherwise
+    /// indistinguishable from one long hold. Ignored unless frozen is
+    /// requested at that boundary; a hold not yet heard (arming, preparing)
+    /// already takes the next latch.
+    void retrigger() noexcept { retrigger_ = true; }
     [[nodiscard]] bool frozen_requested() const noexcept { return requested_; }
 
     /// Hold length for the NEXT latch; a hold already playing keeps its own.
@@ -506,6 +516,9 @@ public:
     /// True when the hold that is (or was last) latched loops the audio
     /// itself rather than holding its spectrum.
     [[nodiscard]] bool looping() const noexcept { return loop_mode_; }
+    /// Latches since prepare: each one a freeze taken from fresh input
+    /// (for tests and diagnostics).
+    [[nodiscard]] std::uint32_t latch_count() const noexcept { return latch_count_; }
     /// The latched loop's length in samples (0 before the first loop).
     [[nodiscard]] std::int64_t loop_length() const noexcept { return loop_length_; }
     /// True while any held content reaches the output.
@@ -741,7 +754,17 @@ private:
         if (requested_) {
             if (phase_ == Phase::live) phase_ = Phase::arming;
             else if (phase_ == Phase::releasing) pending_engage_ = true;
+            else if (retrigger_
+                     && (phase_ == Phase::engaging || phase_ == Phase::held)) {
+                // Release this hold, then latch the next one.
+                phase_ = Phase::releasing;
+                hold_.set_frozen(false); // restarts the capture window
+                release_rho_ = last_rho_;
+                pending_engage_ = true;
+            }
+            retrigger_ = false;
         } else {
+            retrigger_ = false;
             pending_engage_ = false;
             if (phase_ == Phase::arming || phase_ == Phase::preparing) {
                 // Nothing of the hold has been heard.
@@ -853,6 +876,7 @@ private:
     // as its first pass plays (the recording keeps every sample of it for
     // longer than a pass).
     void begin_loop_prepare_() noexcept {
+        ++latch_count_;
         loop_end_ = recorded_ + kHop;
         const auto wanted = wanted_loop_length_();
         const std::int64_t history = history_ + kHop;
@@ -1153,6 +1177,7 @@ private:
     // over one hop: the hold is rendered from its phases once, and each later
     // frame is one complex multiply per bin.
     void begin_prepare_() noexcept {
+        ++latch_count_;
         // The live level the hold is matched to: the capture window's mean,
         // as it stands at the latch.
         const int frames = hold_.capture_frames();
@@ -1591,6 +1616,8 @@ private:
     bool prepared_ = false;
     bool requested_ = false;
     bool pending_engage_ = false;
+    bool retrigger_ = false;
+    std::uint32_t latch_count_ = 0;
 
     // The loop (see THE LOOP and LOOP MEMORY).
     std::unique_ptr<LoopStorage> storage_;        // audio-owned after prepare()
