@@ -8,6 +8,14 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+// The SDK compiles a scripted editor's scripts and verifies its document on a
+// background worker when a host instantiates the plug-in, if the plug-in says
+// what they are (Processor::editor_prewarm). Older SDKs have no hook.
+#if __has_include(<pulp/format/editor_prewarm.hpp>)
+#define SPECTR_HAS_EDITOR_PREWARM 1
+#else
+#define SPECTR_HAS_EDITOR_PREWARM 0
+#endif
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -516,6 +524,11 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+    /// The materialized editor's runtime, design and help scripts and its
+    /// captured document, byte-identical to what an open evaluates.
+    EditorPrewarm editor_prewarm() const override;
+#endif
 #if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
 #error "Spectr requires a Pulp SDK with Processor::editor_background()"
 #endif

@@ -803,6 +803,27 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
     }
 }
 
+#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+pulp::format::Processor::EditorPrewarm Spectr::editor_prewarm() const {
+    // Views of the embedded package, the same bytes write_embedded_package()
+    // puts on disk and the editor reads back: runtime.js is evaluated whole,
+    // it imports materialized-document.runtime.json, and the document bind
+    // evaluates design.js and help-content.js.
+    const auto view = [](const char* name) {
+        for (const auto& file : kEmbeddedFiles)
+            if (std::string_view{file.relative_path} == name)
+                return std::string_view{reinterpret_cast<const char*>(file.data), file.size};
+        return std::string_view{};
+    };
+    EditorPrewarm request;
+    for (const char* script : {"runtime.js", "design.js", "help-content.js"})
+        if (auto text = view(script); !text.empty()) request.scripts.push_back(text);
+    if (auto document = view("materialized-document.runtime.json"); !document.empty())
+        request.materialized_documents.push_back(document);
+    return request;
+}
+#endif
+
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_create");
     (void)install_host_view_first_mouse();
