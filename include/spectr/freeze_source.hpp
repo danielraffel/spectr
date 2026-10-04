@@ -112,6 +112,7 @@
 /// lock-free and reads no clock. All members except `prepare()` belong to the
 /// audio thread.
 
+#include <pulp/runtime/trace.hpp>
 #include <pulp/signal/fft.hpp>
 #include <pulp/signal/freeze_hold.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -719,6 +720,7 @@ private:
     // One hop of input has been recorded and the ready segment of the output
     // ring consumed. Analyse, capture, latch, advance and resynthesise.
     void hop_boundary_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hop");
         // Mean input power of the hop just recorded, and of the analysis
         // window that ends with it.
         const auto hop_ring = hop_energy_.size();
@@ -807,7 +809,10 @@ private:
             // anything into it: the hold continues its partials in phase.
             if (phase_ == Phase::arming && !loop)
                 std::copy(spectra_.begin(), spectra_.end(), latched_.begin());
-            hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            {
+                PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hold_group");
+                hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            }
             if (phase_ == Phase::arming) {
                 if (loop) {
                     if (loop_ready_()) begin_loop_prepare_();
@@ -1061,6 +1066,7 @@ private:
 
     // Windowed FFT of the most recent kFftSize input samples, oldest first.
     void analyse_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.analyse");
         const auto window = static_cast<std::size_t>(kFftSize);
         for (int ch = 0; ch < channels_; ++ch) {
             const float* ring = input_ring_.data() + static_cast<std::size_t>(ch) * window;

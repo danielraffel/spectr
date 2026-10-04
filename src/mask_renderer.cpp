@@ -793,6 +793,7 @@ private:
     }
 
     void render_block_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "tracking.render_block");
         // The fade a swap landing now is given is the gap it closes: the
         // samples since the previous swap landed, clamped. Saturate the count
         // so an idle renderer cannot overflow it. See kIrCrossfadeSamples.
