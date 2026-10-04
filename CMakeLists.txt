@@ -600,6 +600,7 @@ add_executable(Spectr-test
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
     test/test_auto_gain_v2.cpp
+    test/test_auto_gain_v2_transients.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -1025,6 +1026,28 @@ add_test(NAME Spectr-level-autogain-v2-no-smoothing-negative-control
 set_tests_properties(Spectr-level-autogain-v2-no-smoothing-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst_spread <= 0\\.5 \\)")
+# Auto Gain v2 transients (test/test_auto_gain_v2_transients.cpp): the first
+# v2 forgot the material at every locate, and followed a change of material or
+# a Freeze release only at 6 dB/s behind a 3 s average. Each re-creation must
+# fail the gate it motivated.
+add_test(NAME Spectr-level-autogain-v2-reset-on-seek-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-reset-on-seek
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 keeps its level across a locate")
+set_tests_properties(Spectr-level-autogain-v2-reset-on-seek-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst\\.momentary <= kMomentaryGate \\)")
+add_test(NAME Spectr-level-autogain-v2-stale-on-change-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-stale-on-change
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a change of material to quieter and louder")
+set_tests_properties(Spectr-level-autogain-v2-stale-on-change-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst\\.t1db <= kChangeT1dbGate \\)")
+add_test(NAME Spectr-level-autogain-v2-stale-freeze-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-stale-on-change
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a Freeze engage and release")
+set_tests_properties(Spectr-level-autogain-v2-stale-freeze-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( release\\.t1db <= kChangeT1dbGate \\)")
 # The Output LFO destination lands once per block (no ramp): its smoothness
 # gate must catch the per-block zipper.
 add_test(NAME Spectr-level-target-step-negative-control

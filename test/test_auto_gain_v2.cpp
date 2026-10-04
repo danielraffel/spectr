@@ -108,10 +108,17 @@ TEST_CASE("Auto Gain v2 does not pump on steady material",
     const Shape shapes[] = {region("low broad +12", 0, 9, 12.0f),
                             region("high broad -12", 24, 31, -12.0f)};
     double worst_spread = 0.0, worst_extra_sd = 0.0;
+    std::uint64_t worst_restarts = 0;
     for (const auto& m : materials)
         for (const auto& shape : shapes) {
             const auto off = render(m.in, shape, Mode::off);
-            const auto on = render(m.in, shape, Mode::v2);
+            std::uint64_t restarts = 0;
+            RenderOptions count;
+            count.finish = [&](pulp::format::HeadlessHost&, spectr::Spectr& plugin) {
+                restarts = plugin.auto_gain_material().spectrum().restarts();
+            };
+            const auto on = render(m.in, shape, Mode::v2, count);
+            worst_restarts = std::max(worst_restarts, restarts);
             std::vector<float> settled;
             for (std::size_t b = 0; b < on.block_end.size(); ++b)
                 if (on.block_end[b] > from) settled.push_back(on.applied_db[b]);
@@ -130,8 +137,12 @@ TEST_CASE("Auto Gain v2 does not pump on steady material",
         }
     std::printf("[autogain-v2] pumping: worst applied spread %.3f dB, worst extra momentary "
                 "sd %.3f LU\n", worst_spread, worst_extra_sd);
+    std::printf("[autogain-v2] pumping: change detector restarts on steady material: %llu\n",
+                static_cast<unsigned long long>(worst_restarts));
     CHECK(worst_spread <= 0.5);
     CHECK(worst_extra_sd <= 0.05);
+    // Steady material is never mistaken for a change of material.
+    CHECK(worst_restarts == 0);
 }
 
 TEST_CASE("Auto Gain v2 does not depend on how the host chops the stream",

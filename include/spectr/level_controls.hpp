@@ -257,7 +257,11 @@ private:
 /// same), `autogain-v2-no-smoothing` (each frame replaces v2's estimate and
 /// the target is not slew-limited), `autogain-v2-drawn-response` (v2 weighs
 /// the drawn band steps instead of the renderer's realised response; used by
-/// the advisory sweep to show what the realised response buys).
+/// the advisory sweep to show what the realised response buys),
+/// `autogain-v2-reset-on-seek` (v2 forgets the material at every locate),
+/// `autogain-v2-stale-on-change` (no change detector, no level-drop rule, no
+/// Freeze leg switch, a fixed 6 dB/s), `autogain-v2a` (both: the first v2's
+/// transient behaviour, for the sweep's comparison).
 /// Read once per process; unset in every shipping run. The Spectr constructor
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.
