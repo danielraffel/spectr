@@ -1138,3 +1138,115 @@ TEST_CASE("Glitch report: LFO-driven destinations in Tracking against Mixing",
         }
     }
 }
+
+// ── Traced captures: audio + Perfetto on one timeline ──────────────────────
+//
+// Each flow renders through the processor with a trace session running and
+// writes <flow>.wav and <flow>.pftrace side by side. Every host block is a
+// "process" slice (category dsp) carrying `stream_pos` and `frames`, so a
+// glitch found at sample N of the WAV is the slice whose [stream_pos,
+// stream_pos + frames) holds N; Pulp's tools/audio/glitch_trace.py does that
+// join and reports per-block time against the block deadline. Needs an SDK
+// built with tracing; against a shipping SDK the session does not start and
+// the case says so instead of writing empty traces.
+
+#include <pulp/runtime/trace_session.hpp>
+#include <filesystem>
+#include <fstream>
+
+namespace {
+
+void write_wav(const std::string& path, const Stereo& x, double rate) {
+    std::ofstream f(path, std::ios::binary);
+    const auto put32 = [&](std::uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+    const auto put16 = [&](std::uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+    const std::uint32_t frames = std::uint32_t(x.size()), bytes = frames * 2 * 4;
+    f.write("RIFF", 4); put32(36 + bytes); f.write("WAVE", 4);
+    f.write("fmt ", 4); put32(16); put16(3); put16(2); put32(std::uint32_t(rate));
+    put32(std::uint32_t(rate) * 8); put16(8); put16(32);
+    f.write("data", 4); put32(bytes);
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        f.write(reinterpret_cast<const char*>(&x.l[i]), 4);
+        f.write(reinterpret_cast<const char*>(&x.r[i]), 4);
+    }
+}
+
+} // namespace
+
+TEST_CASE("Glitch trace: render each reported flow with Perfetto running", "[.][glitch-trace]") {
+    const char* dir_env = std::getenv("SPECTR_GLITCH_TRACE_DIR");
+    const std::string dir = dir_env ? dir_env : "/tmp/spectr-glitch-traces";
+    std::filesystem::create_directories(dir);
+    const double rate = 48000.0;
+    const int block = 256;
+    const auto capture = [&](const std::string& name, Run run, const Stereo& material) {
+        run.rate = rate;
+        run.block = block;
+        const std::string trace_path = dir + "/" + name + ".pftrace";
+        if (!pulp::runtime::Tracing::start({"dsp", "state"}, trace_path, 256u * 1024u)) {
+            WARN("tracing is not compiled into this SDK; nothing captured for " << name);
+            return;
+        }
+        const auto out = render(material, run);
+        const auto stopped = pulp::runtime::Tracing::stop();
+        write_wav(dir + "/" + name + ".wav", out, rate);
+        std::printf("captured %s: %s (%llu bytes) + %s.wav\n", name.c_str(), stopped.path.c_str(),
+                    (unsigned long long)stopped.trace_bytes, name.c_str());
+    };
+    const auto material = chord(6.0, rate);
+    // Mixing <-> Tracking. SPECTR_PLANT_HARD_RENDER_SWITCH gives the cut.
+    for (const auto from : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+        Run run;
+        run.mode = from;
+        run.shaped = true;
+        run.auto_gain = 1.0f;
+        bool switched = false;
+        run.before = [switched, from](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int,
+                                      pulp::state::ParameterEventQueue&) mutable {
+            if (!switched && pos >= std::size_t(2.0 * 48000.0)) {
+                (void)p.set_render_mode(from == MaskRenderMode::zero_latency
+                    ? MaskRenderMode::linear_phase : MaskRenderMode::zero_latency);
+                switched = true;
+            }
+        };
+        capture(from == MaskRenderMode::zero_latency ? "switch-tracking-to-mixing"
+                                                     : "switch-mixing-to-tracking", run, material);
+    }
+    // FROZEN engage and release, Tracking, 1 bar and 1/4 bar.
+    for (const int length_index : {spectr::kDefaultLengthPreset, 6}) {
+        Run run;
+        run.mode = MaskRenderMode::zero_latency;
+        run.shaped = true;
+        run.auto_gain = 1.0f;
+        const std::size_t engage = at(2.0, rate) + 77, release = at(4.5, rate) + 13;
+        run.before = [=](Spectr&, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                         pulp::state::ParameterEventQueue& ev) {
+            if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, float(length_index));
+            if (engage >= pos && engage < pos + std::size_t(n))
+                (void)ev.push({spectr::kParamFreeze, std::int32_t(engage - pos), 1.0f, 0});
+            if (release >= pos && release < pos + std::size_t(n))
+                (void)ev.push({spectr::kParamFreeze, std::int32_t(release - pos), 0.0f, 0});
+        };
+        capture(length_index == spectr::kDefaultLengthPreset ? "freeze-tracking-1bar"
+                                                             : "freeze-tracking-quarter", run, material);
+    }
+    // A 60 Hz band drag, Tracking.
+    {
+        Run run;
+        run.mode = MaskRenderMode::zero_latency;
+        run.shaped = true;
+        run.auto_gain = 1.0f;
+        std::size_t next = at(2.0, rate);
+        run.before = [next, rate](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int n,
+                                  pulp::state::ParameterEventQueue&) mutable {
+            const std::size_t start = at(2.0, rate), stop = at(3.5, rate);
+            while (next >= pos && next < pos + std::size_t(n) && next < stop) {
+                auto field = p.processing_state_snapshot().field;
+                field.bands[10].gain_db = float(-24.0 + 30.0 * double(next - start) / double(stop - start));
+                p.replace_field(field);
+                next += at(1.0 / 60.0, rate);
+            }
+        };
+        capture("drag-tracking", run, material);
+    }
+}

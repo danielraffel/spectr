@@ -1070,6 +1070,9 @@ private:
     // stream reset. A switch before the stream has started has nothing heard
     // to fade from, so it completes at once.
     bool                                   stream_rendered_ = false;
+    // Audio thread: samples rendered since prepare, stamped on the per-block
+    // trace span so a sample position in a render maps to its block's slice.
+    std::int64_t                           trace_stream_pos_ = 0;
     /// Replays one wet block to a renderer during a switch, so the freeze
     /// source (which advances when it is run) is run ONCE per block however
     /// many renderers are listening. Unarmed it forwards to the real source.
