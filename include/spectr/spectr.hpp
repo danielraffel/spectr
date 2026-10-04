@@ -8,6 +8,14 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+// The SDK compiles a scripted editor's scripts and verifies its document on a
+// background worker when a host instantiates the plug-in, if the plug-in says
+// what they are (Processor::editor_prewarm). Older SDKs have no hook.
+#if __has_include(<pulp/format/editor_prewarm.hpp>)
+#define SPECTR_HAS_EDITOR_PREWARM 1
+#else
+#define SPECTR_HAS_EDITOR_PREWARM 0
+#endif
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -190,6 +198,11 @@ struct ModulatedFieldSnapshot {
     BandField     field{};
     std::uint64_t sequence = 0;
     bool          active   = false;
+    /// An LFO drives a header control (Intensity, Mix, Output, Morph or
+    /// Bands). Those targets keep the publication running so the editor can
+    /// draw the control at its modulated value, without `active` -- which
+    /// hands the band overlay the paint refs -- being claimed for them.
+    bool          controls_driven = false;
 
     // ── Display-time reconstruction inputs ──────────────────────────────
     //
@@ -552,6 +565,11 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+    /// The materialized editor's runtime, design and help scripts and its
+    /// captured document, byte-identical to what an open evaluates.
+    EditorPrewarm editor_prewarm() const override;
+#endif
 #if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
 #error "Spectr requires a Pulp SDK with Processor::editor_background()"
 #endif
@@ -1661,6 +1679,10 @@ private:
     double        native_modulation_drawn_phase_ = -1.0;
     double        native_modulation_drawn_phase_2_ = -1.0;
     int           native_modulation_stale_ticks_ = 0;
+    /// The band overlay was last sent active (so its release is owed).
+    bool          native_modulation_field_shown_ = false;
+    /// The last modulation_controls publication, quantised; -1 = none sent.
+    std::int64_t  native_modulation_controls_key_ = -1;
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
@@ -1686,6 +1708,10 @@ private:
     /// this frame's time from the audio owner's published inputs and hand it
     /// to the editor. Display only -- it never re-enters canonical state.
     void publish_modulation_frame_();
+    void publish_modulation_controls_(const ModulatedFieldSnapshot& modulated,
+                                      double phase_1, double phase_2,
+                                      const LfoShapeFade& fade_1,
+                                      const LfoShapeFade& fade_2);
     /// Tell the editor when the LFOs drive Freeze or Length, and the
     /// LIVE/FROZEN state the audio owner is playing. Sent on change only.
     void publish_freeze_display_();

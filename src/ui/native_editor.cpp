@@ -803,6 +803,27 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
     }
 }
 
+#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+pulp::format::Processor::EditorPrewarm Spectr::editor_prewarm() const {
+    // Views of the embedded package, the same bytes write_embedded_package()
+    // puts on disk and the editor reads back: runtime.js is evaluated whole,
+    // it imports materialized-document.runtime.json, and the document bind
+    // evaluates design.js and help-content.js.
+    const auto view = [](const char* name) {
+        for (const auto& file : kEmbeddedFiles)
+            if (std::string_view{file.relative_path} == name)
+                return std::string_view{reinterpret_cast<const char*>(file.data), file.size};
+        return std::string_view{};
+    };
+    EditorPrewarm request;
+    for (const char* script : {"runtime.js", "design.js", "help-content.js"})
+        if (auto text = view(script); !text.empty()) request.scripts.push_back(text);
+    if (auto document = view("materialized-document.runtime.json"); !document.empty())
+        request.materialized_documents.push_back(document);
+    return request;
+}
+#endif
+
 std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_create");
     (void)install_host_view_first_mouse();
@@ -878,6 +899,12 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     options.enable_runtime_import = true;
     native_scripted_ui_ = std::make_unique<pulp::view::ScriptedUiSession>(
         *root, state(), std::move(options));
+    // A new document has drawn none of the display-only publications: the
+    // next tick sends each of them again rather than assuming the last
+    // editor's state.
+    native_modulation_controls_key_ = -1;
+    native_modulation_field_shown_ = false;
+    native_freeze_display_ = -1;
 
     if (!native_editor_handlers_registered_) {
         register_spectr_editor_handlers(
@@ -1400,6 +1427,63 @@ void Spectr::publish_freeze_display_() {
     }
 }
 
+void Spectr::publish_modulation_controls_(const ModulatedFieldSnapshot& modulated,
+                                          double phase_1, double phase_2,
+                                          const LfoShapeFade& fade_1,
+                                          const LfoShapeFade& fade_2) {
+    const bool driven = modulated.controls_driven;
+    const auto& settings = modulated.settings;
+    const bool intensity_on = driven && modulation_drives(settings, ModulationTarget::Intensity);
+    const bool mix_on = driven && modulation_drives(settings, ModulationTarget::Mix);
+    const bool output_on = driven && modulation_drives(settings, ModulationTarget::Output);
+    const bool morph_on = driven && modulation_drives(settings, ModulationTarget::Morph);
+    ModulationCoordinates coords;
+    if (driven)
+        coords = modulation_coordinates(settings, lfo_value(fade_1, phase_1),
+                                        lfo_value(fade_2, phase_2));
+    const float intensity_pull = intensity_on ? level_pull(coords, ModulationTarget::Intensity) : 0.0f;
+    const float mix_pull = mix_on ? level_pull(coords, ModulationTarget::Mix) : 0.0f;
+    const float output_db = output_on ? output_modulation_db(coords) : 0.0f;
+    const float morph_offset = morph_on
+        ? coords[ModulationTarget::Morph] * kModulationMorphExcursion : 0.0f;
+    // Quantised to well under a pixel of any control's travel: a knob sweeps
+    // 270 degrees over 26 pt, so 1/2048 of its range is a twentieth of a
+    // degree. A publication that would draw the same pixels is not sent.
+    const auto q = [](float v, float scale) {
+        return static_cast<std::int64_t>(std::lround(static_cast<double>(v) * scale)) & 0xFFFF;
+    };
+    const std::int64_t key = (intensity_on ? 1 : 0) | (mix_on ? 2 : 0)
+        | (output_on ? 4 : 0) | (morph_on ? 8 : 0)
+        | (q(intensity_pull, 2048.0f) << 4) | (q(mix_pull, 2048.0f) << 20)
+        | (q(output_db, 256.0f) << 36) | (q(morph_offset, 2048.0f) << 52);
+    if (key == native_modulation_controls_key_) return;
+    // Nothing driven and nothing shown: the first frames of a field-only
+    // modulation have nothing to say about the controls.
+    if (native_modulation_controls_key_ < 0 && !driven) {
+        native_modulation_controls_key_ = key;
+        return;
+    }
+    native_modulation_controls_key_ = key;
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_modulation_controls");
+    auto payload = choc::value::createObject("SpectrModulationControls");
+    payload.addMember("intensity_on", intensity_on);
+    payload.addMember("mix_on", mix_on);
+    payload.addMember("output_on", output_on);
+    payload.addMember("morph_on", morph_on);
+    payload.addMember("intensity_pull", static_cast<double>(intensity_pull));
+    payload.addMember("mix_pull", static_cast<double>(mix_pull));
+    payload.addMember("output_db", static_cast<double>(output_db));
+    payload.addMember("morph_offset", static_cast<double>(morph_offset));
+    try {
+        native_scripted_ui_->bridge()->dispatch_native_message(
+            "__spectrPublishNativeMessage", "modulation_controls", payload,
+            "spectr-modulation-controls", "spectr-native-modulation-controls");
+    } catch (const std::exception& error) {
+        pulp::runtime::log_error("[Spectr native] modulation controls rejected: {}",
+                                 error.what());
+    }
+}
+
 void Spectr::publish_modulation_frame_() {
     // Modulation overlay. The audio owner publishes the post-LFO band field
     // once per processed block; drawing it is what makes an LFO assigned to a
@@ -1473,6 +1557,25 @@ void Spectr::publish_modulation_frame_() {
     native_modulation_drawn_phase_ = phase_1;
     native_modulation_drawn_phase_2_ = phase_2;
     if (unchanged) return;
+
+    // The header controls an LFO moves -- INTENSITY, MIX, OUTPUT and the
+    // MORPH slider -- are drawn at their modulated value around the value the
+    // user set (docs/modulation.md, "The knobs"). Sent as the target's
+    // coordinate, not as a value: the editor applies it to the base value the
+    // control is showing, so a control that host automation is moving shows
+    // the automated base and the LFO's movement around it in one frame.
+    // Small, and only when a quantised value moved.
+    publish_modulation_controls_(modulated, phase_1, phase_2, fade_1, fade_2);
+
+    // The band overlay. Only a field-moving target claims it; a control-only
+    // publication (an LFO on Intensity alone) sends nothing here once the
+    // overlay's release has gone out.
+    if (!modulated.active) {
+        if (!native_modulation_field_shown_) return;
+        native_modulation_field_shown_ = false;
+    } else {
+        native_modulation_field_shown_ = true;
+    }
 
     const BandField* drawn = &modulated.field;
     if (reconstructable) {

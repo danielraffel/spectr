@@ -2402,11 +2402,26 @@ void Spectr::process(
                     // already applies per LFO.
                     const bool modulation_active =
                         modulation_audible(modulation_settings);
+                    // The header controls an LFO moves (Intensity, Mix,
+                    // Output, Morph, Bands) are drawn at their modulated
+                    // value. Those targets do not reshape the field, so they
+                    // keep the publication running without claiming the band
+                    // overlay (`active` stays the field's own answer).
+                    const auto drives_control = [&](ModulationTarget target) {
+                        return modulation_drives(modulation_settings, target);
+                    };
+                    const bool controls_driven =
+                        drives_control(ModulationTarget::Intensity)
+                        || drives_control(ModulationTarget::Mix)
+                        || drives_control(ModulationTarget::Output)
+                        || drives_control(ModulationTarget::Morph)
+                        || drives_control(ModulationTarget::Bands);
+                    const bool publishing = modulation_active || controls_driven;
                     // While running, every block is a new frame. On the falling
                     // edge one last frame carries active=false, which is the
                     // editor's cue to release the overlay and draw canonical
                     // state instead of freezing on the final modulated value.
-                    if (modulation_active || modulated_field_was_active_) {
+                    if (publishing || modulated_field_was_active_) {
                         ++modulated_field_sequence_;
                         const auto sequence = modulated_field_sequence_;
                         // The same tempo resolution the phase advance below
@@ -2439,6 +2454,7 @@ void Spectr::process(
                                 slot.field     = audible;
                                 slot.sequence  = sequence;
                                 slot.active    = modulation_active;
+                                slot.controls_driven = controls_driven;
                                 slot.pre_field = host_field;
                                 slot.settings  = modulation_settings;
                                 slot.snapshots = audio_modulation.snapshots;
@@ -2454,7 +2470,7 @@ void Spectr::process(
                                 slot.published_ns = published_ns;
                             });
                     }
-                    modulated_field_was_active_ = modulation_active;
+                    modulated_field_was_active_ = publishing;
 
                     pulp::signal::SpectralBandLayout automated;
                     // ── Bands destination ───────────────────────────────
