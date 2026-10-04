@@ -77,7 +77,7 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.901.0 REQUIRED)
+find_package(Pulp 0.907.0 REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -638,12 +638,13 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
-# The stream-start case with the priming removed: the measurement must reject
-# it, or it could not see the fade it exists to catch.
+# The stream-start case with the framework's full-overlap stream start turned
+# off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
+# measurement must reject it, or it could not see the fade it exists to catch.
 add_test(NAME Spectr-stream-start-negative-control
     COMMAND Spectr-test "The first samples of a stream reach the output at full level")
 set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
-    ENVIRONMENT SPECTR_PLANT_NO_STREAM_PRIME=1 WILL_FAIL TRUE TIMEOUT 120)
+    ENVIRONMENT SPECTR_PLANT_NO_FULL_OVERLAP=1 WILL_FAIL TRUE TIMEOUT 120)
 # A Latency switch with the warm-up and crossfade removed -- the cut it used to
 # be. The dropout and click measurement must reject it.
 add_test(NAME Spectr-render-switch-negative-control
@@ -659,6 +660,25 @@ add_test(NAME Spectr-deadline-96k-negative-control
     COMMAND Spectr-test "Both modes keep every callback inside a 32-sample deadline at 96 kHz")
 set_tests_properties(Spectr-deadline-96k-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=120000 WILL_FAIL TRUE TIMEOUT 300)
+
+# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
+# the shipping build (the macros are no-ops there) and breaks the first traced
+# build. Checked against the SDK's own declared list, with a planted control.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+get_filename_component(_spectr_pulp_trace_header
+    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
+if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}" --self-test)
+    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
+        PROPERTIES TIMEOUT 60)
+endif()
 
 # The product-independent loudness-compensation unit behind Auto Gain v2
 # (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
@@ -4170,7 +4190,10 @@ endif()
 # in-process, never activated or focused, in a borderless window off every
 # screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
 # without one. Warm opens only for the time gate: the first open of a freshly
-# built binary also pays one-time dyld and Metal shader-cache costs.
+# built binary also pays one-time dyld and Metal shader-cache costs. Since Pulp
+# 0.907 the editor opens content-first: the call includes the document mount
+# and the first frame (warm ~150 ms on an idle M5 Max, 225-320 ms under a
+# build load of 50-80), so the budget is the mount's, with headroom for load.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
@@ -4182,7 +4205,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-editor-open-probe
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
-            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 600)
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
@@ -4208,12 +4231,23 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
                 --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
                 --settled-bg ${_spectr_first_frame_rgb}
                 --expect-first-rgb ${_spectr_first_frame_rgb}
+                --expect-first-ui
                 --max-offbrand-frames 0)
         set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
             TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
             RESOURCE_LOCK spectr_native_materialized_editor
             FIXTURES_REQUIRED spectr_first_frame_dirs)
     endforeach()
+    # The content-first contract has a control: the SDK's view-first order
+    # (the empty background before the document) must fail --expect-first-ui.
+    add_test(NAME Spectr-au-editor-first-frame-view-first-control
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 1 --settle-ms 600 --pixels --expect-first-ui)
+    set_tests_properties(Spectr-au-editor-first-frame-view-first-control PROPERTIES
+        ENVIRONMENT PULP_EDITOR_OPEN=view-first WILL_FAIL TRUE
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
     # Out-of-process variant (AUHostingService + remote view controller). Not a
     # ctest: it needs the component installed where AUHostingService finds it.
     add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
