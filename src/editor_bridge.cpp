@@ -2,6 +2,8 @@
 
 #include "spectr/spectr.hpp"
 #include "spectr/detail/gpu_audio_status_projection.hpp"
+#include "spectr/render_mode.hpp"
+#include <cstdio>
 #include "spectr/edit_engine.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/pattern.hpp"
@@ -167,6 +169,17 @@ std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gp
                                   : std::string_view{"clean"});
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
+    {
+        // The delay the HOST is told for the active mode, which is what its
+        // delay compensation applies -- not a per-mode constant.
+        char latency[160];
+        std::snprintf(latency, sizeof(latency), "%s, %d samples (%.1f ms at %.0f Hz)",
+                      std::string(render_mode_label(plugin.render_mode())).c_str(),
+                      plugin.latency_samples(),
+                      plugin.render_mode_latency_ms(plugin.render_mode()),
+                      plugin.sample_rate());
+        append("Latency reported to host", latency);
+    }
     result.append(detail::gpu_audio_status_copy_text(gpu_status));
     return result;
 }
@@ -194,6 +207,14 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     // Lets the editor show its TRACING badge from the mount rather than
     // committing again when the native side asks for it after load.
     result.addMember("tracing", pulp::runtime::kTracingEnabled);
+    {
+        auto latency = choc::value::createObject("SpectrReportedLatency");
+        latency.addMember("mode", std::string(render_mode_token(plugin.render_mode())));
+        latency.addMember("reported_samples", static_cast<double>(plugin.latency_samples()));
+        latency.addMember("ms", plugin.render_mode_latency_ms(plugin.render_mode()));
+        latency.addMember("sample_rate", plugin.sample_rate());
+        result.addMember("latency", latency);
+    }
     const auto gpu_status=plugin.gpu_audio_status();
     result.addMember("gpu_audio", detail::gpu_audio_status_projection(gpu_status));
     result.addMember("copy_text", build_info_copy_text_(plugin,gpu_status));
@@ -516,6 +537,16 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         options.addArrayElement(option);
     }
     latency.addMember("options", options);
+    // Mixing's GPU processing choice, and the Mixing figure for each side of
+    // it, so the panel can show what turning it on or off would cost. The
+    // Mixing option above already carries the figure for the current choice.
+    latency.addMember("gpu_available", Spectr::gpu_processing_available());
+    latency.addMember("gpu_processing", plugin.gpu_processing());
+    latency.addMember("mixing_cpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, false)));
+    latency.addMember("mixing_gpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, true)));
+    latency.addMember("sample_rate", plugin.sample_rate());
     payload.addMember("latency", latency);
 
     payload.addMember("modulation", modulation);
@@ -1336,6 +1367,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // The mode is sent as its stable token, never as an index. An index would
     // make the panel's option order part of the wire contract, so reordering
     // the list in the UI would silently change what the control does.
+    // Mixing's GPU processing choice. Like the mode, it rebuilds the renderer
+    // and moves the host's delay compensation, so it answers with the
+    // rehydrated panel state carrying the new figures.
+    bridge.add_handler("gpu_processing_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled") || !p["enabled"].isBool())
+                return EditorBridge::err_response("enabled must be a bool");
+            if (!Spectr::gpu_processing_available())
+                return EditorBridge::err_response("this build has no GPU processing");
+            if (!plugin.set_gpu_processing(p["enabled"].getBool()))
+                return EditorBridge::err_response("could not prepare that renderer");
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
+        });
     bridge.add_handler("render_mode_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("mode"))

@@ -62,6 +62,7 @@
 #include <random>
 #include <string>
 #include <utility>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -98,6 +99,9 @@ struct Options {
     bool quiet = false;
     bool notify_reset = false;
     std::string length; // empty: leave the unit's Freeze Length alone
+    float mix = -1.0f;  // Mix parameter in percent; negative leaves it alone
+    bool paced = false; // render at real-time pace (lets a GPU worker deliver)
+    bool gpu = false;   // GPU processing for Mixing, set through the saved state
 };
 
 struct Stereo {
@@ -469,7 +473,14 @@ struct Host {
         AudioUnitAddPropertyListener(au, kAudioUnitProperty_TailTime, &Host::listener, this);
         AudioUnitAddPropertyListener(au, kAudioUnitProperty_Latency, &Host::listener, this);
         if (AudioUnitInitialize(au) != noErr) { std::fprintf(stderr, "Initialize failed\n"); return false; }
+        if (opt.gpu && !set_gpu_processing()) return false;
         if (opt.mode == "mixing" && !set_mode("linear_phase")) return false;
+        // spectr::kMix is parameter id 1 (spectr.hpp).
+        if (opt.mix >= 0.0f
+            && AudioUnitSetParameter(au, 1, kAudioUnitScope_Global, 0, opt.mix, 0) != noErr) {
+            std::fprintf(stderr, "could not set Mix %g\n", double(opt.mix));
+            return false;
+        }
         if (!opt.length.empty() && !set_length(opt.length)) {
             std::fprintf(stderr, "could not set Freeze Length %s\n", opt.length.c_str());
             return false;
@@ -553,6 +564,22 @@ struct Host {
             return false;
         });
         if (!ok) std::fprintf(stderr, "could not set render mode %s\n", token);
+        return ok;
+    }
+
+    // Mixing's GPU processing choice is session state, set the way a project
+    // reload sets it.
+    bool set_gpu_processing() {
+        const bool ok = edit_state([&](std::string& json) {
+            const auto at = json.find("\"gpu_processing\"");
+            if (at == std::string::npos) return false;
+            const auto value = json.find("false", at);
+            const auto end = json.find_first_of(",}", at);
+            if (value == std::string::npos || value > end) return false;
+            json.replace(value, 5, "true");
+            return true;
+        });
+        if (!ok) std::fprintf(stderr, "could not turn GPU processing on\n");
         return ok;
     }
 
@@ -650,7 +677,11 @@ RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap
     std::sort(events.begin(), events.end());
     std::size_t next_event = 0;
     std::size_t pos = 0;
+    const auto paced_start = std::chrono::steady_clock::now();
     while (pos < total) {
+        if (o.paced)
+            std::this_thread::sleep_until(paced_start + std::chrono::nanoseconds(
+                static_cast<long long>(double(pos) * 1e9 / o.sr)));
         UInt32 frames = o.varied ? varied(rng) : o.block;
         frames = UInt32(std::min<std::size_t>(frames, total - pos));
         if (host.reset_pending) {
@@ -845,13 +876,77 @@ int hold_presence(Options o) {
     return control_ok && held ? 0 : 1;
 }
 
+// ── Reported latency against measured delay ────────────────────────────────
+//
+// An impulse per channel through the unit, dry (Mix 0) and wet (Mix 100), and
+// the first sample at a tenth of its height located in the output. The delay
+// measured that way must equal kAudioUnitProperty_Latency exactly: that
+// property is what a host's delay compensation applies. --latency-plant N adds
+// N samples to the reported figure before the comparison (a negative control
+// that must fail). --paced renders at real-time pace, so a GPU-rendered Mixing
+// path is measured as delivered rather than as its CPU fallback.
+int latency_check(Options o, int plant) {
+    const std::size_t total = std::size_t(1.5 * o.sr);
+    constexpr std::size_t marker[2] = {13, 29};
+    constexpr float level[2] = {0.5f, -0.3f};
+    // Dry (Mix 0): an impulse per channel, located by its onset. Wet (Mix
+    // 100): a noise burst, located by the input/output cross-correlation
+    // peak -- the spectral path spreads an isolated impulse over its frame.
+    Stereo impulse; impulse.resize(total);
+    impulse.l[marker[0]] = level[0];
+    impulse.r[marker[1]] = level[1];
+    constexpr std::size_t burst_at = 1000, burst = 4096;
+    Stereo noise; noise.resize(total);
+    std::uint32_t rng = 12345u;
+    for (std::size_t i = 0; i < burst; ++i) {
+        rng = rng * 1664525u + 1013904223u; noise.l[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+        rng = rng * 1664525u + 1013904223u; noise.r[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+    }
+    int bad = 0;
+    for (const float mix : {0.0f, 100.0f}) {
+        o.mix = mix;
+        const bool wet = mix > 0.0f;
+        const auto r = render(o, wet ? noise : impulse, nullptr);
+        const long long reported = r.latency + plant;
+        long long measured[2] = {-1, -1};
+        for (int ch = 0; ch < 2; ++ch) {
+            const auto& x = ch ? r.out.r : r.out.l;
+            if (!wet) {
+                const float threshold = 0.1f * std::abs(level[ch]);
+                for (std::size_t i = 0; i < x.size(); ++i)
+                    if (std::abs(x[i]) >= threshold) { measured[ch] = (long long)i - (long long)marker[ch]; break; }
+                continue;
+            }
+            const auto& in = ch ? noise.r : noise.l;
+            double best = -1.0;
+            const long long lo = std::max(0LL, (long long)r.latency - 2048), hi = (long long)r.latency + 2048;
+            for (long long lag = lo; lag <= hi; ++lag) {
+                double acc = 0.0;
+                for (std::size_t i = burst_at; i < burst_at + burst && i + std::size_t(lag) < x.size(); ++i)
+                    acc += double(in[i]) * double(x[i + std::size_t(lag)]);
+                if (acc > best) { best = acc; measured[ch] = lag; }
+            }
+        }
+        const bool ok = measured[0] == reported && measured[1] == reported;
+        if (!ok) ++bad;
+        std::printf("latency sr=%.0f block=%u mode=%s gpu=%d mix=%.0f paced=%d: reported %lld samples (%.2f ms), "
+                    "measured L %lld R %lld  %s\n",
+                    o.sr, o.block, o.mode.c_str(), int(o.gpu), double(mix), int(o.paced), reported,
+                    1000.0 * double(reported) / o.sr, measured[0], measured[1], ok ? "OK" : "MISMATCH");
+    }
+    std::printf("%s: reported latency %s the measured delay\n", bad ? "FAIL" : "OK",
+                bad ? "does NOT equal" : "equals");
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     Options o;
     int repeat = 1;
     double max_cost_ratio = 0.0;
     bool forbid_notifications = false;
     double deadline = 0.0;
-    bool check_hold = false, check_presence = false;
+    bool check_hold = false, check_presence = false, check_latency = false;
+    int latency_plant = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -875,12 +970,17 @@ int main(int argc, char** argv) {
         else if (a == "--deadline") deadline = std::atof(next().c_str());
         else if (a == "--hold-check") check_hold = true;
         else if (a == "--hold-presence") check_presence = true;
+        else if (a == "--latency-check") check_latency = true;
+        else if (a == "--latency-plant") latency_plant = std::atoi(next().c_str());
+        else if (a == "--paced") o.paced = true;
+        else if (a == "--gpu") o.gpu = true;
         else if (a == "--length") o.length = next();
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
 
     if (check_hold) return hold_check(o);
     if (check_presence) return hold_presence(o);
+    if (check_latency) return latency_check(o, latency_plant);
 
     // Taps: press, hold 0.7-1.6 s, release, rest 0.8-1.5 s. The first press
     // waits for the capture window to fill.

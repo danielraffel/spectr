@@ -1077,7 +1077,9 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // Mix and Output, and 3051.58 -> 2829.78 when MODULATION disclosed a
         // target's Depth row only while it is on (and gained its LFO 1 / LFO 2
         // / TARGETS / OPTIONS headings and the Bands and Preset targets), and
-        // FEEDBACK gained Show tooltips. If you add a group and this fails, that is the window
+        // FEEDBACK gained Show tooltips, and 2829.78 -> 2951.78 when Latency
+        // gained GPU processing in a build that has it (the window shifts by
+        // that row only there). If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1087,7 +1089,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 2750 && s.content_height < 2910"
+        // The GPU processing row (122 px) exists only where the processor
+        // reports GPU processing available.
+        " && (() => { const gpu = globalThis.__spectrLatency?.state?.gpu_available === true ? 122 : 0;"
+        "      return s.content_height > 2750 + gpu && s.content_height < 2910 + gpu; })()"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
