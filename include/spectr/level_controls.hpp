@@ -261,7 +261,13 @@ private:
 /// `autogain-v2-reset-on-seek` (v2 forgets the material at every locate),
 /// `autogain-v2-stale-on-change` (no change detector, no level-drop rule, no
 /// Freeze leg switch, a fixed 6 dB/s), `autogain-v2a` (both: the first v2's
-/// transient behaviour, for the sweep's comparison).
+/// transient behaviour, for the sweep's comparison),
+/// `autogain-v2-short-persistence` (a 3-frame detector with no memory of the
+/// material before a change), `autogain-v2-restore-as-warm` (a restored
+/// session's estimate taken as the estimate rather than as a prior),
+/// `autogain-v2-reprepare-reset` (a host re-prepare forgets the estimate),
+/// `autogain-v2-legacy-composed-only` (the old-session AUTO toggle seen only
+/// on the composed path).
 /// Read once per process; unset in every shipping run. The Spectr constructor
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.

@@ -211,6 +211,105 @@ inline Stereo pink_with_gaps(std::size_t n, unsigned seed = 77u) {
     return s;
 }
 
+inline Stereo scaled(Stereo s, double gain);
+
+// ── Dynamic material: sparse, alternating, decaying, breakdowns, swells ──
+
+inline Stereo kick_only(std::size_t n) {
+    Stereo s = Stereo::zeros(n);
+    const std::size_t beat = seconds(0.5);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double tb = static_cast<double>(i % beat) / kRate;
+        const double kick = std::sin(2.0 * kPi * (50.0 * tb + 60.0 / 25.0 * (1.0 - std::exp(-tb * 25.0))))
+                            * std::exp(-tb * 9.0);
+        s.l[i] = s.r[i] = static_cast<float>(0.45 * kick);
+    }
+    return s;
+}
+
+// Piano-like hits every `period` s: harmonics decaying faster the higher.
+inline Stereo piano_hits(std::size_t n, double period, double f0 = 220.0) {
+    Stereo s = Stereo::zeros(n);
+    const std::size_t p = seconds(period);
+    for (std::size_t i = 0; i < n; ++i) {
+        const double t = static_cast<double>(i % p) / kRate;
+        double v = 0.0;
+        for (int h = 1; h <= 24; ++h)
+            v += std::sin(2.0 * kPi * f0 * h * t) / h * std::exp(-t * (0.8 + 1.2 * h));
+        s.l[i] = s.r[i] = static_cast<float>(0.12 * v * std::min(1.0, t / 0.005));
+    }
+    return s;
+}
+
+// A drum hit with a reverb-like tail that darkens as it decays.
+inline Stereo hit_tail(std::size_t n, double period, unsigned seed = 55u) {
+    Stereo s = Stereo::zeros(n);
+    const std::size_t p = seconds(period);
+    for (int ch = 0; ch < 2; ++ch) {
+        std::mt19937 rng(seed + static_cast<unsigned>(ch));
+        std::normal_distribution<double> w(0.0, 1.0);
+        double z = 0.0;
+        auto& out = ch == 0 ? s.l : s.r;
+        for (std::size_t i = 0; i < n; ++i) {
+            const double t = static_cast<double>(i % p) / kRate;
+            const double cutoff = 8000.0 * std::exp(-t * 1.2) + 300.0;
+            const double a = std::exp(-2.0 * kPi * cutoff / kRate);
+            z = (1.0 - a) * w(rng) + a * z;
+            const double env = std::exp(-t * 1.5);
+            const double hit = std::sin(2.0 * kPi * 60.0 * t) * std::exp(-t * 20.0);
+            out[i] = static_cast<float>(0.3 * hit + 0.25 * env * z);
+        }
+    }
+    return s;
+}
+
+inline Stereo mixed(const Stereo& a, const Stereo& b, double gb = 1.0) {
+    Stereo s = a;
+    for (std::size_t i = 0; i < s.size() && i < b.size(); ++i) {
+        s.l[i] = static_cast<float>(s.l[i] + gb * b.l[i]);
+        s.r[i] = static_cast<float>(s.r[i] + gb * b.r[i]);
+    }
+    return s;
+}
+
+inline Stereo with_envelope(Stereo s, const std::function<double(double)>& env) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const double g = env(static_cast<double>(i) / kRate);
+        s.l[i] = static_cast<float>(s.l[i] * g);
+        s.r[i] = static_cast<float>(s.r[i] * g);
+    }
+    return s;
+}
+
+inline Stereo concat(const Stereo& a, const Stereo& b);
+
+// Kick-only and full-drum bars alternating every 2 s (starts kick-only).
+inline Stereo kick_full_alternating(std::size_t bars = 9) {
+    const auto bar = seconds(2.0);
+    Stereo x = kick_only(bar);
+    for (std::size_t k = 1; k < bars; ++k)
+        x = concat(x, k % 2 == 1 ? drum_loop(bar, 30u + static_cast<unsigned>(k)) : kick_only(bar));
+    return x;
+}
+
+// Dense mix 8 s -> pad-only breakdown 4 s -> dense 8 s.
+inline Stereo dense_breakdown() {
+    const auto n8 = seconds(8.0), n4 = seconds(4.0);
+    const auto dense = [&](std::size_t n, unsigned seed) {
+        return scaled(mixed(mixed(mixed(mixed(bass_line(n), drum_loop(n, seed), 0.8), pad(n), 1.5),
+                                  vocal(n), 0.6), hats(n, seed + 5), 0.7), 0.6);
+    };
+    Stereo x = dense(n8, 17u);
+    x = concat(x, scaled(pad(n4), 0.9));
+    return concat(x, dense(n8, 23u));
+}
+
+// A drum loop whose level swells +-12 dB over 4 s.
+inline Stereo drum_swell(std::size_t n) {
+    return with_envelope(drum_loop(n), [](double t) {
+        return std::pow(10.0, 12.0 * std::sin(2.0 * kPi * t / 4.0) / 20.0); });
+}
+
 inline Stereo concat(const Stereo& a, const Stereo& b) {
     Stereo s = a;
     s.l.insert(s.l.end(), b.l.begin(), b.l.end());
@@ -335,13 +434,16 @@ inline Render render(const Stereo& in, const Shape& shape, Mode mode,
         // Diagnostic: AG_TRACE=1 prints the applied gain, the target and the
         // estimator's restart / level-drop counters every 0.5 s (AG_TRACE=f:
         // every 0.1 s).
-        if (std::getenv("AG_TRACE") && (pos % seconds(std::getenv("AG_TRACE")[0] == 'f' ? 0.1 : 0.5)) < static_cast<std::size_t>(kBlock)) {
+        if (std::getenv("AG_TRACE") && (std::getenv("AG_TRACE")[0] == 'b'
+                || (pos % seconds(std::getenv("AG_TRACE")[0] == 'f' ? 0.1 : 0.5))
+                       < static_cast<std::size_t>(kBlock))) {
             const auto& sp = plugin->auto_gain_material().spectrum();
-            std::printf("  t=%.2f applied %+.2f target %+.2f restarts %llu drops %llu frozen %d legacy %d\n",
+            std::printf("  t=%.2f applied %+.2f target %+.2f restarts %llu drops %llu merges %llu alt %d frozen %d legacy %d\n",
                         static_cast<double>(pos) / kRate, plugin->auto_gain_applied_db(),
                         plugin->auto_gain_material().target_db(),
                         static_cast<unsigned long long>(sp.restarts()),
                         static_cast<unsigned long long>(sp.level_drops()),
+                        static_cast<unsigned long long>(sp.merges()), static_cast<int>(sp.alternating()),
                         static_cast<int>(host.state().get_value(spectr::kParamFreeze) >= 0.5f),
                         static_cast<int>(plugin->auto_gain_legacy_v1()));
         }

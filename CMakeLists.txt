@@ -1048,6 +1048,27 @@ add_test(NAME Spectr-level-autogain-v2-stale-freeze-negative-control
 set_tests_properties(Spectr-level-autogain-v2-stale-freeze-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( release\\.t1db <= kChangeT1dbGate \\)")
+# Auto Gain v2, third round: each fix's defect re-created must fail its gate.
+add_test(NAME Spectr-level-autogain-v2-reprepare-reset-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-reprepare-reset
+        $<TARGET_FILE:Spectr-test> "A host re-prepare keeps Auto Gain's level")
+set_tests_properties(Spectr-level-autogain-v2-reprepare-reset-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_t1db <= 0\\.05 \\)")
+add_test(NAME Spectr-level-autogain-v2-restore-as-warm-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-restore-as-warm
+        $<TARGET_FILE:Spectr-test> "A restored estimate on different material converges no slower than a cold start")
+set_tests_properties(Spectr-level-autogain-v2-restore-as-warm-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_extra <= 0\\.0 \\)")
+add_test(NAME Spectr-level-autogain-v2-legacy-toggle-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-legacy-composed-only
+        $<TARGET_FILE:Spectr-test> "A session that saved AUTO on before v2 keeps v1 until AUTO is toggled")
+set_tests_properties(Spectr-level-autogain-v2-legacy-toggle-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( f->auto_gain_model\\(\\) == AutoGainModel::material_v2 \\)")
+add_test(NAME Spectr-level-autogain-v2-short-persistence-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-short-persistence
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 does not pump on sparse or alternating or decaying material")
+set_tests_properties(Spectr-level-autogain-v2-short-persistence-negative-control PROPERTIES
+    TIMEOUT 600 PASS_REGULAR_EXPRESSION "CHECK\\( worst_excess <= 0\\.25 \\)")
 # The Output LFO destination lands once per block (no ramp): its smoothness
 # gate must catch the per-block zipper.
 add_test(NAME Spectr-level-target-step-negative-control

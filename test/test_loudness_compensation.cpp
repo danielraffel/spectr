@@ -320,21 +320,30 @@ TEST_CASE("MakeupTarget: proportional slew far from the target, slow near it",
     CHECK(n.value_db() == Approx(-0.256f).margin(0.002f));
 }
 
-TEST_CASE("MaterialChangeDetector: persistence and hold-off", "[loudness-compensation][state]") {
+TEST_CASE("MaterialChangeDetector: a gap must persist; a huge one less long",
+          "[loudness-compensation][state]") {
+    using E = MaterialChangeDetector::Event;
     MaterialChangeDetector d;
     d.threshold_db = 4.0;
-    d.frames = 3;
+    d.frames = 12;
+    d.huge_db = 12.0;
+    d.huge_frames = 6;
     d.holdoff_frames = 6;
-    CHECK_FALSE(d.observe(0.0f, 5.0f));
-    CHECK_FALSE(d.observe(0.0f, 5.0f));
-    CHECK_FALSE(d.observe(0.0f, 3.0f));   // a gap resets the run
-    CHECK_FALSE(d.observe(0.0f, 5.0f));
-    CHECK_FALSE(d.observe(0.0f, 5.0f));
-    CHECK(d.observe(0.0f, 5.0f));
-    for (int i = 0; i < 6; ++i) CHECK_FALSE(d.observe(0.0f, 9.0f));  // hold-off
-    CHECK_FALSE(d.observe(0.0f, 9.0f));
-    CHECK_FALSE(d.observe(0.0f, 9.0f));
-    CHECK(d.observe(0.0f, 9.0f));
+    // A passing moment: a run that drains before 12 frames is forgotten
+    // (leaky: one frame below the threshold takes two back).
+    CHECK(d.observe(0.0f, 6.0f) == E::run_started);
+    for (int i = 0; i < 3; ++i) CHECK(d.observe(0.0f, 6.0f) == E::none);
+    CHECK(d.observe(0.0f, 1.0f) == E::none);       // 4 -> 2
+    CHECK(d.observe(0.0f, 1.0f) == E::run_broken); // 2 -> 0
+    // A sustained 6 dB gap: confirmed on the 12th frame.
+    CHECK(d.observe(0.0f, 6.0f) == E::run_started);
+    for (int i = 0; i < 10; ++i) CHECK(d.observe(0.0f, 6.0f) == E::none);
+    CHECK(d.observe(0.0f, 6.0f) == E::confirmed);
+    for (int i = 0; i < 6; ++i) CHECK(d.observe(0.0f, 20.0f) != E::confirmed);  // hold-off
+    // A huge gap: six frames.
+    CHECK(d.observe(0.0f, 20.0f) == E::run_started);
+    for (int i = 0; i < 4; ++i) CHECK(d.observe(0.0f, 20.0f) == E::none);
+    CHECK(d.observe(0.0f, 20.0f) == E::confirmed);
 }
 
 TEST_CASE("LongTermSpectrum: a locate keeps the estimate, a saved one restores warm",
@@ -365,30 +374,108 @@ TEST_CASE("LongTermSpectrum: a locate keeps the estimate, a saved one restores w
     CHECK(t.prior_weight() == 0.0);
 }
 
-TEST_CASE("LongTermSpectrum: quieter new material takes over within a second",
+TEST_CASE("LongTermSpectrum: a level drop rescales the level, never the spectrum",
           "[loudness-compensation][state]") {
-    // Loud noise, then a 3 kHz tone 30 dB quieter. Energy weighting alone
-    // would let the noise outweigh the tone for many seconds; the level-drop
-    // rule restarts the estimate from the new material.
+    // Loud noise, then a 3 kHz tone 30 dB quieter for 6 s. Energy weighting
+    // alone lets the noise outweigh the tone for a long time; the level-drop
+    // rule (4 s window) brings the old level down, so the tone takes over --
+    // without a restart (a decay must not restart the estimate).
     LoudnessCompensationConfig config;
     LongTermSpectrum s;
     s.prepare(kRate, 1, config);
     auto x = noise(static_cast<std::size_t>(kRate * 5.0), 8u, 0.3);
-    const auto quiet = tone(static_cast<std::size_t>(kRate * 1.2), 3000.0, 0.3 * 0.0316);
+    const auto quiet = tone(static_cast<std::size_t>(kRate * 6.0), 3000.0, 0.3 * 0.0316);
     x.insert(x.end(), quiet.begin(), quiet.end());
     const float* c[] = {x.data()};
     s.push(c, 1, static_cast<int>(x.size()));
-    std::printf("[loudness-compensation] 1.2 s after a 30 dB drop to a tone: %.3f of the "
-                "energy within 100 Hz of it (%llu restarts)\n", s.weight(2900.0, 3100.0),
+    std::printf("[loudness-compensation] 6 s after a 30 dB drop to a tone: %.3f of the energy "
+                "within 100 Hz of it (%llu level drops, %llu restarts)\n",
+                s.weight(2900.0, 3100.0), static_cast<unsigned long long>(s.level_drops()),
                 static_cast<unsigned long long>(s.restarts()));
-    CHECK(s.restarts() >= 1);
-    CHECK(s.weight(2900.0, 3100.0) > 0.9);
+    CHECK(s.level_drops() >= 1);
+    CHECK(s.restarts() == 0);
+    CHECK(s.weight(2900.0, 3100.0) > 0.4);
     // Control: without the rule the noise still dominates.
     config.level_drop_db = 0.0;
     LongTermSpectrum r;
     r.prepare(kRate, 1, config);
     r.push(c, 1, static_cast<int>(x.size()));
-    CHECK(r.weight(2900.0, 3100.0) < 0.5);
+    CHECK(r.weight(2900.0, 3100.0) < 0.2);
+}
+
+TEST_CASE("LongTermSpectrum: a restart starts from the candidate and remembers the past",
+          "[loudness-compensation][state]") {
+    // Noise for 4 s, then a 3 kHz tone at the same level. A candidate begun
+    // when the tone starts holds only the tone: restarting from it gives the
+    // tone's estimate at once. Going back to noise and merging gives the mix.
+    LoudnessCompensationConfig config;
+    LongTermSpectrum s;
+    s.prepare(kRate, 1, config);
+    const auto a = noise(static_cast<std::size_t>(kRate * 4.0), 3u, 0.1);
+    const auto b = tone(static_cast<std::size_t>(kRate * 1.0), 3000.0, 0.14);
+    const float* ca[] = {a.data()};
+    s.push(ca, 1, static_cast<int>(a.size()));
+    const double noise_share = s.weight(2900.0, 3100.0);
+    // Skip one window's worth so the candidate's frames hold only the tone.
+    const float* cb[] = {b.data()};
+    s.push(cb, 1, s.fft_size());
+    s.begin_candidate();
+    s.push(cb, 1, static_cast<int>(b.size()) - s.fft_size());
+    s.restart();
+    std::printf("[loudness-compensation] restart from the candidate: %.3f of the energy near "
+                "3 kHz (noise alone %.3f)\n", s.weight(2900.0, 3100.0), noise_share);
+    CHECK(s.weight(2900.0, 3100.0) > 0.95);
+    CHECK(s.has_previous());
+    s.merge_with_previous();
+    CHECK(s.alternating());
+    const double mixed = s.weight(2900.0, 3100.0);
+    std::printf("[loudness-compensation] merged with the noise before it: %.3f\n", mixed);
+    CHECK(mixed > 0.3);
+    CHECK(mixed < 0.7);
+}
+
+TEST_CASE("LongTermSpectrum: a restored estimate is a prior; a carried one is warm and armed",
+          "[loudness-compensation][state]") {
+    LoudnessCompensationConfig config;
+    LongTermSpectrum s;
+    s.prepare(kRate, 1, config);
+    const auto low = tone(static_cast<std::size_t>(kRate * 4.0), 100.0, 0.3);
+    const float* cl[] = {low.data()};
+    s.push(cl, 1, static_cast<int>(low.size()));
+    SpectrumBands saved;
+    s.export_bands(saved);
+    REQUIRE(saved.valid);
+    const auto high = tone(static_cast<std::size_t>(kRate * 1.0), 3000.0, 0.3);
+    const float* ch[] = {high.data()};
+    // As a prior: on different material it converges exactly as a cold start.
+    LongTermSpectrum prior, cold;
+    prior.prepare(kRate, 1, config);
+    cold.prepare(kRate, 1, config);
+    prior.import_bands(saved, LongTermSpectrum::Import::prior);
+    CHECK(prior.weight(50.0, 150.0) > 0.8);   // starts at the saved estimate
+    prior.push(ch, 1, static_cast<int>(high.size()));
+    cold.push(ch, 1, static_cast<int>(high.size()));
+    std::printf("[loudness-compensation] 1 s of a new tone: restored-as-prior %.3f, cold %.3f "
+                "of the energy near it\n", prior.weight(2900.0, 3100.0), cold.weight(2900.0, 3100.0));
+    CHECK(prior.weight(2900.0, 3100.0) == Approx(cold.weight(2900.0, 3100.0)).margin(1e-6));
+    // Warm (a carried estimate): the detector's slow shape is armed on the
+    // carried material, so new material shows as a gap at once.
+    LongTermSpectrum warm;
+    warm.prepare(kRate, 1, config);
+    warm.import_bands(saved, LongTermSpectrum::Import::warm);
+    const float* ch2[] = {high.data()};
+    warm.push(ch2, 1, static_cast<int>(kRate * 0.5));
+    const auto fast = warm.fast_shape_legs(), slow = warm.slow_shape_legs();
+    double fast_hi = 0.0, slow_hi = 0.0;
+    for (std::size_t k = 0; k < fast.ww.size(); ++k) {
+        if (static_cast<double>(k) * warm.bin_hz() < 2000.0) continue;
+        fast_hi += fast.ww[k];
+        slow_hi += slow.ww[k];
+    }
+    std::printf("[loudness-compensation] warm import, 0.5 s of new material: fast shape %.3f, "
+                "slow shape %.3f above 2 kHz\n", fast_hi, slow_hi);
+    CHECK(fast_hi > 0.5);
+    CHECK(slow_hi < 0.4);   // not overwritten by the first frame
 }
 
 TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safety]") {
@@ -421,10 +508,17 @@ TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safe
     s.restart();
     s.restart_grid();
     s.import_bands(saved);
+    s.import_bands(saved, LongTermSpectrum::Import::prior);
+    const float* c0[] = {x.data(), x.data()};
     s.wet_becomes_dry();
     s.legs_uncorrelated();
     MaterialChangeDetector detector;
     (void)detector.observe(1.0f, 9.0f);
+    s.begin_candidate();
+    s.push(c0, c0, 2, 256, [](int) {});
+    s.restart();
+    s.merge_with_previous();
+    s.cancel_candidate();
     (void)target.follow(-10.0f, 0.04, 6.0, 10.0, 120.0);
     REQUIRE(mp.compute(magnitude, 1e-6, phased));
     (void)blend_makeup_gain_db(phased, s.legs(), 0.5, {24.0f, 24.0f});
