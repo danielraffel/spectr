@@ -40,7 +40,7 @@ def escaped(value):
 
 
 TIPS = {
-    "mix": "Mix: blend Spectr's sound with the original. Great with Freeze.",
+    "mix": "Mix: blend Spectr's sound with the original input.",
     "intensity": "Intensity: how strong the effect is. 0% is flat.",
     "output": "Output: final volume (dB).",
     "auto": "Auto Gain: keeps the level steady as you boost or cut.",

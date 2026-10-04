@@ -309,14 +309,33 @@ measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
 
 ## Header controls: context menus
 
-Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH or BANDS opens a
-small menu in the band menu's style: the control's name, **Reset to** its
-default (Live, 100 %, 0.0 dB, 1 bar, 32 bands), then **MODULATION** scoped to
-that control's target -- LFO 1 and LFO 2, each a switch with its Depth slider
-under it while on (a target on for an LFO that is itself off reads "On, LFO
-off"; the menu does not switch the LFO on behind the user's back), plus Hold
-for Length under LIVE / FROZEN -- and **Ask before overriding modulation**.
-One overlay: an outside press, Escape or a press on its control closes it.
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
+the preset button opens a small menu in the band menu's style:
+
+- the control's name and **Reset to** its default (Live, 100 %, 0.0 dB,
+  1 bar, 32 bands, A; the preset has none);
+- **MODULATION** -- the head of the band menu's Modulation submenu, the same
+  component: the **LFO 1** and **LFO 2** switches (the LFOs themselves), the
+  **EDIT LFO 1 / EDIT LFO 2** tabs (opening on the LFO that drives this
+  control, else LFO 1) and that LFO's **Shape** and **Rate**;
+- **<TARGET> TARGET** -- only this control's own target, never the full
+  list: per LFO a row such as **LFO 1 → Freeze** whose switch is the route
+  (On, Off, or "LFO off" when the route is on but its LFO is not). While a
+  route is on its settings sit nested under it behind Settings' guide line:
+  **Depth**, and under Freeze **Hold for Length** (one setting, shown under
+  either Freeze route);
+- **All targets…** -- the band menu's full Modulation submenu, opened in
+  place of this menu on the LFO that drives the control, scrolled to this
+  control's row, that row marked (accent rule, tint and bright label) with
+  the keyboard cursor on it. Its top row (‹ LIVE / FROZEN) returns to this
+  menu; Escape, Left or an outside press close it.
+
+"Ask before overriding modulation" is not in these menus; it is in Settings
+> MODULATION and in the override dialog ("Don't ask again"). The keyboard
+works as in the band menu: Up/Down/Home/End move, Left/Right step a slider
+row, Return presses. One overlay: an outside press, Escape or a press on its
+control closes it. Snapshot A / B keep their own right-click (it clears a
+filled slot).
 
 ## Touching a modulated control
 
