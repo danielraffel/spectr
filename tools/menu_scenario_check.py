@@ -59,6 +59,12 @@ SCENARIO = ";".join([
     "o_msel2=rpress:378,400",      "mutesel2=row:Mute / Unmute selection",
     "o_seln2=rpress:378,400",      "selnone=row:Select none",
     "o_after_seln=rpress:378,400",
+    # The menu is still open after the arrangement press. Close it before
+    # zooming so the wheel is delivered to the spectrum surface, matching a
+    # user who dismisses the context menu before changing the viewport.
+    # On Pulp 0.907 the overlay correctly owns the point while open, so
+    # leaving it mounted would test menu hit-routing rather than zoom.
+    "close_before_zoom=escape",
     "zoom=wheel:378,400,-240,12",
     "o_fit=rpress:378,400",        "fit=row:Fit full range",
     "settle_fit=wait",
