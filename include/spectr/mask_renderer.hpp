@@ -54,11 +54,6 @@ struct MaskRendererConfig {
     double sample_rate       = 48000.0;
     float  initial_mix       = 1.0f;
     int    mix_ramp_samples  = 64;
-    /// Linear-phase only. Treat the time before a fresh stream (prepare or
-    /// reset) as silence that was already analysed, so the first samples of
-    /// the stream reach the output at full level. Off only for a caller that
-    /// primes the stream itself (the shared GPU renderer's CPU reference).
-    bool   prime_stream_start = true;
 };
 
 /// Table in, audio out.
