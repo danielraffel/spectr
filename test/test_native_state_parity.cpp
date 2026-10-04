@@ -11701,9 +11701,11 @@ TEST_CASE("LENGTH, BANDS and the preset label show what their LFO plays",
 
 TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO plays",
           "[native-n1][state-parity][modulation][modulated-controls]") {
-    // The base each control shows stays the user's (and the host's): the
-    // played value is drawn over it and never written. BANDS re-lays the plot
-    // at the count playing, without a React commit.
+    // The base each control holds stays the user's (and the host's) and is
+    // never written. Each knob shows ONE indicator: its needle and value arc
+    // move to the value playing, in violet, its readout prints that value,
+    // and the base is a tick on the ring. BANDS re-lays the plot at the count
+    // playing, without a React commit.
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
@@ -11734,11 +11736,18 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     CHECK(state("String(globalThis.__spectrModControls.state.outputOn)") == "true");
     CHECK(state("String(globalThis.__spectrModControls.state.intensityPull > 0.99)") == "true");
     CHECK(state("String(globalThis.__spectrModControls.state.outputDb > 5.9)") == "true");
-    // Each knob paints a played marker...
-    for (const char* name : {"intensity", "mix", "output-trim"})
-        CHECK(state((std::string("String((globalThis.__spectrModControls.drawn['") + name
-                     + "'] || '').length > 0)").c_str()) == "true");
-    // ...over the base, which neither the knob nor the host lane moved.
+    // Each knob's one needle shows the value playing, in violet, its readout
+    // prints it, and the base is a tick...
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "true");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "rgb(205,180,255)");
+        CHECK(state(("String((" + drawn + ".base || '').length > 0)").c_str()) == "true");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " !== document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
+    // ...of the base, which neither the knob nor the host lane moved.
     CHECK(state("String(document.querySelector('[data-spectr-knob=\"intensity\"]').getAttribute('aria-valuenow'))") == "100");
     CHECK(rig.store.get_value(spectr::kParamIntensity) == intensity_before);
     CHECK(rig.store.get_value(spectr::kMix) == mix_before);
@@ -11756,15 +11765,22 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     CHECK(state("String(globalThis.__spectrModControls.state.intensityPull < 0.01)") == "true");
     CHECK(commits() == before_flip);
 
-    // Control: the routes off, nothing is drawn over any knob.
+    // Control: the routes off, each knob is back to its base -- a white needle,
+    // no tick, the base readout.
     for (const unsigned t : {8u, 9u, 10u, 11u})
         rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 0.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
     feed_audio_blocks(rig, 40);
     settle(rig.clock, 12);
-    for (const char* name : {"intensity", "mix", "output-trim"})
-        CHECK(state((std::string("String(globalThis.__spectrModControls.drawn['") + name
-                     + "'] || '')").c_str()) == "");
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "false");
+        CHECK(state(("String(" + drawn + ".base || '')").c_str()) == "");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "#fff");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " === document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
     CHECK(state("String(spectrDrawnBandCount(32))") == "32");
     storage.require_unchanged();
 }
