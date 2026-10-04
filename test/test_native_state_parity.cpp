@@ -10991,7 +10991,10 @@ TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
         rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
     }
     REQUIRE(rig.processor.apply_surface_params(false));
-    feed_audio_blocks(rig, 375);  // 2 s: history for the freeze, fades done
+    // 2.5 s: history for the freeze, fades done, and a quarter of the way
+    // into the cycle -- the middle of the gate's frozen half, so the gate
+    // holds still around the press below.
+    feed_audio_blocks(rig, 469);
     settle(rig.clock, 12);
     const auto dialog_open = [&] {
         return runtime_value(rig,
@@ -11038,11 +11041,13 @@ TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
         CHECK(std::count(seen.begin(), seen.end(), 1) >= 4);
         CHECK(std::count(seen.begin(), seen.end(), 0) >= 4);
     }
-    // FREEZE with Hold for Length (1 bar at 4 beats: back-to-back holds):
-    // Keep leaves every hold its own fresh freeze.
+    // FREEZE with Hold for Length (1 bar at 4 beats: back-to-back holds;
+    // Length unmodulated here, so every hold is that 1 bar): Keep leaves
+    // every hold its own fresh freeze.
     {
-        rig.store.set_value(spectr::kParamFreezeHoldForLength, 1.0f);
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 0.0f);
         REQUIRE(rig.processor.apply_surface_params(false));
+        rig.store.set_value(spectr::kParamFreezeHoldForLength, 1.0f);  // read per block
         feed_audio_blocks(rig, 375);
         settle(rig.clock, 8);
         activate(rig, "[data-spectr-freeze-toggle]");
@@ -11054,7 +11059,10 @@ TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
         CHECK(rig.processor.freeze_source().latch_count() >= fresh + 2);
         still_driven(6u);
         rig.store.set_value(spectr::kParamFreezeHoldForLength, 0.0f);
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 1.0f);
         REQUIRE(rig.processor.apply_surface_params(false));
+        feed_audio_blocks(rig, 8);  // the editor learns Length is driven again
+        settle(rig.clock, 12);
     }
     // LENGTH: the pick is the new centre; the LFO goes on stepping it.
     {
