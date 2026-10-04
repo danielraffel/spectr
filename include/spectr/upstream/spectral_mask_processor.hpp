@@ -1,8 +1,9 @@
 #pragma once
 
-/// UPSTREAM COPY of SDK 0.901's SpectralMaskProcessorT, unchanged except
+/// UPSTREAM COPY of SDK 0.907's SpectralMaskProcessorT, unchanged except
 /// that it runs the vendored spectral_frame_engine.hpp (deferred
-/// resynthesis). Its configuration and stage interfaces are Pulp's own.
+/// resynthesis) and marks its frame for tracing. Its configuration and
+/// stage interfaces are Pulp's own.
 
 /// @file spectral_mask_processor.hpp
 /// Streaming spectral-mask processor with race-free, frame-boundary table
