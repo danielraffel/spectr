@@ -594,6 +594,7 @@ add_executable(Spectr-test
     test/test_tracking_transition.cpp
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
+    test/test_audio_glitches.cpp
     test/test_freeze.cpp
     test/test_freeze_length.cpp
     test/test_freeze_click.cpp
@@ -644,6 +645,12 @@ add_test(NAME Spectr-stream-start-negative-control
     COMMAND Spectr-test "The first samples of a stream reach the output at full level")
 set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_NO_FULL_OVERLAP=1 WILL_FAIL TRUE TIMEOUT 120)
+# A Latency switch with the warm-up and crossfade removed -- the cut it used to
+# be. The dropout and click measurement must reject it.
+add_test(NAME Spectr-render-switch-negative-control
+    COMMAND Spectr-test "A Latency switch neither drops out nor clicks in either direction")
+set_tests_properties(Spectr-render-switch-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_HARD_RENDER_SWITCH=1 WILL_FAIL TRUE TIMEOUT 300)
 
 # Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
 # the shipping build (the macros are no-ops there) and breaks the first traced
