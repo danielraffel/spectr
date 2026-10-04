@@ -77,7 +77,7 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.901.0 REQUIRED)
+find_package(Pulp 0.907.0 REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -637,12 +637,32 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
-# The stream-start case with the priming removed: the measurement must reject
-# it, or it could not see the fade it exists to catch.
+# The stream-start case with the framework's full-overlap stream start turned
+# off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
+# measurement must reject it, or it could not see the fade it exists to catch.
 add_test(NAME Spectr-stream-start-negative-control
     COMMAND Spectr-test "The first samples of a stream reach the output at full level")
 set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
-    ENVIRONMENT SPECTR_PLANT_NO_STREAM_PRIME=1 WILL_FAIL TRUE TIMEOUT 120)
+    ENVIRONMENT SPECTR_PLANT_NO_FULL_OVERLAP=1 WILL_FAIL TRUE TIMEOUT 120)
+
+# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
+# the shipping build (the macros are no-ops there) and breaks the first traced
+# build. Checked against the SDK's own declared list, with a planted control.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+get_filename_component(_spectr_pulp_trace_header
+    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
+if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}" --self-test)
+    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
+        PROPERTIES TIMEOUT 60)
+endif()
 
 # The product-independent loudness-compensation unit behind Auto Gain v2
 # (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
