@@ -62,6 +62,7 @@
 /// on a frame grid counted in samples from prepare()/reset(), so its state
 /// after N samples does not depend on how the N samples were chunked.
 
+#include <pulp/runtime/trace.hpp>
 #include <pulp/signal/biquad.hpp>
 #include <pulp/signal/fft.hpp>
 #include <pulp/signal/frequency_response.hpp>
@@ -1098,6 +1099,7 @@ private:
         }
     }
     void transform_(float* ring, std::vector<std::complex<float>>& out) noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "autogain.transform");
         // Oldest sample first: write_pos_ is where the next one lands.
         for (int i = 0; i < fft_size_; ++i) {
             int at = write_pos_ + i;
