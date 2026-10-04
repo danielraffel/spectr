@@ -184,7 +184,7 @@ def summarise(rows: list[dict], materials: list[dict]) -> dict:
 
 def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
            tau_rows: dict, drawn_rows: list[dict], realised_quick: list[dict],
-           transient_rows: list[dict]) -> str:
+           transient_rows: list[dict], dynamic_rows: list[dict]) -> str:
     L = []
     L.append("# Spectr Auto Gain v2 -- corpus sweep (advisory)\n")
     L.append("Loudness error = BS.1770 integrated loudness of the output with AUTO on minus "
@@ -274,6 +274,16 @@ def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
     for r in sorted(transient_rows, key=lambda r: (r["scenario"], r["event"], order.get(r["mode"], 9))):
         L.append(f"| {r['scenario']} | {r['event']} | {r['mode']} | {r['t1db']:.2f} | "
                  f"{r['max_momentary_error']:.2f} | {r['seconds_over_6lu']:.2f} |")
+    L.append("\n## Dynamic material (sparse / alternating / decaying / breakdown / swell)\n")
+    L.append("Spread (sd) of momentary error against the flat AUTO-off render, from 3 s and "
+             "from 10 s; a constant gain leaves it exactly at AUTO off's. `v2-short-persistence` "
+             "re-creates the second v2's detector (3 frames, no memory).\n")
+    L.append("| material | shape | model | sd v2 | sd off | excess | excess from 10 s | applied range dB | restarts |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    for r in dynamic_rows:
+        L.append(f"| {r['material']} | {r['shape']} | {r['mode']} | {r['sd']:.2f} | {r['sd_off']:.2f} | "
+                 f"{r['sd'] - r['sd_off']:+.2f} | {r['sd_late'] - r['sd_off_late']:+.2f} | "
+                 f"{r['applied_range_db']:.2f} | {r['restarts']} |")
     L.append("\nWhole-render momentary error (from 0.4 s, against a flat AUTO-off render), "
              "corpus sweep, v2: worst "
              + f"{max((r['max_momentary_error_whole'] or 0.0) for r in rows if r['mode'] == 'v2'):.2f} LU.")
@@ -320,6 +330,16 @@ def main() -> int:
                               check=True, capture_output=True, text=True, env=env(extra))
         transient_rows += [json.loads(line) for line in proc.stdout.splitlines()
                            if line.startswith("{")]
+    dynamic_rows = []
+    for label, extra in (("v2-short-persistence", {"SPECTR_LEVEL_PLANT": "autogain-v2-short-persistence"}),
+                         ("v2", {})):
+        proc = subprocess.run([sweep, "--dynamic", label], check=True, capture_output=True,
+                              text=True, env=env(extra))
+        dynamic_rows += [json.loads(line) for line in proc.stdout.splitlines()
+                         if line.startswith("{")]
+    with open(os.path.join(args.out, "dynamic.jsonl"), "w") as f:
+        for r in dynamic_rows:
+            f.write(json.dumps(r) + "\n")
     with open(os.path.join(args.out, "transients.jsonl"), "w") as f:
         for r in transient_rows:
             f.write(json.dumps(r) + "\n")
@@ -328,7 +348,7 @@ def main() -> int:
                    "transients": transient_rows,
                    "summary": summary, "materials": materials}, f, indent=1)
     text = report(args.out, materials, rows, summary, tau_rows, drawn, realised_quick,
-                  transient_rows)
+                  transient_rows, dynamic_rows)
     print(text[:4000])
     return 0
 

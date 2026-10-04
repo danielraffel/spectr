@@ -77,14 +77,20 @@ auto_gain_v2_config() noexcept {
     c.time_constant_seconds = 3.0;
     c.prior_seconds = 0.5;
     c.gate_lufs = -60.0;
-    c.fast_time_constant_seconds = 0.4;
+    c.fast_time_constant_seconds = 0.25;
     c.level_drop_db = 10.0;
-    c.level_drop_window_seconds = 0.6;
+    c.level_drop_window_seconds = 4.0;
+    c.alternating_time_constant_seconds = 12.0;
+    c.local_level_seconds = 2.0;
+    c.level_weight_exponent = 1.0;
+    c.memory_seconds = 12.0;
     c.material_slew_rate_per_second = 10.0;
     c.material_slew_max_db_per_second = 120.0;
     c.material_slew_knee_db = 0.0;
     c.change_threshold_db = 4.0;
-    c.change_frames = 3;
+    c.change_seconds = 0.7;
+    c.change_huge_db = 12.0;
+    c.change_huge_seconds = 0.4;
     // The dry leg is the live input; the wet leg is what the mask shapes
     // (the held sound while Freeze holds). Their cross-spectrum tells the
     // estimator, sample-deterministically, how they combine at Mix.
@@ -126,6 +132,11 @@ public:
     /// K-weighted pink, per bin, is the start-up prior. @p design_grid is the
     /// renderers' design FFT size: the estimate is taken on the same bin grid,
     /// so the realised response weighs it bin for bin.
+    ///
+    /// A re-prepare at the same geometry keeps the estimate (hosts re-prepare
+    /// before a bounce, on a buffer-size change, mid-song): only the frame
+    /// grid restarts. At a new rate or channel count the estimate is carried
+    /// across band-compressed (rate-independent) and restored warm.
     void prepare(double sample_rate, int channels, const AutoGainReference& reference,
                  int design_grid) {
         sample_rate_ = sample_rate;
@@ -135,6 +146,14 @@ public:
         // control thread, never on the audio thread.
         if (const char* tau = std::getenv("SPECTR_AUTOGAIN_TAU_S"))
             if (const double v = std::atof(tau); v > 0.0) config.time_constant_seconds = v;
+        if (const char* k = std::getenv("SPECTR_AUTOGAIN_KNEE_DB"))
+            config.material_slew_knee_db = std::atof(k);
+        if (const char* d = std::getenv("SPECTR_AUTOGAIN_LEVEL_DROP_DB"))
+            config.level_drop_db = std::atof(d);
+        if (const char* g = std::getenv("SPECTR_AUTOGAIN_WEIGHT_EXP"))
+            config.level_weight_exponent = std::atof(g);
+        if (const char* l = std::getenv("SPECTR_AUTOGAIN_LOCAL_S"))
+            config.local_level_seconds = std::atof(l);
         if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
@@ -150,8 +169,31 @@ public:
             config.level_drop_db = 0.0;
             config.material_slew_rate_per_second = 0.0;
         }
+        // The second v2's detector: three frames, no memory of the past.
+        const bool short_plant = level_plant("autogain-v2-short-persistence");
+        if (short_plant) config.memory_seconds = 0.0;
+        restore_as_warm_plant_ = level_plant("autogain-v2-restore-as-warm");
+        reprepare_reset_plant_ = level_plant("autogain-v2-reprepare-reset");
         detector_.threshold_db = config.change_threshold_db;
-        detector_.frames = config.change_frames;
+        detector_.huge_db = config.change_huge_db;
+        {
+            const double hop_s = static_cast<double>(
+                pulp_candidate::signal::LongTermSpectrum::fft_size_for(sample_rate, config) / 2)
+                / sample_rate;
+            detector_.frames = std::max(1, static_cast<int>(std::ceil(config.change_seconds / hop_s)));
+            detector_.huge_frames = std::max(1, static_cast<int>(
+                std::ceil(config.change_huge_seconds / hop_s)));
+            if (short_plant) detector_.frames = detector_.huge_frames = 3;
+        }
+        if (!reprepare_reset_plant_ && spectrum_.prepared_for(sample_rate, channels, config)
+            && design_grid_ == std::max(64, design_grid)) {
+            restart_grid();
+            target_.reset();
+            return;
+        }
+        pulp_candidate::signal::SpectrumBands carried{};
+        if (spectrum_.prepared() && !stale_plant_ && !reprepare_reset_plant_)
+            spectrum_.export_bands(carried);
         using pulp_candidate::signal::LongTermSpectrum;
         const int bins = LongTermSpectrum::bins_for(sample_rate, config);
         const double bin_hz = sample_rate / static_cast<double>((bins - 1) * 2);
@@ -168,6 +210,7 @@ public:
         phased_.assign(static_cast<std::size_t>(design_grid_ / 2 + 1), {1.0, 0.0});
         minimum_phase_.prepare(design_grid_);
         reset();
+        if (carried.valid) spectrum_.import_bands(carried, LongTermSpectrum::Import::warm);
     }
 
     [[nodiscard]] bool prepared() const noexcept { return spectrum_.prepared(); }
@@ -230,7 +273,10 @@ public:
     /// Any thread: the last published band-compressed estimate (audio thread
     /// writes it every few audible frames).
     [[nodiscard]] pulp_candidate::signal::SpectrumBands saved_estimate() const noexcept {
-        return snapshot_.read();
+        auto bands = snapshot_.read();
+        // Restored but not played yet: what was restored is still the estimate.
+        if (!bands.valid) bands = offered_;
+        return bands;
     }
     /// Control thread: hand a saved estimate to the audio thread, which
     /// adopts it at the start of its next block (adopt_pending()).
@@ -246,8 +292,8 @@ public:
         }
         if (slot_state_.load(std::memory_order_relaxed) != kSlotWriting) return;
         pending_ = bands;
+        offered_ = bands;
         slot_state_.store(kSlotReady, std::memory_order_release);
-        snapshot_.write(bands);
     }
     /// Audio thread, block start: adopt a saved estimate if one was offered.
     void adopt_pending() noexcept {
@@ -255,7 +301,14 @@ public:
         if (!slot_state_.compare_exchange_strong(expected, kSlotReading,
                                                  std::memory_order_acq_rel))
             return;
-        spectrum_.import_bands(pending_);
+        // A restored session may play different material: the saved estimate
+        // is where playback starts, and the material takes over as from a
+        // cold start (prior import). The snapshot is written here, on the
+        // audio thread, its only writer.
+        spectrum_.import_bands(pending_, restore_as_warm_plant_
+            ? pulp_candidate::signal::LongTermSpectrum::Import::warm
+            : pulp_candidate::signal::LongTermSpectrum::Import::prior);
+        snapshot_.write(pending_);
         target_.reset();
         detector_.reset();
         slot_state_.store(kSlotEmpty, std::memory_order_release);
@@ -280,10 +333,11 @@ public:
         // Switching AUTO on (or any edit) is also when a material change
         // that happened while AUTO was off is noticed.
         if (enabled && !stale_plant_ && spectrum_.shape_frames() >= 2
+            && spectrum_.prior_weight() <= 0.0
             && std::abs(target_db_for_(spectrum_.fast_shape_legs())
                         - target_db_for_(spectrum_.slow_shape_legs()))
                    > detector_.threshold_db)
-            spectrum_.restart();
+            confirm_change_();
         const bool moved = target_.retarget(enabled ? shape_target_db() : 0.0f);
         last_event_db_ = target_.value_db();
         // An edit supersedes targets computed for the shape before it.
@@ -374,6 +428,34 @@ private:
             response_, legs, mix_, {c.max_cut_db, c.max_boost_db});
     }
 
+    // A persistent gap between the fast and slow shapes. Four readings: the
+    // material is one of the two halves of an alternation already settled
+    // (nothing to do); it went back to the material before the last change
+    // (an alternation: merge the two); it came back to what the last change
+    // went to, after something the slow estimate absorbed (an alternation:
+    // settle on the estimate that holds both); or it is new (restart).
+    void confirm_change_() noexcept { confirm_change_(target_db_for_(spectrum_.fast_shape_legs())); }
+    void confirm_change_(float fast) noexcept {
+        const double near = detector_.threshold_db;
+        const auto close = [&](const pulp_candidate::signal::LegSpectra& legs) {
+            return std::abs(static_cast<double>(target_db_for_(legs)) - fast) <= near;
+        };
+        if (spectrum_.alternating()
+            && (close(spectrum_.alternate_shape_legs(0)) || close(spectrum_.alternate_shape_legs(1)))) {
+            spectrum_.cancel_candidate();
+            return;
+        }
+        if (spectrum_.has_previous() && close(spectrum_.previous_shape_legs())) {
+            spectrum_.merge_with_previous();
+            return;
+        }
+        if (spectrum_.has_arrived() && close(spectrum_.arrived_shape_legs())) {
+            spectrum_.settle_alternation();
+            return;
+        }
+        spectrum_.restart();
+    }
+
     void clear_events_() noexcept { head_ = 0; events_ = 0; }
     void push_event_(const Event& e) noexcept {
         if (events_ == kMaxEvents) {
@@ -395,11 +477,19 @@ private:
         }
         if (!enabled_ || !target_.primed()) return;
         const auto& c = spectrum_.config();
+        // The change detector (not during a cold or restored start, whose
+        // prior is still fading -- that IS the move to the material).
         if (!stale_plant_ && spectrum_.last_frame_audible()
-            && spectrum_.shape_frames() >= 2
-            && detector_.observe(target_db_for_(spectrum_.fast_shape_legs()),
-                                 target_db_for_(spectrum_.slow_shape_legs())))
-            spectrum_.restart();
+            && spectrum_.shape_frames() >= 2 && spectrum_.prior_weight() <= 0.0) {
+            using E = pulp_candidate::signal::MaterialChangeDetector::Event;
+            const float fast = target_db_for_(spectrum_.fast_shape_legs());
+            switch (detector_.observe(fast, target_db_for_(spectrum_.slow_shape_legs()))) {
+            case E::run_started: spectrum_.begin_candidate(); break;
+            case E::run_broken: spectrum_.cancel_candidate(); break;
+            case E::confirmed: confirm_change_(fast); break;
+            case E::none: break;
+            }
+        }
         // Just restarted: hold the target until the new running mean spans
         // kRestartSettleSeconds (a beat of a groove), or its first frames --
         // one kick, one hat -- would swing the gain.
@@ -428,12 +518,16 @@ private:
     pulp_candidate::signal::MakeupTarget target_;
     pulp_candidate::signal::MaterialChangeDetector detector_;
     bool stale_plant_ = false;
+    bool restore_as_warm_plant_ = false;
+    bool reprepare_reset_plant_ = false;
     int export_countdown_ = 0;
     pulp_candidate::signal::SpectrumBands export_scratch_{};
     mutable pulp::runtime::TripleBuffer<pulp_candidate::signal::SpectrumBands> snapshot_{
         pulp_candidate::signal::SpectrumBands{}};
     std::atomic<int> slot_state_{kSlotEmpty};
     pulp_candidate::signal::SpectrumBands pending_{};
+    // Control thread only: the last estimate offered from a session.
+    pulp_candidate::signal::SpectrumBands offered_{};
     // The wet leg's response on the estimator's grid, and the scratch it is
     // computed in (a table is far too large for an audio thread's stack).
     std::vector<std::complex<double>> response_;

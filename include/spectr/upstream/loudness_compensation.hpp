@@ -106,10 +106,24 @@ struct LoudnessCompensationConfig {
     double fast_time_constant_seconds = 0.4;
     /// Level-drop rule: when no audible frame in the last
     /// level_drop_window_seconds came within level_drop_db of the slow
-    /// estimate's level, both estimates are rescaled to the recent level so
-    /// quieter new material is not outweighed by the louder past. <= 0: off.
+    /// estimate's level, the estimates' LEVEL is rescaled to the recent one
+    /// so quieter material is not outweighed by the louder past. It never
+    /// restarts the spectrum (a decay is not a change of material). <= 0: off.
     double level_drop_db = 10.0;
-    double level_drop_window_seconds = 0.6;
+    double level_drop_window_seconds = 4.0;
+    /// The same for the live (dry) leg, which has no change detector.
+    double dry_level_drop_window_seconds = 0.6;
+    /// Frames are weighted by their power relative to a running average of
+    /// frame power over this long (see LongTermSpectrum's frame_): energy
+    /// weighting within a groove, not across a swell or a fade. <= 0: each
+    /// frame weighs the same.
+    double local_level_seconds = 2.0;
+    double level_weight_exponent = 1.0;
+    /// Time constant of the slow estimate while the material alternates
+    /// between two remembered states (see LongTermSpectrum::merge_with_previous).
+    double alternating_time_constant_seconds = 8.0;
+    /// How long the material before the last change is remembered.
+    double memory_seconds = 12.0;
     /// Slowest rate the material moves the make-up target, dB/s (<= 0: no
     /// limit) -- and the proportional speed-up for a far target (see
     /// MakeupTarget::follow).
@@ -122,8 +136,10 @@ struct LoudnessCompensationConfig {
     /// Change detector (MaterialChangeDetector): the fast and slow estimates'
     /// make-up for the current shape disagree by more than this for this many
     /// audible frames.
-    double change_threshold_db = 3.0;
-    int change_frames = 3;
+    double change_threshold_db = 4.0;
+    double change_seconds = 1.0;
+    double change_huge_db = 12.0;
+    double change_huge_seconds = 0.5;
     /// Make-up range.
     float max_cut_db = 24.0f;
     float max_boost_db = 24.0f;
@@ -362,30 +378,61 @@ struct SpectrumBands {
 };
 
 /// Detects a genuine change of material from the gap between the make-up the
-/// fast and the slow estimates give the current shape: more than
-/// `threshold_db` apart for `frames` audible frames in a row, outside a
-/// hold-off after the last change. Pure bookkeeping; deterministic.
+/// fast and the slow estimates give the current shape. The gap must persist:
+/// a leaky count -- up one for each audible frame above `threshold_db`, down
+/// two for each below -- must reach `frames` (`huge_frames` while the gap is
+/// above `huge_db`, for a change nobody could miss). So material that is
+/// itself uneven (a groove: a kick frame, then a hat frame) still confirms,
+/// and a passing moment -- a hit, a fill, part of a decay -- drains away and
+/// is forgotten. Pure bookkeeping; deterministic.
 class MaterialChangeDetector {
 public:
-    double threshold_db = 3.0;
-    int frames = 3;
+    double threshold_db = 4.0;
+    int frames = 12;
+    double huge_db = 12.0;
+    int huge_frames = 6;
     int holdoff_frames = 6;
 
-    void reset() noexcept { run_ = 0; holdoff_ = 0; }
-    /// One audible frame. Returns true when the material has changed.
-    bool observe(float fast_db, float slow_db) noexcept {
-        if (holdoff_ > 0) { --holdoff_; run_ = 0; return false; }
-        if (std::abs(static_cast<double>(fast_db) - slow_db) > threshold_db) ++run_;
-        else run_ = 0;
-        if (run_ < frames) return false;
-        run_ = 0;
-        holdoff_ = holdoff_frames;
-        return true;
+    enum class Event { none, run_started, run_broken, confirmed };
+
+    void reset() noexcept { run_ = 0; huge_run_ = 0; holdoff_ = 0; }
+    [[nodiscard]] int run() const noexcept { return run_; }
+
+    /// One audible frame.
+    Event observe(float fast_db, float slow_db) noexcept {
+        if (holdoff_ > 0) {
+            --holdoff_;
+            return end_run_();
+        }
+        const double gap = std::abs(static_cast<double>(fast_db) - slow_db);
+        if (!(gap > threshold_db)) {
+            if (run_ == 0) return Event::none;
+            run_ = std::max(0, run_ - 2);
+            huge_run_ = std::max(0, huge_run_ - 2);
+            return run_ == 0 ? Event::run_broken : Event::none;
+        }
+        const bool started = run_ == 0;
+        ++run_;
+        huge_run_ = gap > huge_db ? huge_run_ + 1 : std::max(0, huge_run_ - 2);
+        if (run_ >= frames || huge_run_ >= huge_frames) {
+            run_ = 0;
+            huge_run_ = 0;
+            holdoff_ = holdoff_frames;
+            return Event::confirmed;
+        }
+        return started ? Event::run_started : Event::none;
     }
-    void hold_off() noexcept { run_ = 0; holdoff_ = holdoff_frames; }
+    void hold_off() noexcept { end_run_(); holdoff_ = holdoff_frames; }
 
 private:
+    Event end_run_() noexcept {
+        const bool had = run_ > 0;
+        run_ = 0;
+        huge_run_ = 0;
+        return had ? Event::run_broken : Event::none;
+    }
     int run_ = 0;
+    int huge_run_ = 0;
     int holdoff_ = 0;
 };
 
@@ -418,6 +465,12 @@ public:
         fast_.assign(nb);
         fast_shape_.assign(nb, 0.0);
         slow_shape_.assign(nb, 0.0);
+        candidate_.assign(nb);
+        previous_.assign(nb);
+        previous_shape_.assign(nb, 0.0);
+        arrived_shape_.assign(nb, 0.0);
+        alt_a_shape_.assign(nb, 0.0);
+        alt_b_shape_.assign(nb, 0.0);
         size_published_();
         flat_.assign(nb, 1.0);
         zero_.assign(nb, 0.0);
@@ -445,8 +498,17 @@ public:
             ? 1.0 - std::exp(-hop_seconds / config.fast_time_constant_seconds) : 1.0;
         prior_step_ = config.prior_seconds > 0.0
             ? hop_seconds / config.prior_seconds : 1.0;
+        local_alpha_ = config.local_level_seconds > 0.0
+            ? 1.0 - std::exp(-hop_seconds / config.local_level_seconds) : 1.0;
+        alt_alpha_ = config.alternating_time_constant_seconds > 0.0
+            ? 1.0 - std::exp(-hop_seconds / config.alternating_time_constant_seconds) : alpha_;
+        memory_frames_ = static_cast<std::int64_t>(std::ceil(config.memory_seconds / hop_seconds));
+        geometry_rate_ = sample_rate_;
+        geometry_channels_ = channels_;
         level_drop_frames_ = std::clamp(static_cast<int>(std::ceil(
             config.level_drop_window_seconds / hop_seconds)), 1, kMaxRecent);
+        dry_drop_frames_ = std::clamp(static_cast<int>(std::ceil(
+            config.dry_level_drop_window_seconds / hop_seconds)), 1, kMaxRecent);
         prepared_ = fft_ && fft_->ready() && static_cast<int>(window_.size()) == fft_size_;
         reset();
     }
@@ -476,9 +538,13 @@ public:
         slow_frames_ = 0;
         fast_frames_ = 0;
         shape_frames_ = 0;
+        forget_memory_();
+        candidate_frames_ = 0;
+        candidate_active_ = false;
         std::fill(fast_shape_.begin(), fast_shape_.end(), 0.0);
         std::fill(slow_shape_.begin(), slow_shape_.end(), 0.0);
         prior_weight_ = 1.0;
+        level_local_ = 0.0;
         observed_frames_ = 0;
         gated_frames_ = 0;
         level_drops_ = 0;
@@ -501,23 +567,122 @@ public:
         hop_pos_ = 0;
     }
 
-    /// The material changed: both estimates forget it and start again as
-    /// running means of what comes next. Energy weighting is why: seeded from
-    /// anything that still holds the old material, a louder past would
-    /// outweigh quieter new material for seconds. Until the first new frame
-    /// lands the published estimate stays what it was.
+    /// A detector run began: collect the would-be new material's own energy
+    /// average, so a confirmed change starts from what has been heard since,
+    /// not from zero. The frames whose windows still reach back across the
+    /// change (one window from the frame that began the run) are left out:
+    /// energy-weighted, a little of a louder past would bias it for seconds.
+    void begin_candidate() noexcept {
+        candidate_.clear();
+        candidate_frames_ = 0;
+        candidate_active_ = true;
+        candidate_skip_ = fft_size_ / std::max(1, hop_) - 1;
+    }
+    /// The run broke: that was a passing moment, not new material.
+    void cancel_candidate() noexcept { candidate_active_ = false; candidate_frames_ = 0; }
+
+    /// The material changed. Both estimates start again from the candidate
+    /// (the new material's energy average since the change was first seen),
+    /// or empty when there is none, and go on as running means. Energy
+    /// weighting is why: seeded from anything that still holds the old
+    /// material, a louder past would outweigh quieter new material for
+    /// seconds. The material before is remembered (merge_with_previous), and
+    /// the detector's slow shape is re-armed on the new material.
     void restart() noexcept {
-        slow_.clear();
-        fast_.clear();
+        if (slow_frames_ > 0) {
+            previous_.copy_from(slow_);
+            std::copy(slow_shape_.begin(), slow_shape_.end(), previous_shape_.begin());
+            previous_valid_ = true;
+            frames_since_previous_ = 0;
+        }
+        alternating_ = false;
+        if (candidate_active_ && candidate_frames_ > 0) {
+            slow_.copy_from(candidate_);
+            fast_.copy_from(candidate_);
+            slow_frames_ = candidate_frames_;
+            fast_frames_ = std::min(candidate_frames_, fast_equivalent_frames_());
+        } else {
+            slow_.clear();
+            fast_.clear();
+            slow_frames_ = 0;
+            fast_frames_ = 0;
+        }
+        cancel_candidate();
         std::copy(fast_shape_.begin(), fast_shape_.end(), slow_shape_.begin());
-        shape_frames_ = std::min<std::int64_t>(shape_frames_, fast_equivalent_frames_());
-        slow_frames_ = 0;
-        fast_frames_ = 0;
+        std::copy(fast_shape_.begin(), fast_shape_.end(), arrived_shape_.begin());
+        arrived_valid_ = true;
+        frames_since_arrival_ = 0;
+        rearm_shapes_();
         recent_count_ = 0;
         drop_run_ = 0;
-        // Detection takes several frames, so the next frame's window lies
-        // after the change: nothing to skip.
         ++restarts_;
+        if (slow_frames_ > 0) publish_();
+    }
+
+    /// The material went back to what it was before the last change: it
+    /// alternates (a kick-only bar and a full one, a hit and its tail). The
+    /// slow estimate becomes the mix of both and averages over
+    /// alternating_time_constant_seconds from here, so the gain holds steady
+    /// instead of chasing each half.
+    void merge_with_previous() noexcept {
+        if (!previous_valid_) return;
+        std::copy(previous_shape_.begin(), previous_shape_.end(), alt_a_shape_.begin());
+        std::copy(slow_shape_.begin(), slow_shape_.end(), alt_b_shape_.begin());
+        const auto mix = [](std::vector<double>& a, const std::vector<double>& b) {
+            for (std::size_t k = 0; k < a.size(); ++k) a[k] = 0.5 * (a[k] + b[k]);
+        };
+        mix(slow_.ww, previous_.ww);
+        mix(slow_.dd, previous_.dd);
+        mix(slow_.re, previous_.re);
+        mix(slow_.im, previous_.im);
+        for (std::size_t k = 0; k < slow_shape_.size(); ++k)
+            slow_shape_[k] = 0.5 * (alt_a_shape_[k] + alt_b_shape_[k]);
+        slow_frames_ = std::max<std::int64_t>(slow_frames_, static_cast<std::int64_t>(
+            std::ceil(1.0 / std::max(alpha_, 1e-9))));
+        alternating_ = true;
+        previous_valid_ = false;
+        cancel_candidate();
+        ++merges_;
+        publish_();
+    }
+    /// The material came back to what the LAST restart went to, after
+    /// something else in between that never confirmed a change (it alternates,
+    /// and the slow estimate already holds both halves): stop chasing it --
+    /// keep the estimate, average over alternating_time_constant_seconds, and
+    /// remember both halves.
+    void settle_alternation() noexcept {
+        std::copy(arrived_shape_.begin(), arrived_shape_.end(), alt_a_shape_.begin());
+        std::copy(slow_shape_.begin(), slow_shape_.end(), alt_b_shape_.begin());
+        alternating_ = true;
+        arrived_valid_ = false;
+        previous_valid_ = false;
+        cancel_candidate();
+        ++merges_;
+    }
+    [[nodiscard]] bool has_arrived() const noexcept { return arrived_valid_; }
+    [[nodiscard]] LegSpectra arrived_shape_legs() const noexcept {
+        if (!config_.weight_by_material) return {flat_, flat_, flat_, zero_};
+        return {arrived_shape_, arrived_shape_, arrived_shape_, zero_};
+    }
+    [[nodiscard]] bool has_previous() const noexcept { return previous_valid_; }
+    [[nodiscard]] bool alternating() const noexcept { return alternating_; }
+    [[nodiscard]] LegSpectra previous_shape_legs() const noexcept {
+        if (!config_.weight_by_material) return {flat_, flat_, flat_, zero_};
+        return {previous_shape_, previous_shape_, previous_shape_, zero_};
+    }
+    /// The two remembered halves of an alternation (0: the earlier, 1: the later).
+    [[nodiscard]] LegSpectra alternate_shape_legs(int which) const noexcept {
+        if (!config_.weight_by_material) return {flat_, flat_, flat_, zero_};
+        const auto& v = which == 0 ? alt_a_shape_ : alt_b_shape_;
+        return {v, v, v, zero_};
+    }
+    [[nodiscard]] std::uint64_t merges() const noexcept { return merges_; }
+    /// The estimator has the geometry prepare() would give these arguments.
+    [[nodiscard]] bool prepared_for(double sample_rate, int channels,
+                                    const LoudnessCompensationConfig& config) const noexcept {
+        return prepared_ && geometry_rate_ == sample_rate
+            && geometry_channels_ == std::max(1, channels)
+            && fft_size_ == fft_size_for(sample_rate, config);
     }
     /// Audible frames averaged since the last restart (or cold start).
     [[nodiscard]] std::int64_t frames_since_restart() const noexcept { return slow_frames_; }
@@ -539,8 +704,10 @@ public:
                 const auto i = static_cast<std::size_t>(b);
                 slow_shape_[i] = fast_shape_[i] = t > 0.0 ? fast_.ww[i] / t : 0.0;
             }
-            shape_frames_ = slow_frames_;
         }
+        rearm_shapes_();
+        forget_memory_();
+        cancel_candidate();
         recent_count_ = 0;
         // The next frames' windows still hold the hold's last moments: they
         // describe neither leg, so they wait.
@@ -622,30 +789,45 @@ public:
             out.re[j] = static_cast<float>(out.re[j] / total);
             out.im[j] = static_cast<float>(out.im[j] / total);
         }
-        out.level_ms = level_total_() * power_to_mean_square_;
+        out.level_ms = level_local_ * power_to_mean_square_;
         out.valid = true;
     }
 
-    /// Start warm from a saved estimate: no prior, no cold start; the frame
-    /// grid restarts. A band's energy is spread evenly over the bins whose
-    /// centres fall in it (or given to the bin nearest its centre).
-    void import_bands(const SpectrumBands& in) noexcept {
+    /// How import_bands() treats a saved estimate.
+    enum class Import {
+        /// As a better prior: playback starts at the saved estimate's level
+        /// and the material's own estimate takes over exactly as from a cold
+        /// start (a restored session may play different material).
+        prior,
+        /// As the estimate itself (the same stream, carried across a change
+        /// of geometry).
+        warm,
+    };
+
+    /// A band's energy is spread evenly over the bins whose centres fall in
+    /// it (or given to the bin nearest its centre). The frame grid restarts.
+    void import_bands(const SpectrumBands& in, Import how = Import::warm) noexcept {
         if (!prepared_ || !in.valid || !(in.level_ms > 0.0) || !(power_to_mean_square_ > 0.0))
             return;
         std::array<int, SpectrumBands::kBands> count{};
         for (int b = 0; b < bins_; ++b)
             ++count[static_cast<std::size_t>(SpectrumBands::band_of(static_cast<double>(b) * bin_hz_))];
-        slow_.clear();
-        const double total = in.level_ms / power_to_mean_square_;
+        Estimate& e = candidate_;  // scratch: nothing is being collected now
+        e.clear();
+        // The estimates are in units of the local level (see frame_): the
+        // saved spectrum sums to one frame's worth, and the level comes back
+        // as the local level the next frames are measured against.
+        const double total = 1.0;
+        level_local_ = in.level_ms / power_to_mean_square_;
         for (int band = 0; band < SpectrumBands::kBands; ++band) {
             const auto j = static_cast<std::size_t>(band);
             if (count[j] > 0) continue;
             const auto b = static_cast<std::size_t>(std::clamp(static_cast<int>(std::lround(
                 SpectrumBands::centre_hz(band) / bin_hz_)), 0, bins_ - 1));
-            slow_.ww[b] += total * in.ww[j];
-            slow_.dd[b] += total * in.dd[j];
-            slow_.re[b] += total * in.re[j];
-            slow_.im[b] += total * in.im[j];
+            e.ww[b] += total * in.ww[j];
+            e.dd[b] += total * in.dd[j];
+            e.re[b] += total * in.re[j];
+            e.im[b] += total * in.im[j];
         }
         for (int b = 0; b < bins_; ++b) {
             const auto i = static_cast<std::size_t>(b);
@@ -653,28 +835,41 @@ public:
                 SpectrumBands::band_of(static_cast<double>(b) * bin_hz_));
             if (count[j] == 0) continue;
             const double share = total / static_cast<double>(count[j]);
-            slow_.ww[i] += share * in.ww[j];
-            slow_.dd[i] += share * in.dd[j];
-            slow_.re[i] += share * in.re[j];
-            slow_.im[i] += share * in.im[j];
+            e.ww[i] += share * in.ww[j];
+            e.dd[i] += share * in.dd[j];
+            e.re[i] += share * in.re[j];
+            e.im[i] += share * in.im[j];
         }
         if (!config_.track_dry_leg) {
-            slow_.dd = slow_.ww;
-            slow_.re = slow_.ww;
-            std::fill(slow_.im.begin(), slow_.im.end(), 0.0);
+            e.dd = e.ww;
+            e.re = e.ww;
+            std::fill(e.im.begin(), e.im.end(), 0.0);
         }
-        fast_.copy_from(slow_);
-        {
-            const double t = slow_.total();
+        if (how == Import::prior) {
+            const double t = e.total();
             for (int b = 0; b < bins_; ++b) {
                 const auto i = static_cast<std::size_t>(b);
-                slow_shape_[i] = fast_shape_[i] = t > 0.0 ? slow_.ww[i] / t : 0.0;
+                prior_[i] = t > 0.0 ? std::max(0.0, e.ww[i]) / t : 0.0;
             }
-            shape_frames_ = slow_frames_;
+            e.clear();
+            reset();
+            return;
+        }
+        slow_.copy_from(e);
+        fast_.copy_from(e);
+        e.clear();
+        const double t = slow_.total();
+        for (int b = 0; b < bins_; ++b) {
+            const auto i = static_cast<std::size_t>(b);
+            slow_shape_[i] = fast_shape_[i] = t > 0.0 ? slow_.ww[i] / t : 0.0;
         }
         prior_weight_ = 0.0;
         slow_frames_ = static_cast<std::int64_t>(std::ceil(1.0 / std::max(alpha_, 1e-9)));
         fast_frames_ = fast_equivalent_frames_();
+        rearm_shapes_();
+        forget_memory_();
+        candidate_frames_ = 0;
+        candidate_active_ = false;
         observed_frames_ = std::max<std::uint64_t>(observed_frames_, 1);
         recent_count_ = 0;
         drop_run_ = 0;
@@ -733,7 +928,20 @@ public:
     [[nodiscard]] const SpectrumCdf& cdf() const noexcept { return cdf_; }
 
 private:
-    static constexpr int kMaxRecent = 32;
+    static constexpr int kMaxRecent = 128;
+
+    // The detector's slow shape, re-armed after a restart or a release: it
+    // is the new material's from now on, averaging on the slow constant
+    // (not a short running mean that would track the fast one for seconds).
+    void rearm_shapes_() noexcept {
+        shape_frames_ = static_cast<std::int64_t>(std::ceil(1.0 / std::max(alpha_, 1e-9)));
+    }
+    void forget_memory_() noexcept {
+        previous_valid_ = false;
+        arrived_valid_ = false;
+        alternating_ = false;
+        frames_since_previous_ = 0;
+    }
 
     struct Estimate {
         std::vector<double> ww, dd, re, im;
@@ -850,24 +1058,56 @@ private:
             return;
         }
         ++observed_frames_;
-        // Both estimates are energy-weighted (integrated loudness is): a
-        // running mean until they hold as many frames as their time
-        // constant spans, an exponential average after.
+        // Energy weighting RELATIVE TO THE LOCAL LEVEL: each frame's power is
+        // divided by a short (local_level_seconds) average of frame power
+        // before it is averaged. Inside a groove that local level hardly
+        // moves, so the kick still outweighs its tail exactly as integrated
+        // loudness weighs it; but a swell, a fade or a quieter new part no
+        // longer lets the loud past dominate the spectrum for seconds.
+        level_local_ = level_local_ > 0.0
+            ? level_local_ + local_alpha_ * (total - level_local_) : total;
+        // A frame's weight is (its power / the local level)^exponent: 1 is
+        // energy weighting within the local window, 0 every frame equal.
+        double norm = level_local_ > 0.0 ? 1.0 / level_local_ : 0.0;
+        if (config_.level_weight_exponent != 1.0 && total > 0.0 && level_local_ > 0.0)
+            norm = std::pow(total / level_local_, config_.level_weight_exponent) / total;
+        for (int b = 0; b < bins_; ++b) {
+            const auto i = static_cast<std::size_t>(b);
+            frame_ww_[i] *= norm;
+            frame_dd_[i] *= norm;
+            frame_re_[i] *= norm;
+            frame_im_[i] *= norm;
+        }
+        total *= norm;
+        // Both estimates: a running mean until they hold as many frames as
+        // their time constant spans, an exponential average after.
         ++slow_frames_;
         ++fast_frames_;
-        const double a_slow = alpha_ >= 1.0 ? 1.0
-            : std::max(alpha_, 1.0 / static_cast<double>(slow_frames_));
+        const double slow_alpha = alternating_ ? alt_alpha_ : alpha_;
+        const double a_slow = slow_alpha >= 1.0 ? 1.0
+            : std::max(slow_alpha, 1.0 / static_cast<double>(slow_frames_));
         const double a_fast = fast_alpha_ >= 1.0 ? 1.0
             : std::max(fast_alpha_, 1.0 / static_cast<double>(fast_frames_));
         accumulate_(slow_, a_slow);
         accumulate_(fast_, a_fast);
+        if (candidate_active_) {
+            if (candidate_skip_ > 0) {
+                --candidate_skip_;
+            } else {
+                ++candidate_frames_;
+                accumulate_(candidate_, 1.0 / static_cast<double>(candidate_frames_));
+            }
+        }
+        if (previous_valid_ && ++frames_since_previous_ > memory_frames_) previous_valid_ = false;
+        if (arrived_valid_ && ++frames_since_arrival_ > memory_frames_) arrived_valid_ = false;
         // The change detector's pair: the same averages of each frame's
         // SHAPE (every audible frame weighs the same), so a change of
         // material shows within a few frames however much quieter it is.
         {
             ++shape_frames_;
-            const double sa = alpha_ >= 1.0 ? 1.0
-                : std::max(alpha_, 1.0 / static_cast<double>(shape_frames_));
+            const double shape_alpha = alternating_ ? alt_alpha_ : alpha_;
+            const double sa = shape_alpha >= 1.0 ? 1.0
+                : std::max(shape_alpha, 1.0 / static_cast<double>(shape_frames_));
             const double fa = fast_alpha_ >= 1.0 ? 1.0
                 : std::max(fast_alpha_, 1.0 / static_cast<double>(shape_frames_));
             const double inv = total > 0.0 ? 1.0 / total : 0.0;
@@ -898,39 +1138,46 @@ private:
         const auto slot = static_cast<std::size_t>(recent_pos_);
         recent_[slot] = wet_total;
         recent_dry_[slot] = dry_total;
-        recent_pos_ = (recent_pos_ + 1) % level_drop_frames_;
-        recent_count_ = std::min(recent_count_ + 1, level_drop_frames_);
-        if (!(config_.level_drop_db > 0.0) || recent_count_ < level_drop_frames_) return;
-        double wet_max = 0.0, dry_max = 0.0;
-        for (int i = 0; i < level_drop_frames_; ++i) {
-            wet_max = std::max(wet_max, recent_[static_cast<std::size_t>(i)]);
-            dry_max = std::max(dry_max, recent_dry_[static_cast<std::size_t>(i)]);
-        }
+        recent_pos_ = (recent_pos_ + 1) % kMaxRecent;
+        recent_count_ = std::min(recent_count_ + 1, kMaxRecent);
+        if (!(config_.level_drop_db > 0.0)) return;
+        const auto max_of = [&](const std::array<double, kMaxRecent>& ring, int frames) {
+            double m = 0.0;
+            for (int k = 1; k <= frames; ++k)
+                m = std::max(m, ring[static_cast<std::size_t>(
+                    (recent_pos_ - k + kMaxRecent) % kMaxRecent)]);
+            return m;
+        };
         const double floor = std::pow(10.0, -config_.level_drop_db / 10.0);
-        const double wet_level = sum_(slow_.ww);
-        const double dry_level = config_.track_dry_leg ? sum_(slow_.dd) : wet_level;
-        const double rw = wet_level > 0.0 && wet_max < wet_level * floor ? wet_max / wet_level : 1.0;
-        const double rd = config_.track_dry_leg
-            ? (dry_level > 0.0 && dry_max < dry_level * floor ? dry_max / dry_level : 1.0)
-            : rw;
-        if (rw >= 1.0 && rd >= 1.0) {
-            drop_run_ = 0;
-            return;
+        double rw = 1.0, rd = 1.0, wet_max = 0.0, dry_max = 0.0;
+        if (recent_count_ >= level_drop_frames_) {
+            wet_max = max_of(recent_, level_drop_frames_);
+            const double wet_level = sum_(slow_.ww);
+            if (wet_level > 0.0 && wet_max < wet_level * floor) rw = wet_max / wet_level;
         }
-        if (++drop_run_ < 2) return;
-        drop_run_ = 0;
-        if (rw < 1.0) {
-            // The material the mask shapes got genuinely quieter: what it is
-            // now is what counts, so start again from it.
-            ++level_drops_;
-            restart();
-            return;
+        // The live (dry) leg has no change detector of its own -- it is the
+        // dry half of a Mix, or the live input under a hold -- so its level
+        // follows over the short window.
+        if (config_.track_dry_leg && recent_count_ >= dry_drop_frames_) {
+            dry_max = max_of(recent_dry_, dry_drop_frames_);
+            const double dry_level = sum_(slow_.dd);
+            if (dry_level > 0.0 && dry_max < dry_level * floor) rd = dry_max / dry_level;
         }
-        // Only the live (dry) leg dropped -- the hold plays on: bring the dry
-        // leg's average down to its recent level.
-        rescale_legs_(slow_, 1.0, rd);
-        const double fd = config_.track_dry_leg ? sum_(fast_.dd) : 0.0;
-        if (fd > dry_max && dry_max > 0.0) rescale_legs_(fast_, 1.0, dry_max / fd);
+        if (!config_.track_dry_leg) rd = rw;
+        drop_run_ = rw < 1.0 ? drop_run_ + 1 : 0;
+        dry_drop_run_ = rd < 1.0 ? dry_drop_run_ + 1 : 0;
+        if (drop_run_ < 2) rw = 1.0;
+        if (dry_drop_run_ < 2) rd = 1.0;
+        if (rw >= 1.0 && rd >= 1.0) return;
+        // Level only: the spectrum is the change detector's business.
+        rescale_legs_(slow_, rw, rd);
+        const double fw = sum_(fast_.ww);
+        const double fd = config_.track_dry_leg ? sum_(fast_.dd) : fw;
+        rescale_legs_(fast_, rw < 1.0 && fw > wet_max && wet_max > 0.0 ? wet_max / fw : 1.0,
+                      rd < 1.0 && fd > dry_max && dry_max > 0.0 ? dry_max / fd : 1.0);
+        if (previous_valid_) rescale_legs_(previous_, rw, rd);
+        if (rw < 1.0) drop_run_ = 0;
+        if (rd < 1.0) dry_drop_run_ = 0;
         recent_count_ = 0;
         ++level_drops_;
     }
@@ -1000,6 +1247,8 @@ private:
     double fast_alpha_ = 0.0;
     double prior_step_ = 1.0;
     double prior_weight_ = 1.0;
+    double level_local_ = 0.0;
+    double local_alpha_ = 1.0;
     bool prepared_ = false;
     std::unique_ptr<pulp::signal::FftT<float>> fft_;
     std::vector<float> window_;
@@ -1015,6 +1264,20 @@ private:
     std::vector<double> zero_;
     SpectrumCdf cdf_;
     std::int64_t slow_frames_ = 0, fast_frames_ = 0, shape_frames_ = 0;
+    Estimate candidate_, previous_;
+    std::int64_t candidate_frames_ = 0;
+    int candidate_skip_ = 0;
+    bool candidate_active_ = false;
+    std::vector<double> previous_shape_, alt_a_shape_, alt_b_shape_, arrived_shape_;
+    bool arrived_valid_ = false;
+    std::int64_t frames_since_arrival_ = 0;
+    bool previous_valid_ = false;
+    bool alternating_ = false;
+    std::int64_t frames_since_previous_ = 0, memory_frames_ = 0;
+    std::uint64_t merges_ = 0;
+    double alt_alpha_ = 0.0;
+    double geometry_rate_ = 0.0;
+    int geometry_channels_ = 0;
     std::vector<double> fast_shape_, slow_shape_;
     std::uint64_t observed_frames_ = 0;
     std::uint64_t gated_frames_ = 0;
@@ -1022,6 +1285,7 @@ private:
     std::uint64_t restarts_ = 0;
     std::array<double, kMaxRecent> recent_{}, recent_dry_{};
     int recent_pos_ = 0, recent_count_ = 0, level_drop_frames_ = 9, drop_run_ = 0;
+    int dry_drop_frames_ = 9, dry_drop_run_ = 0;
     int settle_frames_ = 0;
     double last_frame_lufs_ = -1.0e9;
     bool last_audible_ = false;

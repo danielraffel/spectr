@@ -180,9 +180,76 @@ void transients(Mode mode, const char* label) {
     }
 }
 
+// ── Dynamic material (--dynamic) ───────────────────────────────────────────
+// Sparse, alternating, decaying, breakdown and swelling material: does v2
+// pump where a constant gain would not? Spread of momentary error (output vs
+// the flat AUTO-off render, from 3 s; and from 10 s) against AUTO off's.
+void dynamic(Mode mode, const char* label) {
+    const auto n = seconds(18.0);
+    struct Case { const char* name; Stereo in; };
+    const Case cases[] = {
+        {"kick-only / full drums alternating", kick_full_alternating()},
+        {"dense -> pad breakdown -> dense", dense_breakdown()},
+        {"piano hits every 3 s", piano_hits(n, 3.0)},
+        {"drum hit + darkening tail / 3 s", hit_tail(n, 3.0)},
+        {"drum loop swelling +-12 dB", drum_swell(n)},
+        {"drum loop (no swell)", drum_loop(n)},
+    };
+    std::vector<Shape> shapes;
+    for (const float db : {6.0f, 12.0f, 24.0f, -6.0f, -12.0f, -24.0f}) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "high broad %+.0f", db);
+        shapes.push_back(region(name, 24, 31, db));
+    }
+    shapes.push_back(region("low broad +12", 0, 9, 12.0f));
+    shapes.push_back(region("low broad -12", 0, 9, -12.0f));
+    shapes.push_back({"tilt -12..+12", [](std::size_t i, spectr::Band& b) {
+                          b.gain_db = -12.0f + 24.0f * static_cast<float>(i) / 31.0f; }});
+    for (const auto& c : cases) {
+        const auto ref = render(c.in, Shape{"flat", {}}, Mode::off);
+        const auto mref = momentary_from_start(ref.out);
+        for (const auto& shape : shapes) {
+            std::uint64_t restarts = 0;
+            RenderOptions o;
+            o.finish = [&](pulp::format::HeadlessHost&, spectr::Spectr& plugin) {
+                restarts = plugin.auto_gain_material().spectrum().restarts();
+            };
+            const auto on = render(c.in, shape, mode, o);
+            const auto off = render(c.in, shape, Mode::off);
+            const auto mon = momentary_from_start(on.out), moff = momentary_from_start(off.out);
+            const auto spread = [&](double from_s) {
+                std::vector<double> a, b;
+                for (std::size_t k = 0; k < mref.size(); ++k) {
+                    const double t = static_cast<double>((k + 1) * kBlock) / kRate;
+                    if (t < from_s || !std::isfinite(mref[k]) || mref[k] < -70.0
+                        || !std::isfinite(mon[k]) || !std::isfinite(moff[k]))
+                        continue;
+                    a.push_back(mon[k] - mref[k]);
+                    b.push_back(moff[k] - mref[k]);
+                }
+                return std::pair{stddev(a), stddev(b)};
+            };
+            float lo = 1e9f, hi = -1e9f;
+            for (std::size_t b = 0; b < on.block_end.size(); ++b)
+                if (on.block_end[b] >= seconds(3.0)) {
+                    lo = std::min(lo, on.applied_db[b]);
+                    hi = std::max(hi, on.applied_db[b]);
+                }
+            const auto [s3, o3] = spread(3.0);
+            const auto [s10, o10] = spread(10.0);
+            std::printf("{\"material\":\"%s\",\"shape\":\"%s\",\"mode\":\"%s\","
+                        "\"sd\":%.3f,\"sd_off\":%.3f,\"sd_late\":%.3f,\"sd_off_late\":%.3f,"
+                        "\"applied_range_db\":%.3f,\"restarts\":%llu}\n", c.name,
+                        shape.name.c_str(), label, s3, o3, s10, o10,
+                        static_cast<double>(hi - lo), static_cast<unsigned long long>(restarts));
+            std::fflush(stdout);
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     std::string write_dir, corpus, shapes_choice = "all", modes_choice = "v1,v2";
-    std::string transient_label;
+    std::string transient_label, dynamic_label;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto next = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -191,6 +258,11 @@ int main(int argc, char** argv) {
         else if (a == "--shapes") shapes_choice = next();
         else if (a == "--modes") modes_choice = next();
         else if (a == "--transients") transient_label = next();
+        else if (a == "--dynamic") dynamic_label = next();
+    }
+    if (!dynamic_label.empty()) {
+        dynamic(dynamic_label == "v1" ? Mode::v1 : Mode::v2, dynamic_label.c_str());
+        return 0;
     }
     if (!transient_label.empty()) {
         transients(transient_label == "v1" ? Mode::v1 : Mode::v2, transient_label.c_str());

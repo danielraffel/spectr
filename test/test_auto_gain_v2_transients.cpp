@@ -14,7 +14,9 @@
 // the 400 ms momentary window 10 log10((0.01 x 251 + 0.39) / 0.4) = 8.6 LU
 // over, and one that needs a single 170 ms analysis window 20.3 LU. Those
 // cases are gated on T1dB and on how long the error stays above 6 LU
-// (<= 1.5 s), and their maximum is reported. Negative controls
+// (<= 1.6 s: the change detector waits ~0.7 s for a gap to persist, so a
+// one-bar fill is not mistaken for a new part), and their maximum is
+// reported. Negative controls
 // (CMakeLists.txt):
 //
 //   SPECTR_LEVEL_PLANT=autogain-v2-reset-on-seek    the first v2 forgot the
@@ -44,7 +46,7 @@ namespace {
 constexpr double kSeekT1dbGate = 1.0;
 constexpr double kChangeT1dbGate = 1.5;
 constexpr double kMomentaryGate = 6.0;
-constexpr double kOverMomentaryGateSeconds = 1.5;
+constexpr double kOverMomentaryGateSeconds = 1.6;
 
 const Shape kHighBoost = region("high broad +24", 24, 31, 24.0f);
 const Shape kLowBoost = region("low broad +24", 0, 9, 24.0f);
@@ -328,6 +330,35 @@ TEST_CASE("A session that saved AUTO on before v2 keeps v1 until AUTO is toggled
     CHECK_FALSE(r->auto_gain_legacy_v1());
     CHECK(std::abs(r->auto_gain_applied_db()) < 1.0f);
 
+    // The same toggle while the shape is FLAT (the composed path is idle with
+    // AUTO off and nothing drawn), then the boost drawn.
+    {
+        pulp::format::HeadlessHost flat_reader(spectr::create_spectr);
+        auto* f = flat_reader.processor_as<spectr::Spectr>();
+        flat_reader.state().set_value(spectr::kParamAutoGain, 1.0f);
+        REQUIRE(f->deserialize_plugin_state(old_supplemental));
+        REQUIRE(f->auto_gain_model() == AutoGainModel::reference_v1);
+        flat_reader.prepare(kRate, kBlock);
+        std::vector<float> fl(kBlock), fr(kBlock);
+        const auto run = [&](std::size_t blocks) {
+            for (std::size_t k = 0; k < blocks; ++k) {
+                const float* ip[] = {in.l.data(), in.r.data()};
+                float* op[] = {fl.data(), fr.data()};
+                pulp::audio::BufferView<const float> iv(ip, 2, kBlock);
+                pulp::audio::BufferView<float> ov(op, 2, kBlock);
+                flat_reader.process(ov, iv);
+            }
+        };
+        run(10);
+        flat_reader.state().set_value(spectr::kParamAutoGain, 0.0f);
+        run(10);
+        flat_reader.state().set_value(spectr::kParamAutoGain, 1.0f);
+        run(10);
+        std::printf("[autogain-v2-transient] pre-v2 session toggled with a flat shape: model %d\n",
+                    static_cast<int>(f->auto_gain_model()));
+        CHECK(f->auto_gain_model() == AutoGainModel::material_v2);
+    }
+
     // A pre-v2 session that saved AUTO off, and every new instance, run v2.
     pulp::format::HeadlessHost off_reader(spectr::create_spectr);
     auto* o = off_reader.processor_as<spectr::Spectr>();
@@ -342,4 +373,207 @@ TEST_CASE("A session that saved AUTO on before v2 keeps v1 until AUTO is toggled
     current.state().set_value(spectr::kParamAutoGain, 1.0f);
     REQUIRE(c->deserialize_plugin_state(w->serialize_plugin_state()));
     CHECK(c->auto_gain_model() == AutoGainModel::material_v2);
+}
+
+TEST_CASE("Auto Gain v2 does not pump on sparse or alternating or decaying material",
+          "[level][autogain][v2][transient][dynamic][audio]") {
+    // Material whose spectrum moves by itself: kick-only and full-drum bars
+    // alternating every 2 s, a dense mix with a pad breakdown, piano hits and
+    // drum hits with darkening tails every 3 s, a drum loop swelling +-12 dB.
+    // A perfect Auto Gain holds a constant gain on these, and any constant
+    // gain leaves the spread of momentary error (output vs the flat AUTO-off
+    // render, from 3 s) exactly where AUTO off has it. Gates:
+    //  - spread at most AUTO off's + 0.25 LU (what a 3 s average of a groove
+    //    moves the gain at all: +0.07 LU on the plain drum loop);
+    //  - on the swell the applied gain moves at most 1.5 dB (the plain loop
+    //    alone: 0.65 dB on the top octaves +24; the first v2's behaviour,
+    //    SPECTR_LEVEL_PLANT=autogain-v2a, 1.68 dB on this same case);
+    //  - an alternation is recognised after one cycle: at most two restarts,
+    //    and from then (10 s on) the same 0.25 LU bound. Until a pattern has
+    //    come back once it cannot be told from a real change of material,
+    //    which must be followed within 1.5 s; the first cycle's cost is
+    //    reported (`whole`).
+    const auto n = seconds(18.0);
+    struct Case { const char* name; Stereo in; bool alternation; };
+    const Case cases[] = {
+        {"kick-only / full drums alternating", kick_full_alternating(), true},
+        {"dense -> pad breakdown -> dense", dense_breakdown(), false},
+        {"piano hits every 3 s", piano_hits(n, 3.0), false},
+        {"drum hit + darkening tail / 3 s", hit_tail(n, 3.0), false},
+        {"drum loop swelling +-12 dB", drum_swell(n), false},
+        {"drum loop, no swell (swell baseline)", drum_loop(n), false},
+    };
+    const Shape shapes[] = {
+        region("high broad +12", 24, 31, 12.0f), region("high broad +24", 24, 31, 24.0f),
+        region("high broad -12", 24, 31, -12.0f), region("low broad +12", 0, 9, 12.0f),
+        {"tilt -12..+12", [](std::size_t i, spectr::Band& b) {
+             b.gain_db = -12.0f + 24.0f * static_cast<float>(i) / 31.0f; }},
+    };
+    double worst_excess = -1e9, worst_swell_extra = -1e9, worst_swell = 0.0;
+    std::uint64_t worst_alt_restarts = 0;
+    std::string worst_case;
+    std::vector<double> swell_range, base_range;
+    for (const auto& c : cases) {
+        const auto ref = render(c.in, kFlat, Mode::off);
+        const auto mref = momentary_from_start(ref.out);
+        for (const auto& shape : shapes) {
+            std::uint64_t restarts = 0;
+            RenderOptions o;
+            o.finish = [&](pulp::format::HeadlessHost&, spectr::Spectr& plugin) {
+                restarts = plugin.auto_gain_material().spectrum().restarts();
+            };
+            const auto on = render(c.in, shape, Mode::v2, o);
+            const auto off = render(c.in, shape, Mode::off);
+            const auto mon = momentary_from_start(on.out), moff = momentary_from_start(off.out);
+            const auto spread = [&](double from_s) {
+                std::vector<double> eon, eoff;
+                for (std::size_t k = 0; k < mref.size(); ++k) {
+                    const double t = static_cast<double>((k + 1) * kBlock) / kRate;
+                    if (t < from_s || !std::isfinite(mref[k]) || mref[k] < -70.0
+                        || !std::isfinite(mon[k]) || !std::isfinite(moff[k]))
+                        continue;
+                    eon.push_back(mon[k] - mref[k]);
+                    eoff.push_back(moff[k] - mref[k]);
+                }
+                return std::pair{stddev(eon), stddev(eoff)};
+            };
+            float lo = 1e9f, hi = -1e9f;
+            for (std::size_t b = 0; b < on.block_end.size(); ++b)
+                if (on.block_end[b] >= seconds(3.0)) {
+                    lo = std::min(lo, on.applied_db[b]);
+                    hi = std::max(hi, on.applied_db[b]);
+                }
+            const auto [sd_on, sd_off] = spread(3.0);
+            const auto [late_on, late_off] = spread(10.0);
+            const double gated = c.alternation ? late_on - late_off : sd_on - sd_off;
+            std::printf("[autogain-v2-dynamic] %-36s %-16s momentary-error sd v2 %.2f off %.2f "
+                        "(%+.2f; from 10 s %+.2f); applied range %.2f dB; %llu restarts\n",
+                        c.name, shape.name.c_str(), sd_on, sd_off, sd_on - sd_off,
+                        late_on - late_off, static_cast<double>(hi - lo),
+                        static_cast<unsigned long long>(restarts));
+            if (std::string(c.name).find("baseline") != std::string::npos) {
+                base_range.push_back(hi - lo);
+                continue;
+            }
+            if (std::string(c.name).find("swelling") != std::string::npos) {
+                swell_range.push_back(hi - lo);
+                worst_swell = std::max(worst_swell, static_cast<double>(hi - lo));
+            }
+            if (c.alternation) worst_alt_restarts = std::max(worst_alt_restarts, restarts);
+            if (gated > worst_excess) {
+                worst_excess = gated;
+                worst_case = std::string(c.name) + " / " + shape.name;
+            }
+        }
+    }
+    for (std::size_t k = 0; k < swell_range.size() && k < base_range.size(); ++k)
+        worst_swell_extra = std::max(worst_swell_extra, swell_range[k] - base_range[k]);
+    std::printf("[autogain-v2-dynamic] worst gated sd excess over AUTO off %+.2f LU (%s); swell "
+                "applied range at most %.2f dB (%+.2f over the plain loop); alternation "
+                "restarts %llu\n", worst_excess, worst_case.c_str(), worst_swell,
+                worst_swell_extra, static_cast<unsigned long long>(worst_alt_restarts));
+    INFO(worst_case);
+    CHECK(worst_excess <= 0.25);
+    CHECK(worst_swell <= 1.5);
+    CHECK(worst_alt_restarts <= 2);
+}
+
+TEST_CASE("A host re-prepare keeps Auto Gain's level",
+          "[level][autogain][v2][transient][state][audio]") {
+    // Hosts re-prepare before a bounce, on a buffer-size change, mid-song.
+    // Bass line under +24 dB on the top octaves (v2: 0 dB; a forgotten
+    // estimate restarts at v1's -20.6 dB). Re-prepared at 8 s: at the same
+    // rate and block size, with a different block size, at a different rate;
+    // and right after a restored session's first block.
+    const Stereo in = bass_line(seconds(12.0));
+    struct Case { const char* name; double rate; int block; };
+    const Case cases[] = {{"same rate and block", kRate, 4096},
+                          {"other block size", kRate, 1024},
+                          {"other rate (44.1 kHz)", 44100.0, 4096}};
+    double worst_t1db = 0.0, worst_mom = 0.0;
+    for (const auto& c : cases) {
+        RenderOptions o;
+        bool done = false;
+        o.before = [&](std::size_t pos, pulp::format::HeadlessHost& host, spectr::Spectr&) {
+            if (pos >= seconds(8.0) && !done) {
+                done = true;
+                host.prepare(c.rate, c.block);
+            }
+        };
+        const auto v2 = render(in, kHighBoost, Mode::v2, o);
+        const auto ref = render(in, kFlat, Mode::off, o);
+        const auto tr = transition(v2, ref, 8.0, 11.9, 11.9);
+        float lo = 1e9f;
+        for (std::size_t b = 0; b < v2.block_end.size(); ++b)
+            if (v2.block_end[b] >= seconds(8.0)) lo = std::min(lo, v2.applied_db[b]);
+        std::printf("[autogain-v2-transient] re-prepare (%s) at 8 s: T1dB %.2f s, max "
+                    "momentary error %.2f LU, lowest gain after %+.2f dB\n", c.name, tr.t1db,
+                    tr.max_momentary_error, static_cast<double>(lo));
+        worst_t1db = std::max(worst_t1db, tr.t1db);
+        worst_mom = std::max(worst_mom, tr.max_momentary_error);
+    }
+    // A restored session, re-prepared after its first block.
+    std::vector<std::uint8_t> blob;
+    RenderOptions save;
+    save.finish = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+        blob = pulp::format::plugin_state_io::serialize(host.state(), plugin);
+    };
+    (void)render(in, kHighBoost, Mode::v2, save);
+    RenderOptions restore;
+    restore.setup = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+        REQUIRE(pulp::format::plugin_state_io::deserialize(blob, host.state(), plugin));
+    };
+    bool reprepared = false;
+    restore.before = [&](std::size_t pos, pulp::format::HeadlessHost& host, spectr::Spectr&) {
+        if (pos > 0 && !reprepared) {
+            reprepared = true;
+            host.prepare(kRate, 4096);
+        }
+    };
+    const auto restored = render(in, kHighBoost, Mode::v2, restore);
+    const auto ref = render(in, kFlat, Mode::off, restore);
+    const auto tr = transition(restored, ref, 0.0, 4.0, 11.9);
+    std::printf("[autogain-v2-transient] restored, re-prepared after one block: T1dB %.2f s, "
+                "max momentary error from 0.4 s %.2f LU\n", tr.t1db, tr.max_momentary_error);
+    worst_t1db = std::max(worst_t1db, tr.t1db);
+    worst_mom = std::max(worst_mom, tr.max_momentary_error);
+    CHECK(worst_t1db <= 0.05);
+    CHECK(worst_mom <= 1.0);
+}
+
+TEST_CASE("A restored estimate on different material converges no slower than a cold start",
+          "[level][autogain][v2][transient][state][audio]") {
+    // A session saved after a bass line, reopened on other material: the
+    // saved estimate is where playback starts, and the material's own takes
+    // over as from a cold start -- the same prior fade, so the same time as a
+    // cold start whose prior is as wrong. A cold start on pink is
+    // instantaneous only because v1's prior IS pink; the bound is therefore
+    // max(cold T1dB, the cold-start time when the prior is wrong: 0.75 s).
+    std::vector<std::uint8_t> blob;
+    RenderOptions save;
+    save.finish = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+        blob = pulp::format::plugin_state_io::serialize(host.state(), plugin);
+    };
+    (void)render(bass_line(seconds(10.0)), kHighBoost, Mode::v2, save);
+    const auto n = seconds(8.0);
+    struct Case { const char* name; Stereo in; Shape shape; };
+    const Case cases[] = {{"hats", hats(n), kHighBoost}, {"pink", pink(n, 5u), kHighBoost},
+                          {"drum loop", drum_loop(n), kHighBoost},
+                          {"pink, high +12", pink(n, 5u), region("high broad +12", 24, 31, 12.0f)}};
+    double worst_extra = -1e9;
+    for (const auto& c : cases) {
+        RenderOptions restore;
+        restore.setup = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+            REQUIRE(pulp::format::plugin_state_io::deserialize(blob, host.state(), plugin));
+        };
+        const auto restored = render(c.in, c.shape, Mode::v2, restore);
+        const auto cold = render(c.in, c.shape, Mode::v2);
+        const auto ref = render(c.in, kFlat, Mode::off);
+        const auto tr = transition(restored, ref, 0.0, 5.0, 7.9);
+        const auto tc = transition(cold, ref, 0.0, 5.0, 7.9);
+        std::printf("[autogain-v2-transient] restored bass estimate, then %-14s T1dB %.2f s "
+                    "(cold %.2f s)\n", c.name, tr.t1db, tc.t1db);
+        worst_extra = std::max(worst_extra, tr.t1db - std::max(tc.t1db, 0.75));
+    }
+    CHECK(worst_extra <= 0.0);
 }

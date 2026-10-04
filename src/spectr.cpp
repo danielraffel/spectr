@@ -928,8 +928,10 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     preroll_surviving_hold_();
     // The pre-roll above ran the wet-source tap over silence. Start the
     // estimator's frame grid here, at the stream's first sample, so a bounce
-    // and a playback prepared the same way see the same frames.
-    auto_gain_material_.reset();
+    // and a playback prepared the same way see the same frames -- and keep
+    // the estimate a re-prepare carried (Auto Gain v2 never forgets the
+    // material because the host re-prepared).
+    auto_gain_material_.restart_grid();
     // Audio→worker lane for host-automation adoption (see the drift sweep
     // in process()). Restart cleanly across re-prepare.
     if (!param_sync_lane_.start(&Spectr::param_sync_trampoline_, this,
@@ -1439,6 +1441,32 @@ void Spectr::process(
     // A restored session's Auto Gain estimate (deserialize_plugin_state) is
     // adopted here, before any sample reaches the estimator.
     auto_gain_material_.adopt_pending();
+    // A session saved with AUTO on before v2 keeps v1 until the user switches
+    // AUTO off and on again -- seen here, every block, whatever path renders
+    // it (a flat shape never reaches the composed path). 2: just loaded, so
+    // what AUTO was before the load is not a toggle.
+    {
+        const bool auto_on = state().get_value(kParamAutoGain) >= 0.5f;
+        int legacy = auto_gain_legacy_v1_.load(std::memory_order_relaxed);
+        if (legacy == 2) {
+            auto_gain_seen_ = -1;
+            int fresh = 2;
+            (void)auto_gain_legacy_v1_.compare_exchange_strong(
+                fresh, 1, std::memory_order_relaxed);
+            legacy = 1;
+        }
+        if (legacy == 1 && auto_gain_seen_ == 0 && auto_on) {
+            auto_gain_model_.store(static_cast<int>(AutoGainModel::material_v2),
+                                   std::memory_order_relaxed);
+            int expected = 1;
+            (void)auto_gain_legacy_v1_.compare_exchange_strong(
+                expected, 0, std::memory_order_relaxed);
+        }
+        // (Negative control: the earlier placement only saw AUTO on the
+        // composed path, which a flat shape with AUTO off never runs.)
+        if (!(level_plant("autogain-v2-legacy-composed-only") && !auto_on))
+            auto_gain_seen_ = auto_on ? 1 : 0;
+    }
 
     // An offline render is not paced, so the workers that design a staged
     // mask or apply drifted host parameters fall a load-dependent number of
@@ -2323,27 +2351,6 @@ void Spectr::process(
                         // the gain loop below.
                         const bool auto_on = cursor.value(kParamAutoGain) >= 0.5f
                             && !level_plant("autogain-follow-output");
-                        // A session saved with AUTO on before v2 keeps v1 until
-                        // the user switches AUTO off and on again.
-                        // (2: just loaded -- what AUTO was before the load
-                        // is not a toggle.)
-                        int legacy = auto_gain_legacy_v1_.load(std::memory_order_relaxed);
-                        if (legacy == 2) {
-                            auto_gain_seen_ = -1;
-                            int fresh = 2;
-                            (void)auto_gain_legacy_v1_.compare_exchange_strong(
-                                fresh, 1, std::memory_order_relaxed);
-                            legacy = 1;
-                        }
-                        if (legacy == 1 && auto_gain_seen_ == 0 && auto_on) {
-                            auto_gain_model_.store(
-                                static_cast<int>(AutoGainModel::material_v2),
-                                std::memory_order_relaxed);
-                            int expected = 1;
-                            (void)auto_gain_legacy_v1_.compare_exchange_strong(
-                                expected, 0, std::memory_order_relaxed);
-                        }
-                        auto_gain_seen_ = auto_on ? 1 : 0;
                         const int auto_model =
                             auto_gain_model_.load(std::memory_order_relaxed);
                         const float auto_mix = std::clamp(
