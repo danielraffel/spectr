@@ -16,7 +16,7 @@ PINS = [
     "**Mix** blends Spectr's sound with the original input. It is most useful with Freeze",
     "**Output** is the final volume",
     "**AUTO** keeps the level steady as you boost or cut.",
-    "AUTO starts off: turn it on when you want it.",
+    "AUTO is off by default because it estimates the level from your shape rather than the sound",
     "A project that saved AUTO on keeps it on.",
     "**Range** in Settings, under Structure, sets how far a full-height drag reaches",
     "It does not change the sound.",

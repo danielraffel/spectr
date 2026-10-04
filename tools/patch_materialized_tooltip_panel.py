@@ -79,7 +79,7 @@ EDITS = [
      '      const y = box.bottom - origin.top + 6;\n'),
     ('AUTO is off for new instances, and its tooltip says when to use it',
      'globalThis.spectrHeaderTip("Auto Gain: keeps the level steady as you boost or cut.", "[data-spectr-auto-gain]")',
-     'globalThis.spectrHeaderTip("Auto Gain: AUTO keeps the level steady \u2014 turn it on when you want it.", "[data-spectr-auto-gain]")'),
+     'globalThis.spectrHeaderTip("Auto Gain \u2014 keeps the volume steady as you boost or cut.", "[data-spectr-auto-gain]")'),
     ('the tip state carries its box',
      '        setTip({ text, x });\n',
      '        setTip({ text, x, y, w });\n'),
