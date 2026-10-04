@@ -425,16 +425,13 @@ public:
         c.initial_mix        = config.initial_mix;
         c.mix_ramp_samples   = config.mix_ramp_samples;
         c.mix_curve          = pulp::signal::MixCurve::Linear;
+        // The framework starts every stream (prepare or reset) with analysis
+        // frames placed before its first sample, so that sample is covered by
+        // the full set of overlapping windows and reaches the output at full
+        // level, at the same latency. The negative control turns that off.
+        c.frame.full_overlap_stream_start = !full_overlap_disabled_by_plant_();
         if (!processor_.prepare(c)) return false;
         config_ = config;
-        prime_silence_.assign(static_cast<std::size_t>(config.max_block), 0.0f);
-        prime_sink_.assign(static_cast<std::size_t>(config.max_block * config.channels), 0.0f);
-        prime_in_.assign(static_cast<std::size_t>(config.channels), prime_silence_.data());
-        prime_out_.resize(static_cast<std::size_t>(config.channels));
-        for (int ch = 0; ch < config.channels; ++ch)
-            prime_out_[static_cast<std::size_t>(ch)] =
-                prime_sink_.data() + static_cast<std::size_t>(ch * config.max_block);
-        prime_stream_start_();
         return true;
     }
 
@@ -475,42 +472,19 @@ public:
         PULP_TRACE_SCOPE_NAMED("dsp", "mixing.process");
         return processor_.process(input, output, num_samples);
     }
-    void reset() noexcept override {
-        processor_.reset();
-        prime_stream_start_();
-    }
+    void reset() noexcept override { processor_.reset(); }
     [[nodiscard]] unsigned long long active_generation() const noexcept override {
         return generation_.load(std::memory_order_acquire);
     }
 
 private:
-    // A fresh WOLA stream has no analysis frames ending before its first
-    // sample, so the first fft_size - hop samples are covered by fewer than
-    // the full set of overlapping windows and the engine's start-of-stream
-    // normalisation floor attenuates them: an impulse 13 samples into a fresh
-    // stream came out at -176 dB, one 1024 samples in at -25 dB, and a drum
-    // hit at playback start lost its attack. Feeding fft_size - hop samples
-    // of silence first places frames before the stream's start, so every
-    // real sample is covered by the full overlap. The latency is unchanged:
-    // the silence occupies the head of the fixed-latency output, which is
-    // silent anyway. No frame is emitted while priming, so this is a copy of
-    // zeros, cheap enough for the audio thread's reset. The wet source is
-    // detached so a freeze does not hear silence that never played.
-    void prime_stream_start_() noexcept {
-        if (!config_.prime_stream_start || !processor_.prepared()
-            || stream_start_prime_disabled_()) return;
-        int remaining = config_.design_grid_size - config_.analysis_hop;
-        processor_.set_wet_source_stage(nullptr);
-        while (remaining > 0) {
-            const int n = std::min(remaining, config_.max_block);
-            (void)processor_.process(prime_in_.data(), prime_out_.data(), n);
-            remaining -= n;
-        }
-        processor_.set_wet_source_stage(wet_source_);
-    }
-    // Negative-control seam (SPECTR_PLANT_NO_STREAM_PRIME), read once.
-    static bool stream_start_prime_disabled_() noexcept {
-        static const bool disabled = std::getenv("SPECTR_PLANT_NO_STREAM_PRIME") != nullptr;
+    // Negative-control seam (SPECTR_PLANT_NO_FULL_OVERLAP), read once: a fresh
+    // WOLA stream without frames before its first sample tapers the first
+    // fft_size - hop samples toward zero (an impulse 13 samples in came out at
+    // -176 dB, one 1024 samples in at -25 dB), which the stream-start test
+    // must reject.
+    static bool full_overlap_disabled_by_plant_() noexcept {
+        static const bool disabled = std::getenv("SPECTR_PLANT_NO_FULL_OVERLAP") != nullptr;
         return disabled;
     }
 
@@ -518,9 +492,6 @@ private:
     MaskRendererConfig                  config_{};
     std::atomic<unsigned long long>     generation_{0};
     WetSource*                          wet_source_ = nullptr;
-    std::vector<float>                  prime_silence_, prime_sink_;
-    std::vector<const float*>           prime_in_;
-    std::vector<float*>                 prime_out_;
 };
 
 // ── Zero latency ───────────────────────────────────────────────────────────
