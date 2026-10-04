@@ -19,11 +19,13 @@
 /// held material the mask is shaping -- which is why the estimator is fed from
 /// a wet-source tap (AutoGainWetTap) and not from the host input.
 ///
-/// What this adapter owns, and the unit does not: turning a
-/// SpectralBandLayout plus Mix into band power gains (extend-edge bands, mutes,
-/// the dry blend), the start-up prior (v1's reference, tabulated per bin),
-/// Spectr's negative-control seams, and the per-slice event list the processor
-/// applies sample-accurately.
+/// What this adapter owns, and the unit does not: asking the active renderer
+/// for the response it realises for a SpectralBandLayout (and its minimum
+/// phase, where it designs one), the start-up prior (v1's reference,
+/// tabulated per bin), Spectr's negative-control seams, the per-slice event
+/// list the processor applies sample-accurately, and the wet-source tap that
+/// feeds the estimator the wet leg (the held sound while Freeze holds) and
+/// the dry leg (the live input).
 ///
 /// No pumping: nothing reads the output; the spectrum is a several-second,
 /// energy-weighted average that skips frames below the loudness gate (so it
@@ -66,36 +68,15 @@ auto_gain_v2_config() noexcept {
     c.time_constant_seconds = 3.0;
     c.prior_seconds = 0.5;
     c.gate_lufs = -60.0;
+    c.relative_gate_lu = 10.0;
+    // The dry leg is the live input; the wet leg is what the mask shapes
+    // (the held sound while Freeze holds). Their cross-spectrum tells the
+    // estimator, sample-deterministically, how they combine at Mix.
+    c.track_dry_leg = true;
     c.material_slew_db_per_second = 6.0;
     c.max_cut_db = 24.0f;
     c.max_boost_db = 24.0f;
     return c;
-}
-
-/// Band power gains of an effective layout blended with the dry signal at
-/// @p mix: extend_edge_band, so the first band owns everything below the
-/// window and the last everything above it. Pure.
-inline std::size_t auto_gain_band_powers(
-    const pulp::signal::SpectralBandLayout& layout, float mix,
-    std::span<pulp_candidate::signal::BandPowerGain> out) noexcept {
-    const auto n = std::min({static_cast<std::size_t>(layout.active_bands),
-                             layout.bands.size(), out.size()});
-    if (n == 0 || !(layout.max_hz > layout.min_hz) || !(layout.min_hz > 0.0f)) return 0;
-    const double m = std::clamp(static_cast<double>(mix), 0.0, 1.0);
-    const double ratio = static_cast<double>(layout.max_hz) / static_cast<double>(layout.min_hz);
-    for (std::size_t i = 0; i < n; ++i) {
-        double lo = static_cast<double>(layout.min_hz)
-            * std::pow(ratio, static_cast<double>(i) / static_cast<double>(n));
-        double hi = static_cast<double>(layout.min_hz)
-            * std::pow(ratio, static_cast<double>(i + 1) / static_cast<double>(n));
-        if (i == 0) lo = 1.0;
-        if (i + 1 == n) hi = 1.0e9;
-        const auto& band = layout.bands[i];
-        const double g = band.muted ? 0.0 : std::pow(10.0, static_cast<double>(band.gain_db) / 20.0);
-        const double blended = m * g + (1.0 - m);
-        out[i] = {lo, hi, blended * blended};
-    }
-    return n;
 }
 
 // SPECTR-RENDER-PATH BEGIN -- the adapter and the wet-source tap run on the
@@ -127,6 +108,8 @@ public:
             if (const double v = std::atof(tau); v > 0.0) config.time_constant_seconds = v;
         if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
+        if (const char* gate = std::getenv("SPECTR_AUTOGAIN_REL_GATE_LU"))
+            config.relative_gate_lu = std::atof(gate);  // <= 0 turns it off
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
         if (level_plant("autogain-v2-unweighted")) config.weight_by_material = false;
         if (level_plant("autogain-v2-no-smoothing")) {
@@ -143,9 +126,11 @@ public:
             prior[static_cast<std::size_t>(k)] = reference.weight(lo, hi);
         }
         spectrum_.prepare(sample_rate, channels, config, prior);
-        response_.assign(static_cast<std::size_t>(spectrum_.bins()), 1.0);
-        magnitudes_.assign(static_cast<std::size_t>(
-            std::max(design_grid, spectrum_.fft_size()) / 2 + 1), 1.0);
+        response_.assign(static_cast<std::size_t>(spectrum_.bins()), {1.0, 0.0});
+        design_grid_ = std::max(64, design_grid);
+        magnitudes_.assign(static_cast<std::size_t>(design_grid_ / 2 + 1), 1.0);
+        phased_.assign(static_cast<std::size_t>(design_grid_ / 2 + 1), {1.0, 0.0});
+        minimum_phase_.prepare(design_grid_);
         reset();
     }
 
@@ -176,6 +161,7 @@ public:
                      bool enabled, bool shape_changed,
                      const MaskRenderer* renderer) noexcept {
         enabled_ = enabled;
+        mix_ = std::clamp(static_cast<double>(mix), 0.0, 1.0);
         events_ = 0;
         slice_pos_ = 0;
         if (target_.primed() && !shape_changed) return false;
@@ -183,9 +169,11 @@ public:
         return target_.retarget(enabled ? shape_target_db() : 0.0f);
     }
 
-    /// The wet source's block, from the tap, in stream order.
-    void push(const float* const* x, int channels, int num_samples) noexcept {
-        spectrum_.push(x, channels, num_samples, [&](int consumed) {
+    /// The wet source's block and the live input it was made from, from the
+    /// tap, in stream order.
+    void push(const float* const* wet, const float* const* live, int channels,
+              int num_samples) noexcept {
+        spectrum_.push(wet, live, channels, num_samples, [&](int consumed) {
             on_frame_(slice_pos_ + consumed);
         });
         slice_pos_ = std::min(slice_pos_ + std::max(0, num_samples), 1 << 30);
@@ -199,39 +187,53 @@ public:
 
     /// The make-up the current estimate gives the current slice's shape.
     [[nodiscard]] float shape_target_db() const noexcept {
-        if (!spectrum_.prepared()) return 0.0f;
+        if (!spectrum_.prepared() || !response_valid_) return 0.0f;
         const auto& c = spectrum_.config();
-        const pulp_candidate::signal::MakeupLimits limits{c.max_cut_db, c.max_boost_db};
-        if (response_per_bin_)
-            return pulp_candidate::signal::makeup_gain_db(response_, spectrum_.spectrum(), limits);
-        return pulp_candidate::signal::band_makeup_gain_db(
-            std::span<const pulp_candidate::signal::BandPowerGain>(bands_.data(), band_count_),
-            [this](double lo, double hi) { return spectrum_.weight(lo, hi); }, limits);
+        return pulp_candidate::signal::blend_makeup_gain_db(
+            response_, spectrum_.legs(), mix_, {c.max_cut_db, c.max_boost_db});
     }
-    /// Whether the last derived response was the renderer's realised one.
-    [[nodiscard]] bool response_is_realised() const noexcept { return response_per_bin_; }
+    /// Whether the last derived response was the renderer's realised one
+    /// (false: the compiled table, the drawn steps).
+    [[nodiscard]] bool response_is_realised() const noexcept { return response_realised_; }
 
 private:
+    // The wet leg's response for this shape on the estimator's grid: the
+    // renderer's realised magnitude (or, without one, the compiled table),
+    // with the minimum phase a minimum-phase realisation gives it when the
+    // phase matters (Mix below 100 %).
     void derive_response_(const pulp::signal::SpectralBandLayout& shape, float mix,
                           const MaskRenderer* renderer) noexcept {
-        band_count_ = auto_gain_band_powers(shape, mix, bands_);
-        response_per_bin_ = false;
-        if (renderer == nullptr || !spectrum_.prepared() || level_plant("autogain-v2-drawn-response"))
-            return;
-        const int grid = renderer->design_grid_size();
-        if (grid <= 0 || static_cast<std::size_t>(grid / 2 + 1) > magnitudes_.size()) return;
-        if (!renderer->realised_magnitude(shape, sample_rate_, table_, magnitudes_)) return;
-        const double m = std::clamp(static_cast<double>(mix), 0.0, 1.0);
-        const auto bins = response_.size();
-        const double ratio = static_cast<double>(grid) / static_cast<double>(spectrum_.fft_size());
+        response_realised_ = false;
+        response_valid_ = false;
+        if (!spectrum_.prepared()) return;
+        const bool drawn = renderer == nullptr || level_plant("autogain-v2-drawn-response");
+        int grid = drawn ? design_grid_ : renderer->design_grid_size();
+        if (grid <= 0 || grid > design_grid_) grid = design_grid_;
+        bool ok = false;
+        if (!drawn) {
+            ok = renderer->realised_magnitude(shape, sample_rate_, table_, magnitudes_);
+            response_realised_ = ok;
+        }
+        if (!ok) {
+            if (!pulp::signal::build_spectral_mask(shape, grid, static_cast<float>(sample_rate_),
+                                                   table_))
+                return;
+            for (int b = 0; b < table_.num_bins; ++b)
+                magnitudes_[static_cast<std::size_t>(b)] =
+                    static_cast<double>(table_.gain_linear[static_cast<std::size_t>(b)]);
+        }
         const auto design_bins = static_cast<std::size_t>(grid / 2 + 1);
-        for (std::size_t k = 0; k < bins; ++k) {
+        const double floor = drawn ? 0.0 : renderer->minimum_phase_floor();
+        const bool phased = floor > 0.0 && mix < 1.0f && grid == design_grid_
+            && minimum_phase_.compute(std::span<const double>(magnitudes_.data(), design_bins),
+                                      floor, phased_);
+        const double ratio = static_cast<double>(grid) / static_cast<double>(spectrum_.fft_size());
+        for (std::size_t k = 0; k < response_.size(); ++k) {
             const auto j = std::min(design_bins - 1, static_cast<std::size_t>(
                 std::lround(static_cast<double>(k) * ratio)));
-            const double blended = m * magnitudes_[j] + (1.0 - m);
-            response_[k] = blended * blended;
+            response_[k] = phased ? phased_[j] : std::complex<double>(magnitudes_[j], 0.0);
         }
-        response_per_bin_ = true;
+        response_valid_ = true;
     }
 
     void on_frame_(int offset_in_slice) noexcept {
@@ -250,14 +252,17 @@ private:
 
     pulp_candidate::signal::LongTermSpectrum spectrum_;
     pulp_candidate::signal::MakeupTarget target_;
-    std::array<pulp_candidate::signal::BandPowerGain, kMaxBands> bands_{};
-    std::size_t band_count_ = 0;
-    // The realised response on the estimator's grid, and the scratch the
-    // renderer computes it in (a table is far too large for the stack).
-    std::vector<double> response_;
+    // The wet leg's response on the estimator's grid, and the scratch it is
+    // computed in (a table is far too large for an audio thread's stack).
+    std::vector<std::complex<double>> response_;
     std::vector<double> magnitudes_;
+    std::vector<std::complex<double>> phased_;
+    pulp_candidate::signal::MinimumPhaseResponse minimum_phase_;
     MaskRenderer::Table table_{};
-    bool response_per_bin_ = false;
+    int design_grid_ = 8192;
+    double mix_ = 1.0;
+    bool response_valid_ = false;
+    bool response_realised_ = false;
     double sample_rate_ = 48000.0;
     bool enabled_ = false;
     int slice_pos_ = 0;
@@ -284,7 +289,7 @@ public:
                 if (wet[ch] != input[ch])
                     std::copy(input[ch], input[ch] + num_samples, wet[ch]);
         }
-        if (material_ != nullptr) material_->push(wet, channels, num_samples);
+        if (material_ != nullptr) material_->push(wet, input, channels, num_samples);
     }
 
 private:

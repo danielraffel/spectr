@@ -128,13 +128,18 @@ int main(int argc, char** argv) {
         // end. "whole" is from 0.5 s, start-up included.
         const auto from = m.freeze_at > 0.0 ? seconds(m.freeze_at + 4.5) : seconds(4.0);
         const auto whole_from = m.freeze_at > 0.0 ? seconds(m.freeze_at + 0.5) : seconds(0.5);
-        double ref_steady = integrated_lufs(in, from), ref_whole = integrated_lufs(in, whole_from);
-        if (m.freeze_at > 0.0) {
-            const auto held = render(in, Shape{"flat", {}}, Mode::off, options);
-            ref_steady = integrated_lufs(held.out, from);
-            ref_whole = integrated_lufs(held.out, whole_from);
-        }
+        const double in_steady = integrated_lufs(in, from), in_whole = integrated_lufs(in, whole_from);
         for (const auto& shape : shapes) {
+            double ref_steady = in_steady, ref_whole = in_whole;
+            if (m.freeze_at > 0.0) {
+                // The held material's own loudness at this Mix: the same
+                // frozen render, flat shape, AUTO off.
+                Shape flat{"flat", {}};
+                flat.mix = shape.mix;
+                const auto held = render(in, flat, Mode::off, options);
+                ref_steady = integrated_lufs(held.out, from);
+                ref_whole = integrated_lufs(held.out, whole_from);
+            }
             const auto off = render(in, shape, Mode::off, options);
             const double off_steady = integrated_lufs(off.out, from) - ref_steady;
             for (const auto mode : modes) {

@@ -108,6 +108,12 @@ public:
     /// thread's stack). Returns false, writing nothing, if the layout does not
     /// compile or @p out is too short. The default is the table itself, which
     /// is what a realisation that applies the table per STFT bin realises.
+    /// > 0 when this realisation reconstructs a MINIMUM-PHASE impulse from the
+    /// realised magnitude, with this magnitude floor; 0 when its wet leg is
+    /// zero-phase against the latency-aligned dry leg. Auto Gain v2 needs the
+    /// phase only below 100 % Mix, where wet and dry interfere.
+    [[nodiscard]] virtual double minimum_phase_floor() const noexcept { return 0.0; }
+
     [[nodiscard]] virtual bool realised_magnitude(const Layout& layout, double sample_rate,
                                                   Table& scratch,
                                                   std::span<double> out) const noexcept {

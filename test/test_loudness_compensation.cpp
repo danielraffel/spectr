@@ -10,6 +10,9 @@
 #include "spectr/upstream/loudness_compensation.hpp"
 
 #include <atomic>
+#include <complex>
+#include <cstdio>
+#include <span>
 #include <cmath>
 #include <cstdlib>
 #include <new>
@@ -98,6 +101,96 @@ TEST_CASE("makeup_gain_db: pure vectors", "[loudness-compensation][pure]") {
     for (auto& v : huge) v = 1.0e6;
     CHECK(makeup_gain_db(huge, flat, {12.0f, 6.0f}) == -12.0f);
     CHECK(makeup_gain_db(std::vector<double>(8, 1.0e-6), flat, {12.0f, 6.0f}) == 6.0f);
+}
+
+TEST_CASE("blend_makeup_gain_db: the two-leg model", "[loudness-compensation][pure]") {
+    const MakeupLimits limits{24.0f, 24.0f};
+    const std::vector<double> p{1, 1, 1, 1}, zero(4, 0.0);
+    using C = std::complex<double>;
+    // Coherent legs (an ordinary effect), 100 % wet: the single-leg answer.
+    const std::vector<C> boost{{2, 0}, {1, 0}, {1, 0}, {1, 0}};
+    const LegSpectra coherent{p, p, p, zero};
+    const std::vector<double> boost_power{4, 1, 1, 1};
+    CHECK(blend_makeup_gain_db(boost, coherent, 1.0, limits)
+          == Approx(makeup_gain_db(boost_power, p, limits)).margin(1e-6));
+    // Coherent at 50 %: |0.5 H + 0.5|^2 per bin.
+    const double half = (2.25 + 3.0) / 4.0;
+    CHECK(blend_makeup_gain_db(boost, coherent, 0.5, limits)
+          == Approx(-10.0 * std::log10(half)).margin(1e-4));
+    // A pure phase flip at 50 %: coherent legs cancel, so the boost limit...
+    const std::vector<C> flip(4, C{-1, 0});
+    CHECK(blend_makeup_gain_db(flip, coherent, 0.5, limits) == 24.0f);
+    // ...uncorrelated legs (a hold while the input moves on) add as powers,
+    // so the same flip changes nothing.
+    const LegSpectra uncorrelated{p, p, zero, zero};
+    CHECK(blend_makeup_gain_db(flip, uncorrelated, 0.5, limits) == Approx(0.0f).margin(1e-6));
+    // Uncorrelated, 50 %, the wet leg muted: half the power, +3.01 dB.
+    const std::vector<C> mute(4, C{0, 0});
+    CHECK(blend_makeup_gain_db(mute, uncorrelated, 0.5, limits) == Approx(3.0103f).margin(1e-3));
+    // Nothing to measure.
+    const LegSpectra silent{zero, zero, zero, zero};
+    CHECK(blend_makeup_gain_db(boost, silent, 1.0, limits) == 0.0f);
+}
+
+TEST_CASE("MinimumPhaseResponse keeps the magnitude and has minimum phase",
+          "[loudness-compensation][pure]") {
+    constexpr int n = 1024;
+    MinimumPhaseResponse mp;
+    mp.prepare(n);
+    REQUIRE(mp.prepared());
+    std::vector<std::complex<double>> out(n / 2 + 1);
+    // Flat: zero phase.
+    REQUIRE(mp.compute(std::vector<double>(n / 2 + 1, 1.0), 1e-6, out));
+    double worst_phase = 0.0;
+    for (const auto& h : out) worst_phase = std::max(worst_phase, std::abs(std::arg(h)));
+    CHECK(worst_phase < 1e-5);
+    // A one-pole low-pass's magnitude comes back as that one-pole's response
+    // (a one-pole is minimum phase), phase and all.
+    const double a = 0.9;
+    std::vector<double> mag(n / 2 + 1);
+    for (int k = 0; k <= n / 2; ++k) {
+        const auto z = std::polar(1.0, -2.0 * kPi * k / n);
+        mag[static_cast<std::size_t>(k)] = std::abs((1.0 - a) / (1.0 - a * z));
+    }
+    REQUIRE(mp.compute(mag, 1e-6, out));
+    double worst = 0.0;
+    for (int k = 0; k <= n / 2; ++k) {
+        const auto z = std::polar(1.0, -2.0 * kPi * k / n);
+        const auto want = (1.0 - a) / (1.0 - a * z);
+        worst = std::max(worst, std::abs(out[static_cast<std::size_t>(k)] - want));
+    }
+    INFO("worst deviation from the one-pole response " << worst);
+    CHECK(worst < 1e-3);
+}
+
+TEST_CASE("LongTermSpectrum measures how the legs combine", "[loudness-compensation][state]") {
+    LoudnessCompensationConfig config;
+    config.track_dry_leg = true;
+    const auto x = noise(static_cast<std::size_t>(kRate * 6.0), 21u);
+    const auto y = noise(x.size(), 22u);
+    const auto sum = [](std::span<const double> v) {
+        double t = 0;
+        for (const double e : v) t += e;
+        return t;
+    };
+    // The wet leg IS the dry leg: the cross-spectrum is the power spectrum.
+    LongTermSpectrum same;
+    same.prepare(kRate, 1, config);
+    const float* xc[] = {x.data()};
+    same.push(xc, xc, 1, static_cast<int>(x.size()), [](int) {});
+    const auto s = same.legs();
+    CHECK(sum(s.wd_re) == Approx(sum(s.ww)).epsilon(1e-6));
+    CHECK(std::abs(sum(s.wd_im)) < 1e-6 * sum(s.ww));
+    // Independent legs: the cross-spectrum is a small fraction of the power.
+    LongTermSpectrum apart;
+    apart.prepare(kRate, 1, config);
+    const float* yc[] = {y.data()};
+    apart.push(xc, yc, 1, static_cast<int>(x.size()), [](int) {});
+    const auto t = apart.legs();
+    const double coherence = std::abs(sum(t.wd_re)) / std::sqrt(sum(t.ww) * sum(t.dd));
+    std::printf("[loudness-compensation] independent legs: |sum Pwd| / sqrt(sum Pww sum Pdd) = %.4f\n",
+                coherence);
+    CHECK(coherence < 0.05);
 }
 
 TEST_CASE("band_makeup_gain_db over a SpectrumCdf", "[loudness-compensation][pure]") {
@@ -215,8 +308,13 @@ TEST_CASE("MakeupTarget: an edit jumps, the material slews", "[loudness-compensa
 
 TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safety]") {
     LoudnessCompensationConfig config;
+    config.track_dry_leg = true;
     LongTermSpectrum s;
     s.prepare(kRate, 2, config);
+    MinimumPhaseResponse mp;
+    mp.prepare(s.fft_size());
+    std::vector<std::complex<double>> phased(static_cast<std::size_t>(s.bins()));
+    std::vector<double> magnitude(static_cast<std::size_t>(s.bins()), 0.5);
     MakeupTarget target;
     const auto x = noise(static_cast<std::size_t>(kRate * 1.0), 5u);
     const float* ch[] = {x.data(), x.data()};
@@ -226,13 +324,15 @@ TEST_CASE("The realtime calls do not allocate", "[loudness-compensation][rt-safe
     g_counting = true;
     for (std::size_t pos = 0; pos + 256 <= x.size(); pos += 256) {
         const float* c[] = {ch[0] + pos, ch[1] + pos};
-        s.push(c, 2, 256, [&](int) {
+        s.push(c, c, 2, 256, [&](int) {
             (void)target.follow(band_makeup_gain_db(
                 bands, [&](double lo, double hi) { return s.weight(lo, hi); },
                 {config.max_cut_db, config.max_boost_db}), 0.04, 6.0);
         });
     }
     (void)makeup_gain_db(response, s.spectrum(), {24.0f, 24.0f});
+    REQUIRE(mp.compute(magnitude, 1e-6, phased));
+    (void)blend_makeup_gain_db(phased, s.legs(), 0.5, {24.0f, 24.0f});
     s.reset();
     g_counting = false;
     INFO("allocations on the realtime path: " << g_allocations.load());

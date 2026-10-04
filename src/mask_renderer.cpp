@@ -611,6 +611,10 @@ public:
         return config_.design_grid_size;
     }
 
+    [[nodiscard]] double minimum_phase_floor() const noexcept override {
+        return kDesignMagnitudeFloor;
+    }
+
     /// The table plus this realisation's band-edge shaping: the magnitude
     /// design_and_stage_ reconstructs, by the same code path.
     [[nodiscard]] bool realised_magnitude(const Layout& layout, double sample_rate,

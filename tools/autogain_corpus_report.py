@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -131,7 +132,14 @@ def env(extra: dict | None = None) -> dict:
 def run_sweep(sweep: str, tsv: str, shapes: str, modes: str, extra: dict | None = None) -> list[dict]:
     proc = subprocess.run([sweep, "--corpus", tsv, "--shapes", shapes, "--modes", modes],
                           check=True, capture_output=True, text=True, env=env(extra))
-    return [json.loads(line) for line in proc.stdout.splitlines() if line.startswith("{")]
+    rows = []
+    for line in proc.stdout.splitlines():
+        if not line.startswith("{"):
+            continue
+        # printf spells a non-finite value nan/inf (e.g. the loudness of a
+        # window that is all silence); JSON has no such literal.
+        rows.append(json.loads(re.sub(r"(?<=:)-?(nan|inf)\b", "null", line)))
+    return rows
 
 
 def write_tsv(path: str, materials: list[dict]) -> None:
@@ -149,8 +157,9 @@ def summarise(rows: list[dict], materials: list[dict]) -> dict:
     by_key = {(r["material"], r["shape"], r["mode"]): r for r in rows}
     out: dict = {}
     for mode in ("v1", "v2"):
-        errs = [abs(r["error_lu"]) for r in rows if r["mode"] == mode]
-        whole = [abs(r["error_whole_lu"]) for r in rows if r["mode"] == mode]
+        errs = [abs(r["error_lu"]) for r in rows if r["mode"] == mode and r["error_lu"] is not None]
+        whole = [abs(r["error_whole_lu"]) for r in rows
+                 if r["mode"] == mode and r["error_whole_lu"] is not None]
         out[mode] = {"n": len(errs), "p50": pct(errs, 0.5), "p95": pct(errs, 0.95),
                      "worst": max(errs) if errs else 0.0,
                      "whole_p95": pct(whole, 0.95), "whole_worst": max(whole) if whole else 0.0}
@@ -174,7 +183,8 @@ def summarise(rows: list[dict], materials: list[dict]) -> dict:
 
 
 def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
-           tau_rows: dict, drawn_rows: list[dict], realised_quick: list[dict]) -> str:
+           tau_rows: dict, drawn_rows: list[dict], realised_quick: list[dict],
+           no_relative_gate: list[dict]) -> str:
     L = []
     L.append("# Spectr Auto Gain v2 -- corpus sweep (advisory)\n")
     L.append("Loudness error = BS.1770 integrated loudness of the output with AUTO on minus "
@@ -229,6 +239,8 @@ def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
     for r in rows:
         if r["mode"] != "v2" or r["shape"] not in ("low broad +12", "high broad -12"):
             continue
+        if r["momentary_sd_on"] is None or r["momentary_sd_off"] is None:
+            continue  # a window with silence in it has no finite momentary spread
         L.append(f"| {r['material']} | {r['shape']} | {r['momentary_sd_off']:.3f} | "
                  f"{r['momentary_sd_on']:.3f} | {r['momentary_sd_on'] - r['momentary_sd_off']:+.3f} | "
                  f"{r['applied_sd_db']:.4f} |")
@@ -242,10 +254,11 @@ def report(out: str, materials: list[dict], rows: list[dict], summary: dict,
         sp = [r["applied_spread_db"] for r in trs]
         L.append(f"| {tau} | {pct(e, 0.95):.2f} | {max(e):.2f} | {pct(w, 0.95):.2f} | "
                  f"{statistics.mean(sd):.4f} | {max(sp):.3f} |")
-    L.append("\n## Realised vs drawn response (quick subset, v2)\n")
+    L.append("\n## Realised vs drawn response, relative gate on/off (quick subset, v2)\n")
     L.append("| response | p95 abs LU | worst abs LU |")
     L.append("|---|---|---|")
-    for label, rs in (("realised (shipping)", realised_quick), ("drawn bands", drawn_rows)):
+    for label, rs in (("realised (shipping)", realised_quick), ("drawn bands", drawn_rows),
+                      ("realised, no relative gate", no_relative_gate)):
         e = [abs(r["error_lu"]) for r in rs]
         if e:
             L.append(f"| {label} | {pct(e, 0.95):.2f} | {max(e):.2f} |")
@@ -285,10 +298,14 @@ def main() -> int:
     realised_quick = run_sweep(sweep, quick_tsv, "quick", "v2")
     drawn = run_sweep(sweep, quick_tsv, "quick", "v2",
                       {"SPECTR_LEVEL_PLANT": "autogain-v2-drawn-response"})
+    no_relative_gate = run_sweep(sweep, quick_tsv, "quick", "v2",
+                                 {"SPECTR_AUTOGAIN_REL_GATE_LU": "0"})
     with open(os.path.join(args.out, "aux.json"), "w") as f:
         json.dump({"tau": tau_rows, "drawn": drawn, "realised_quick": realised_quick,
+                   "no_relative_gate": no_relative_gate,
                    "summary": summary, "materials": materials}, f, indent=1)
-    text = report(args.out, materials, rows, summary, tau_rows, drawn, realised_quick)
+    text = report(args.out, materials, rows, summary, tau_rows, drawn, realised_quick,
+                  no_relative_gate)
     print(text[:4000])
     return 0
 
