@@ -57,6 +57,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
+#include "spectr/upstream/processing_switch_crossfade.hpp"
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
@@ -440,7 +441,33 @@ public:
     /// so a failed switch is a no-op rather than a gap: on failure the previous
     /// mode is still live and this returns false. On success the host is told
     /// its delay compensation is stale via `flag_latency_changed()`.
+    ///
+    /// The switch is heard as a crossfade, not a cut: the audio thread warms
+    /// the new renderer on the live input while the old one is still heard,
+    /// then crossfades into it (spectr/upstream/processing_switch_crossfade.hpp). It completes
+    /// on the audio thread, a few hundred milliseconds of audio later; a
+    /// second switch, a prepare or a release first settles the one in flight.
     bool set_render_mode(MaskRenderMode mode);
+
+    /// Renderers this instance has built (prepare, a mode switch). A control
+    /// that must provably change nothing -- a GPU choice made in Tracking --
+    /// reads this before and after.
+    [[nodiscard]] std::uint64_t renderer_build_count() const noexcept {
+        return renderer_builds_.load(std::memory_order_relaxed);
+    }
+
+    /// True once no switch holds a renderer: the outgoing renderer of the
+    /// last switch has been freed (by the reclaim worker, without waiting for
+    /// another control call).
+    [[nodiscard]] bool render_switch_settled() const noexcept {
+        return render_switch_state_.load(std::memory_order_acquire) == kSwitchIdle;
+    }
+
+    /// True while a mode switch is still crossfading on the audio thread.
+    [[nodiscard]] bool render_switch_in_flight() const noexcept {
+        const int s = render_switch_state_.load(std::memory_order_acquire);
+        return s == kSwitchPending || s == kSwitchRunning || s == kSwitchBusy;
+    }
 
     /// True when the last restore could not build the renderer the project
     /// asked for, so the instance is still running the mode it had. A project
@@ -1015,6 +1042,93 @@ private:
     // demonstrably let go of them. Drained on the control thread; never freed
     // from process().
     std::vector<std::unique_ptr<MaskRenderer>> retired_renderers_{};
+
+    // ── Mode-switch crossfade ─────────────────────────────────────────────
+    //
+    // A switch hands the audio thread both renderers: it keeps rendering the
+    // outgoing one (still `active_renderer_`), warms the incoming one on the
+    // same input, crossfades, and only then publishes the incoming one as
+    // active. One atomic word is the whole handshake, so the control thread
+    // can tell "the audio thread is inside this switch" from "it is not" and
+    // never takes over a switch the audio thread is processing.
+    static constexpr int kSwitchIdle    = 0;  ///< no switch
+    static constexpr int kSwitchPending = 1;  ///< published, not yet started
+    static constexpr int kSwitchRunning = 2;  ///< started; audio thread between blocks
+    static constexpr int kSwitchBusy    = 3;  ///< audio thread inside a block of it
+    static constexpr int kSwitchDone    = 4;  ///< incoming is active; outgoing awaits the control thread
+    std::atomic<int>                       render_switch_state_{kSwitchIdle};
+    std::atomic<std::uint64_t>             renderer_builds_{0};
+    // Written by the control thread before it publishes kSwitchPending, read
+    // by the audio thread only after it claims the switch.
+    MaskRenderer*                          switch_incoming_ = nullptr;
+    std::unique_ptr<MaskRenderer>          switch_outgoing_{};
+    pulp_candidate::signal::ProcessingSwitchPlan switch_plan_{};
+    bool                                   switch_wet_wired_ = false;
+    // Audio thread only.
+    pulp_candidate::signal::ProcessingSwitchCrossfade switch_xfade_{};
+    /// Replays one wet block to a renderer during a switch, so the freeze
+    /// source (which advances when it is run) is run ONCE per block however
+    /// many renderers are listening. Unarmed it forwards to the real source.
+    struct ReplayWetSource final : MaskRenderer::WetSource {
+        MaskRenderer::WetSource* forward = nullptr;
+        const float* const*      replay = nullptr;
+        int                      offset = 0;
+        void process_block(const float* const* input, float* const* wet, int channels,
+                           int num_samples) noexcept override {
+            if (replay != nullptr) {
+                for (int ch = 0; ch < channels; ++ch)
+                    for (int i = 0; i < num_samples; ++i)
+                        wet[ch][i] = replay[ch][offset + i];
+                offset += num_samples;
+            } else if (forward != nullptr) {
+                forward->process_block(input, wet, channels, num_samples);
+            } else {
+                for (int ch = 0; ch < channels; ++ch)
+                    for (int i = 0; i < num_samples; ++i) wet[ch][i] = input[ch][i];
+            }
+        }
+    };
+    ReplayWetSource                        switch_replay_out_{};
+    ReplayWetSource                        switch_replay_in_{};
+    // Per-channel scratch, prepared with the processor: a copy of the input
+    // (the outgoing renderer may run in place), the shared wet block, and the
+    // incoming renderer's output.
+    std::vector<float>                     switch_scratch_{};
+    std::array<const float*, kMaximumChannels> switch_in_ptrs_{};
+    std::array<const float*, kMaximumChannels> switch_wet_read_{};
+    std::array<float*, kMaximumChannels>       switch_wet_write_{};
+    std::array<float*, kMaximumChannels>       switch_out_ptrs_{};
+
+    /// Audio thread: claim a published switch for this block. Returns the
+    /// incoming renderer, or null when no switch is running.
+    MaskRenderer* claim_render_switch_(MaskRenderer* outgoing) noexcept;
+    /// Audio thread: end the block's part in the switch, completing it when
+    /// the fade has finished.
+    void release_render_switch_(MaskRenderer* incoming) noexcept;
+    /// Audio thread: render one call through the outgoing renderer and, while
+    /// a switch runs, the incoming one, mixing the two.
+    [[nodiscard]] bool render_through_(MaskRenderer* renderer, MaskRenderer* incoming,
+                                       const float* const* input, float* const* output,
+                                       int num_samples) noexcept;
+    /// Control thread, holding switch_mutex_: settle any switch in flight --
+    /// wait for the audio thread to finish it, or finish it here when no audio
+    /// is running -- and free its outgoing renderer. Returns with no switch in
+    /// flight.
+    void settle_render_switch_() noexcept;
+    /// Reclaim worker: free a finished switch's outgoing renderer as soon as
+    /// the audio thread reports it done, rather than at the next control
+    /// call. A GPU renderer runs a service thread for as long as it exists.
+    struct SwitchReclaimTask { int unused = 0; };
+    static void switch_reclaim_trampoline_(void* ctx, const SwitchReclaimTask&) noexcept;
+    // Serialises the control side of a switch: set_render_mode, settling,
+    // and the reclaim worker. Never taken on the audio thread.
+    std::mutex                             switch_mutex_;
+    pulp::format::BackgroundTaskLane<SwitchReclaimTask, 4> switch_reclaim_lane_;
+    /// Control thread, no audio running (prepare, release): drop any switch.
+    void abandon_render_switch_() noexcept;
+    /// Control thread: free the switch's outgoing renderer once the audio
+    /// thread provably cannot hold it, or park it.
+    void retire_switch_outgoing_() noexcept;
 
     // The last layout the audio thread staged into the renderer, and whether
     // it holds one. Owned by process() alone -- never read or written by any
