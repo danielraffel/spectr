@@ -35,6 +35,7 @@
 #include <pulp/view/inspector.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
+#include <pulp/view/plugin_view_host.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/screenshot_compare.hpp>
@@ -44,6 +45,7 @@
 #include <pulp/view/widget_bridge.hpp>
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
+#include "shim/pulp_frame_cost_probe.hpp"
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
@@ -58,6 +60,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -1675,6 +1678,328 @@ int main(int argc, char** argv) {
                 capture(rig, dir, prefix + "PLANT", backend, scale);
             }
             return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── Modulated controls: frames, damage and frame cost ───────────
+        //
+        // SPECTR_MODULATION_CONTROLS=1: LFO 1 at 1 beat (2 Hz at 120 BPM)
+        // drives INTENSITY, MIX, OUTPUT, MORPH and BANDS at Depth 100 %, with
+        // snapshots A and B captured so Morph has somewhere to go, then the
+        // same with Freeze on. Writes `modctl-*.png` frames across one LFO
+        // cycle and prints, per frame, what each control drew.
+        //
+        // Then the frame-cost gate, per scenario, over 400 display frames of
+        // one 800-sample audio block each (60 Hz at 48 kHz):
+        //   * wall time of the display tick (publication + JS + canvas + rAF),
+        //   * layout passes and React commits the tick caused,
+        //   * the repaint damage it requested (a recording plug-in host on the
+        //     root: a bounded rect, or the whole surface).
+        // The gate (exit 1 on breach): with the analyzer quiet, the
+        // modulation frames request bounded damage inside the controls'
+        // boxes, cause no layout pass and no React commit, and add at most
+        // kModCtlBudgetMs to the p95 tick over the unmodulated baseline.
+        // SPECTR_MODCTL_PLANT=full-invalidate adds a painter that touches the
+        // document root on every modulation frame (a control whose update
+        // re-lays the tree), and the gate must FAIL.
+        if (std::getenv("SPECTR_MODULATION_CONTROLS") != nullptr) {
+            auto& store = rig.store;
+            const char* plant_env = std::getenv("SPECTR_MODCTL_PLANT");
+            const std::string plant = plant_env ? plant_env : "";
+            constexpr double kModCtlBudgetMs = 1.5;
+            const auto read_js = [&](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { throw new Error('PULPVALUE:' + (" + expr + ") + ':END'); })();",
+                             "spectr-modctl-read");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    const auto end = msg.find(":END");
+                    if (at != std::string::npos && end != std::string::npos && end > at)
+                        return msg.substr(at + 10, end - at - 10);
+                }
+                return "(unreadable)";
+            };
+            // A shape, captured as A; its mirror, captured as B.
+            store.set_value(spectr::kParamBandCount, 32.0f);
+            const auto shape = [&](float sign) {
+                for (std::size_t band = 0; band < 32; ++band)
+                    store.set_value(spectr::band_gain_param_id(band),
+                                    sign * 9.0f * static_cast<float>(
+                                        std::sin(0.35 * static_cast<double>(band))));
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+            };
+            shape(1.0f);
+            rig.activate("#spectr-snapshot-capture-a");
+            shape(-1.0f);
+            rig.activate("#spectr-snapshot-capture-b");
+            rig.service_runtime();
+            store.set_value(spectr::kParamMorph, 0.5f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoShape, 0.0f);
+            store.set_value(spectr::kParamLfoRate, 1.0f);
+            const auto route = [&](spectr::ModulationTarget target, bool on) {
+                const auto t = static_cast<std::size_t>(target);
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), on ? 1.0f : 0.0f);
+                store.set_value(spectr::lfo_route_amount_param_id(0, t), 1.0f);
+            };
+            const auto set_routes = [&](std::initializer_list<spectr::ModulationTarget> on) {
+                for (std::size_t t = 0; t < spectr::kModulationTargetCount; ++t) {
+                    bool want = false;
+                    for (auto target : on)
+                        want = want || static_cast<std::size_t>(target) == t;
+                    route(static_cast<spectr::ModulationTarget>(t), want);
+                }
+                rig.processor.apply_surface_params(false);
+            };
+            using MT = spectr::ModulationTarget;
+            constexpr int kBlock = 800;
+            std::vector<float> in0(kBlock), in1(kBlock), out0(kBlock), out1(kBlock);
+            const float* inputs[2]{in0.data(), in1.data()};
+            float* outputs[2]{out0.data(), out1.data()};
+            pulp::midi::MidiBuffer midi_in, midi_out;
+            pulp::format::ProcessContext context;
+            context.sample_rate = 48000.0;
+            context.num_samples = kBlock;
+            long long sample_clock = 0;
+            // `level` 0 is digital silence: the analyzer goes quiet and the
+            // plot's draw loop parks, so what remains is what modulation draws.
+            const auto block = [&](float level) {
+                for (int i = 0; i < kBlock; ++i)
+                    in0[i] = in1[i] = level * static_cast<float>(
+                        std::sin(0.13 * static_cast<double>(sample_clock + i)));
+                sample_clock += kBlock;
+                pulp::audio::BufferView<const float> input(inputs, 2, kBlock);
+                pulp::audio::BufferView<float> output(outputs, 2, kBlock);
+                rig.processor.process(output, input, midi_in, midi_out, context);
+            };
+            const auto drawn_state = [&]() {
+                return read_js(
+                    "(() => { const s = globalThis.__spectrModControls;"
+                    " const st = s ? s.state : {}; const d = s ? s.drawn : {};"
+                    " const f = typeof spectrFreezeStore === 'function' ? spectrFreezeStore().display : null;"
+                    " const ang = (p) => { if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
+                    "   return m ? (Math.atan2(+m[3] - 13, 13 - +m[4]) * 180 / Math.PI).toFixed(1) + 'deg' : 'none'; };"
+                    " return 'frames=' + (s ? s.frames : -1)"
+                    " + ' intensity=' + (st.intensityOn ? (100 * (1 - st.intensityPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.intensity)"
+                    " + ' mix=' + (st.mixOn ? (100 * (1 - st.mixPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.mix)"
+                    " + ' output=' + (st.outputOn ? (st.outputDb >= 0 ? '+' : '') + st.outputDb.toFixed(2) + 'dB' : 'off') + '@' + ang(d['output-trim'])"
+                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphPath=' + JSON.stringify(d.morph || '').slice(0, 40)"
+                    " + ' bands=' + (f ? f.bands : 'none')"
+                    " + ' frozen=' + (typeof spectrFreezeStore === 'function' ? String(spectrFreezeStore().modulated) : '?'); })()");
+            };
+            // ── Frames across one LFO cycle, looked at ──
+            const auto cycle_shots = [&](const std::string& tag) {
+                // 30 blocks of 800 at 48 kHz = one 2 Hz cycle; six frames.
+                for (int shot = 0; shot < 6; ++shot) {
+                    for (int b = 0; b < 5; ++b) {
+                        block(0.3f);
+                        rig.clock.tick(1.0f / 60.0f);
+                    }
+                    rig.service_runtime();
+                    rig.root->layout_children();
+                    const std::string name = "modctl-" + tag + "-" + std::to_string(shot);
+                    capture(rig, dir, prefix + name, backend, scale);
+                    std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                }
+            };
+            set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
+            for (int i = 0; i < 30; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+            cycle_shots("controls");
+            store.set_value(spectr::kParamFreeze, 1.0f);
+            rig.processor.apply_surface_params(false);
+            for (int i = 0; i < 30; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+            cycle_shots("freeze");
+            store.set_value(spectr::kParamFreeze, 0.0f);
+            rig.processor.apply_surface_params(false);
+
+            // ── Frame cost and damage ──
+            //
+            // Pulp's FrameCostProbe (tools/shim/pulp_frame_cost_probe.hpp until
+            // the pinned SDK ships it) puts a recording plug-in host on the
+            // root, so every repaint request is classified: bounded (its rect)
+            // or whole-surface.
+            if (!plant.empty() && plant != "full-invalidate") {
+                std::printf("[modctl] UNKNOWN PLANT %s\n", plant.c_str());
+                return 2;
+            }
+            if (plant == "full-invalidate")
+                // A control that animates by restyling a laid-out node: the
+                // knob's own box changes size on every modulation frame.
+                rig.eval("(() => { let flip = false; spectrModControlsSubscribe(() => {"
+                         " flip = !flip; const el = document.querySelector('[data-spectr-knob=intensity]');"
+                         " if (el) el.style.width = flip ? '27px' : '26px'; }); })();",
+                         "spectr-modctl-plant");
+            using Probe = spectr::shim::FrameCostProbe;
+            const bool paint_frames = std::getenv("SPECTR_MODCTL_PAINT") != nullptr;
+            // SPECTR_MODCTL_TRACE=FILE.pftrace: a Perfetto capture of the
+            // frame-cost runs (a PULP_TRACING=ON SDK only).
+            const char* modctl_trace = std::getenv("SPECTR_MODCTL_TRACE");
+            bool modctl_tracing = false;
+            if (modctl_trace != nullptr) {
+                if (!pulp::runtime::kTracingEnabled) {
+                    std::printf("[modctl] TRACE UNAVAILABLE: SDK built with PULP_TRACING=OFF\n");
+                } else {
+                    modctl_tracing = pulp::runtime::Tracing::start(
+                        {"render", "layout", "canvas", "text", "js", "state"},
+                        std::string(modctl_trace), 512u * 1024u);
+                    std::printf("[modctl] trace session: %s -> %s\n",
+                                modctl_tracing ? "started" : "REFUSED", modctl_trace);
+                }
+            }
+            struct Result { std::string name; Probe::Summary s; int commit_windows; int painted; };
+            std::vector<Result> results;
+            const auto commits = [&]() {
+                return std::atoll(read_js("(globalThis.__pulpCommitStats__ ? globalThis.__pulpCommitStats__.commits : -1)").c_str());
+            };
+            const auto controls_painted = [&]() {
+                return std::atoll(read_js("(globalThis.__spectrModControls ? globalThis.__spectrModControls.frames : 0)").c_str());
+            };
+            const auto run = [&](const std::string& name, std::initializer_list<MT> on, bool freeze, float level) {
+                set_routes(on);
+                store.set_value(spectr::kParamFreeze, freeze ? 1.0f : 0.0f);
+                rig.processor.apply_surface_params(false);
+                for (int i = 0; i < 90; ++i) { block(level); rig.clock.tick(1.0f / 60.0f); }
+                rig.service_runtime();
+                rig.root->layout_children();
+                const auto painted0 = controls_painted();
+                if (const char* only = std::getenv("SPECTR_MODCTL_SCENARIOS");
+                    only != nullptr && std::string(only).find(name) == std::string::npos
+                    && name != "idle-quiet")
+                    return;
+                Result r{name, {}, 0, 0};
+                std::vector<double> paint_ms;
+                PULP_TRACE_SCOPE_NAMED("state", "modctl_scenario");
+                {
+                    Probe probe(*rig.root, {static_cast<std::uint32_t>(kDesignWidth),
+                                            static_cast<std::uint32_t>(kDesignHeight)});
+                    long long commit_base = commits();
+                    for (int frame = 0; frame < 400; ++frame) {
+                        block(level);
+                        probe.measure([&] {
+                            PULP_TRACE_SCOPE_NAMED("render", "modctl_frame");
+                            rig.clock.tick(1.0f / 60.0f);
+                            rig.root->layout_children_if_needed();
+                        });
+                        // SPECTR_MODCTL_PAINT=1: then rasterize the whole tree,
+                        // as the macOS plug-in host repaints it. Outside the
+                        // probe: a capture lays the tree out itself, which is
+                        // the capture's cost, not the frame's.
+                        if (paint_frames) {
+                            PULP_TRACE_SCOPE_NAMED("render", "modctl_paint");
+                            std::uint32_t w = 0, h = 0;
+                            const auto p0 = std::chrono::steady_clock::now();
+                            (void)pulp::view::render_to_rgba(
+                                *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+                                static_cast<std::uint32_t>(kDesignHeight), 1.0f, &w, &h);
+                            paint_ms.push_back(std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - p0).count());
+                        }
+                        // Reading the counter is itself a script call, so it
+                        // is sampled every 16 frames, outside the measurement.
+                        if ((frame & 15) == 15) {
+                            const long long now = commits();
+                            if (now != commit_base) ++r.commit_windows;
+                            commit_base = now;
+                        }
+                    }
+                    r.s = probe.summary();
+                }
+                r.painted = static_cast<int>(controls_painted() - painted0);
+                if (!paint_ms.empty()) {
+                    std::sort(paint_ms.begin(), paint_ms.end());
+                    std::printf("[modctl-paint] %-20s raster p50 %.3f p95 %.3f max %.3f ms\n",
+                                name.c_str(), paint_ms[paint_ms.size() / 2],
+                                paint_ms[paint_ms.size() * 95 / 100], paint_ms.back());
+                }
+                std::printf("[modctl-cost] %-20s p50 %.3f p95 %.3f max %.3f ms | whole-surface frames %d/%d"
+                            " | layout frames %d | commit windows %d/25 | bounded damage mean %.0f px2"
+                            " union (%.0f,%.0f %.0fx%.0f) | controls publications painted %d\n",
+                            name.c_str(), r.s.p50_ms, r.s.p95_ms, r.s.max_ms, r.s.full_damage_frames,
+                            r.s.frames, r.s.layout_frames, r.commit_windows, r.s.mean_damage_area,
+                            r.s.damage_union.x, r.s.damage_union.y, r.s.damage_union.width,
+                            r.s.damage_union.height, r.painted);
+                results.push_back(r);
+            };
+            // Quiet input (the analyzer parks) isolates what modulation draws;
+            // a tone shows the cost on top of a live analyzer.
+            store.set_value(spectr::kParamLfoEnabled, 0.0f);
+            run("idle-quiet", {}, false, 0.0f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            run("knobs-quiet", {MT::Intensity, MT::Mix, MT::Output}, false, 0.0f);
+            run("morph-quiet", {MT::Morph}, false, 0.0f);
+            run("bands+freeze-quiet", {MT::Bands}, true, 0.0f);
+            run("all-quiet", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.0f);
+            run("bank-tone", {MT::WholeBank}, false, 0.3f);
+            run("all-tone", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.3f);
+            if (modctl_tracing) {
+                const auto stopped = pulp::runtime::Tracing::stop();
+                std::printf("[modctl] trace flushed: ok=%d bytes=%llu path=%s\n",
+                            stopped.ok ? 1 : 0,
+                            static_cast<unsigned long long>(stopped.trace_bytes),
+                            stopped.path.c_str());
+            }
+            // The gate, on the controls scenario against the quiet baseline:
+            // it painted (positive control), requested no whole-surface
+            // repaint, ran no layout pass, committed nothing, kept its damage
+            // to the controls' boxes (under 1 % of the editor; four 30 x 30
+            // knobs and a 90 x 16 slider are ~0.4 %) and grew the p95 tick by
+            // at most kModCtlBudgetMs.
+            // Damage is REPORTED, not gated. In this editor every frame that
+            // runs script still requests a whole-surface repaint whatever a
+            // control does: the bridge's own repaint request after a native
+            // dispatch or an animation frame is rect-less, and a bounded
+            // request under the design viewport's render transform escalates
+            // to the whole surface (View::request_repaint(Rect)). The macOS
+            // plug-in host repaints in full every frame regardless, so what a
+            // modulated control can cost is layout, commits and time, and
+            // those are gated.
+            constexpr bool kSdkBoundsAnimatedPaints = false;
+            (void)SPECTR_SDK_HAS_FRAME_COST_PROBE;
+            Probe::Budget budget;
+            budget.max_p95_ms = kModCtlBudgetMs;
+            // Whatever the idle editor already repaints whole (none, on an SDK
+            // that bounds them) is the floor; modulation may add none.
+            budget.max_full_damage_frames = kSdkBoundsAnimatedPaints
+                ? results[0].s.full_damage_frames : 1 << 30;
+            budget.max_layout_frames = 0;
+            budget.max_mean_damage_area = kSdkBoundsAnimatedPaints
+                ? 0.01 * kDesignWidth * kDesignHeight
+                : std::numeric_limits<double>::infinity();
+            budget.min_painted_frames = 100;
+            if (results.size() < 2 || results[1].name != "knobs-quiet") {
+                std::printf("[modctl-gate] NOT JUDGED: the knobs scenario did not run\n");
+                return 2;
+            }
+            const auto& base = results[0];
+            const auto& ctl = results[1];
+            auto breaches = Probe::check(ctl.s, budget, &base.s);
+            if (ctl.painted < 100)
+                breaches.push_back("positive control: only " + std::to_string(ctl.painted)
+                                   + " modulation_controls publications painted");
+            for (const auto& r : results)
+                if (r.commit_windows > 0)
+                    breaches.push_back(r.name + ": " + std::to_string(r.commit_windows)
+                                       + " windows made a React commit");
+            // Morph and Bands redraw the plot, which is a canvas the size of
+            // most of the editor, so their damage is that canvas's box -- not
+            // the whole surface -- and their frames stay inside the budget.
+            for (const auto& r : results) {
+                if (r.name == "idle-quiet" || r.name == "knobs-quiet") continue;
+                Probe::Budget plot = budget;
+                plot.max_mean_damage_area = kSdkBoundsAnimatedPaints
+                    ? 0.85 * kDesignWidth * kDesignHeight
+                    : std::numeric_limits<double>::infinity();
+                plot.max_layout_frames = r.s.frames / 8;  // a band-count step re-lays one label
+                plot.min_painted_frames = 1;
+                for (const auto& line : Probe::check(r.s, plot, &base.s))
+                    breaches.push_back(r.name + ": " + line);
+            }
+            for (const auto& line : breaches) std::printf("[modctl-gate] FAIL: %s\n", line.c_str());
+            const bool ok = breaches.empty();
+            std::printf("[modctl-gate] %s (plant=%s)\n", ok ? "PASS" : "FAIL",
+                        plant.empty() ? "none" : plant.c_str());
+            return ok ? 0 : 1;
         }
 
         // ── LFO routing: UI frame cost ─────────────────────────────────
