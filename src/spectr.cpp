@@ -889,7 +889,11 @@ MaskRenderer* Spectr::claim_render_switch_(MaskRenderer* outgoing) noexcept {
         return nullptr;
     MaskRenderer* incoming = switch_incoming_;
     if (claimed == kSwitchPending) {
-        switch_xfade_.begin(switch_plan_);
+        // Nothing has been heard since prepare or a reset (a host restoring a
+        // session's mode before it starts the stream): the new renderer
+        // starts the stream itself, as it would after a prepare.
+        switch_xfade_.begin(stream_rendered_
+            ? switch_plan_ : pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
         // Both renderers now listen to one run of the freeze source per
         // block (render_through_), not one each.
         if (switch_wet_wired_ && outgoing != nullptr) {
@@ -1011,6 +1015,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // renderer and anything a mode switch parked are free to go now.
     switch_reclaim_lane_.stop();
     abandon_render_switch_();
+    stream_rendered_ = false;
     active_renderer_.store(nullptr, std::memory_order_release);
     (void)switch_reclaim_lane_.start(&Spectr::switch_reclaim_trampoline_, this,
                                      pulp::format::BackgroundTaskPolicy::Latest);
@@ -1601,10 +1606,15 @@ void Spectr::process(
     struct RenderSwitchScope {
         Spectr* self;
         MaskRenderer* incoming;
-        ~RenderSwitchScope() { self->release_render_switch_(incoming); }
+        bool rendered;
+        ~RenderSwitchScope() {
+            self->release_render_switch_(incoming);
+            if (rendered) self->stream_rendered_ = true;
+        }
     };
     const RenderSwitchScope switch_scope{
-        this, processor_prepared_ && renderer ? claim_render_switch_(renderer) : nullptr};
+        this, processor_prepared_ && renderer ? claim_render_switch_(renderer) : nullptr,
+        processor_prepared_ && renderer != nullptr};
     MaskRenderer* const switch_in = switch_scope.incoming;
     // A restored session's Auto Gain estimate (deserialize_plugin_state) is
     // adopted here, before any sample reaches the estimator.
