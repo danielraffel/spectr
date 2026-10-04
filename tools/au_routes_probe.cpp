@@ -40,7 +40,8 @@
 // faster-than-real-time bounce is. With the offline fix the AU waits for its
 // own workers and the two match sample for sample; --no-offline-flag renders
 // the unpaced pass without the property (the negative control, which differs
-// on a loaded machine). Exit 0 match, 1 mismatch.
+// on a loaded machine). Exit 0 match, 1 mismatch. --auto-gain adds Auto Gain
+// (v2, which follows the material) and a change of material at 3 s.
 //
 // What this can and cannot see. The renderer spreads every mask swap over a
 // crossfade (up to 18 ms), so even an UN-ramped switch reaches the audio at
@@ -93,6 +94,7 @@ struct Options {
     bool offline_equivalence = false;
     bool offline_flag = true;
     bool offline_lifecycle = false;
+    bool auto_gain = false;
 };
 
 // How a render call is paced against the AU's own mask-design worker.
@@ -334,8 +336,13 @@ int offline_equivalence(const Options& o) {
         const double t = double(n) / o.sr;
         seed = seed * 1664525u + 1013904223u;
         const double noise = (double(seed >> 8) / double(1u << 24) - 0.5) * 0.05;
-        input.x[n] = float(0.15 * std::sin(2 * kPi * 220 * t) + 0.1 * std::sin(2 * kPi * 2000 * t)
-                           + 0.08 * std::sin(2 * kPi * 7000 * t) + noise);
+        // --auto-gain: the material's balance changes at 3 s (the 220 Hz tone
+        // stops, the 7 kHz one doubles), so Auto Gain v2's estimate -- and the
+        // gain it applies -- really moves during the render.
+        const double low = (o.auto_gain && t >= 3.0) ? 0.0 : 0.15;
+        const double high = (o.auto_gain && t >= 3.0) ? 0.16 : 0.08;
+        input.x[n] = float(low * std::sin(2 * kPi * 220 * t) + 0.1 * std::sin(2 * kPi * 2000 * t)
+                           + high * std::sin(2 * kPi * 7000 * t) + noise);
     }
     const auto at = [&](double s) { return std::size_t(s * o.sr); };
     constexpr AudioUnitParameterID kIntensity = 5000;
@@ -356,6 +363,9 @@ int offline_equivalence(const Options& o) {
     ev.push_back({0, route_amount(8), 0.6f});
     ev.push_back({0, route_on(4), 1.0f});
     ev.push_back({0, route_amount(4), 0.5f});
+    // Auto Gain (5001) on: its v2 estimator advances on a sample-counted frame
+    // grid, so the paced render and the bounce must still match exactly.
+    if (o.auto_gain) ev.push_back({0, 5001, 1.0f});
     std::vector<Event> automation;
     for (std::size_t s = 0; s < at(seconds); s += o.block) {
         const double t = double(s) / o.sr;
@@ -456,6 +466,7 @@ int main(int argc, char** argv) {
         else if (a == "--offline-equivalence") o.offline_equivalence = true;
         else if (a == "--no-offline-flag") o.offline_flag = false;
         else if (a == "--offline-flag-lifecycle") o.offline_lifecycle = true;
+        else if (a == "--auto-gain") o.auto_gain = true;
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (o.bundle.empty()) { std::fprintf(stderr, "--bundle is required\n"); return 2; }

@@ -107,6 +107,7 @@ namespace {
 
 Spectr::Spectr() : editor_authority_(*this) {
     prime_negative_control_seams();
+    auto_gain_tap_.bind(&freeze_source_, &auto_gain_material_);
 #if defined(SPECTR_NATIVE_EDITOR)
     pulp::view::CommandInfo settings;
     settings.id = kOpenSettingsCommand;
@@ -674,7 +675,9 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     // Last: the pump above runs on this (control) thread while the audio
     // thread may be running the outgoing renderer through the same source, so
     // the source is attached only once nothing here will process again.
-    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&freeze_source_);
+    // The tap runs the freeze source and then shows Auto Gain v2 what the
+    // mask is about to shape (auto_gain_material.hpp).
+    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&auto_gain_tap_);
     return renderer;
 }
 
@@ -806,6 +809,13 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         freeze_source_.ensure_loop_storage_while_stopped(freeze_seconds);
     freeze_storage_collect_sent_ = false;
     start_freeze_storage_lane_();
+    // Auto Gain's reference and v2's material estimator belong to the rate.
+    // Prepared before any renderer is built, so the wet-source tap never
+    // runs an estimator sized for another geometry.
+    auto_gain_reference_.prepare(sample_rate_);
+    auto_gain_material_.prepare(sample_rate_, channels_, auto_gain_reference_,
+                                kSpectralFftSize);
+    auto_gain_last_valid_ = false;
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
@@ -848,9 +858,8 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
-    // Level controls: the reference spectrum belongs to the rate, and the
-    // first block adopts Intensity and the Auto Gain level without a ramp.
-    auto_gain_reference_.prepare(sample_rate_);
+    // Level controls: the first block adopts Intensity and the Auto Gain level
+    // without a ramp.
     auto_gain_.set_ramp_time(kAutoGainRampSeconds, static_cast<float>(sample_rate_));
     auto_gain_.set_immediate(1.0f);
     auto_gain_target_db_ = 0.0f;
@@ -872,6 +881,10 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         publish_processing_state_();
     }
     preroll_surviving_hold_();
+    // The pre-roll above ran the wet-source tap over silence. Start the
+    // estimator's frame grid here, at the stream's first sample, so a bounce
+    // and a playback prepared the same way see the same frames.
+    auto_gain_material_.reset();
     // Audio→worker lane for host-automation adoption (see the drift sweep
     // in process()). Restart cleanly across re-prepare.
     if (!param_sync_lane_.start(&Spectr::param_sync_trampoline_, this,
@@ -1417,8 +1430,13 @@ void Spectr::process(
         // else: a playing hold keeps playing across it.
         freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
-        // Level controls re-adopt their values on the next composed block.
+        // Level controls re-adopt their values on the next composed block, and
+        // Auto Gain v2 forgets the material with the rest of the history: a
+        // bounce and a playback that start from the same reset hear the same
+        // gain.
         auto_gain_primed_ = false;
+        auto_gain_material_.reset();
+        auto_gain_last_valid_ = false;
         audio_intensity_primed_ = false;
         audio_output_mod_primed_ = false;
         audio_output_mod_db_ = 0.0f;
@@ -2142,13 +2160,22 @@ void Spectr::process(
 
                         // Auto Gain compensates the shape the user DREW (the
                         // pre-LFO field, after morph and macros) at this
-                        // Intensity and Mix. Computed from the shape, never
-                        // from the output, so a static shape is a constant
-                        // gain and nothing can pump.
-                        float target_db = 0.0f;
-                        if (cursor.value(kParamAutoGain) >= 0.5f
-                            && !level_plant("autogain-follow-output")) {
-                            pulp::signal::SpectralBandLayout shape = automated;
+                        // Intensity and Mix. Never computed from the output:
+                        // v1 weighs the shape against a fixed K-weighted pink
+                        // reference; v2 (what AUTO runs) against the long-term
+                        // spectrum of the material the mask is shaping
+                        // (auto_gain_material.hpp). A shape edit retargets at
+                        // once; v2's material movement arrives as per-sample
+                        // events from the estimator's frame grid, applied in
+                        // the gain loop below.
+                        const bool auto_on = cursor.value(kParamAutoGain) >= 0.5f
+                            && !level_plant("autogain-follow-output");
+                        const int auto_model =
+                            auto_gain_model_.load(std::memory_order_relaxed);
+                        const float auto_mix = std::clamp(
+                            cursor.value(kMix) / 100.0f, 0.0f, 1.0f);
+                        pulp::signal::SpectralBandLayout shape = automated;
+                        if (auto_on) {
                             for (std::size_t band = 0;
                                  band < shape.active_bands; ++band) {
                                 shape.bands[band].gain_db =
@@ -2157,16 +2184,40 @@ void Spectr::process(
                                     host_field.bands[band].muted;
                             }
                             apply_intensity(shape, audio_intensity_);
-                            target_db = auto_gain_reference_.compensation_db(
-                                shape, std::clamp(cursor.value(kMix) / 100.0f,
-                                                  0.0f, 1.0f));
                         }
+                        float target_db = 0.0f;
+                        bool retarget = false;
+                        if (auto_model == static_cast<int>(AutoGainModel::reference_v1)) {
+                            if (auto_on)
+                                target_db = auto_gain_reference_.compensation_db(
+                                    shape, auto_mix);
+                            retarget = target_db != auto_gain_target_db_;
+                            (void)auto_gain_material_.begin_slice(
+                                shape, auto_mix, /*enabled=*/false, true, nullptr);
+                        } else {
+                            const bool changed = !auto_gain_last_valid_
+                                || auto_on != auto_gain_last_enabled_
+                                || auto_model != auto_gain_last_model_
+                                || auto_mix != auto_gain_last_mix_
+                                || renderer != auto_gain_last_renderer_
+                                || !same_mask_layout_(auto_gain_last_shape_, shape);
+                            retarget = auto_gain_material_.begin_slice(
+                                shape, auto_mix, auto_on, changed, renderer);
+                            target_db = auto_gain_material_.target_db();
+                            retarget = retarget || target_db != auto_gain_target_db_;
+                        }
+                        auto_gain_last_shape_ = shape;
+                        auto_gain_last_mix_ = auto_mix;
+                        auto_gain_last_enabled_ = auto_on;
+                        auto_gain_last_model_ = auto_model;
+                        auto_gain_last_renderer_ = renderer;
+                        auto_gain_last_valid_ = true;
                         if (!auto_gain_primed_) {
                             auto_gain_.set_immediate(
                                 std::pow(10.0f, target_db * 0.05f));
                             auto_gain_target_db_ = target_db;
                             auto_gain_primed_ = true;
-                        } else if (target_db != auto_gain_target_db_) {
+                        } else if (retarget) {
                             auto_gain_.set_target(
                                 std::pow(10.0f, target_db * 0.05f));
                             auto_gain_target_db_ = target_db;
@@ -2247,6 +2298,22 @@ void Spectr::process(
                     const bool processed = renderer->process(
                         input_channels_.data(), output_channels_.data(),
                         static_cast<int>(out_slice.num_samples()));
+                    // v2's frame events of this slice, in sample order.
+                    const std::size_t auto_events =
+                        auto_gain_material_.event_count();
+                    std::size_t auto_event = 0;
+                    const auto take_auto_events = [&](std::size_t up_to) {
+                        while (auto_event < auto_events
+                               && static_cast<std::size_t>(
+                                      auto_gain_material_.event(auto_event).offset)
+                                      <= up_to) {
+                            const float db =
+                                auto_gain_material_.event(auto_event).target_db;
+                            auto_gain_.set_target(std::pow(10.0f, db * 0.05f));
+                            auto_gain_target_db_ = db;
+                            ++auto_event;
+                        }
+                    };
                     if (!processed) {
                         auto_gain_.skip(static_cast<int>(out_slice.num_samples()));
                         output_gain_.skip(static_cast<int>(out_slice.num_samples()));
@@ -2302,6 +2369,7 @@ void Spectr::process(
                                     output_gain_.set_target(trim_target);
                                 trim_gain = output_gain_.next();
                             }
+                            take_auto_events(sample);
                             float gain = trim_gain * auto_gain_.next();
                             // The Output destination rides on top of Auto
                             // Gain and the trim: Auto Gain never sees it, and
@@ -2325,6 +2393,10 @@ void Spectr::process(
                                 output_channels_[channel][sample] *= gain;
                         }
                     }
+                    // A frame that completed on the slice's last sample moves
+                    // the target from the next slice's first sample: the same
+                    // sample however the host cut the stream.
+                    take_auto_events(std::numeric_limits<std::size_t>::max());
                     const double sample_rate = ctx.sample_rate > 0.0
                         ? ctx.sample_rate : sample_rate_;
                     const double tempo = ctx.tempo_bpm > 0.0

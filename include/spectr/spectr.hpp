@@ -13,6 +13,7 @@
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
 #include "spectr/level_controls.hpp"
+#include "spectr/auto_gain_material.hpp"
 #include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
@@ -656,6 +657,22 @@ public:
         return auto_gain_applied_db_.load(std::memory_order_relaxed);
     }
 
+    /// Which Auto Gain computation AUTO runs (auto_gain_material.hpp). v2 is
+    /// the product; v1 stays selectable here, and only here, so the corpus
+    /// sweep and the tests can measure the two side by side. Not saved, not
+    /// a parameter. Takes effect at the next block.
+    void set_auto_gain_model(AutoGainModel model) noexcept {
+        auto_gain_model_.store(static_cast<int>(model), std::memory_order_relaxed);
+    }
+    [[nodiscard]] AutoGainModel auto_gain_model() const noexcept {
+        return static_cast<AutoGainModel>(auto_gain_model_.load(std::memory_order_relaxed));
+    }
+    /// v2's material estimator. Audio-thread state: read it only where
+    /// process() cannot be running (tests, between renders).
+    [[nodiscard]] const AutoGainMaterial& auto_gain_material() const noexcept {
+        return auto_gain_material_;
+    }
+
     /// Freeze's musical Length: how much of the incoming sound the next
     /// freeze takes in (freeze_length.hpp). Host parameter 4 (Freeze Length)
     /// picks one of the header's common lengths or "Custom", the custom
@@ -1065,6 +1082,21 @@ private:
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.
     FreezeSource                           freeze_source_{};
+    // Auto Gain v2: the material estimator and the wet-source stage the
+    // renderers call -- it runs freeze_source_, then feeds the estimator what
+    // the mask is about to shape. Audio-thread state after prepare().
+    AutoGainMaterial                       auto_gain_material_{};
+    AutoGainWetTap                         auto_gain_tap_{};
+    std::atomic<int>                       auto_gain_model_{
+        static_cast<int>(kAutoGainShippingModel)};
+    // The last slice's Auto Gain inputs, to tell a shape edit (retarget now)
+    // from material movement (slew-limited, on the estimator's frame grid).
+    pulp::signal::SpectralBandLayout       auto_gain_last_shape_{};
+    float                                  auto_gain_last_mix_ = -1.0f;
+    bool                                   auto_gain_last_enabled_ = false;
+    int                                    auto_gain_last_model_ = 0;
+    const MaskRenderer*                    auto_gain_last_renderer_ = nullptr;
+    bool                                   auto_gain_last_valid_ = false;
     std::atomic<std::uint32_t> freeze_custom_length_{pack_length(kDefaultFreezeLength)};
     std::atomic<double> transport_tempo_bpm_{kFallbackTempoBpm};
     std::atomic<int> transport_time_sig_numerator_{4};
