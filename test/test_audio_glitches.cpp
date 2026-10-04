@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <random>
 #include <ctime>
@@ -644,7 +645,61 @@ TEST_CASE("A Latency switch before the stream starts takes effect at once",
     CHECK(std::abs(out_l[std::size_t(latency)] - 0.5f) < 0.01f);
 }
 
-// ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
+TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
+          "[render-mode][deadline]") {
+    // Logic at a 32-sample buffer: 0.667 ms per callback at 48 kHz. Per-call
+    // thread CPU (load-robust, unlike wall time) over a steady render and one
+    // with FROZEN pressed and released and a band drag, with the product's
+    // shape and AUTO on. Gate: p99 at most half the deadline, max under it.
+    // Negative control: SPECTR_PLANT_CALLBACK_BURST adds a fixed burst every
+    // 512 samples, the per-hop pattern that crackles live; it must fail.
+    const double rate = 48000.0;
+    const int block = 32;
+    const auto material = chord(4.0, rate);
+    Run run;
+    run.rate = rate;
+    run.block = block;
+    run.mode = MaskRenderMode::zero_latency;
+    run.shaped = true;
+    run.auto_gain = 1.0f;
+    const std::size_t engage = at(1.5, rate) + 7, release = at(2.6, rate) + 3;
+    std::size_t next = at(2.8, rate);
+    run.before = [&](Spectr& p, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                     pulp::state::ParameterEventQueue& ev) {
+        if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, 6.0f);
+        if (engage >= pos && engage < pos + std::size_t(n))
+            (void)ev.push({spectr::kParamFreeze, std::int32_t(engage - pos), 1.0f, 0});
+        if (release >= pos && release < pos + std::size_t(n))
+            (void)ev.push({spectr::kParamFreeze, std::int32_t(release - pos), 0.0f, 0});
+        while (next >= pos && next < pos + std::size_t(n) && next < at(3.6, rate)) {
+            auto field = p.processing_state_snapshot().field;
+            field.bands[10].gain_db = float(-24.0 + 30.0 * double(next - at(2.8, rate)) / double(at(0.8, rate)));
+            p.replace_field(field);
+            next += at(1.0 / 60.0, rate);
+        }
+    };
+    // The minimum over three runs of each callback's cost: a preemption or a
+    // cache-cold page in one run is the machine, not the processor.
+    std::vector<double> best;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        BlockCosts costs;
+        (void)render(material, run, nullptr, nullptr, &costs);
+        if (best.empty()) best = costs.us;
+        for (std::size_t i = 0; i < best.size() && i < costs.us.size(); ++i)
+            best[i] = std::min(best[i], costs.us[i]);
+    }
+    // Skip the first second: prepare-time work and the estimator's warm-up.
+    std::vector<double> v(best.begin() + std::ptrdiff_t(at(1.0, rate) / std::size_t(block)), best.end());
+    std::sort(v.begin(), v.end());
+    const double deadline = 1e6 * block / rate;
+    const double p99 = v[std::size_t(0.99 * double(v.size()))], worst = v.back();
+    std::printf("\nTracking at 48 kHz / 32: p50 %.0f us, p99 %.0f us, max %.0f us, deadline %.0f us\n",
+                v[v.size() / 2], p99, worst, deadline);
+    CHECK(p99 <= 0.5 * deadline);
+    CHECK(worst < deadline);
+}
+
+// ── 2/3. Reports// ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
 
 TEST_CASE("Glitch report: Freeze engage and release in Tracking",
           "[.][glitch-report]") {
@@ -1177,8 +1232,12 @@ TEST_CASE("Glitch trace: render each reported flow with Perfetto running", "[.][
     const char* dir_env = std::getenv("SPECTR_GLITCH_TRACE_DIR");
     const std::string dir = dir_env ? dir_env : "/tmp/spectr-glitch-traces";
     std::filesystem::create_directories(dir);
-    const double rate = 48000.0;
-    const int block = 256;
+    // SPECTR_GLITCH_TRACE_RATE / _BLOCK: the host geometry (Logic at 96 kHz /
+    // 32 samples is the case a 0.333 ms deadline makes hardest).
+    const char* rate_env = std::getenv("SPECTR_GLITCH_TRACE_RATE");
+    const char* block_env = std::getenv("SPECTR_GLITCH_TRACE_BLOCK");
+    const double rate = rate_env ? std::atof(rate_env) : 48000.0;
+    const int block = block_env ? std::atoi(block_env) : 256;
     const auto capture = [&](const std::string& name, Run run, const Stereo& material) {
         run.rate = rate;
         run.block = block;
@@ -1194,6 +1253,13 @@ TEST_CASE("Glitch trace: render each reported flow with Perfetto running", "[.][
                     (unsigned long long)stopped.trace_bytes, name.c_str());
     };
     const auto material = chord(6.0, rate);
+    for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+        Run run;
+        run.mode = mode;
+        run.shaped = true;
+        run.auto_gain = 1.0f;
+        capture(mode == MaskRenderMode::zero_latency ? "steady-tracking" : "steady-mixing", run, material);
+    }
     // Mixing <-> Tracking. SPECTR_PLANT_HARD_RENDER_SWITCH gives the cut.
     for (const auto from : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
         Run run;
@@ -1201,9 +1267,9 @@ TEST_CASE("Glitch trace: render each reported flow with Perfetto running", "[.][
         run.shaped = true;
         run.auto_gain = 1.0f;
         bool switched = false;
-        run.before = [switched, from](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int,
+        run.before = [switched, from, rate](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int,
                                       pulp::state::ParameterEventQueue&) mutable {
-            if (!switched && pos >= std::size_t(2.0 * 48000.0)) {
+            if (!switched && pos >= at(2.0, rate)) {
                 (void)p.set_render_mode(from == MaskRenderMode::zero_latency
                     ? MaskRenderMode::linear_phase : MaskRenderMode::zero_latency);
                 switched = true;
@@ -1248,5 +1314,107 @@ TEST_CASE("Glitch trace: render each reported flow with Perfetto running", "[.][
             }
         };
         capture("drag-tracking", run, material);
+    }
+}
+
+TEST_CASE("Glitch report: callback cost at tiny host buffers", "[.][glitch-report][tiny]") {
+    // Logic at a 32-sample buffer leaves 0.667 ms per callback at 48 kHz.
+    // Thread-CPU per callback, steady and around each flow, against that.
+    std::printf("\nCallback thread-CPU at tiny buffers (us): p50 / p99 / max, misses = callbacks over the deadline\n"
+                "  %-10s %-9s %6s %5s %7s %18s %18s\n", "flow", "mode", "rate", "block", "budget", "steady", "event window");
+    for (const double rate : {44100.0, 48000.0, 96000.0}) {
+        for (const int block : {16, 32, 64}) {
+            for (const int flow : {0, 1, 2}) {
+                for (const auto mode : {MaskRenderMode::zero_latency, MaskRenderMode::linear_phase}) {
+                    if (flow != 0 && mode == MaskRenderMode::linear_phase) continue;
+                    const auto material = chord(4.0, rate);
+                    Run run;
+                    run.rate = rate;
+                    run.block = block;
+                    run.mode = mode;
+                    run.shaped = true;
+                    run.auto_gain = 1.0f;
+                    const std::size_t ev_at = at(2.0, rate), ev_end = at(3.2, rate);
+                    std::size_t next = ev_at;
+                    run.before = [&](Spectr& p, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                                     pulp::state::ParameterEventQueue& ev) {
+                        if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, 6.0f);
+                        if (flow == 1) {
+                            if (ev_at >= pos && ev_at < pos + std::size_t(n))
+                                (void)ev.push({spectr::kParamFreeze, std::int32_t(ev_at - pos), 1.0f, 0});
+                            if (ev_end >= pos && ev_end < pos + std::size_t(n))
+                                (void)ev.push({spectr::kParamFreeze, std::int32_t(ev_end - pos), 0.0f, 0});
+                        }
+                        if (flow == 2) {
+                            while (next >= pos && next < pos + std::size_t(n) && next < ev_end) {
+                                auto field = p.processing_state_snapshot().field;
+                                field.bands[10].gain_db = float(-24.0 + 30.0 * double(next - ev_at) / double(ev_end - ev_at));
+                                p.replace_field(field);
+                                next += at(1.0 / 60.0, rate);
+                            }
+                        }
+                    };
+                    BlockCosts costs;
+                    (void)render(material, run, nullptr, nullptr, &costs);
+                    const double budget = 1e6 * block / rate;
+                    const auto stats = [&](std::size_t a, std::size_t b) {
+                        std::vector<double> v;
+                        for (std::size_t i = 0; i < costs.start.size(); ++i)
+                            if (costs.start[i] >= a && costs.start[i] < b) v.push_back(costs.us[i]);
+                        std::sort(v.begin(), v.end());
+                        int misses = 0;
+                        for (double x : v) if (x > budget) ++misses;
+                        char buf[64];
+                        std::snprintf(buf, sizeof buf, "%3.0f/%4.0f/%4.0f m%d", v[v.size() / 2],
+                                      v[std::min(v.size() - 1, std::size_t(0.99 * double(v.size())))], v.back(), misses);
+                        return std::string(buf);
+                    };
+                    std::printf("  %-10s %-9s %6.0f %5d %7.0f %18s %18s\n",
+                                flow == 0 ? "steady" : flow == 1 ? "FROZEN" : "drag", mode_name(mode),
+                                rate, block, budget, stats(at(0.8, rate), at(1.9, rate)).c_str(),
+                                stats(ev_at, ev_end + at(0.2, rate)).c_str());
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("Null hash: a spectral Freeze hold through the product", "[.][null-hash]") {
+    // Prints an exact hash of a render with spectral holds (short Lengths
+    // hold the spectrum through FreezeHold) at 48 kHz/32 and 96 kHz/32, so
+    // two builds can be compared bit for bit: an optimisation that claims
+    // to change no sample must print the same hashes.
+    for (const double rate : {48000.0, 96000.0}) {
+        for (const int length_index : {0, 1, 2}) {
+            const auto material = chord(3.0, rate);
+            Run run;
+            run.rate = rate;
+            run.block = 32;
+            // Mixing: its output does not depend on when a worker finishes
+            // (Tracking's is reproducible only to a bound), and the hold is
+            // upstream of either renderer. Flat shape, AUTO off.
+            run.mode = MaskRenderMode::linear_phase;
+            run.shaped = false;
+            run.auto_gain = 0.0f;
+            const std::size_t engage = at(1.1, rate) + 5, release = at(2.3, rate);
+            run.before = [&](Spectr&, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                             pulp::state::ParameterEventQueue& ev) {
+                if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, float(length_index));
+                if (engage >= pos && engage < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(engage - pos), 1.0f, 0});
+                if (release >= pos && release < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(release - pos), 0.0f, 0});
+            };
+            const auto out = render(material, run);
+            std::uint64_t h = 1469598103934665603ull;
+            for (std::size_t i = 0; i < out.size(); ++i)
+                for (const float v : {out.l[i], out.r[i]}) {
+                    std::uint32_t bits;
+                    std::memcpy(&bits, &v, 4);
+                    h = (h ^ bits) * 1099511628211ull;
+                }
+            std::printf("null-hash rate %.0f length %d: %016llx\n", rate, length_index,
+                        (unsigned long long)h);
+        }
     }
 }

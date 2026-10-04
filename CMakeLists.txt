@@ -651,6 +651,11 @@ add_test(NAME Spectr-render-switch-negative-control
     COMMAND Spectr-test "A Latency switch neither drops out nor clicks in either direction")
 set_tests_properties(Spectr-render-switch-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_HARD_RENDER_SWITCH=1 WILL_FAIL TRUE TIMEOUT 300)
+# The 32-sample deadline gate with a planted per-hop burst: it must fail.
+add_test(NAME Spectr-deadline-negative-control
+    COMMAND Spectr-test "Tracking keeps every callback inside a 32-sample deadline at 48 kHz")
+set_tests_properties(Spectr-deadline-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=150000 WILL_FAIL TRUE TIMEOUT 300)
 
 # Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
 # the shipping build (the macros are no-ops there) and breaks the first traced

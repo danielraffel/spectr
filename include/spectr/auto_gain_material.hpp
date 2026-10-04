@@ -40,6 +40,7 @@
 /// renderer's latency, so the gain does not depend on host block size or
 /// render speed. Design record and measurements: docs/level-controls.md.
 
+#include <pulp/runtime/trace.hpp>
 #include "spectr/band_state.hpp"
 #include "spectr/freeze_source.hpp"
 #include "spectr/level_controls.hpp"
@@ -499,6 +500,7 @@ private:
     }
 
     void on_frame_(std::int64_t frame_end) noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "autogain.on_frame");
         // Publish the session-state copy every few audible frames.
         if (spectrum_.last_frame_audible() && --export_countdown_ <= 0) {
             export_countdown_ = 4;

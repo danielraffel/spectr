@@ -56,7 +56,20 @@ bool modulation_plants_level_target_step() noexcept {
 
 // Every negative-control seam the audio thread reads. Called from the
 // constructor and from prepare(), never from process().
+// SPECTR_PLANT_CALLBACK_BURST=<iterations>: once every 512 samples, burn a
+// fixed amount of arithmetic in the callback -- the bursty per-hop work a
+// deadline gate exists to catch. Negative control only; read once, on the
+// control thread (prepare primes it).
+long callback_burst_plant() noexcept {
+    static const long iterations = [] {
+        const char* v = std::getenv("SPECTR_PLANT_CALLBACK_BURST");
+        return v ? std::atol(v) : 0L;
+    }();
+    return iterations;
+}
+
 void prime_negative_control_seams() noexcept {
+    (void)callback_burst_plant();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
     (void)level_plant("");
@@ -1612,6 +1625,11 @@ void Spectr::process(
     PULP_TRACE_SCOPE_NAMED_ARGS("dsp", "process",
         "stream_pos", trace_stream_pos_,
         "frames", static_cast<std::int64_t>(output.num_samples()));
+    if (const long burst = callback_burst_plant(); burst > 0
+        && (trace_stream_pos_ % 512) < static_cast<std::int64_t>(output.num_samples())) {
+        volatile double sink = 0.0;
+        for (long i = 0; i < burst; ++i) sink = sink + std::sqrt(static_cast<double>(i));
+    }
     trace_stream_pos_ += static_cast<std::int64_t>(output.num_samples());
     MaskRenderer* const renderer = active_renderer_.load(std::memory_order_acquire);
     // A mode switch in flight: this block renders both renderers and
@@ -2367,11 +2385,26 @@ void Spectr::process(
                     // already applies per LFO.
                     const bool modulation_active =
                         modulation_audible(modulation_settings);
+                    // The header controls an LFO moves (Intensity, Mix,
+                    // Output, Morph, Bands) are drawn at their modulated
+                    // value. Those targets do not reshape the field, so they
+                    // keep the publication running without claiming the band
+                    // overlay (`active` stays the field's own answer).
+                    const auto drives_control = [&](ModulationTarget target) {
+                        return modulation_drives(modulation_settings, target);
+                    };
+                    const bool controls_driven =
+                        drives_control(ModulationTarget::Intensity)
+                        || drives_control(ModulationTarget::Mix)
+                        || drives_control(ModulationTarget::Output)
+                        || drives_control(ModulationTarget::Morph)
+                        || drives_control(ModulationTarget::Bands);
+                    const bool publishing = modulation_active || controls_driven;
                     // While running, every block is a new frame. On the falling
                     // edge one last frame carries active=false, which is the
                     // editor's cue to release the overlay and draw canonical
                     // state instead of freezing on the final modulated value.
-                    if (modulation_active || modulated_field_was_active_) {
+                    if (publishing || modulated_field_was_active_) {
                         ++modulated_field_sequence_;
                         const auto sequence = modulated_field_sequence_;
                         // The same tempo resolution the phase advance below
@@ -2404,6 +2437,7 @@ void Spectr::process(
                                 slot.field     = audible;
                                 slot.sequence  = sequence;
                                 slot.active    = modulation_active;
+                                slot.controls_driven = controls_driven;
                                 slot.pre_field = host_field;
                                 slot.settings  = modulation_settings;
                                 slot.snapshots = audio_modulation.snapshots;
@@ -2419,7 +2453,7 @@ void Spectr::process(
                                 slot.published_ns = published_ns;
                             });
                     }
-                    modulated_field_was_active_ = modulation_active;
+                    modulated_field_was_active_ = publishing;
 
                     pulp::signal::SpectralBandLayout automated;
                     // ── Bands destination ───────────────────────────────

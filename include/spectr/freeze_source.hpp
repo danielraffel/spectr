@@ -112,8 +112,9 @@
 /// lock-free and reads no clock. All members except `prepare()` belong to the
 /// audio thread.
 
+#include <pulp/runtime/trace.hpp>
 #include <pulp/signal/fft.hpp>
-#include <pulp/signal/freeze_hold.hpp>
+#include "spectr/upstream/freeze_hold.hpp"
 #include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <algorithm>
@@ -139,7 +140,7 @@ public:
 
     /// Hold length: the capture window the next latch averages.
     static constexpr double kDefaultHoldSeconds =
-        pulp::signal::FreezeHoldReferenceTiming::kCaptureSeconds;
+        pulp_candidate::signal::FreezeHoldReferenceTiming::kCaptureSeconds;
     static constexpr double kMinHoldSeconds = 0.05;
     /// The spectral capture's longest window (FreezeHold's history). A hold
     /// that long loops; the spectral hold only ever uses the start of it.
@@ -349,7 +350,7 @@ public:
         channels_ = channels;
         bins_ = kFftSize / 2 + 1;
 
-        pulp::signal::FreezeHold::Config config;
+        pulp_candidate::signal::FreezeHold::Config config;
         config.fft_size = kFftSize;
         config.channels = channels;
         config.analysis_hop = kHop;
@@ -543,7 +544,7 @@ public:
         signal_floor_power_ = std::max(0.0, power);
     }
 
-    [[nodiscard]] const pulp::signal::FreezeHold& hold() const noexcept { return hold_; }
+    [[nodiscard]] const pulp_candidate::signal::FreezeHold& hold() const noexcept { return hold_; }
     /// The gain the hold's noise-like part plays at: its level matched,
     /// once, to the live window it was taken from (for tests and
     /// diagnostics). Its tonal part always plays at the input's level.
@@ -719,6 +720,7 @@ private:
     // One hop of input has been recorded and the ready segment of the output
     // ring consumed. Analyse, capture, latch, advance and resynthesise.
     void hop_boundary_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hop");
         // Mean input power of the hop just recorded, and of the analysis
         // window that ends with it.
         const auto hop_ring = hop_energy_.size();
@@ -807,7 +809,10 @@ private:
             // anything into it: the hold continues its partials in phase.
             if (phase_ == Phase::arming && !loop)
                 std::copy(spectra_.begin(), spectra_.end(), latched_.begin());
-            hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            {
+                PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hold_group");
+                hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            }
             if (phase_ == Phase::arming) {
                 if (loop) {
                     if (loop_ready_()) begin_loop_prepare_();
@@ -1061,6 +1066,7 @@ private:
 
     // Windowed FFT of the most recent kFftSize input samples, oldest first.
     void analyse_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.analyse");
         const auto window = static_cast<std::size_t>(kFftSize);
         for (int ch = 0; ch < channels_; ++ch) {
             const float* ring = input_ring_.data() + static_cast<std::size_t>(ch) * window;
@@ -1556,7 +1562,7 @@ private:
     }
     // SPECTR-RENDER-PATH END
 
-    pulp::signal::FreezeHold hold_{};
+    pulp_candidate::signal::FreezeHold hold_{};
     pulp::signal::Fft fft_{};
     std::vector<float> window_;
     std::vector<float> synthesis_window_;         // window_ * synthesis_scale_
