@@ -20,3 +20,7 @@ For the existing Cocoa open probe, adapt its JSON with:
 ```sh
 --command 'open=python3 tools/bench/editor_open_adapter.py build/open-{run}.json'
 ```
+
+For frame cadence, run `frame_cadence_probe.py --json-out build/frame.json` and
+adapt with `python3 tools/bench/frame_cadence_adapter.py build/frame.json`.
+The adapter rejects reports without a gesture p95 metric.
