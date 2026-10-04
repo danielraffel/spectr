@@ -2281,6 +2281,8 @@ int main(int argc, char** argv) {
                 settle(rig.clock, 24);
                 for (const auto& [selector, name] :
                      {std::pair<std::string, std::string>{"[data-spectr-freeze-toggle]", "freeze"},
+                      std::pair<std::string, std::string>{"[data-spectr-length-trigger]", "length"},
+                      std::pair<std::string, std::string>{"[data-spectr-dropdown=\"bands\"]", "bands"},
                       std::pair<std::string, std::string>{"[data-spectr-dropdown=\"pattern\"]", "preset"}}) {
                     open_control(selector);
                     const std::string base = std::string("control-targets-") + size.tag + "-" + name;

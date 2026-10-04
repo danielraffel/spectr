@@ -1021,6 +1021,7 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
+find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
@@ -2223,7 +2224,7 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-materialized-control-menu-targets PROPERTIES TIMEOUT 60)
-    foreach(plant wrong-target no-accent every-accent)
+    foreach(plant wrong-target no-accent every-accent loose-hold lfo2-shape head-copy)
         add_test(NAME Spectr-materialized-control-menu-targets-${plant}-control
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs

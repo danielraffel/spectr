@@ -16,7 +16,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
+#include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using Catch::Approx;
@@ -481,6 +484,338 @@ TEST_CASE("Hold for Length off leaves the gate following the LFO",
         const double held = double(run.holds[i].second - run.holds[i].first) / kRate;
         CHECK(held == Approx(0.1 * 2.0 * bar_seconds).margin(double(kBlock) / kRate));
     }
+}
+
+// ── Hold for Length: every trigger is its own freeze, of its own Length ─────
+//
+// "Hold for Length = keep Freeze enabled for the length of the modulated
+// Length": each rising edge of the Freeze target's gate freezes fresh audio
+// and holds it for the Length in effect at that trigger -- the Length
+// target's step included -- then releases; the next trigger takes the Length
+// in effect then. These runs log every hold (trigger, the Length it took,
+// when it ended, whether the freeze source latched fresh audio for it, the
+// loop it played) from the processor's own counters.
+namespace {
+
+struct HoldSetup {
+    double bpm = 120.0;
+    LfoShape freeze_shape = LfoShape::Square;
+    float freeze_rate = 4.0f;    // beats per LFO 1 cycle
+    float freeze_depth = 0.1f;   // the gate's duty
+    int length_preset = spectr::kDefaultLengthPreset;
+    bool hold = true;
+    float length_depth_lfo1 = -1.0f;  // < 0: LFO 1 does not drive Length
+    bool lfo2 = false;                // LFO 2 drives Length
+    LfoShape lfo2_shape = LfoShape::Saw;
+    float lfo2_rate = 7.0f;
+    float lfo2_depth = 0.5f;
+    double seconds = 30.0;
+    double freeze_from = 0.0;  // the Freeze route comes on here (warm-up)
+};
+
+struct HoldLog {
+    std::uint64_t start = 0, end = 0;  // [start, end) samples
+    double seconds = 0.0;              // the Length the trigger took
+    int index = -1;                    // its LENGTH-list index (label)
+    int labels_seen = 0;               // distinct labels shown while held
+    std::uint32_t source_latches = 0;  // fresh freezes the source made for it
+    std::int64_t loop = 0;             // the loop it played
+    bool loop_resized = false;         // the loop changed mid-hold
+    int modulated_seen_differs = 0;    // blocks the Length target sat elsewhere
+    int source_length_drift = 0;       // blocks the source was asked another length
+};
+
+struct HoldRunLog {
+    std::vector<HoldLog> holds;  // complete holds only
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> frozen;  // effective spans
+    std::vector<int> label_between;  // label shown on each block between holds
+};
+
+std::size_t hold_slack() { return kBlock; }
+
+HoldRunLog run_hold_log(const HoldSetup& setup) {
+    pulp::format::HeadlessHost host{create_tracking};
+    host.prepare(kRate, kBlock);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+    auto& s = host.state();
+    s.set_value(spectr::kParamLfoEnabled, 1.0f);
+    s.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    s.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);
+    s.set_value(spectr::kParamLfoShape, float(setup.freeze_shape));
+    s.set_value(spectr::kParamLfoRate, setup.freeze_rate);
+    s.set_value(spectr::lfo_route_amount_param_id(0, kFreezeT), setup.freeze_depth);
+    s.set_value(spectr::lfo_route_enabled_param_id(0, kFreezeT),
+                setup.freeze_from > 0.0 ? 0.0f : 1.0f);
+    s.set_value(spectr::kParamFreezeLength, float(setup.length_preset));
+    s.set_value(spectr::kParamFreezeHoldForLength, setup.hold ? 1.0f : 0.0f);
+    if (setup.length_depth_lfo1 >= 0.0f) {
+        s.set_value(spectr::lfo_route_enabled_param_id(0, kLengthT), 1.0f);
+        s.set_value(spectr::lfo_route_amount_param_id(0, kLengthT), setup.length_depth_lfo1);
+    }
+    if (setup.lfo2) {
+        s.set_value(spectr::kParamLfo2Enabled, 1.0f);
+        s.set_value(spectr::kParamLfo2Shape, float(setup.lfo2_shape));
+        s.set_value(spectr::kParamLfo2Rate, setup.lfo2_rate);
+        s.set_value(spectr::lfo_route_enabled_param_id(1, kLengthT), 1.0f);
+        s.set_value(spectr::lfo_route_amount_param_id(1, kLengthT), setup.lfo2_depth);
+    }
+    HoldRunLog log;
+    pulp::audio::Buffer<float> in(2, kBlock), o(2, kBlock);
+    double phase = 0.0;
+    bool was = false, open = false;
+    HoldLog current;
+    std::uint32_t latches = plugin->freeze_hold_latch_count();
+    std::uint32_t source_latches = plugin->freeze_source().latch_count();
+    std::int64_t loop_first = -1;
+    std::vector<int> labels;
+    const auto close = [&](std::uint64_t at) {
+        current.end = at;
+        current.labels_seen = int(labels.size());
+        log.holds.push_back(current);
+        open = false;
+    };
+    std::uint64_t n = 0;
+    while (n < std::uint64_t(setup.seconds * kRate)) {
+        if (setup.freeze_from > 0.0 && n == std::uint64_t(setup.freeze_from * kRate) / kBlock * kBlock)
+            s.set_value(spectr::lfo_route_enabled_param_id(0, kFreezeT), 1.0f);
+        for (std::size_t i = 0; i < kBlock; ++i) {
+            phase += 2.0 * kPi * 440.0 / kRate;
+            in.channel(0)[i] = in.channel(1)[i] = 0.3f * float(std::sin(phase));
+        }
+        const float* ip[] = {in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> iv(ip, 2, kBlock);
+        auto ov = o.view();
+        pulp::format::ProcessContext ctx;
+        ctx.tempo_bpm = setup.bpm;
+        ctx.time_sig_numerator = 4;
+        ctx.time_sig_denominator = 4;
+        ctx.position_beats = double(n) / kRate * setup.bpm / 60.0;
+        ctx.is_playing = true;
+        host.process(ov, iv, ctx);
+        const bool now = plugin->freeze_effective();
+        if (now && !was) log.frozen.push_back({n, 0});
+        if (!now && was) log.frozen.back().second = n;
+        was = now;
+        // A latch: the hold before it (if any) ends here, back to back.
+        const auto count = plugin->freeze_hold_latch_count();
+        if (count != latches) {
+            REQUIRE(count == latches + 1);  // at most one per block here
+            latches = count;
+            if (open) close(n);
+            current = HoldLog{};
+            current.start = n;
+            current.seconds = plugin->freeze_hold_latched_seconds();
+            current.index = plugin->freeze_engaged_length_index();
+            open = true;
+            loop_first = -1;
+            labels.clear();
+        } else if (open && !now) {
+            close(n);
+        }
+        const auto source = plugin->freeze_source().latch_count();
+        if (open) {
+            current.source_latches += source - source_latches;
+            const int label = plugin->freeze_shown_length_index();
+            if (std::find(labels.begin(), labels.end(), label) == labels.end())
+                labels.push_back(label);
+            if (plugin->freeze_modulated_length_index() != current.index)
+                ++current.modulated_seen_differs;
+            // Whenever the source latches for this hold -- a hop, or a whole
+            // release fade, after the trigger -- it takes the hold's length.
+            if (now && plugin->freeze_source().hold_seconds() != current.seconds)
+                ++current.source_length_drift;
+            // The loop this hold's latch made, once it plays alone.
+            if (current.source_latches > 0
+                && plugin->freeze_source().phase() == spectr::FreezeSource::Phase::held) {
+                const auto loop = plugin->freeze_source().loop_length();
+                if (loop_first < 0) loop_first = loop;
+                else if (loop != loop_first) current.loop_resized = true;
+                current.loop = loop;
+            }
+        } else {
+            log.label_between.push_back(plugin->freeze_shown_length_index());
+        }
+        source_latches = source;
+        n += kBlock;
+    }
+    return log;
+}
+
+std::uint64_t samples_of(double seconds) {
+    return std::uint64_t(std::llround(seconds * kRate));
+}
+
+// Each complete hold lasted its own Length (to the slice), was a fresh freeze
+// of the source, showed its own Length the whole time, and was never resized.
+void check_holds_each_their_own(const HoldRunLog& log, std::size_t at_least) {
+    REQUIRE(log.holds.size() >= at_least);
+    for (std::size_t i = 0; i < log.holds.size(); ++i) {
+        const auto& h = log.holds[i];
+        INFO("hold " << i << " from " << double(h.start) / kRate << " s, Length "
+             << h.seconds << " s (index " << h.index << "), ended "
+             << double(h.end) / kRate << " s, source latches " << h.source_latches);
+        CHECK(h.end - h.start >= samples_of(h.seconds));
+        CHECK(h.end - h.start < samples_of(h.seconds) + hold_slack());
+        CHECK(h.source_latches == 1);
+        CHECK(h.labels_seen == 1);
+        CHECK_FALSE(h.loop_resized);
+        CHECK(h.source_length_drift == 0);
+    }
+}
+
+}  // namespace
+
+TEST_CASE("Hold for Length releases every hold even when the next trigger lands on its end",
+          "[modulation][freeze-target][hold-for-length]") {
+    // The defaults: 1 bar Length, LFO at 4 beats -- every hold ends on the
+    // slice the next cycle's gate rises. Each must still be its own freeze.
+    HoldSetup setup;
+    setup.seconds = 20.0;
+    const auto log = run_hold_log(setup);
+    check_holds_each_their_own(log, 8);
+    for (const auto& h : log.holds) CHECK(h.seconds == Approx(2.0));
+    // Back to back: the freeze never visibly drops, yet every hold re-latched.
+    CHECK(log.holds.size() >= 8);
+    CHECK(log.frozen.size() == 1);
+}
+
+TEST_CASE("Hold for Length: one LFO on Freeze and Length walks its lengths, every hold released",
+          "[modulation][freeze-target][hold-for-length][length-target]") {
+    // The reported setup: LFO 1 Sine at 4 beats, Freeze Depth 18 %, Length
+    // Depth 69 %, LENGTH 1 bar, Hold for Length on, 120 BPM.
+    HoldSetup setup;
+    setup.freeze_shape = LfoShape::Sine;
+    setup.freeze_rate = 4.0f;
+    setup.freeze_depth = 0.18f;
+    setup.length_depth_lfo1 = 0.69f;
+    setup.seconds = 150.0;
+    const auto log = run_hold_log(setup);
+    check_holds_each_their_own(log, 9);
+    // The trigger phase is the same every cycle (the gate's threshold), so
+    // the n-th hold reads the wave n/8 of a cycle past it: an independent
+    // oracle for each hold's Length.
+    const double cycle_seconds = 4.0 * 60.0 / setup.bpm;
+    std::vector<int> distinct;
+    for (std::size_t i = 0; i < log.holds.size(); ++i) {
+        const auto& h = log.holds[i];
+        const double trigger_phase = double(h.start) / kRate / cycle_seconds;
+        const double read = trigger_phase + 0.125 * double(i % 8);
+        const float coordinate = 0.69f * float(std::sin(2.0 * kPi * read));
+        const int expected = spectr::modulated_length_index(16, coordinate, 20);
+        INFO("hold " << i << " read at phase " << read << " coordinate " << coordinate);
+        CHECK(h.index == expected);
+        CHECK(h.seconds == Approx(spectr::length_in_bars(
+            spectr::kLengthPresets[std::size_t(expected)]) * cycle_seconds));
+        if (i < 8 && std::find(distinct.begin(), distinct.end(), h.index) == distinct.end())
+            distinct.push_back(h.index);
+    }
+    // Eight holds follow the wave's shape: several different lengths.
+    CHECK(distinct.size() >= 3);
+    // Released between holds, the label tracks the Length target again.
+    std::vector<int> between = log.label_between;
+    std::sort(between.begin(), between.end());
+    CHECK(std::unique(between.begin(), between.end()) - between.begin() >= 2);
+}
+
+TEST_CASE("Hold for Length: a Length on the other LFO is read at each trigger",
+          "[modulation][freeze-target][hold-for-length][length-target]") {
+    // LFO 1 (square, 4 beats) triggers; LFO 2 (saw, 7 beats) steps Length
+    // around 5/6 bar by up to 4 steps: 1/2 bar .. 2 bars. Freeze comes on
+    // after a warm-up long enough to hold a 2-bar loop.
+    HoldSetup setup;
+    setup.length_preset = 13;
+    setup.lfo2 = true;
+    setup.lfo2_shape = LfoShape::Saw;
+    setup.lfo2_rate = 7.0f;
+    setup.lfo2_depth = 0.5f;
+    setup.freeze_from = 5.0;
+    setup.seconds = 60.0;
+    const auto log = run_hold_log(setup);
+    check_holds_each_their_own(log, 10);
+    const double bar = 4.0 * 60.0 / setup.bpm;
+    std::vector<int> distinct;
+    for (std::size_t i = 0; i < log.holds.size(); ++i) {
+        const auto& h = log.holds[i];
+        // LFO 2's phase at the trigger, straight from the transport.
+        const double beats = double(h.start) / kRate * setup.bpm / 60.0;
+        const double p = beats / 7.0 - std::floor(beats / 7.0);
+        const int expected = spectr::modulated_length_index(
+            13, float(2.0 * p - 1.0) * 0.5f, 20);
+        INFO("hold " << i << " at " << double(h.start) / kRate << " s, LFO 2 phase " << p);
+        CHECK(h.index == expected);
+        // The loop it played is exactly its Length (enough history behind it).
+        CHECK(h.loop == std::int64_t(samples_of(h.seconds)));
+        CHECK(h.seconds == Approx(spectr::length_in_bars(
+            spectr::kLengthPresets[std::size_t(expected)]) * bar));
+        // The Length target kept moving during the hold without resizing it.
+        if (std::find(distinct.begin(), distinct.end(), h.index) == distinct.end())
+            distinct.push_back(h.index);
+    }
+    CHECK(distinct.size() >= 4);
+    // Lengths changed between triggers, including from long to short.
+    bool long_then_short = false;
+    for (std::size_t i = 0; i + 1 < log.holds.size(); ++i)
+        long_then_short = long_then_short
+            || (log.holds[i].index >= 16 && log.holds[i + 1].index <= 10);
+    CHECK(long_then_short);
+    int moved = 0;
+    for (const auto& h : log.holds) moved += h.modulated_seen_differs > 0 ? 1 : 0;
+    CHECK(moved > 0);  // control: the target did move while holds played
+}
+
+TEST_CASE("Hold for Length off: Freeze follows the gate with modulated Length",
+          "[modulation][freeze-target][hold-for-length]") {
+    HoldSetup setup;
+    setup.freeze_shape = LfoShape::Sine;
+    setup.freeze_depth = 0.18f;
+    setup.length_depth_lfo1 = 0.69f;
+    setup.hold = false;
+    setup.seconds = 20.0;
+    const auto log = run_hold_log(setup);
+    CHECK(log.holds.empty());  // no hold-mode latch at all
+    REQUIRE(log.frozen.size() >= 8);
+    for (std::size_t i = 0; i + 1 < log.frozen.size(); ++i) {
+        const double held = double(log.frozen[i].second - log.frozen[i].first) / kRate;
+        // The gate's own 18 % of a 2 s cycle, to the block.
+        CHECK(held == Approx(0.18 * 2.0).margin(2.0 * double(kBlock) / kRate));
+    }
+}
+
+TEST_CASE("Hold for Length is off in a new instance and in a session saved without it",
+          "[modulation][freeze-target][hold-for-length][state]") {
+    const auto wired = [] {
+        auto store = std::make_unique<pulp::state::StateStore>();
+        auto plugin = std::make_unique<spectr::Spectr>();
+        plugin->set_state_store(store.get());
+        plugin->define_parameters(*store);
+        return std::make_pair(std::move(store), std::move(plugin));
+    };
+    auto [store, plugin] = wired();
+    CHECK(store->get_value(spectr::kParamFreezeHoldForLength) == 0.0f);
+    CHECK_FALSE(plugin->freeze_hold_for_length());
+    // An older session: a store that never had the lane.
+    pulp::state::StateStore old;
+    {
+        pulp::state::ParamInfo info;
+        info.id = spectr::kParamFreezeLength;
+        info.name = "Freeze Length";
+        info.range = {0.0f, 20.0f, 16.0f, 1.0f};
+        old.add_parameter(info);
+        old.set_value(spectr::kParamFreezeLength, 17.0f);
+    }
+    const auto blob = old.serialize();
+    auto [loaded_store, loaded] = wired();
+    REQUIRE(loaded_store->deserialize(std::span<const std::uint8_t>(blob)));
+    CHECK(loaded_store->get_value(spectr::kParamFreezeLength) == 17.0f);  // control
+    CHECK(loaded_store->get_value(spectr::kParamFreezeHoldForLength) == 0.0f);
+    CHECK_FALSE(loaded->freeze_hold_for_length());
+    // Control: a session saved with it on restores it on.
+    store->set_value(spectr::kParamFreezeHoldForLength, 1.0f);
+    const auto with = store->serialize();
+    auto [on_store, on] = wired();
+    REQUIRE(on_store->deserialize(std::span<const std::uint8_t>(with)));
+    CHECK(on->freeze_hold_for_length());
 }
 
 // ── Bands and Preset destinations ───────────────────────────────────────────

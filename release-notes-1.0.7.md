@@ -12,9 +12,9 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 ### Modulation
 - **Multiple targets per LFO.** Each LFO can drive several destinations at once, and every target has its own **Depth**.
 - **13 targets:** Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread, Freeze, Length, Intensity, Mix, Output, Bands and Preset.
-- **Hold for Length.** When an LFO drives Freeze, turn on Hold for Length to hold each trigger for exactly one Length.
+- **Hold for Length.** When an LFO drives Freeze, turn on Hold for Length to keep Freeze enabled for the length of the modulated Length: each trigger freezes fresh sound and plays to the end of the Length in effect at that moment, then lets go. With Length modulated, every freeze can have its own length. Off (the default), Freeze follows the LFO as a gate.
 - **Modulated controls show what they play.** LENGTH, BANDS and the preset name show the value the LFO is playing, in violet.
-- **Ask before overriding.** Touching a control an LFO is driving asks whether to stop the modulation first. You can turn this off in Settings.
+- **Ask before overriding.** Touching a control an LFO is driving asks whether to stop the modulation first. **Keep modulating** leaves the LFO in charge (for LIVE / FROZEN your click is set aside); **Turn off** stops it and applies your change. You can turn this off in Settings.
 
 ### Level controls
 - **MIX, INTENSITY and OUTPUT knobs** in the header, with **AUTO** gain.
@@ -22,7 +22,7 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 
 ### Editor
 - **Tooltips** on the header controls, with a Settings switch to hide them.
-- **Right-click menus** on LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH and the preset button for reset and modulation: each names its own LFO target ("LFO 1 → Freeze") with its switch and Depth, and **All targets…** opens the full target list scrolled to and highlighting that target.
+- **Right-click menus** on LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH and the preset button: reset, the LFO 1 / LFO 2 switches with Shape and Rate, then just that control's own target ("LFO 1 → Freeze") with its Depth (and Hold for Length) nested under it, and **All targets…** for the full list scrolled to and highlighting that target.
 - **Faster opening.** The plug-in window opens sooner and with no flash of colour.
 
 ### In your DAW

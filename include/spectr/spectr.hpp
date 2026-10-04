@@ -943,6 +943,15 @@ public:
     [[nodiscard]] int freeze_shown_length_index() const noexcept;
     /// Freeze "Hold for Length" (kParamFreezeHoldForLength).
     [[nodiscard]] bool freeze_hold_for_length() const noexcept;
+    /// Hold for Length latches since prepare (each one a fresh freeze held
+    /// for its own Length), and the Length in seconds the last one took
+    /// (diagnostics and tests).
+    [[nodiscard]] std::uint32_t freeze_hold_latch_count() const noexcept {
+        return freeze_hold_latch_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double freeze_hold_latched_seconds() const noexcept {
+        return freeze_hold_latched_seconds_.load(std::memory_order_relaxed);
+    }
     /// The band count the Bands destination plays, or 0 when no LFO drives it.
     [[nodiscard]] int modulated_band_count_shown() const noexcept {
         return audio_bands_shown_.load(std::memory_order_relaxed);
@@ -1118,6 +1127,13 @@ private:
                                                    int denominator) noexcept;
     [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
                                                  int denominator) const noexcept;
+    /// The Length a freeze takes with the LFOs at @p phases (LFO 1, LFO 2):
+    /// seconds, its LENGTH-list index in @p index (-1 when no LFO drives
+    /// Length), and the longest length the routes reach in @p reach_seconds.
+    [[nodiscard]] double freeze_length_at_phases_(double tempo_bpm, int numerator,
+                                                  int denominator, const double phases[2],
+                                                  int* index,
+                                                  double* reach_seconds) const noexcept;
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
@@ -1228,6 +1244,23 @@ private:
     std::string preset_centre_id_;
     bool freeze_hold_gate_last_ = false;
     double audio_freeze_length_seconds_ = 0.0;
+    // The length the playing Hold for Length hold took at its trigger, in
+    // seconds (0 between holds): the source's hold length while it plays.
+    double freeze_hold_seconds_ = 0.0;
+    // The longest Length the Length target can step to now, in seconds (the
+    // loop rings are grown for it ahead of the trigger that needs it).
+    double audio_freeze_reach_seconds_ = 0.0;
+    // ONE LFO ON BOTH (see the Hold for Length latch): how many eighths of a
+    // cycle along an LFO driving Freeze and Length the next hold reads its
+    // Length, the transport state it last saw, and a request from a state
+    // load to start the walk again.
+    static constexpr double kFreezeHoldWalkStep = 0.125;
+    static constexpr int kFreezeHoldWalkCycle = 8;
+    int freeze_hold_walk_ = 0;
+    bool freeze_hold_playing_last_ = false;
+    std::atomic<bool> freeze_hold_walk_reset_{false};
+    std::atomic<std::uint32_t> freeze_hold_latch_count_{0};
+    std::atomic<double> freeze_hold_latched_seconds_{0.0};
     // An editor press (button, key, chord) while the Freeze target drives the
     // freeze: the value it asks for, or -1. Taken on the audio thread, where
     // it holds the freeze there until the gate's next change -- even when the
