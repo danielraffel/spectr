@@ -246,8 +246,8 @@ if (plantOverlay) {
 }
 if (plantGeometry) {
   plant("band geometry starts following the zoom window",
-    "    const bandGap = 2;\n    const bandW = (inner.w - bandGap * (N - 1)) / N;",
-    "    const bandGap = 2;\n    const bandW = (inner.w - bandGap * (N - 1)) / N "
+    "    const bandW = (inner.w - bandGap * (nd - 1)) / nd;",
+    "    const bandW = (inner.w - bandGap * (nd - 1)) / nd "
     + "* (view.lmax - view.lmin) / (Math.log10(2e4) - Math.log10(20));");
 }
 

@@ -46,6 +46,7 @@
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
 #include "shim/pulp_frame_cost_probe.hpp"
+#include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
@@ -55,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <tuple>
 #include <typeinfo>
 #include <exception>
 #include <filesystem>
@@ -1708,7 +1710,11 @@ int main(int argc, char** argv) {
         // kModCtlBudgetMs to the p95 tick over the unmodulated baseline.
         // SPECTR_MODCTL_PLANT=full-invalidate adds a painter that touches the
         // document root on every modulation frame (a control whose update
-        // re-lays the tree), and the gate must FAIL.
+        // re-lays the tree), and the gate must FAIL. Every frame also checks
+        // that each modulated control draws ONE indicator (one needle and at
+        // most one value arc per knob, one Morph thumb);
+        // SPECTR_MODCTL_PLANT=two-indicators draws the base as a second full
+        // indicator, and that check must FAIL.
         if (std::getenv("SPECTR_MODULATION_CONTROLS") != nullptr) {
             auto& store = rig.store;
             const char* plant_env = std::getenv("SPECTR_MODCTL_PLANT");
@@ -1786,16 +1792,96 @@ int main(int argc, char** argv) {
                     "(() => { const s = globalThis.__spectrModControls;"
                     " const st = s ? s.state : {}; const d = s ? s.drawn : {};"
                     " const f = typeof spectrFreezeStore === 'function' ? spectrFreezeStore().display : null;"
-                    " const ang = (p) => { if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
+                    " const ang = (k) => { const p = k && k.needle; if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
                     "   return m ? (Math.atan2(+m[3] - 13, 13 - +m[4]) * 180 / Math.PI).toFixed(1) + 'deg' : 'none'; };"
                     " return 'frames=' + (s ? s.frames : -1)"
                     " + ' intensity=' + (st.intensityOn ? (100 * (1 - st.intensityPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.intensity)"
                     " + ' mix=' + (st.mixOn ? (100 * (1 - st.mixPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.mix)"
                     " + ' output=' + (st.outputOn ? (st.outputDb >= 0 ? '+' : '') + st.outputDb.toFixed(2) + 'dB' : 'off') + '@' + ang(d['output-trim'])"
-                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphPath=' + JSON.stringify(d.morph || '').slice(0, 40)"
+                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphThumb=' + JSON.stringify((d.morph && d.morph.thumb) || '')"
                     " + ' bands=' + (f ? f.bands : 'none')"
                     " + ' frozen=' + (typeof spectrFreezeStore === 'function' ? String(spectrFreezeStore().modulated) : '?'); })()");
             };
+            // ── One indicator per control ──
+            //
+            // What each modulated control actually draws, read back from the
+            // native widgets (not from the editor's own bookkeeping): a knob
+            // shows exactly one needle (a two-point stroke from the hub) and
+            // at most one value arc besides its full track, and Morph shows
+            // exactly one thumb (the React thumb, or the played thumb while
+            // an LFO drives it -- never both). The `two-indicators` plant
+            // draws a second needle into each knob's base marker and shows
+            // the base thumb again, and this check must fail.
+            std::vector<std::string> single_breaches;
+            const auto path_points = [](const std::string& d) {
+                std::vector<std::pair<float, float>> pts;
+                std::istringstream in(d);
+                std::string tok;
+                while (in >> tok) {
+                    if (tok == "M" || tok == "L") {
+                        float x = 0.0f, y = 0.0f;
+                        if (in >> x >> y) pts.emplace_back(x, y);
+                    }
+                }
+                return pts;
+            };
+            const auto check_single = [&](const std::string& frame) {
+                for (const char* knob : {"intensity", "mix", "output-trim"}) {
+                    const std::string ids = read_js(
+                        std::string("(() => [...document.querySelectorAll('[data-spectr-knob=\"") + knob
+                        + "\"] path')].map(e => e.__pulpId || e._id || e.id || '').join(','))()");
+                    int needles = 0, arcs = 0, paths = 0;
+                    std::stringstream list(ids);
+                    std::string id;
+                    while (std::getline(list, id, ',')) {
+                        auto* w = dynamic_cast<pulp::view::SvgPathWidget*>(find_by_id(*rig.root, id));
+                        if (w == nullptr) continue;
+                        ++paths;
+                        const auto pts = path_points(w->path_data());
+                        if (pts.size() == 2
+                            && std::hypot(pts[0].first - 13.0f, pts[0].second - 13.0f) < 4.5f)
+                            ++needles;
+                        else if (pts.size() >= 3) {
+                            const float a0 = std::atan2(pts.front().first - 13.0f, 13.0f - pts.front().second);
+                            const float a1 = std::atan2(pts.back().first - 13.0f, 13.0f - pts.back().second);
+                            const bool full_track = a0 < -2.3f && a1 > 2.3f;
+                            if (!full_track) ++arcs;
+                        }
+                    }
+                    if (paths < 3 || needles != 1 || arcs > 1)
+                        single_breaches.push_back(frame + " " + knob + ": " + std::to_string(needles)
+                                                  + " needles, " + std::to_string(arcs)
+                                                  + " value arcs over " + std::to_string(paths) + " paths");
+                }
+                const std::string morph_ids = read_js(
+                    "(() => { const t = document.querySelector('[data-spectr-morph-thumb]');"
+                    " const p = document.querySelector('[data-spectr-morph-played-thumb]');"
+                    " const id = (e) => e ? (e.__pulpId || e._id || e.id || '') : '';"
+                    " return id(t) + ',' + id(p); })()");
+                const auto comma = morph_ids.find(',');
+                if (comma != std::string::npos) {
+                    const auto* thumb = find_by_id(*rig.root, morph_ids.substr(0, comma));
+                    const auto* played = dynamic_cast<pulp::view::SvgPathWidget*>(
+                        find_by_id(*rig.root, morph_ids.substr(comma + 1)));
+                    const int thumbs = (thumb != nullptr && thumb->opacity() > 0.01f ? 1 : 0)
+                        + (played != nullptr && !played->path_data().empty() ? 1 : 0);
+                    if (thumbs != 1)
+                        single_breaches.push_back(frame + " morph: " + std::to_string(thumbs)
+                                                  + " thumbs");
+                } else {
+                    single_breaches.push_back(frame + " morph: thumb not found");
+                }
+            };
+            if (plant == "two-indicators")
+                // The old design: the base keeps its own full needle and thumb
+                // next to the value playing.
+                rig.eval("(() => { spectrModControlsSubscribe(() => {"
+                         " for (const k of ['intensity', 'mix', 'output-trim']) {"
+                         "   const el = document.querySelector('[data-spectr-knob-base=\"' + k + '\"]');"
+                         "   if (el) spectrSetPathD(el, 'M 13.00 9.50 L 13.00 3.50'); }"
+                         " const t = document.querySelector('[data-spectr-morph-thumb]');"
+                         " if (t && t.style) t.style.opacity = '1'; }); })();",
+                         "spectr-modctl-plant");
             // ── Frames across one LFO cycle, looked at ──
             const auto cycle_shots = [&](const std::string& tag) {
                 // 30 blocks of 800 at 48 kHz = one 2 Hz cycle; six frames.
@@ -1809,6 +1895,7 @@ int main(int argc, char** argv) {
                     const std::string name = "modctl-" + tag + "-" + std::to_string(shot);
                     capture(rig, dir, prefix + name, backend, scale);
                     std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    check_single(name);
                 }
             };
             set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
@@ -1820,6 +1907,27 @@ int main(int argc, char** argv) {
             cycle_shots("freeze");
             store.set_value(spectr::kParamFreeze, 0.0f);
             rig.processor.apply_surface_params(false);
+            // The header at the two shipping window sizes, each with the LFO
+            // driving INTENSITY, MIX, OUTPUT and MORPH and with it off.
+            for (const auto& [w, h, tag] : {std::tuple<float, float, const char*>{990.0f, 645.0f, "990"},
+                                            std::tuple<float, float, const char*>{792.0f, 516.0f, "792"}}) {
+                rig.resize(w, h);
+                for (const bool on : {true, false}) {
+                    set_routes(on ? std::initializer_list<MT>{MT::Intensity, MT::Mix, MT::Output, MT::Morph}
+                                  : std::initializer_list<MT>{});
+                    // Long enough for a route switched off to slew out (0.2 s for
+                    // Intensity), so the unmodulated frame shows no LFO at all.
+                    for (int i = 0; i < 40; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+                    rig.service_runtime();
+                    rig.root->layout_children();
+                    const std::string name = std::string("modctl-") + tag + (on ? "-modulated" : "-unmodulated");
+                    capture(rig, dir, prefix + name, backend, scale);
+                    std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    if (on) check_single(name);
+                }
+            }
+            rig.resize(kDesignWidth, kDesignHeight);
+            set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
 
             // ── Frame cost and damage ──
             //
@@ -1827,7 +1935,10 @@ int main(int argc, char** argv) {
             // the pinned SDK ships it) puts a recording plug-in host on the
             // root, so every repaint request is classified: bounded (its rect)
             // or whole-surface.
-            if (!plant.empty() && plant != "full-invalidate") {
+            for (const auto& line : single_breaches)
+                std::printf("[modctl-single] FAIL: %s\n", line.c_str());
+            std::printf("[modctl-single] %s\n", single_breaches.empty() ? "PASS" : "FAIL");
+            if (!plant.empty() && plant != "full-invalidate" && plant != "two-indicators") {
                 std::printf("[modctl] UNKNOWN PLANT %s\n", plant.c_str());
                 return 2;
             }
@@ -1844,7 +1955,7 @@ int main(int argc, char** argv) {
             // trips (render transform, filter, scrolling parent).
             if (std::getenv("SPECTR_MODCTL_ESCALATION") != nullptr) {
                 const auto id = read_js("(() => { const el = document.querySelector("
-                                        "'[data-spectr-knob-played=intensity]');"
+                                        "'[data-spectr-knob-needle=intensity]');"
                                         " return el ? (el.__pulpId || el._id || el.id || '(no id)') : '(absent)'; })()");
                 std::printf("[modctl-esc] knob path id=%s\n", id.c_str());
                 const pulp::view::View* v = find_by_id(*rig.root, id);
@@ -2018,6 +2129,8 @@ int main(int argc, char** argv) {
             const auto& base = results[0];
             const auto& ctl = results[1];
             auto breaches = Probe::check(ctl.s, budget, &base.s);
+            for (const auto& line : single_breaches)
+                breaches.push_back("single indicator: " + line);
             if (ctl.painted < 100)
                 breaches.push_back("positive control: only " + std::to_string(ctl.painted)
                                    + " modulation_controls publications painted");

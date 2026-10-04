@@ -76,21 +76,21 @@ each other:
 - **Automation writes and plays the base.** A drag, wheel notch or key on a
   knob, the MORPH slider or a menu sends one gesture bracket, so a host in
   Write, Latch or Touch records it, and plays it back into the same lane: the
-  control's base (white needle, blue arc, readout, slider thumb) follows the
-  lane.
+  control's base follows the lane (the needle, arc, readout and slider thumb
+  when nothing modulates it; a short white tick while an LFO does).
 - **Modulation offsets around the base and writes nothing.** The value an LFO
   plays is computed on the audio thread from the base the lane delivers, and
-  is drawn over the control in violet (see [modulation.md](modulation.md#intensity-mix-and-output)).
+  is what the control's one indicator shows, in violet (see [modulation.md](modulation.md#intensity-mix-and-output)).
   No processor-side write ever reaches a host lane, so a host recording in
   Touch or Latch while an LFO runs records nothing it was not given by a
   person.
 - **Both at once** is the normal case: with a lane playing and an LFO on, the
-  base walks the lane and the violet marker swings around it.
+  base tick walks the lane and the violet indicator swings around it.
 
 Verified in REAPER (`tools/reaper_modulation_automation.py`, VST3, CLAP and
 AU): a scripted knob gesture in Touch records Intensity points; Read plays
 them back and the editor's knob follows; with LFO 1 on Intensity in Touch the
-knob's base follows the lane, its violet marker moves, and the envelope's
+knob's base follows the lane, its violet indicator moves, and the envelope's
 point count does not change.
 
 ## Editor protocol (for anyone adding a control)
