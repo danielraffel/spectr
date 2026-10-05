@@ -223,6 +223,26 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
       };
       authored = authored.replace(marker, `type SpectrSettingsSliderProps = { value: number; min: number; max: number; step: number; onChange: (value: number) => unknown; fmt?: (value: number) => string; gestureId?: number; disabled?: boolean; target?: string };\nfunction SpectrSettingsSlider({ value, min, max, step, onChange, fmt, gestureId, disabled, target }: SpectrSettingsSliderProps) {`);
     }
+    if (applyPropContracts && component.name === 'RailBtn') {
+      const marker = 'function RailBtn({ children, onClick, active, popupKind, railAction, dropdown, onContextMenu }) {';
+      if (!authored.includes(marker)) fail('RailBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'children/onClick required; active/popupKind/railAction/dropdown/onContextMenu optional',
+        value_type: 'children:ReactChild; onClick:(...args:any[])=>unknown; active?:boolean; popupKind?:string; railAction?:string; dropdown?:string; onContextMenu?:(...args:any[])=>unknown',
+      };
+      authored = authored.replace(marker, `type RailBtnChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<RailBtnChild> } | ReadonlyArray<RailBtnChild>;\ntype RailBtnProps = { children: RailBtnChild; onClick: (...args: any[]) => unknown; active?: boolean; popupKind?: string; railAction?: string; dropdown?: string; onContextMenu?: (...args: any[]) => unknown };\nfunction RailBtn({ children, onClick, active, popupKind, railAction, dropdown, onContextMenu }: RailBtnProps) {`);
+    }
+    if (applyPropContracts && component.name === 'SnapBtn') {
+      const marker = 'function SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }) {';
+      if (!authored.includes(marker)) fail('SnapBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'id/action/slot/filled/onClick/label required; onClear/capture optional',
+        value_type: 'id:string; action:string; slot:string; filled:boolean; onClick:(...args:any[])=>unknown; onClear?:(...args:any[])=>unknown; capture?:boolean; label:string',
+      };
+      authored = authored.replace(marker, `type SnapBtnProps = { id: string; action: string; slot: string; filled: boolean; onClick: (...args: any[]) => unknown; onClear?: (...args: any[]) => unknown; capture?: boolean; label: string };\nfunction SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }: SnapBtnProps) {`);
+    }
     const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
     components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}) });
@@ -245,7 +265,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -341,6 +361,24 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (!wrong || !missing) fail(`planted SpectrSettingsSlider controls did not fail closed: ${JSON.stringify(typeDiagnostics)}`);
       settingsSliderPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsSlider', properties: ['disabled'], missing_property: ['value'], diagnostics: [wrong], missing_diagnostic: missing, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let chromePropTypeNegativeControl = { status: 'not-run' };
+    if (plantChromePropType) {
+      if (plantChromePropType !== 'toolbar-buttons') fail(`Chrome prop-type control must target toolbar-buttons, got ${plantChromePropType}`);
+      const railTarget = path.join(stage, 'components', 'RailBtn.tsx');
+      const snapTarget = path.join(stage, 'components', 'SnapBtn.tsx');
+      if (!fs.existsSync(railTarget) || !fs.existsSync(snapTarget)) fail('toolbar button prop-type control targets are not staged');
+      fs.appendFileSync(railTarget, '\nconst __wp1_planted_rail_missing_required__ = <RailBtn active={false}>{"x"}</RailBtn>;\nconst __wp1_planted_rail_wrong_active__ = <RailBtn onClick={() => {}} active={"yes"}>{"x"}</RailBtn>;\n');
+      fs.appendFileSync(snapTarget, '\nconst __wp1_planted_snap_missing_required__ = <SnapBtn action={"x"} slot={"A"} filled={false} onClick={() => {}} label={"A"} />;\nconst __wp1_planted_snap_wrong_filled__ = <SnapBtn id={"x"} action={"x"} slot={"A"} filled={"yes"} onClick={() => {}} label={"A"} />;\n');
+      const planted = runTypeScript(stage);
+      const railDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith('components/RailBtn.tsx'));
+      const snapDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith('components/SnapBtn.tsx'));
+      const railWrong = railDiagnostics.find((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const railMissing = railDiagnostics.find((diagnostic) => /RailBtnProps/.test(diagnostic.message));
+      const snapWrong = snapDiagnostics.find((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const snapMissing = snapDiagnostics.find((diagnostic) => /SnapBtnProps/.test(diagnostic.message));
+      if (!railWrong || !railMissing || !snapWrong || !snapMissing) fail(`planted toolbar button controls did not fail closed: ${JSON.stringify({ railDiagnostics, snapDiagnostics })}`);
+      chromePropTypeNegativeControl = { status: 'passed', components: ['RailBtn', 'SnapBtn'], diagnostics: [railWrong, snapWrong], missing_diagnostics: [railMissing, snapMissing], planted_diagnostic_count: planted.diagnostics.length };
+    }
     let jsxChildrenNegativeControl = { status: 'not-run' };
     if (plantJsxChildren) {
       const target = path.join(stage, 'components', 'Hrow.tsx');
@@ -382,6 +420,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
       settings_chips_prop_type_negative_control: settingsChipsPropTypeNegativeControl,
       settings_slider_prop_type_negative_control: settingsSliderPropTypeNegativeControl,
+      chrome_prop_type_negative_control: chromePropTypeNegativeControl,
       jsx_children_negative_control: jsxChildrenNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
@@ -397,13 +436,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -413,7 +452,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);
