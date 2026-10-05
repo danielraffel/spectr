@@ -37,7 +37,8 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                  "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType",
                  "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField",
                  "--plant-mbtn-prop-type", "MBtn", "--plant-jsx-children", "yes",
-                 "--plant-settings-chips-prop-type", "SpectrSettingsChips"],
+                 "--plant-settings-chips-prop-type", "SpectrSettingsChips",
+                 "--plant-settings-slider-prop-type", "SpectrSettingsSlider"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -72,6 +73,9 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(len(report["settings_chips_prop_type_negative_control"]["diagnostics"]), 2)
             self.assertTrue(all(item["code"] == "TS2322" for item in report["settings_chips_prop_type_negative_control"]["diagnostics"]))
             self.assertEqual(report["settings_chips_prop_type_negative_control"]["missing_diagnostic"]["code"], "TS2322")
+            self.assertEqual(report["settings_slider_prop_type_negative_control"]["status"], "passed")
+            self.assertEqual(report["settings_slider_prop_type_negative_control"]["diagnostics"][0]["code"], "TS2322")
+            self.assertEqual(report["settings_slider_prop_type_negative_control"]["missing_diagnostic"]["code"], "TS2322")
             self.assertLessEqual(report["prop_contract_effect"]["delta"], 0)
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 
