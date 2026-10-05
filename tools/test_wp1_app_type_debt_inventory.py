@@ -36,7 +36,7 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                 ["node", str(INVENTORY), "--artifact", str(ARTIFACT), "--manifest", str(manifest),
                  "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType",
                  "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField",
-                 "--plant-mbtn-prop-type", "MBtn"],
+                 "--plant-mbtn-prop-type", "MBtn", "--plant-jsx-children", "yes"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -64,6 +64,9 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(report["mbtn_prop_type_negative_control"]["status"], "passed")
             self.assertEqual(len(report["mbtn_prop_type_negative_control"]["diagnostics"]), 2)
             self.assertTrue(all(item["code"] == "TS2322" for item in report["mbtn_prop_type_negative_control"]["diagnostics"]))
+            self.assertEqual(report["jsx_children_negative_control"]["status"], "passed")
+            self.assertEqual(len(report["jsx_children_negative_control"]["diagnostics"]), 2)
+            self.assertTrue(all(item["code"] == "TS2322" for item in report["jsx_children_negative_control"]["diagnostics"]))
             self.assertLessEqual(report["prop_contract_effect"]["delta"], 0)
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 

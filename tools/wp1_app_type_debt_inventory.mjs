@@ -137,7 +137,7 @@ function ambientDeclarations(manifest) {
     }
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
-  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } interface IntrinsicAttributes { key?: unknown; } }');
+  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } interface IntrinsicAttributes { key?: unknown; } interface ElementChildrenAttribute { children: {}; } }');
   return `${declarations.join('\n')}\n`;
 }
 
@@ -225,7 +225,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -292,6 +292,19 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (typedControls.length !== 2) fail(`planted wrong MBtn prop types did not produce exact primary/action TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
       mbtnPropTypeNegativeControl = { status: 'passed', name: 'MBtn', properties: ['primary', 'action'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let jsxChildrenNegativeControl = { status: 'not-run' };
+    if (plantJsxChildren) {
+      const target = path.join(stage, 'components', 'Hrow.tsx');
+      if (!fs.existsSync(target)) fail('JSX children control target is not staged');
+      fs.appendFileSync(target, '\ntype __Wp1RequiredChildrenProps = { children: number };\nfunction __Wp1RequiredChildren({ children }: __Wp1RequiredChildrenProps) { return children; }\nconst __wp1_planted_missing_children = <__Wp1RequiredChildren />;\nconst __wp1_planted_wrong_children = <__Wp1RequiredChildren>{"wrong"}</__Wp1RequiredChildren>;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/Hrow.tsx';
+      const controls = planted.diagnostics.filter((diagnostic) => diagnostic.file.endsWith(targetSuffix));
+      const missing = controls.find((diagnostic) => ['TS2322', 'TS2741', 'TS2745'].includes(diagnostic.code) && /(?:children|__Wp1RequiredChildrenProps)/.test(diagnostic.message) && /missing|required|expects|assignable/.test(diagnostic.message));
+      const wrong = controls.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /number/.test(diagnostic.message));
+      if (!missing || !wrong) fail(`planted JSX children controls did not fail closed: ${JSON.stringify(controls)}`);
+      jsxChildrenNegativeControl = { status: 'passed', properties: ['children required', 'children:number'], diagnostics: [missing, wrong], planted_diagnostic_count: planted.diagnostics.length };
+    }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {
       schema: SCHEMA, version: 1,
@@ -318,6 +331,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
       mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
+      jsx_children_negative_control: jsxChildrenNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
     fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
@@ -332,13 +346,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -348,7 +362,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);
