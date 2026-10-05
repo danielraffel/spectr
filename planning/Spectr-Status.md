@@ -24,6 +24,18 @@ experimental until it lands through the normal integration and validation
 gates. The next-wave design-import/GraphNode work remains gated on that Pulp
 integration and an independent adversarial review.
 
+The hosted three-run adapter is now available at
+`tools/bench/wp0_hosted_receipt.py` (local commit `13d1dd5`, not pushed). It
+requires all six UI workload families (`open`, `frame`, `bridge`, `layout`,
+`paint`, and `size`), matching three-or-more-run metrics, positive per-run RSS,
+and a passing native receipt. Its tests include missing-family, short-run,
+zero-RSS, zero-size, and planted offscreen negative controls. A hosted
+three-run receipt has not yet been captured; this adapter is the next gate
+before claiming that baseline. It now rejects plain native-shot receipts,
+requires the negative-control log, and requires matching host, format, build,
+artifact digest, and artifact-size identity in both inputs. Historical local
+receipts intentionally fail those new hosted-only checks.
+
 ## Release 1 product state
 
 Release 1 is a zoomable spectral-isolation effect:
