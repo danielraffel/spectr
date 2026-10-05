@@ -34,9 +34,10 @@ const COMPONENT = /^[A-Z][A-Za-z0-9_$]*$/;
 const RUNTIME_GLOBALS = new Set([
   'React', 'window', 'document', 'globalThis', 'console', 'JSON', 'Math', 'Date',
   'Number', 'String', 'Boolean', 'Array', 'Object', 'RegExp', 'Promise', 'Error',
-  'Infinity', 'NaN', 'undefined', 'setTimeout', 'clearTimeout', 'requestAnimationFrame',
+  'Infinity', 'NaN', 'undefined', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame',
   'cancelAnimationFrame', 'Intl', 'performance', 'parseInt', 'parseFloat', 'isFinite',
   'BigInt', 'Symbol', 'Map', 'Set', 'WeakMap', 'URL', 'URLSearchParams',
+  'Float32Array',
   // JavaScript's implicit function binding and browser globals used by the
   // frozen editor. These are runtime-provided names, not authored modules.
   'arguments', 'Blob', 'FileReader', 'navigator',

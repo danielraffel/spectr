@@ -110,6 +110,14 @@ class ParserDependencyManifestTest(unittest.TestCase):
             for component in manifest["components"]:
                 self.assertEqual(component["unresolved"], [], component["name"])
 
+    def test_full_app_closure_has_no_unresolved_runtime_bindings(self):
+        result = run_manifest(artifact=ARTIFACT, root="App")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertGreater(manifest["component_count"], 20)
+        for component in manifest["components"]:
+            self.assertEqual(component["unresolved"], [], component["name"])
+
     def test_unresolved_nested_reference_fails_closed(self):
         source = FIXTURE.read_text()
         self.assertIn("MBtn, {", source)
@@ -156,6 +164,19 @@ function Panel() {
             result = run_manifest(source=bad, root="Broken")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("parser rejected", result.stderr)
+
+    def test_unknown_timer_binding_still_fails_closed(self):
+        source_text = """
+function Panel() {
+  return React.createElement("div", { onClick: () => mysteryTimer() });
+}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "unknown-timer.jsx"
+            source.write_text(source_text)
+            result = run_manifest(source=source, root="Panel")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unresolved identifiers for Panel: mysteryTimer", result.stderr)
 
     def test_checked_in_fixture_manifest_matches_parser_output(self):
         result = run_manifest(source=FIXTURE, root="Panel")
