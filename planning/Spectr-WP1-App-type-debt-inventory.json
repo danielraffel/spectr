@@ -883,7 +883,7 @@
         "line": 191,
         "column": 7,
         "code": "TS2322",
-        "message": "Type '{ railAction: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
+        "message": "Type '{ children: string; railAction: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -891,7 +891,7 @@
         "line": 191,
         "column": 156,
         "code": "TS2322",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
+        "message": "Type '{ children: string; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -899,7 +899,7 @@
         "line": 216,
         "column": 228,
         "code": "TS2322",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
+        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -907,7 +907,7 @@
         "line": 219,
         "column": 133,
         "code": "TS2322",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
+        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -915,7 +915,7 @@
         "line": 222,
         "column": 227,
         "code": "TS2322",
-        "message": "Type '{ popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
+        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1479,126 +1479,6 @@
         "category": "browser-window"
       },
       {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 146,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 250,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 296,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 334,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 389,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 445,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 497,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 546,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 590,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 636,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 694,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 736,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 820,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 867,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/HelpPopover.tsx",
-        "line": 22,
-        "column": 964,
-        "code": "TS2322",
-        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
         "file": "components/MorphSlider.tsx",
         "line": 4,
         "column": 59,
@@ -1793,14 +1673,6 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 590,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 848,
         "code": "TS2322",
         "message": "Type '{ value: any; onChange: (v: any) => any; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
@@ -1849,14 +1721,6 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 3004,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 3350,
         "code": "TS2322",
         "message": "Type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
@@ -1868,14 +1732,6 @@
         "column": 3640,
         "code": "TS2322",
         "message": "Type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4249,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1959,14 +1815,6 @@
         "category": "browser-window"
       },
       {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 88,
-        "column": 27,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
         "file": "components/SpectrControlMenu.tsx",
         "line": 16,
         "column": 56,
@@ -2009,14 +1857,6 @@
       {
         "file": "components/SpectrLatencySettings.tsx",
         "line": 93,
-        "column": 27,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrLatencySettings.tsx",
-        "line": 93,
         "column": 386,
         "code": "TS2322",
         "message": "Type '{ value: any; onChange: (next: any) => void; opts: any; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
@@ -2053,14 +1893,6 @@
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 69,
-        "code": "TS2322",
-        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
@@ -2285,96 +2117,16 @@
         "code": "TS2339",
         "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 30,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 56,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 243,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 427,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 555,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 720,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 749,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 956,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 1118,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/TweaksPanel.tsx",
-        "line": 57,
-        "column": 1232,
-        "code": "TS2322",
-        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
-        "category": "prop-or-type"
       }
     ],
     "counts": {
       "browser-window": 159,
-      "prop-or-type": 65,
+      "prop-or-type": 34,
       "other-semantic": 16
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2322": 58,
+      "TS2322": 27,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
@@ -2385,12 +2137,12 @@
     "unknown_binding_names": []
   },
   "prop_contract_effect": {
-    "before_diagnostics": 285,
-    "after_diagnostics": 240,
+    "before_diagnostics": 254,
+    "after_diagnostics": 209,
     "delta": -45,
     "control_counts": {
       "browser-window": 159,
-      "prop-or-type": 110,
+      "prop-or-type": 79,
       "other-semantic": 16
     }
   },
@@ -2406,7 +2158,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 241
+    "planted_diagnostic_count": 210
   },
   "prop_contracts": [
     {
@@ -2431,7 +2183,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 242
+    "planted_diagnostic_count": 211
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2458,7 +2210,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 244
+    "planted_diagnostic_count": 213
   },
   "mbtn_prop_type_negative_control": {
     "status": "passed",
@@ -2485,7 +2237,33 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 246
+    "planted_diagnostic_count": 215
+  },
+  "jsx_children_negative_control": {
+    "status": "passed",
+    "properties": [
+      "children required",
+      "children:number"
+    ],
+    "diagnostics": [
+      {
+        "file": "components/Hrow.tsx",
+        "line": 19,
+        "column": 41,
+        "code": "TS2322",
+        "message": "Type '{}' is not assignable to type 'IntrinsicAttributes & __Wp1RequiredChildrenProps'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Hrow.tsx",
+        "line": 20,
+        "column": 61,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'number'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "planted_diagnostic_count": 217
   },
   "scope": {
     "runtime_artifact_changed": false,
