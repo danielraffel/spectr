@@ -133,7 +133,7 @@ function runEmitterVerify(artifactPath, manifestPath, emissionDir) {
   if (result.status !== 0) fail(`emission verification rejected the App closure: ${(result.stderr || result.stdout || 'no diagnostic').trim()}`);
 }
 
-function ambientDeclarations(manifest) {
+function ambientDeclarations(manifest, { includeInitial = false } = {}) {
   const names = new Set(['React', 'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus']);
   for (const component of manifest.components) {
     for (const name of component.external_bindings || []) {
@@ -142,6 +142,7 @@ function ambientDeclarations(manifest) {
     }
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
+  const initialMethod = includeInitial ? '  initial(type: string): SpectrPulpInitialPayload | null;\n' : '';
   declarations.push(`
 interface SpectrPulpPayload {
   ok?: boolean;
@@ -263,8 +264,7 @@ interface SpectrPulpResponse {
 interface SpectrPulpBridge {
   on(type: string, listener: (message: SpectrPulpMessage) => void): () => boolean;
   postMessage(type: string, payload?: Record<string, unknown>, id?: string): Promise<SpectrPulpResponse>;
-  initial(type: string): SpectrPulpInitialPayload | null;
-}
+${initialMethod}}
 interface Window {
   pulp?: SpectrPulpBridge;
 }
@@ -360,8 +360,10 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const { value: manifest } = readJson(manifestPath, 'dependency manifest');
   if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.components)) fail('dependency manifest schema/components are invalid');
   const inlinePulpFields = pulpContractFields(artifact.html);
-  if (!bridgeSourceBytes.toString('utf8').includes('initial(type)')) fail('maintained native bridge source does not expose initial(type)');
-  if (!synchronizedRuntimeBytes.toString('utf8').includes('initial(type)')) fail('synchronized native bridge runtime does not expose initial(type)');
+  const sourcePulpFields = pulpContractFields(bridgeSourceBytes.toString('utf8'));
+  const synchronizedPulpFields = pulpContractFields(synchronizedRuntimeBytes.toString('utf8'));
+  if (!sourcePulpFields.includes('initial')) fail('maintained native bridge source does not expose initial(type)');
+  if (!synchronizedPulpFields.includes('initial')) fail('synchronized native bridge runtime does not expose initial(type)');
   validateExternalBindings(manifest, artifact);
   runEmitterVerify(artifactPath, manifestPath, emissionDir);
   const { raw: emissionRaw, value: emission } = readJson(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
@@ -370,10 +372,10 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const controlStage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-control-'));
   try {
     const modules = stageModules(manifest, emission, emissionDir, stage);
-    fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest));
+    fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial') }));
     const baseline = runTypeScript(stage);
     stageModules(manifest, emission, emissionDir, controlStage, { applyPropContracts: false });
-    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest));
+    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial') }));
     const controlBaseline = runTypeScript(controlStage);
     let negativeControl = { status: 'not-run' };
     if (plantUnknown) {
@@ -417,8 +419,8 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       fs.appendFileSync(target, `\nconst __wp1_planted_pulp_initial__ = window.pulp?.initial("probe")?.__wp1_unknown_initial_field;\n`);
       const planted = runTypeScript(stage);
       const targetSuffix = `components/${plantPulpInitial}.tsx`;
-      const diagnostic = planted.diagnostics.find((entry) => entry.file.endsWith(targetSuffix) && entry.code === 'TS2339' && /initial/.test(entry.message));
-      if (!diagnostic) fail(`unknown Window.pulp.initial field did not produce TS2339: ${JSON.stringify(planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix)))}`);
+      const diagnostic = planted.diagnostics.find((entry) => entry.file.endsWith(targetSuffix) && entry.code === 'TS2339' && (inlinePulpFields.includes('initial') ? /__wp1_unknown_initial_field/.test(entry.message) : /initial/.test(entry.message)));
+      if (!diagnostic) fail(`Window.pulp.initial contract control did not produce the expected TS2339: ${JSON.stringify(planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix)))}`);
       pulpInitialNegativeControl = { status: 'passed', name: plantPulpInitial, diagnostic, planted_diagnostic_count: planted.diagnostics.length };
     }
     let pulpPayloadNegativeControl = { status: 'not-run' };
@@ -458,20 +460,22 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
       window_pulp_contract: {
-        fields: ['on', 'postMessage', 'initial'],
+        fields: inlinePulpFields,
         optional: true,
         post_message_returns: 'Promise<SpectrPulpResponse>',
-        initial_present: true,
-        initial_returns: 'SpectrPulpInitialPayload | null',
+        initial_present: inlinePulpFields.includes('initial'),
+        initial_returns: inlinePulpFields.includes('initial') ? 'SpectrPulpInitialPayload | null' : null,
         source_receipt: {
           path: path.relative(process.cwd(), bridgeSourcePath),
           sha256: sha256(bridgeSourceBytes),
           synchronized_runtime: {
             path: path.relative(process.cwd(), synchronizedRuntimePath),
             sha256: sha256(synchronizedRuntimeBytes),
-            fields: ['on', 'postMessage', 'initial'],
-            initial_present: true,
+            fields: synchronizedPulpFields,
+            initial_present: synchronizedPulpFields.includes('initial'),
           },
+          fields: sourcePulpFields,
+          initial_present: sourcePulpFields.includes('initial'),
           embedded_artifact: {
             path: path.relative(process.cwd(), artifactPath),
             sha256: sha256(artifactBytes),
