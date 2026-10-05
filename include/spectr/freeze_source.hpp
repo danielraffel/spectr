@@ -113,6 +113,7 @@
 /// audio thread.
 
 #include <pulp/runtime/trace.hpp>
+#include "spectr/test_seams.hpp"
 #include <pulp/signal/fft.hpp>
 #include "spectr/upstream/freeze_hold.hpp"
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -1093,7 +1094,7 @@ public:
 private:
     // SPECTR_PLANT_ALWAYS_CAPTURE restores the capture on every hop.
     static bool capture_plant_() noexcept {
-        static const bool planted = std::getenv("SPECTR_PLANT_ALWAYS_CAPTURE") != nullptr;
+        static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_ALWAYS_CAPTURE") != nullptr;
         return planted;
     }
 

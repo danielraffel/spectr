@@ -2,6 +2,7 @@
 #include <spectr/experimental/shared_spectral_renderer.hpp>
 #endif
 #include "spectr/spectr.hpp"
+#include "spectr/test_seams.hpp"
 
 #include <pulp/runtime/trace.hpp>
 #include <pulp/format/param_processing.hpp>
@@ -38,7 +39,7 @@ namespace {
 /// were slewed. Read once per process; unset in every shipping run.
 bool modulation_plants_route_step() noexcept {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_MODULATION_PLANT");
         return value != nullptr && std::string_view(value) == "route-step";
     }();
     return planted;
@@ -49,7 +50,7 @@ bool modulation_plants_route_step() noexcept {
 // ramp exists to prevent. The Output-target smoothness gate must fail with it.
 bool modulation_plants_level_target_step() noexcept {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_MODULATION_PLANT");
         return value != nullptr && std::string_view(value) == "level-target-step";
     }();
     return planted;
@@ -63,7 +64,7 @@ bool modulation_plants_level_target_step() noexcept {
 // control thread (prepare primes it).
 long callback_burst_plant() noexcept {
     static const long iterations = [] {
-        const char* v = std::getenv("SPECTR_PLANT_CALLBACK_BURST");
+        const char* v = SPECTR_TEST_ENV("SPECTR_PLANT_CALLBACK_BURST");
         return v ? std::atol(v) : 0L;
     }();
     return iterations;
@@ -633,7 +634,7 @@ constexpr double kRenderSwitchFadeSeconds = 0.03;
 // SPECTR_PLANT_HARD_RENDER_SWITCH restores the cut a switch used to be. Read
 // on the control thread only (set_render_mode).
 bool render_switch_plants_hard_cut_() noexcept {
-    static const bool planted = std::getenv("SPECTR_PLANT_HARD_RENDER_SWITCH") != nullptr;
+    static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_HARD_RENDER_SWITCH") != nullptr;
     return planted;
 }
 } // namespace
@@ -3279,7 +3280,7 @@ namespace {
 /// flag so the shipping binary is the one the control is proven against.
 bool migration_plant_adopts_other_mode_() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_RENDER_MODE_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_RENDER_MODE_PLANT");
         return value != nullptr
             && std::string_view(value) == "migration-adopts-other-mode";
     }();

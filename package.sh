@@ -137,6 +137,17 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
   echo "Spectr tracked source must be clean before the package rebuild" >&2
   exit 2
 }
+# Test seams and diagnostics never ship. SPECTR_ENABLE_TEST_SEAMS compiles the
+# SPECTR_* environment seams (script injection, synthetic input, planted
+# defects) into the products; the other options add acceptance-only code or
+# exports to them. A package is built only from a configuration with all OFF.
+for opt in SPECTR_ENABLE_TEST_SEAMS SPECTR_ENABLE_PERF_FIXTURES \
+           SPECTR_SHARED_PRODUCT_ACCEPTANCE SPECTR_SHARED_NATIVE_HOST_PROBE; do
+  if grep -qE "^$opt:BOOL=(ON|TRUE|1|YES)$" "$CACHE"; then
+    echo "$opt is ON in $CACHE: a package must come from a release configuration" >&2
+    exit 2
+  fi
+done
 
 # Rebuild every payload named below from this exact clean head. The governor
 # leases a bounded share of the shared M5 rather than claiming the machine.
@@ -165,6 +176,8 @@ APP="$BUILD/$BUNDLE_NAME.app"
 for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
+# The rebuilt products must read no SPECTR_* test seam: their names are absent.
+python3 "$ROOT/tools/check_no_test_seams.py" --expect absent "$APP" "$AU" "$VST3" "$CLAP"
 
 # A RELEASE (Spectr.app numbered exactly VER) must read the release feed: an
 # app that ships reading a practice or loopback feed, or with no updater, can

@@ -1,4 +1,5 @@
 #include "spectr/spectr.hpp"
+#include "spectr/test_seams.hpp"
 #include <pulp/view/plugin_view_host.hpp>
 
 #include "spectr/editor_bridge.hpp"
@@ -508,9 +509,9 @@ bool write_embedded_package(const std::filesystem::path& path) {
     if (ec) return false;
 
     const bool plant_unmute =
-        std::getenv("SPECTR_GROUP_DRAG_UNMUTE_PLANT") != nullptr;
+        SPECTR_TEST_ENV("SPECTR_GROUP_DRAG_UNMUTE_PLANT") != nullptr;
     const bool plant_freeze =
-        std::getenv("SPECTR_GROUP_DRAG_FREEZE_PLANT") != nullptr;
+        SPECTR_TEST_ENV("SPECTR_GROUP_DRAG_FREEZE_PLANT") != nullptr;
     const bool plant = plant_unmute || plant_freeze;
 
     std::size_t total = 0;
@@ -851,7 +852,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // the authored document mounts. The external harness still drives the
     // gesture through AppKit/WindowHost; this avoids making dropdown geometry
     // part of a Bands rendering benchmark.
-    if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
+    if (const auto* fixture = SPECTR_TEST_ENV("SPECTR_BANDS_PERF_FIXTURE");
         fixture && std::string_view{fixture} == "1") {
         state().set_value(kParamBandCount, 64.0f);
     }
@@ -860,9 +861,9 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // modulation overlay is the workload under measurement. The audio owner
     // advances the phase inside process(), so a capture that wants motion must
     // also keep audio live (PULP_SCREENSHOT_KEEP_AUDIO=1).
-    if (const auto* fixture = std::getenv("SPECTR_LFO_PERF_FIXTURE");
+    if (const auto* fixture = SPECTR_TEST_ENV("SPECTR_LFO_PERF_FIXTURE");
         fixture && std::string_view{fixture} == "1") {
-        const auto* shape = std::getenv("SPECTR_LFO_PERF_SHAPE");
+        const auto* shape = SPECTR_TEST_ENV("SPECTR_LFO_PERF_SHAPE");
         state().set_value(kParamBandCount, 64.0f);
         state().set_value(kParamLfoShape,
                           shape ? static_cast<float>(std::atof(shape)) : 0.0f);
@@ -1143,7 +1144,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             // on an SDK without the retained-scroll flex fix, and that is the
             // one surface the whole-image content floor cannot judge, so the
             // capture has to be reachable without a human at the window.
-            if (const auto* open_settings = std::getenv("SPECTR_OPEN_SETTINGS");
+            if (const auto* open_settings = SPECTR_TEST_ENV("SPECTR_OPEN_SETTINGS");
                 open_settings && std::string_view{open_settings} == "1") {
                 bridge->load_script(
                     "if (!globalThis.__pulpActivateMaterializedElement__("
@@ -1158,7 +1159,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             // applied in order; a miss throws rather than producing a capture
             // of the state we did not reach, which would be indistinguishable
             // from a passing capture of a broken one.
-            if (const auto* clicks = std::getenv("SPECTR_CLICK");
+            if (const auto* clicks = SPECTR_TEST_ENV("SPECTR_CLICK");
                 clicks != nullptr && *clicks != '\0') {
                 std::string script;
                 std::string_view remaining{clicks};
@@ -1231,12 +1232,12 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             // the style over" from "the style was handed over and did not take
             // effect" needs one direct write from JS, and guessing between
             // those two has already cost this session three wrong theories.
-            if (const auto* script = std::getenv("SPECTR_EVAL");
+            if (const auto* script = SPECTR_TEST_ENV("SPECTR_EVAL");
                 script != nullptr && *script != '\0') {
                 bridge->load_script(std::string(script), "spectr-eval-fixture");
             }
 
-            if (const auto* key = std::getenv("SPECTR_KEY_JS");
+            if (const auto* key = SPECTR_TEST_ENV("SPECTR_KEY_JS");
                 key != nullptr && *key != '\0') {
                 // POSITIVE CONTROL, not decoration. A dispatch that reaches
                 // no listener looks exactly like a key the app ignores, so the
@@ -1267,7 +1268,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                       "globalThis.__pulpRuntimeSettle__(12); })();";
                 bridge->load_script(js, "spectr-key-js-fixture");
             }
-            if (const auto* fixture = std::getenv("SPECTR_BANDS_PERF_FIXTURE");
+            if (const auto* fixture = SPECTR_TEST_ENV("SPECTR_BANDS_PERF_FIXTURE");
                 fixture && std::string_view{fixture} == "1") {
                 bridge->load_script(
                     "globalThis.__pulpActivateMaterializedElement__("
@@ -1347,7 +1348,7 @@ void Spectr::settle_native_runtime_(int frames) {
 }
 
 void Spectr::dump_fixture_stage_(const std::string& stage) {
-    const auto* prefix = std::getenv("SPECTR_DRAG_DUMP_PREFIX");
+    const auto* prefix = SPECTR_TEST_ENV("SPECTR_DRAG_DUMP_PREFIX");
     if (prefix == nullptr || *prefix == '\0' || native_editor_root_ == nullptr)
         return;
     pulp::view::LayoutTreeSnapshotOptions options;
@@ -1650,7 +1651,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // needs a real window resize, which a headless capture cannot perform. A
     // row resting on input mapping at scale != 1 is not closed by this.
     if (!resize_fixture_applied_ && native_editor_root_ != nullptr) {
-        if (const auto* spec = std::getenv("SPECTR_RESIZE");
+        if (const auto* spec = SPECTR_TEST_ENV("SPECTR_RESIZE");
             spec != nullptr && *spec != '\0') {
             const std::string text{spec};
             const auto x = text.find('x');
@@ -1677,7 +1678,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // early -- the settings body measures 466x0 with no content until Yoga has
     // run -- so wait for a laid-out scroll container and act once.
     {
-        if (const auto* scroll_to = std::getenv("SPECTR_SETTINGS_SCROLL");
+        if (const auto* scroll_to = SPECTR_TEST_ENV("SPECTR_SETTINGS_SCROLL");
             scroll_to != nullptr) {
             std::vector<pulp::view::ScrollView*> found;
             if (native_editor_root_ != nullptr)
@@ -1705,7 +1706,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // that highlights while ModulationSettings still says Sine looks identical
     // in every screenshot, so the picture cannot answer this and the parameter
     // has to be read back.
-    if (const auto* mod_dump = std::getenv("SPECTR_MODULATION_DUMP");
+    if (const auto* mod_dump = SPECTR_TEST_ENV("SPECTR_MODULATION_DUMP");
         mod_dump != nullptr && settings_fixture_scrolled_) {
         const auto m = modulation_settings();
         const auto shape_name = [](spectr::LfoShape shape) {
@@ -1748,7 +1749,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // spot as render_to_png, so treating it as a live capture would reintroduce
     // exactly the error this exists to remove.
     if (!live_capture_done_) {
-        if (const auto* out = std::getenv("SPECTR_LIVE_CAPTURE");
+        if (const auto* out = SPECTR_TEST_ENV("SPECTR_LIVE_CAPTURE");
             out != nullptr && *out != '\0' && native_editor_root_ != nullptr) {
             auto* host = native_editor_root_->window_host();
             if (host == nullptr) {
@@ -1786,7 +1787,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // registered-shortcut table and, if unclaimed, dispatched as a DOM
     // `keydown`. Both results are reported so a row can say which answered.
     if (!settings_fixture_key_sent_ && settings_fixture_scrolled_) {
-        if (const auto* key = std::getenv("SPECTR_KEY");
+        if (const auto* key = SPECTR_TEST_ENV("SPECTR_KEY");
             key != nullptr && native_editor_root_ != nullptr) {
             std::string spec{key};
             uint16_t mods = 0;
@@ -1880,8 +1881,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // probed after a drag, same hit view either way. So order drag points LAST
     // in SPECTR_CURSOR_POINTS, or treat a hover that follows one as unsound.
     if (settings_fixture_scrolled_ && !cursor_probe_done_) {
-        const auto* probe_out = std::getenv("SPECTR_CURSOR_PROBE");
-        const auto* probe_points = std::getenv("SPECTR_CURSOR_POINTS");
+        const auto* probe_out = SPECTR_TEST_ENV("SPECTR_CURSOR_PROBE");
+        const auto* probe_points = SPECTR_TEST_ENV("SPECTR_CURSOR_POINTS");
         if (probe_out != nullptr && *probe_out != '\0'
             && probe_points != nullptr && *probe_points != '\0'
             && native_editor_root_ != nullptr) {
@@ -2060,7 +2061,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // paints. Only the snapshot carries the painted string.
     if (!drag_fixture_done_ && settings_fixture_scrolled_
         && native_editor_root_ != nullptr) {
-        if (const auto* spec = std::getenv("SPECTR_DRAG");
+        if (const auto* spec = SPECTR_TEST_ENV("SPECTR_DRAG");
             spec != nullptr && *spec != '\0') {
             float coords[5] = {0, 0, 0, 0, 0};
             {
@@ -2136,7 +2137,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // Latched off once the gesture and its readback are behind us, so the
     // frames AFTER the measured window carry none of this fixture's parsing.
     if (!gesture_perf_done_ && native_editor_root_ != nullptr) {
-        if (const auto* spec = std::getenv("SPECTR_GESTURE_PERF");
+        if (const auto* spec = SPECTR_TEST_ENV("SPECTR_GESTURE_PERF");
             spec != nullptr && *spec != '\0') {
             std::uint16_t mods = 0;
             float pt[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -2255,7 +2256,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // disappearance are both TIME properties, so they are read on the wall
     // clock from the same process, at offsets the caller names.
     if (drag_fixture_done_ && drag_fixture_finished_ms_ >= 0.0) {
-        if (const auto* offsets = std::getenv("SPECTR_STATUS_PROBE_MS");
+        if (const auto* offsets = SPECTR_TEST_ENV("SPECTR_STATUS_PROBE_MS");
             offsets != nullptr && *offsets != '\0') {
             std::vector<double> wanted;
             std::string_view rest{offsets};
@@ -2289,7 +2290,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // scale other than 1. A capture at the default size cannot see a
     // transform bug at all, because there the transform is the identity.
     if (!resize_request_sent_ && settings_fixture_scrolled_) {
-        if (const auto* spec = std::getenv("SPECTR_REQUEST_RESIZE");
+        if (const auto* spec = SPECTR_TEST_ENV("SPECTR_REQUEST_RESIZE");
             spec != nullptr && *spec != '\0') {
             const std::string text{spec};
             const auto x = text.find('x');
@@ -2314,7 +2315,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // the opposite trim -- is false if the opposite trim moves at any point,
     // even briefly, so it can only be judged frame by frame.
     if (settings_fixture_scrolled_) {
-        if (const auto* trace_path = std::getenv("SPECTR_STATE_TRACE");
+        if (const auto* trace_path = SPECTR_TEST_ENV("SPECTR_STATE_TRACE");
             trace_path != nullptr && *trace_path != '\0') {
             const auto snap = processing_state_snapshot();
             const auto n = visible_count(snap.layout);
@@ -2348,7 +2349,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // it injects in root coordinates and so is blind to the transform by
     // construction.
     if (settings_fixture_scrolled_) {
-        if (const auto* state_out = std::getenv("SPECTR_STATE_OUT");
+        if (const auto* state_out = SPECTR_TEST_ENV("SPECTR_STATE_OUT");
             state_out != nullptr && *state_out != '\0') {
             const auto snap = processing_state_snapshot();
             const auto n = visible_count(snap.layout);
@@ -2403,8 +2404,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // one -- coalescing can only ever remove samples, and the row's accuracy
     // claim has to hold for the samples that do arrive.
     if (settings_fixture_scrolled_ && !gesture_probe_done_) {
-        const auto* gesture_out = std::getenv("SPECTR_GESTURE_OUT");
-        const auto* gesture_spec = std::getenv("SPECTR_GESTURES");
+        const auto* gesture_out = SPECTR_TEST_ENV("SPECTR_GESTURE_OUT");
+        const auto* gesture_spec = SPECTR_TEST_ENV("SPECTR_GESTURES");
         if (gesture_out != nullptr && *gesture_out != '\0'
             && gesture_spec != nullptr && *gesture_spec != '\0'
             && native_editor_root_ != nullptr) {
@@ -2441,7 +2442,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
             };
 
             int gesture_probe_settle_frames = 8;
-            if (const auto* frames = std::getenv("SPECTR_GESTURES_SETTLE"))
+            if (const auto* frames = SPECTR_TEST_ENV("SPECTR_GESTURES_SETTLE"))
                 gesture_probe_settle_frames = std::max(1, std::atoi(frames));
             bool first_gesture = true;
             std::string_view rest{gesture_spec};
@@ -2654,8 +2655,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // step comes back that way.
     if (settings_fixture_scrolled_ && !menu_scenario_done_
         && native_editor_root_ != nullptr) {
-        const auto* spec = std::getenv("SPECTR_MENU_SCENARIO");
-        const auto* out_path = std::getenv("SPECTR_MENU_SCENARIO_OUT");
+        const auto* spec = SPECTR_TEST_ENV("SPECTR_MENU_SCENARIO");
+        const auto* out_path = SPECTR_TEST_ENV("SPECTR_MENU_SCENARIO_OUT");
         if (spec != nullptr && *spec != '\0'
             && out_path != nullptr && *out_path != '\0') {
             if (menu_scenario_steps_.empty()) {
@@ -2669,7 +2670,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 }
                 menu_scenario_json_ = "{\"schema\":\"spectr-menu-scenario-v1\","
                                       "\"steps\":[";
-                if (const auto* delay = std::getenv("SPECTR_MENU_SCENARIO_DELAY"))
+                if (const auto* delay = SPECTR_TEST_ENV("SPECTR_MENU_SCENARIO_DELAY"))
                     menu_scenario_delay_ = std::max(1, std::atoi(delay));
             }
             if (++menu_scenario_tick_ >= menu_scenario_delay_) {
@@ -3568,7 +3569,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 // keep audio in a screenshot launch: with it set the real
                 // worker runs, and this must not race it. (Being prepared is
                 // not the signal -- the standalone prepares without a device.)
-                if (const auto* keep = std::getenv("SPECTR_SCREENSHOT_KEEPS_AUDIO");
+                if (const auto* keep = SPECTR_TEST_ENV("SPECTR_SCREENSHOT_KEEPS_AUDIO");
                     keep == nullptr || std::string_view{keep} != "1")
                     (void)apply_surface_params(/*apply_morph=*/true);
                 {
@@ -3677,7 +3678,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // seam this was meant to close: the picture and the measurement then
     // describe different instants.
     if (settings_fixture_scrolled_) {
-        if (const auto* dump = std::getenv("SPECTR_LAYOUT_DUMP");
+        if (const auto* dump = SPECTR_TEST_ENV("SPECTR_LAYOUT_DUMP");
             dump != nullptr && native_editor_root_ != nullptr) {
             pulp::view::LayoutTreeSnapshotOptions options;
             options.surface = "standalone";
@@ -3715,7 +3716,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     // getenv check -- and the SPECTR_AUTOMATION_PERF_FIXTURE literal itself
     // -- do not exist in a shipping binary.
     const bool automation_perf_fixture = [] {
-        const auto* value = std::getenv("SPECTR_AUTOMATION_PERF_FIXTURE");
+        const auto* value = SPECTR_TEST_ENV("SPECTR_AUTOMATION_PERF_FIXTURE");
         return value != nullptr && std::string_view{value} == "1";
     }();
 #else

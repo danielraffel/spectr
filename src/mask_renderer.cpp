@@ -1,4 +1,5 @@
 #include <spectr/mask_renderer.hpp>
+#include "spectr/test_seams.hpp"
 
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/convolver.hpp>
@@ -365,7 +366,7 @@ static_assert(std::is_same_v<pulp::signal::ConvolverIrSwapper,
 /// variant of it. Read once per process and unset in every shipping run.
 bool swap_plants_history_reset() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_SWAP_PLANT");
         return value != nullptr && std::string_view(value) == "history-reset";
     }();
     return planted;
@@ -380,7 +381,7 @@ bool swap_plants_history_reset() {
 /// unset in every shipping run.
 bool swap_plants_fixed_fade() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_SWAP_PLANT");
         return value != nullptr && std::string_view(value) == "fixed-fade";
     }();
     return planted;
@@ -484,7 +485,7 @@ private:
     // -176 dB, one 1024 samples in at -25 dB), which the stream-start test
     // must reject.
     static bool full_overlap_disabled_by_plant_() noexcept {
-        static const bool disabled = std::getenv("SPECTR_PLANT_NO_FULL_OVERLAP") != nullptr;
+        static const bool disabled = SPECTR_TEST_ENV("SPECTR_PLANT_NO_FULL_OVERLAP") != nullptr;
         return disabled;
     }
 

@@ -42,6 +42,7 @@
 
 #include <pulp/runtime/trace.hpp>
 #include "spectr/band_state.hpp"
+#include "spectr/test_seams.hpp"
 #include "spectr/freeze_source.hpp"
 #include "spectr/level_controls.hpp"
 #include "spectr/mask_renderer.hpp"
@@ -148,25 +149,25 @@ public:
         config.fft_size = design_grid;
         // Advisory-sweep seams (tools/autogain_sweep.cpp), read here on the
         // control thread, never on the audio thread.
-        if (const char* tau = std::getenv("SPECTR_AUTOGAIN_TAU_S"))
+        if (const char* tau = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_TAU_S"))
             if (const double v = std::atof(tau); v > 0.0) config.time_constant_seconds = v;
-        if (const char* k = std::getenv("SPECTR_AUTOGAIN_KNEE_DB"))
+        if (const char* k = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_KNEE_DB"))
             config.material_slew_knee_db = std::atof(k);
-        if (const char* d = std::getenv("SPECTR_AUTOGAIN_LEVEL_DROP_DB"))
+        if (const char* d = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_LEVEL_DROP_DB"))
             config.level_drop_db = std::atof(d);
-        if (const char* g = std::getenv("SPECTR_AUTOGAIN_WEIGHT_EXP"))
+        if (const char* g = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_WEIGHT_EXP"))
             config.level_weight_exponent = std::atof(g);
-        if (const char* l = std::getenv("SPECTR_AUTOGAIN_LOCAL_S"))
+        if (const char* l = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_LOCAL_S"))
             config.local_level_seconds = std::atof(l);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_THRESHOLD_DB"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_THRESHOLD_DB"))
             config.change_drop_threshold_db = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_LEVEL_DB"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_LEVEL_DB"))
             config.change_drop_level_db = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_MIN_LOUD_S"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_MIN_LOUD_S"))
             config.change_drop_min_loud_seconds = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_MAX_DECAY_DB_S"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_MAX_DECAY_DB_S"))
             config.change_max_decay_db_per_second = std::atof(t);
-        if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
+        if (const char* slew = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
         if (level_plant("autogain-v2-unweighted")) config.weight_by_material = false;
@@ -191,7 +192,7 @@ public:
         // v2c: the detector ran only while AUTO was on.
         off_detect_plant_ = level_plant("autogain-v2-detect-only-when-on");
         restored_agree_fade_ = level_plant("autogain-v2-restore-fixed-fade") ? 1.0 : 3.0;
-        if (const char* f = std::getenv("SPECTR_AUTOGAIN_RESTORED_FADE"))
+        if (const char* f = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_RESTORED_FADE"))
             if (const double v = std::atof(f); v >= 1.0) restored_agree_fade_ = v;
         detector_.threshold_db = config.change_threshold_db;
         detector_.huge_db = config.change_huge_db;
@@ -524,7 +525,7 @@ private:
     }
     // SPECTR_PLANT_AUTOGAIN_UNSTAGED restores the whole frame in one callback.
     static bool deferral_plant_() noexcept {
-        static const bool planted = std::getenv("SPECTR_PLANT_AUTOGAIN_UNSTAGED") != nullptr;
+        static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_AUTOGAIN_UNSTAGED") != nullptr;
         return planted;
     }
 

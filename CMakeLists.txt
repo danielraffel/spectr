@@ -301,6 +301,21 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+# Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
+# variables that load a script into the editor (SPECTR_EVAL), synthesise
+# input, dump state, tune Auto Gain, or plant a defect so a negative control
+# can prove its measurement sees it. They are compiled out unless this is ON:
+# a release build reads no SPECTR_* variable and carries none of their names.
+# Test executables that compile Spectr's sources themselves (Spectr-test and
+# the shared-spectral fixtures) always have them. Configure ON for the test
+# build the full ctest runs in; package.sh refuses a build with it ON.
+option(SPECTR_ENABLE_TEST_SEAMS
+       "Compile the SPECTR_* test seams into the plug-in, standalone and probe targets (never for a release)" OFF)
+if(SPECTR_ENABLE_PERF_FIXTURES AND NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(FATAL_ERROR "SPECTR_ENABLE_PERF_FIXTURES reads its fixtures through the test "
+        "seams; configure with -DSPECTR_ENABLE_TEST_SEAMS=ON as well")
+endif()
+
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
@@ -347,6 +362,7 @@ function(spectr_configure_native_target target)
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
         $<$<BOOL:${SPECTR_ENABLE_PERF_FIXTURES}>:SPECTR_ENABLE_PERF_FIXTURES=1>
+        $<$<BOOL:${SPECTR_ENABLE_TEST_SEAMS}>:SPECTR_ENABLE_TEST_SEAMS=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -614,6 +630,8 @@ target_include_directories(Spectr-test PRIVATE
 )
 target_compile_definitions(Spectr-test PRIVATE
     $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
+    # A test binary, never shipped: its negative controls need the plants.
+    SPECTR_ENABLE_TEST_SEAMS=1
     SPECTR_NATIVE_ASSETS=1
     SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
     SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
@@ -756,6 +774,7 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
         src/experimental/shared_spectral_renderer.cpp src/mask_renderer.cpp)
     target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
     target_compile_definitions(SpectrSharedSpectralBridge PRIVATE SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+    target_compile_definitions(SpectrSharedSpectralBridge PUBLIC SPECTR_ENABLE_TEST_SEAMS=1)
     target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
     add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
         test/test_shared_spectral_fixture.cpp)
@@ -4733,4 +4752,31 @@ if(APPLE)
             -DSCRATCH=${CMAKE_BINARY_DIR}/min-os-configure-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/test/min_os_configure_test.cmake)
     set_tests_properties(Spectr-bundle-min-os-configure PROPERTIES TIMEOUT 120)
+endif()
+
+# The SPECTR_* test seams in the built product binaries: with
+# SPECTR_ENABLE_TEST_SEAMS OFF (a release) none of their names may appear;
+# with it ON (the test build) every product must carry them -- the positive
+# control that proves the byte search can see a seam at all.
+if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET}
+   AND TARGET ${SPECTR_NATIVE_AU_TARGET} AND TARGET ${SPECTR_NATIVE_VST3_TARGET}
+   AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    if(SPECTR_ENABLE_TEST_SEAMS)
+        set(_spectr_seams_expect present)
+    else()
+        set(_spectr_seams_expect absent)
+    endif()
+    add_test(NAME Spectr-test-seams-${_spectr_seams_expect}
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_no_test_seams.py
+            --expect ${_spectr_seams_expect}
+            ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+            ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+            ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    set_tests_properties(Spectr-test-seams-${_spectr_seams_expect} PROPERTIES TIMEOUT 60)
+endif()
+if(NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(STATUS "Spectr: test seams compiled out of the products (release "
+        "configuration). The full ctest needs -DSPECTR_ENABLE_TEST_SEAMS=ON.")
 endif()

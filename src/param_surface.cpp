@@ -1,4 +1,5 @@
 #include "spectr/param_surface.hpp"
+#include "spectr/test_seams.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/spectr.hpp"
 
@@ -485,7 +486,7 @@ void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexce
     // thread. Read once; unset in every shipping configuration, where the
     // branch is a single relaxed load of a zero.
     static const int stall_ms = [] {
-        const char* raw = std::getenv("SPECTR_TEST_PARAM_SYNC_STALL_MS");
+        const char* raw = SPECTR_TEST_ENV("SPECTR_TEST_PARAM_SYNC_STALL_MS");
         if (raw == nullptr) return 0;
         const int parsed = std::atoi(raw);
         return parsed > 0 ? std::min(parsed, 5000) : 0;

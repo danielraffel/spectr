@@ -1,4 +1,5 @@
 #include "spectr/spectr.hpp"
+#include "spectr/test_seams.hpp"
 
 #include <pulp/format/standalone.hpp>
 
@@ -29,7 +30,7 @@ int main(int argc, char** argv) {
     // ModulationSettings from parameters inside process(). Without audio the
     // LFO state therefore never leaves its defaults, and reading it back
     // measures the missing audio thread rather than the feature.
-    if (const auto* keep = std::getenv("SPECTR_SCREENSHOT_KEEPS_AUDIO");
+    if (const auto* keep = SPECTR_TEST_ENV("SPECTR_SCREENSHOT_KEEPS_AUDIO");
         keep != nullptr && std::strcmp(keep, "1") == 0) {
         config.screenshot_keeps_audio = true;
     }
