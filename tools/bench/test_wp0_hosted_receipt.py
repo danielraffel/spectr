@@ -153,6 +153,22 @@ class HostedReceiptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not a hosted editor format", result.stderr)
 
+    def test_artifact_digest_is_verified(self):
+        document = json.loads(self.ui.read_text())
+        document["identity"]["artifact_sha256"] = "a" * 64
+        self.ui.write_text(json.dumps(document))
+        result = self.run_adapter("--negative-log", str(self.log))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match artifact_path", result.stderr)
+
+    def test_source_provenance_is_bound_to_identity(self):
+        document = json.loads(self.native.read_text())
+        document["product_source_sha"] = "b" * 40
+        self.native.write_text(json.dumps(document))
+        result = self.run_adapter("--negative-log", str(self.log))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match identity", result.stderr)
+
     def test_missing_scenario_is_planted_negative(self):
         document = ui_fixture(self.identity)
         del document["scenarios"]["paint"]
