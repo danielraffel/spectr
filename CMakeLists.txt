@@ -2390,6 +2390,24 @@ if(SPECTR_NODE_EXECUTABLE)
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
     set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
+    # Settings' UPDATES group (Check for Updates) renders in the standalone
+    # app and nowhere else: it asks the native update service through the
+    # editor bridge, and a plug-in, an SDK without the bridge, or a build
+    # without Sparkle answers "not available". Two planted controls must fail.
+    add_test(NAME Spectr-materialized-check-for-updates
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    foreach(_spectr_updates_plant always-show dead-button)
+        add_test(NAME Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_updates_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+    set_tests_properties(Spectr-materialized-check-for-updates PROPERTIES TIMEOUT 60)
 
     # A header control's context menu names its own LFO target, toggles only
     # that target's lane, and opens the full Modulation submenu marked on it.

@@ -23,6 +23,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/SpectrSparklePolicy.cmake)
 set(SPECTR_SPARKLE_PUBLIC_ED_KEY "mosCtB7H9gxWzbWUYyHiHTapl4sWMgkd4t09iIUnO2g=")
 set(SPECTR_SPARKLE_RELEASE_FEED
     "https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml")
+set(SPECTR_RELEASES_PAGE "https://github.com/danielraffel/spectr/releases")
 set(SPECTR_SPARKLE_PRACTICE_FEED
     "https://github.com/danielraffel/spectr/releases/download/sparkle-practice/appcast-practice.xml")
 
@@ -112,7 +113,17 @@ function(spectr_configure_sparkle target kind)
         message(FATAL_ERROR "Spectr: the Pulp SDK provides no pulp_add_sparkle(); "
             "Spectr.app's updater needs Pulp 0.907.0 or newer")
     endif()
+    # What the Settings UPDATES note says is generated from these facts
+    # (docs/updates.md): where releases are published, that an update is the
+    # installer package (quits and reopens Spectr, asks for an administrator
+    # password), and -- AUTOMATIC_INSTALL left off -- that nothing installs
+    # without the user choosing Install. Automatic checks are on from the
+    # first launch; the user turns them off in Settings. Pulp SDKs older than
+    # the update service ignore RELEASES_URL and INSTALLER.
     pulp_add_sparkle(${target}
         FEED_URL "${_feed}"
-        PUBLIC_ED_KEY "${SPECTR_SPARKLE_PUBLIC_ED_KEY}")
+        PUBLIC_ED_KEY "${SPECTR_SPARKLE_PUBLIC_ED_KEY}"
+        AUTOMATIC_CHECKS ON
+        RELEASES_URL "${SPECTR_RELEASES_PAGE}"
+        INSTALLER package)
 endfunction()

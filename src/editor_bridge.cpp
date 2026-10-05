@@ -15,6 +15,13 @@
 #include <pulp/runtime/build_info.hpp>
 #include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
+// Pulp's in-app update bridge (pulp_updates_*). Spectr builds against SDKs
+// with and without it; without it the Settings UPDATES group asks, gets
+// "unknown message type", and renders nothing.
+#if __has_include(<pulp/format/app_updates_bridge.hpp>)
+#include <pulp/format/app_updates_bridge.hpp>
+#define SPECTR_HAS_PULP_APP_UPDATES 1
+#endif
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
@@ -1177,6 +1184,13 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
         [&plugin](const choc::value::ValueView&) -> std::string {
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
+
+    // Check for Updates in Settings: status, check, automatic-check toggle,
+    // releases page. Only the standalone installs an update service; in a
+    // plug-in these answer `available: false` and the group stays hidden.
+#if defined(SPECTR_HAS_PULP_APP_UPDATES)
+    pulp::format::add_app_update_handlers(bridge);
+#endif
 
     // Range: the plot's vertical scale and how far a full-height edit
     // reaches. Editor state persisted with the session, never a host
