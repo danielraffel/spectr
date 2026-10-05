@@ -137,7 +137,136 @@ function ambientDeclarations(manifest) {
     }
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
-  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } interface IntrinsicAttributes { key?: unknown; } }');
+  declarations.push(`
+interface SpectrPulpPayload {
+  ok?: boolean;
+  error?: string;
+  n_visible?: number;
+  gain_db?: ReadonlyArray<number>;
+  muted?: ReadonlyArray<boolean>;
+  min_hz?: number;
+  max_hz?: number;
+  patterns_json?: string;
+  can_undo?: boolean;
+  can_redo?: boolean;
+  morph?: number;
+  mix_pct?: number;
+  intensity_pct?: number;
+  trim_db?: number;
+  auto_gain?: boolean;
+  auto_gain_db?: number;
+  peak_db?: number;
+  over?: boolean;
+  active?: boolean;
+  schema_version?: number;
+  epoch?: number;
+  sequence_number?: number;
+  floor_db?: number;
+  ceiling_db?: number;
+  latency?: SpectrPulpLatency;
+  modulation?: SpectrPulpModulation;
+  snapshots?: SpectrPulpSnapshots;
+  keyboard?: SpectrPulpKeyboard;
+  range_db?: number;
+  macros?: ReadonlyArray<SpectrPulpMacro>;
+  product_version?: string;
+  product_sha?: string;
+  product_provenance_known?: boolean;
+  product_dirty?: boolean;
+  sdk_version?: string;
+  sdk_sha?: string;
+  sdk_provenance_exact?: boolean;
+  sdk_dirty?: boolean;
+  tracing?: boolean;
+}
+interface SpectrPulpLatency {
+  mode?: string;
+  samples?: number;
+}
+interface SpectrPulpModulationRoute {
+  mask?: number;
+  amounts?: ReadonlyArray<number>;
+}
+interface SpectrPulpModulation {
+  enabled?: boolean;
+  shape?: number;
+  beats_per_cycle?: number;
+  depth?: number;
+  target?: number;
+  lfo2_enabled?: boolean;
+  lfo2_shape?: number;
+  lfo2_beats_per_cycle?: number;
+  lfo2_depth?: number;
+  morph_applies_viewport?: boolean;
+  target_mask?: number;
+  targets?: ReadonlyArray<string>;
+  routes?: ReadonlyArray<SpectrPulpModulationRoute>;
+  freeze_hold_for_length?: boolean;
+}
+interface SpectrPulpSnapshot {
+  populated?: boolean;
+  gain_db?: ReadonlyArray<number>;
+  muted?: ReadonlyArray<boolean>;
+  min_hz?: number;
+  max_hz?: number;
+}
+interface SpectrPulpSnapshots {
+  A?: SpectrPulpSnapshot;
+  B?: SpectrPulpSnapshot;
+}
+interface SpectrPulpKeyboard {
+  host_kind?: string;
+  shortcuts_in_daw?: boolean;
+  show_tooltips?: boolean;
+  ask_before_override?: boolean;
+}
+interface SpectrPulpMacro {
+  value_db?: number;
+  slots?: ReadonlyArray<number>;
+}
+interface SpectrPulpInitialPayload extends SpectrPulpPayload {
+  n_visible?: number;
+  gain_db?: ReadonlyArray<number>;
+  muted?: ReadonlyArray<boolean>;
+  min_hz?: number;
+  max_hz?: number;
+  modulation?: SpectrPulpModulation;
+  latency?: SpectrPulpLatency;
+  patterns_json?: string;
+  morph?: number;
+  product_version?: string;
+  sdk_version?: string;
+  tracing?: boolean;
+  trim_db?: number;
+  mix_pct?: number;
+  intensity_pct?: number;
+  auto_gain?: boolean;
+  auto_gain_db?: number;
+  peak_db?: number;
+  over?: boolean;
+}
+interface SpectrPulpMessage {
+  type: string;
+  payload: SpectrPulpPayload;
+  id: string;
+}
+interface SpectrPulpResponse {
+  ok: boolean;
+  payload: SpectrPulpPayload;
+  error?: string;
+}
+interface SpectrPulpBridge {
+  on(type: string, listener: (message: SpectrPulpMessage) => void): () => boolean;
+  postMessage(type: string, payload?: Record<string, unknown>, id?: string): Promise<SpectrPulpResponse>;
+  initial(type: string): SpectrPulpInitialPayload | null;
+}
+interface Window {
+  pulp?: SpectrPulpBridge;
+}
+declare namespace JSX {
+  interface IntrinsicElements { [elemName: string]: any; }
+  interface IntrinsicAttributes { key?: unknown; }
+}`);
   return `${declarations.join('\n')}\n`;
 }
 
@@ -215,8 +344,10 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantPulpInitial, plantPulpPayload }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
+  const bridgeSourcePath = path.join(path.dirname(artifactPath), 'spectr-native-services.js');
+  const bridgeSourceBytes = readBytes(bridgeSourcePath, 'maintained native bridge source');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
   const { value: manifest } = readJson(manifestPath, 'dependency manifest');
@@ -269,6 +400,28 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (typedControls.length !== 2) fail(`planted wrong prop types for ${plantPropType} did not produce exact label/hidden TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
       propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let pulpInitialNegativeControl = { status: 'not-run' };
+    if (plantPulpInitial) {
+      const target = path.join(stage, 'components', `${plantPulpInitial}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted Window.pulp component ${plantPulpInitial} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_pulp_initial__ = window.pulp?.initial("probe")?.__wp1_unknown_initial_field;\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantPulpInitial}.tsx`;
+      const diagnostic = planted.diagnostics.find((entry) => entry.file.endsWith(targetSuffix) && entry.code === 'TS2339' && /initial/.test(entry.message));
+      if (!diagnostic) fail(`unknown Window.pulp.initial field did not produce TS2339: ${JSON.stringify(planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix)))}`);
+      pulpInitialNegativeControl = { status: 'passed', name: plantPulpInitial, diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let pulpPayloadNegativeControl = { status: 'not-run' };
+    if (plantPulpPayload) {
+      const target = path.join(stage, 'components', `${plantPulpPayload}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted Window.pulp payload component ${plantPulpPayload} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_pulp_payload__ = window.pulp?.postMessage("probe", {}).then((response) => response.payload.__wp1_unknown_payload_field);\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantPulpPayload}.tsx`;
+      const diagnostic = planted.diagnostics.find((entry) => entry.file.endsWith(targetSuffix) && entry.code === 'TS2339' && /__wp1_unknown_payload_field/.test(entry.message));
+      if (!diagnostic) fail(`unknown Window.pulp response payload field did not produce TS2339: ${JSON.stringify(planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix)))}`);
+      pulpPayloadNegativeControl = { status: 'passed', name: plantPulpPayload, diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {
       schema: SCHEMA, version: 1,
@@ -294,6 +447,19 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       prop_contracts: modules.filter((module) => module.prop_contract).map((module) => module.prop_contract),
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
+      window_pulp_contract: {
+        fields: ['on', 'postMessage', 'initial'],
+        optional: true,
+        post_message_returns: 'Promise<SpectrPulpResponse>',
+        initial_present: true,
+        initial_returns: 'SpectrPulpInitialPayload | null',
+        source_receipt: {
+          path: path.relative(process.cwd(), bridgeSourcePath),
+          sha256: sha256(bridgeSourceBytes),
+        },
+      },
+      window_pulp_initial_negative_control: pulpInitialNegativeControl,
+      window_pulp_payload_negative_control: pulpPayloadNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
     fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
@@ -308,13 +474,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-pulp-initial' || arg === '--plant-pulp-payload') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-pulp-initial COMPONENT] [--plant-pulp-payload COMPONENT]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -324,7 +490,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantPulpInitial: args.plant_pulp_initial, plantPulpPayload: args.plant_pulp_payload }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

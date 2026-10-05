@@ -35,7 +35,8 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             result = subprocess.run(
                 ["node", str(INVENTORY), "--artifact", str(ARTIFACT), "--manifest", str(manifest),
                  "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType",
-                 "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField"],
+                 "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField",
+                 "--plant-pulp-initial", "App", "--plant-pulp-payload", "App"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -60,6 +61,16 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertTrue(any("string" in message and "boolean" in message for message in messages))
             self.assertEqual(report["prop_contracts"][0]["name"], "SpectrSettingsField")
             self.assertLessEqual(report["prop_contract_effect"]["delta"], 0)
+            self.assertEqual(report["window_pulp_contract"]["fields"], ["on", "postMessage", "initial"])
+            self.assertEqual(report["window_pulp_contract"]["optional"], True)
+            self.assertEqual(report["window_pulp_contract"]["initial_present"], True)
+            self.assertEqual(report["window_pulp_contract"]["initial_returns"], "SpectrPulpInitialPayload | null")
+            self.assertEqual(report["window_pulp_contract"]["source_receipt"]["path"], "native-ui/materialized/spectr-native-services.js")
+            self.assertEqual(len(report["window_pulp_contract"]["source_receipt"]["sha256"]), 64)
+            self.assertEqual(report["window_pulp_initial_negative_control"]["status"], "passed")
+            self.assertEqual(report["window_pulp_initial_negative_control"]["diagnostic"]["code"], "TS2339")
+            self.assertEqual(report["window_pulp_payload_negative_control"]["status"], "passed")
+            self.assertEqual(report["window_pulp_payload_negative_control"]["diagnostic"]["code"], "TS2339")
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 
     def test_unproven_manifest_external_binding_fails_closed(self):

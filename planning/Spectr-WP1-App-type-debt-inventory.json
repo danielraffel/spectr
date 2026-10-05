@@ -448,14 +448,6 @@
     "diagnostics": [
       {
         "file": "components/App.tsx",
-        "line": 17,
-        "column": 59,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
         "line": 26,
         "column": 16,
         "code": "TS2339",
@@ -496,50 +488,10 @@
       },
       {
         "file": "components/App.tsx",
-        "line": 40,
-        "column": 42,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 40,
-        "column": 64,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 40,
-        "column": 104,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
         "line": 49,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'SpectrNativePatterns' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 60,
-        "column": 16,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 95,
-        "column": 41,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -568,14 +520,6 @@
       },
       {
         "file": "components/App.tsx",
-        "line": 105,
-        "column": 41,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
         "line": 106,
         "column": 18,
         "code": "TS2339",
@@ -592,42 +536,10 @@
       },
       {
         "file": "components/App.tsx",
-        "line": 115,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 122,
-        "column": 42,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 136,
-        "column": 14,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
         "line": 171,
         "column": 10,
         "code": "TS2339",
         "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 174,
-        "column": 30,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -684,14 +596,6 @@
         "column": 28,
         "code": "TS2339",
         "message": "Property 'SpectrNativePatterns' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/App.tsx",
-        "line": 281,
-        "column": 35,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -1032,30 +936,6 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 619,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 619,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 620,
-        "column": 24,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
         "line": 698,
         "column": 26,
         "code": "TS2339",
@@ -1208,54 +1088,6 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1810,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1810,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1819,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1943,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1943,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1944,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
         "line": 1968,
         "column": 14,
         "code": "TS2339",
@@ -1384,58 +1216,10 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2487,
-        "column": 19,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2487,
-        "column": 41,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2498,
-        "column": 16,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2514,
-        "column": 42,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2514,
-        "column": 64,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
         "line": 2524,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2533,
-        "column": 30,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -1469,14 +1253,6 @@
         "code": "TS17001",
         "message": "JSX elements cannot have multiple attributes with the same name.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/HelpGuideOverlay.tsx",
-        "line": 15,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
       },
       {
         "file": "components/HelpPopover.tsx",
@@ -1597,46 +1373,6 @@
         "code": "TS2322",
         "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
         "category": "prop-or-type"
-      },
-      {
-        "file": "components/MorphSlider.tsx",
-        "line": 4,
-        "column": 59,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/MorphSlider.tsx",
-        "line": 46,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/MorphSlider.tsx",
-        "line": 46,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/MorphSlider.tsx",
-        "line": 54,
-        "column": 25,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/MorphSlider.tsx",
-        "line": 55,
-        "column": 25,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
       },
       {
         "file": "components/PatternDeleteDialog.tsx",
@@ -2064,54 +1800,6 @@
       },
       {
         "file": "components/SpectrBuildInfo.tsx",
-        "line": 20,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 20,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 29,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 30,
-        "column": 16,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 35,
-        "column": 32,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
-        "line": 83,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrBuildInfo.tsx",
         "line": 88,
         "column": 27,
         "code": "TS2322",
@@ -2136,30 +1824,6 @@
       },
       {
         "file": "components/SpectrLatencySettings.tsx",
-        "line": 67,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrLatencySettings.tsx",
-        "line": 67,
-        "column": 33,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrLatencySettings.tsx",
-        "line": 68,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrLatencySettings.tsx",
         "line": 93,
         "column": 27,
         "code": "TS2322",
@@ -2180,30 +1844,6 @@
         "column": 10,
         "code": "TS2339",
         "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationOverrideDialog.tsx",
-        "line": 51,
-        "column": 27,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationOverrideDialog.tsx",
-        "line": 51,
-        "column": 49,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationOverrideDialog.tsx",
-        "line": 55,
-        "column": 34,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -2312,59 +1952,11 @@
       },
       {
         "file": "components/SpectrOutputMeter.tsx",
-        "line": 63,
-        "column": 59,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
         "line": 114,
         "column": 39,
         "code": "TS2339",
         "message": "Property 'offsetWidth' does not exist on type 'Element'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 278,
-        "column": 17,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 278,
-        "column": 39,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 284,
-        "column": 32,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 368,
-        "column": 14,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 383,
-        "column": 14,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
       },
       {
         "file": "components/SpectrOutputMeter.tsx",
@@ -2389,38 +1981,6 @@
         "code": "TS2322",
         "message": "Type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrTooltipSetting.tsx",
-        "line": 19,
-        "column": 19,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrTooltipSetting.tsx",
-        "line": 19,
-        "column": 41,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrTooltipSetting.tsx",
-        "line": 20,
-        "column": 30,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrTracingBadge.tsx",
-        "line": 6,
-        "column": 59,
-        "code": "TS2339",
-        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
       },
       {
         "file": "components/StatusBanner.tsx",
@@ -2536,12 +2096,12 @@
       }
     ],
     "counts": {
-      "browser-window": 159,
+      "browser-window": 104,
       "prop-or-type": 86,
       "other-semantic": 16
     },
     "counts_by_code": {
-      "TS2339": 169,
+      "TS2339": 114,
       "TS2322": 79,
       "TS2349": 1,
       "TS2362": 2,
@@ -2553,11 +2113,11 @@
     "unknown_binding_names": []
   },
   "prop_contract_effect": {
-    "before_diagnostics": 285,
-    "after_diagnostics": 261,
+    "before_diagnostics": 230,
+    "after_diagnostics": 206,
     "delta": -24,
     "control_counts": {
-      "browser-window": 159,
+      "browser-window": 104,
       "prop-or-type": 110,
       "other-semantic": 16
     }
@@ -2574,7 +2134,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 262
+    "planted_diagnostic_count": 207
   },
   "prop_contracts": [
     {
@@ -2594,7 +2154,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 263
+    "planted_diagnostic_count": 208
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2621,7 +2181,48 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 265
+    "planted_diagnostic_count": 210
+  },
+  "window_pulp_contract": {
+    "fields": [
+      "on",
+      "postMessage",
+      "initial"
+    ],
+    "optional": true,
+    "post_message_returns": "Promise<SpectrPulpResponse>",
+    "initial_present": true,
+    "initial_returns": "SpectrPulpInitialPayload | null",
+    "source_receipt": {
+      "path": "native-ui/materialized/spectr-native-services.js",
+      "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8"
+    }
+  },
+  "window_pulp_initial_negative_control": {
+    "status": "passed",
+    "name": "App",
+    "diagnostic": {
+      "file": "components/App.tsx",
+      "line": 625,
+      "column": 69,
+      "code": "TS2339",
+      "message": "Property '__wp1_unknown_initial_field' does not exist on type 'SpectrPulpInitialPayload'.",
+      "category": "other-semantic"
+    },
+    "planted_diagnostic_count": 211
+  },
+  "window_pulp_payload_negative_control": {
+    "status": "passed",
+    "name": "App",
+    "diagnostic": {
+      "file": "components/App.tsx",
+      "line": 627,
+      "column": 112,
+      "code": "TS2339",
+      "message": "Property '__wp1_unknown_payload_field' does not exist on type 'SpectrPulpPayload'.",
+      "category": "other-semantic"
+    },
+    "planted_diagnostic_count": 212
   },
   "scope": {
     "runtime_artifact_changed": false,
