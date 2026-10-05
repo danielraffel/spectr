@@ -2195,7 +2195,26 @@
     "initial_returns": "SpectrPulpInitialPayload | null",
     "source_receipt": {
       "path": "native-ui/materialized/spectr-native-services.js",
-      "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8"
+      "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8",
+      "synchronized_runtime": {
+        "path": "native-ui/materialized/runtime.js",
+        "sha256": "987888d22210580a28ec2befeeb6c4eedfff6d5bb037007974a6feaa314098cb",
+        "fields": [
+          "on",
+          "postMessage",
+          "initial"
+        ],
+        "initial_present": true
+      },
+      "embedded_artifact": {
+        "path": "native-ui/materialized/materialized-document.runtime.json",
+        "sha256": "ddf68506810ce2bc013ce719cb2f42d9fe686ee52858d6d94f692f2e81db6453",
+        "fields": [
+          "on",
+          "postMessage"
+        ],
+        "initial_present": false
+      }
     }
   },
   "window_pulp_initial_negative_control": {

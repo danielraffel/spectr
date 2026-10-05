@@ -58,6 +58,11 @@ function assertKeys(value, expected, label) {
   const extra = [...actual].filter((key) => !expected.has(key));
   if (missing.length || extra.length) fail(`${label} keys changed`);
 }
+function pulpContractFields(html) {
+  const match = typeof html === 'string' && html.match(/const pulp = \{([\s\S]*?)\n\s*\};/);
+  if (!match) fail('artifact does not contain a recognizable window.pulp object');
+  return ['on', 'postMessage', 'initial'].filter((field) => new RegExp(`\\b${field}\\s*(?:\\(|,)`).test(match[1]));
+}
 function namesFromPattern(node, out = new Set()) {
   if (!node) return out;
   if (node.type === 'Identifier') out.add(node.name);
@@ -348,10 +353,15 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const bridgeSourcePath = path.join(path.dirname(artifactPath), 'spectr-native-services.js');
   const bridgeSourceBytes = readBytes(bridgeSourcePath, 'maintained native bridge source');
+  const synchronizedRuntimePath = path.join(path.dirname(artifactPath), 'runtime.js');
+  const synchronizedRuntimeBytes = readBytes(synchronizedRuntimePath, 'synchronized native bridge runtime');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
   const { value: manifest } = readJson(manifestPath, 'dependency manifest');
   if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.components)) fail('dependency manifest schema/components are invalid');
+  const inlinePulpFields = pulpContractFields(artifact.html);
+  if (!bridgeSourceBytes.toString('utf8').includes('initial(type)')) fail('maintained native bridge source does not expose initial(type)');
+  if (!synchronizedRuntimeBytes.toString('utf8').includes('initial(type)')) fail('synchronized native bridge runtime does not expose initial(type)');
   validateExternalBindings(manifest, artifact);
   runEmitterVerify(artifactPath, manifestPath, emissionDir);
   const { raw: emissionRaw, value: emission } = readJson(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
@@ -456,6 +466,18 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
         source_receipt: {
           path: path.relative(process.cwd(), bridgeSourcePath),
           sha256: sha256(bridgeSourceBytes),
+          synchronized_runtime: {
+            path: path.relative(process.cwd(), synchronizedRuntimePath),
+            sha256: sha256(synchronizedRuntimeBytes),
+            fields: ['on', 'postMessage', 'initial'],
+            initial_present: true,
+          },
+          embedded_artifact: {
+            path: path.relative(process.cwd(), artifactPath),
+            sha256: sha256(artifactBytes),
+            fields: inlinePulpFields,
+            initial_present: inlinePulpFields.includes('initial'),
+          },
         },
       },
       window_pulp_initial_negative_control: pulpInitialNegativeControl,
