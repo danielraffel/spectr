@@ -588,9 +588,14 @@ jobs:
           ditto "$SPECTR_BUILD_DIR/AU/Spectr.component" "$stage/Library/Audio/Plug-Ins/Components/Spectr.component"
           ditto "$SPECTR_BUILD_DIR/VST3/Spectr.vst3" "$stage/Library/Audio/Plug-Ins/VST3/Spectr.vst3"
           ditto "$SPECTR_BUILD_DIR/CLAP/Spectr.clap" "$stage/Library/Audio/Plug-Ins/CLAP/Spectr.clap"
+          project_version="$(sed -n 's/^CMAKE_PROJECT_VERSION:STATIC=//p' "$SPECTR_BUILD_DIR/CMakeCache.txt" | tail -1)"
+          [[ "$project_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "invalid or missing Spectr project version: ${project_version:-<empty>}" >&2
+            exit 2
+          }
           pkg="$SPECTR_ACCEPTANCE_ROOT/Spectr-M5-Product-Acceptance-${GITHUB_SHA:0:12}.pkg"
           pkgbuild --root "$stage" --identifier com.pulp.spectr.acceptance \
-            --version 1.0.0 --install-location / "$pkg"
+            --version "$project_version" --install-location / "$pkg"
           pkgutil --payload-files "$pkg" | sort > "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
           grep -qE '^(\./)?Applications/Spectr\.app/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
           grep -qE '^(\./)?Library/Audio/Plug-Ins/Components/Spectr\.component/' "$SPECTR_ACCEPTANCE_ROOT/pkg-payload.txt"
