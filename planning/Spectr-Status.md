@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-04. This is the concise state-of-the-world for
+_Last updated: 2026-10-05. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## WP-0 runtime baseline (2026-10-04)
@@ -15,8 +15,8 @@ experimental Pulp build until its source change is integrated and validated.
 | Browser import/render | PASS: one readiness marker, zero console errors, zero network failures, deterministic repeat screenshot; planted broken React mount rejected | `/Volumes/Workshop/Code/agent-artifacts/spectr-browser-fidelity-runtime-20261004/receipt.json` (1,246 B, SHA-256 `ee10f80e82989455186648b5ce699f9ee1da536b3762ad8fd4aeb808141af278`); screenshot SHA-256 `2301ab903a561f6d460e588070a31f193ec2a8355dea463cfd7edc217949d968` |
 | Editor open | PASS: cold mean 414.795 ms, warm mean 204.138 ms, max main-thread stall about 4.1 ms, RSS 201,584 KB | `build-wp0-runtime/wp0-open-bench.json` (2,470 B, SHA-256 `6838dbbdc1e890ab48b1edcc058de43b1f7100f3146e6c26911f5aa750802b39`) |
 | Frame cadence | PASS: p95 mean 17.190 ms, three-run spread 0.56%, direct idle/gesture ratio 1.002 | `build-wp0-runtime/wp0-frame-bench.json` (1,469 B, SHA-256 `f569665f4871d63f9aae6dc38d0d685e61b46365436439b6ea939574a4a7588b`) |
-| Native importer/runtime receipt | PASS on experimental counter SDK: 19,662 registered-native-API mount calls; resize reachability control passed; four pinned host sizes recorded with declared forced-full-tree layout timing, raw Skia paint timing after forced layout, capture backend/scale, clean-source provenance, RSS, RGBA, PNG, and layout bytes; adapter accepted the receipt and rejects malformed dimension/byte mutations or stale artifact sizes | `build-wp0-counter/native-wp0-baseline-final5-20261004/wp0-baseline.json` (2,150 B, SHA-256 `d650737a547d08f25b4dd2ce1085d79dee553fa7d2a2b29e5ef546848d87d3ad`); adapter `tools/bench/wp0_baseline_adapter.py` |
-| Native planted negative control | PASS: moving visible `__behavior_pr_e1` offscreen was rejected by the runtime receipt and adapter | `build-wp0-counter/native-wp0-baseline-negative-final5-20261004/wp0-baseline.json` (2,151 B, SHA-256 `cd89df7599d6cd26d6090c09e5de224044544930e627a1780ab6c17bd5befd30`) |
+| Native importer/runtime receipt | PASS on experimental counter SDK: 19,662 registered-native-API mount calls; resize reachability control passed; four pinned host sizes recorded with declared forced-full-tree layout timing, raw Skia paint timing after forced layout, capture backend/scale, clean-source provenance, RSS, RGBA, PNG, and layout bytes; adapter accepted the receipt and rejects malformed dimension/byte mutations or stale artifact sizes | `build-wp0-counter/native-wp0-baseline-final7-20261004/wp0-baseline.json` (2,211 B, SHA-256 `49a4b7f65537665b05f65c225e6ac9b5967fa8903227cccbb2e6c2fad3e5475a`); adapter `tools/bench/wp0_baseline_adapter.py` |
+| Native planted negative control | PASS: moving visible `__behavior_pr_e1` offscreen was rejected by the runtime receipt and adapter | `build-wp0-counter/native-wp0-baseline-negative-final7-20261004/wp0-baseline.json` (2,212 B, SHA-256 `17cd2f9ddf1017ea2ac7ac70c9a955c96606aacd881cce2f0e837734987efedd`) |
 
 The native rows are measured against Pulp counter SDK commit
 `1f43a425652a99383b27ac04d3ac6e74ba1b3e4a`; that SDK is explicitly
@@ -24,16 +24,18 @@ experimental until it lands through the normal integration and validation
 gates. The next-wave design-import/GraphNode work remains gated on that Pulp
 integration and an independent adversarial review.
 
-The hosted three-run adapter is now available at
-`tools/bench/wp0_hosted_receipt.py` (local commit `13d1dd5`, not pushed). It
+The hosted three-run adapter is available at
+`tools/bench/wp0_hosted_receipt.py` (local commit `c2ceac9`, not pushed). It
 requires all six UI workload families (`open`, `frame`, `bridge`, `layout`,
 `paint`, and `size`), matching three-or-more-run metrics, positive per-run RSS,
 and a passing native receipt. Its tests include missing-family, short-run,
-zero-RSS, zero-size, and planted offscreen negative controls. A hosted
-three-run receipt has not yet been captured; this adapter is the next gate
-before claiming that baseline. It now rejects plain native-shot receipts,
-requires the negative-control log, and requires matching host, format, build,
-artifact digest, and artifact-size identity in both inputs. Historical local
+zero-RSS, zero-size, standalone-format, artifact-digest, and planted offscreen
+negative controls. `ui_bench.py` measures each child RSS independently instead
+of reusing the parent's cumulative maximum. A hosted three-run receipt has not
+yet been captured; this adapter is the next gate before claiming that baseline.
+It rejects plain native-shot and standalone receipts, requires the
+negative-control log, and binds both inputs to matching host, format, build,
+run, source-SHA, artifact-digest, and artifact-size identity. Historical local
 receipts intentionally fail those new hosted-only checks.
 
 ## Release 1 product state
