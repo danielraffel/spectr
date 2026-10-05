@@ -61,8 +61,12 @@ in the standalone and absent in plug-ins, with planted controls) and Pulp's
 installs to `/Applications/Spectr.app` -- not over whichever copy is running.
 A copy anywhere else (left in Downloads, moved to `~/Applications`) never
 changes when an update installs, so it would be offered the same update on
-every check. Such a copy therefore runs no scheduled checks; **Check for
-Updates…** still works there, after a warning that names where the copy is.
+every check, and installing it updates `/Applications/Spectr.app`, not the
+copy that asked. Spectr does not currently tell such a copy apart: Pulp's
+standalone host owns the updater and gives the app no hook to skip a scheduled
+check or warn before a manual one (`spectr/updater_location.hpp` keeps the
+location rule, pinned by Spectr-test, for when it does). So run Spectr from
+`/Applications`, where the installer puts it.
 
 The updater can only update a copy that already contains it. **1.0.7 is the
 first release with Sparkle**: anyone on 1.0.6 or earlier installs 1.0.7 by

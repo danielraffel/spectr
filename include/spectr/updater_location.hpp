@@ -7,8 +7,10 @@
 // anywhere else (left in Downloads, moved to ~/Applications, a second copy on
 // another volume) therefore never changes when "it" updates: after the
 // install it is still the old version, so the next scheduled check offers the
-// same update again, forever. Scheduled checks run only from the install
-// location; a manual "Check for Updates..." still works, after a warning.
+// same update again, forever. The rule: scheduled checks run only from the
+// install location; a manual "Check for Updates..." still works, after a
+// warning. Not applied yet -- Pulp's standalone host owns the updater and has
+// no hook for it (docs/updates.md) -- so only Spectr-test reads this today.
 
 #include <string_view>
 
