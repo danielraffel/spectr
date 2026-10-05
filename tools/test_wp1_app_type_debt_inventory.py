@@ -71,6 +71,7 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(report["settings_chips_prop_type_negative_control"]["status"], "passed")
             self.assertEqual(len(report["settings_chips_prop_type_negative_control"]["diagnostics"]), 2)
             self.assertTrue(all(item["code"] == "TS2322" for item in report["settings_chips_prop_type_negative_control"]["diagnostics"]))
+            self.assertEqual(report["settings_chips_prop_type_negative_control"]["missing_diagnostic"]["code"], "TS2322")
             self.assertLessEqual(report["prop_contract_effect"]["delta"], 0)
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 

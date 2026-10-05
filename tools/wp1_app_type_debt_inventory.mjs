@@ -307,13 +307,15 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (plantSettingsChipsPropType !== 'SpectrSettingsChips') fail(`settings chips prop-type control must target SpectrSettingsChips, got ${plantSettingsChipsPropType}`);
       const target = path.join(stage, 'components', 'SpectrSettingsChips.tsx');
       if (!fs.existsSync(target)) fail('SpectrSettingsChips prop-type control target is not staged');
-      fs.appendFileSync(target, '\nconst __wp1_planted_chips_wrong_wrap__ = <SpectrSettingsChips value={0} opts={[[0, "ok"]]} onChange={() => {}} wrap={"yes"} />;\nconst __wp1_planted_chips_wrong_value__ = <SpectrSettingsChips value={true} opts={[[0, "ok"]]} onChange={() => {}} />;\n');
+      fs.appendFileSync(target, '\nconst __wp1_planted_chips_missing_required__ = <SpectrSettingsChips onChange={() => {}} />;\nconst __wp1_planted_chips_wrong_wrap__ = <SpectrSettingsChips value={0} opts={[[0, "ok"]]} onChange={() => {}} wrap={"yes"} />;\nconst __wp1_planted_chips_wrong_value__ = <SpectrSettingsChips value={true} opts={[[0, "ok"]]} onChange={() => {}} />;\n');
       const planted = runTypeScript(stage);
       const targetSuffix = 'components/SpectrSettingsChips.tsx';
       const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
       const typedControls = typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /boolean/.test(diagnostic.message) && /SpectrSettingsChipValue/.test(diagnostic.message)));
       if (typedControls.length !== 2) fail(`planted wrong SpectrSettingsChips prop types did not produce exact value/wrap TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
-      settingsChipsPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsChips', properties: ['wrap', 'value'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
+      const missing = typeDiagnostics.find((diagnostic) => /onChange/.test(diagnostic.message) && /SpectrSettingsChipsProps/.test(diagnostic.message));
+      if (!missing) fail(`planted missing SpectrSettingsChips props did not produce a required-prop diagnostic: ${JSON.stringify(typeDiagnostics)}`);
+      settingsChipsPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsChips', properties: ['wrap', 'value'], missing_property: ['value', 'opts'], diagnostics: typedControls, missing_diagnostic: missing, planted_diagnostic_count: planted.diagnostics.length };
     }
     let jsxChildrenNegativeControl = { status: 'not-run' };
     if (plantJsxChildren) {
