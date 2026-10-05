@@ -1,4 +1,4 @@
-Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level controls, and the first standalone app that updates itself.
+Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level controls, optional GPU processing for Mixing, and the first standalone app that updates itself.
 
 **Install:** download `Spectr-1.0.7.pkg` and open it. By default it installs the AU, VST3 and CLAP plug-ins, the standalone Spectr app, and Spectr Diagnostics. You can untick any of them under Customize. The installer is signed and notarized by Apple. Requires a Mac with Apple silicon running macOS 13.4 or later.
 
@@ -13,13 +13,24 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 - **Multiple targets per LFO.** Each LFO can drive several destinations at once, and every target has its own **Depth**.
 - **13 targets:** Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread, Freeze, Length, Intensity, Mix, Output, Bands and Preset.
 - **Hold for Length.** When an LFO drives Freeze, turn on Hold for Length to keep Freeze enabled for the length of the modulated Length: each trigger freezes fresh sound and plays to the end of the Length in effect at that moment, then lets go. With Length modulated, every freeze can have its own length. Off (the default), Freeze follows the LFO as a gate.
-- **Modulated controls show what they play.** LENGTH, BANDS and the preset name show the value the LFO is playing, in violet.
+- **Modulated controls show what they play.** A modulated knob or MORPH shows a single indicator at the value the LFO is playing, and moves with it; LENGTH, BANDS and the preset name show the value the LFO is playing, in violet. Modulation never writes automation.
 - **Ask before overriding.** Touching a control an LFO is driving asks whether to stop the modulation first. **Keep modulating** leaves the LFO in charge (for LIVE / FROZEN your click is set aside); **Turn off** stops it and applies your change. You can turn this off in Settings.
 
 ### Level controls
 - **MIX, INTENSITY and OUTPUT knobs** in the header, with **AUTO** gain.
 - **AUTO listens to your sound.** Auto Gain now keeps the level steady by weighing your shape against the long-term balance of the sound going through Spectr, so boosting the highs of a bass line no longer turns it down. It holds through silence and does not pump, catches up in about a second when the sound changes or Freeze is released, remembers the sound across stops, locates and reopened projects, and while Freeze holds it listens to the held sound. It keeps listening while it is off, so switching it on starts from the sound that is playing. **AUTO is now on by default** in a new instance; projects keep the AUTO they saved, and one saved before AUTO existed opens with it off. A project that saved AUTO on with an earlier version keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.
 - **Range and Display settings** for the editor.
+
+### GPU processing (Mixing)
+- **Optional GPU processing for Mixing.** Mixing can run its spectral processing on the Mac's GPU. It is off by default: turn it on with the CPU / GPU chip in the header while in Mixing, or under **Settings > GPU processing**.
+- **Same sound, more latency.** GPU processing sounds the same as the CPU. It reports more latency to your DAW, which your DAW compensates: at 48 kHz Mixing reports about 320 ms on the GPU instead of 213 ms on the CPU. Settings shows the figure for your session's sample rate.
+- **Tracking stays on the CPU** for the lowest latency. In Tracking the chip says so and changes nothing.
+- **GPU stats.** A Settings switch shows what the GPU is doing; it is off by default.
+
+### Audio
+- **Click-free Latency switch.** Switching between Tracking and Mixing crossfades from one to the other instead of dropping out, also when you switch before playback starts or the host resets during the switch.
+- **Small buffers.** Mixing and Auto Gain spread their work across callbacks, so Spectr keeps up at 32-sample buffers at 48 kHz and 96 kHz.
+- **Mixing starts at full level.** The first moments of playback in Mixing come through at full level instead of fading in.
 
 ### Editor
 - **Tooltips** on the header controls, with a Settings switch to hide them.
@@ -34,6 +45,6 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 ### Updates
 - **The standalone app updates itself.** Spectr.app checks for updates and installs them with **Check for Updates**. This is the first version that can update itself; earlier versions need this installer once.
 
-Built with the Pulp v0.901.0 SDK.
+Built with the Pulp v0.907.0 SDK.
 
 **Having trouble?** Open **Spectr Diagnostics** from Applications. It saves a report you can email to support.
