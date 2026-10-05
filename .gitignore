@@ -36,3 +36,6 @@ Spectr_Info.plist.au
 # Bytecode from the tools/ scripts (patch_materialized_editor.py et al).
 __pycache__/
 *.pyc
+
+# Local parser install for the bounded WP-1 dependency experiment.
+tools/wp1-parser/node_modules/
