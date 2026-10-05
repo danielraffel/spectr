@@ -34,16 +34,41 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 from PIL import Image
 
-# Behaviour ids are handed out in creation order, so a header node added or
-# removed before the banner moves them. Re-read them from a lit layout dump
-# (the Label whose text reads "... BAND n/N" and the View that frames it).
-SHELL_ID = "__behavior_pr_12"
-TEXT_ID = "__behavior_pr_11"
+# Behaviour ids are handed out in creation order, so any node added or removed
+# before the banner (a header control, the GPU stats pill when its setting
+# defaults off) moves them. They are found in the lit layout dump instead: the
+# Label whose text reads "... BAND n/N" and the smallest node that frames it.
+# Ids are stable within one build, so the other dumps of the run use the same.
+SHELL_ID = ""
+TEXT_ID = ""
+BANNER_RE = re.compile(r"\bBAND \d+/\d+\b")
 DEVIATION = 24
+
+
+def resolve_banner_ids(by_id: dict) -> bool:
+    """Set TEXT_ID / SHELL_ID from a lit dump. False when no banner is found."""
+    global SHELL_ID, TEXT_ID
+    texts = [n for n in by_id.values()
+             if BANNER_RE.search(" ".join(b["text"] for b in (n.get("measured_text_boxes") or [])))]
+    if len(texts) != 1:
+        return False
+    t = texts[0]["rect"]
+    def contains(r) -> bool:
+        return (r["x"] <= t["x"] and r["y"] <= t["y"]
+                and r["x"] + r["w"] >= t["x"] + t["w"] and r["y"] + r["h"] >= t["y"] + t["h"])
+    frames = [n for n in by_id.values()
+              if n is not texts[0] and n["rect"]["w"] * n["rect"]["h"] > t["w"] * t["h"]
+              and contains(n["rect"])]
+    if not frames:
+        return False
+    TEXT_ID = texts[0]["id"]
+    SHELL_ID = min(frames, key=lambda n: n["rect"]["w"] * n["rect"]["h"])["id"]
+    return True
 
 
 def load_nodes(path: str) -> dict:
@@ -207,6 +232,9 @@ def main() -> int:
     lit_img = Image.open(args.lit).convert("L")
     lit_px = lit_img.load()
     _, lit_by_id = load_nodes(args.lit_snapshot)
+    if not resolve_banner_ids(lit_by_id):
+        print("cannot judge: no 'BAND n/N' banner in the lit snapshot", file=sys.stderr)
+        return 2
     rect = shell_rect(lit_by_id)
     if rect is None:
         print("cannot judge: no status shell in the lit snapshot", file=sys.stderr)
