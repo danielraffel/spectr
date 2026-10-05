@@ -100,6 +100,7 @@ class ModulePlanTest(unittest.TestCase):
             extra = dict(manifest["components"][0])
             extra["name"] = "Unused"
             extra["id"] = "component:Unused:" + "b" * 64
+            extra["sha256"] = extra["source_sha256"] = "b" * 64
             manifest["components"].append(extra)
             manifest["component_count"] += 1
             path = root / "unreachable.json"

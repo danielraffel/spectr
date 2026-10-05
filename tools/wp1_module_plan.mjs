@@ -53,6 +53,7 @@ function validateManifest(raw, manifestPath) {
   assertDigest(manifest.source.sha256, 'manifest source.sha256');
   assertNonNegativeInteger(manifest.source.bytes, 'manifest source.bytes');
   if (!Array.isArray(manifest.roots) || !manifest.roots.length) fail('manifest roots must be a non-empty array');
+  if (new Set(manifest.roots).size !== manifest.roots.length) fail('manifest roots contain duplicates');
   assertNonNegativeInteger(manifest.component_count, 'manifest component_count');
   if (!Array.isArray(manifest.components)) fail('manifest components must be an array');
   if (manifest.component_count !== manifest.components.length) fail('manifest component_count does not match components');
@@ -63,6 +64,8 @@ function validateManifest(raw, manifestPath) {
     assertKeys(component, COMPONENT_KEYS, `component[${index}]`);
     if (typeof component.id !== 'string' || !ID_RE.test(component.id)) fail(`component[${index}] has invalid id`);
     if (typeof component.name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(component.name)) fail(`component[${index}] has invalid name`);
+    const idParts = component.id.match(ID_RE);
+    if (idParts[1] !== component.name) fail(`component ${component.name} id name does not match`);
     if (byId.has(component.id)) fail(`duplicate component id ${component.id}`);
     if (byName.has(component.name)) fail(`duplicate component name ${component.name}`);
     byId.set(component.id, component);
@@ -72,10 +75,13 @@ function validateManifest(raw, manifestPath) {
     assertDigest(component.sha256, `component ${component.name}.sha256`);
     assertDigest(component.source_sha256, `component ${component.name}.source_sha256`);
     if (component.sha256 !== component.source_sha256) fail(`component ${component.name} source/hash identity diverges`);
+    if (idParts[2] !== component.sha256) fail(`component ${component.name} id/hash identity diverges`);
+    if (!['function', 'arrow'].includes(component.kind)) fail(`component ${component.name} has unsupported kind ${JSON.stringify(component.kind)}`);
     if (component.owner !== null && (typeof component.owner !== 'string' || !ID_RE.test(component.owner))) fail(`component ${component.name} owner is invalid`);
     for (const key of ['dependencies', 'captures', 'external_bindings', 'unresolved']) {
       if (!Array.isArray(component[key]) || component[key].some(value => typeof value !== 'string')) fail(`component ${component.name}.${key} must be a string array`);
     }
+    if (new Set(component.dependencies).size !== component.dependencies.length) fail(`component ${component.name} dependencies contain duplicates`);
     if (component.unresolved.length) fail(`unresolved identifiers for ${component.name}: ${component.unresolved.join(', ')}`);
   }
   for (const root of manifest.roots) {
