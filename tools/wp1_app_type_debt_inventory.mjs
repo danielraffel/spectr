@@ -137,7 +137,7 @@ function ambientDeclarations(manifest) {
     }
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
-  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } }');
+  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } interface IntrinsicAttributes { key?: unknown; } }');
   return `${declarations.join('\n')}\n`;
 }
 
@@ -249,7 +249,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (!NAME_RE.test(plantProp)) fail(`planted prop component is not an identifier: ${plantProp}`);
       const target = path.join(stage, 'components', `${plantProp}.tsx`);
       if (!fs.existsSync(target)) fail(`planted prop component ${plantProp} is not staged`);
-      fs.appendFileSync(target, `\nconst __wp1_planted_missing_props__ = <${plantProp} children={\"planted\"} />;\n`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_missing_props__: SpectrSettingsFieldProps = { children: \"planted\" };\n`);
       const planted = runTypeScript(stage);
       const targetSuffix = `components/${plantProp}.tsx`;
       const found = planted.diagnostics.some((diagnostic) => ['TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith(targetSuffix) && /label/.test(diagnostic.message));
@@ -265,8 +265,9 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       const planted = runTypeScript(stage);
       const targetSuffix = `components/${plantPropType}.tsx`;
       const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
-      if (typeDiagnostics.length < 2) fail(`planted wrong prop types for ${plantPropType} did not produce two TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
-      propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typeDiagnostics.slice(0, 2), planted_diagnostic_count: planted.diagnostics.length };
+      const typedControls = typeDiagnostics.filter((diagnostic) => /number/.test(diagnostic.message) && /string/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong prop types for ${plantPropType} did not produce exact label/hidden TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
     }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {

@@ -77,7 +77,7 @@
       "TweaksPanel",
       "App"
     ],
-    "graph_sha256": "83a0990a6fe2e8c487e3a4e517bd9d5b90997cf765575da0aee0d48edf9e96ec"
+    "graph_sha256": "4d829601e8b429944e1e620567da1bfd7ec71af8774225efcd0273355842a802"
   },
   "bindings": {
     "groups": {
@@ -1969,26 +1969,10 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 693,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 848,
         "code": "TS2741",
         "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => any; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 1093,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
@@ -2001,26 +1985,10 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 1368,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 1443,
         "code": "TS2741",
         "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 1633,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
@@ -2033,33 +2001,9 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 2142,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 2524,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 2612,
         "code": "TS2739",
         "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': fmt, gestureId, disabled, target",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 2749,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
         "category": "prop-or-type"
       },
       {
@@ -2081,34 +2025,10 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 3112,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 3264,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 3350,
         "code": "TS2741",
         "message": "Property 'wrap' is missing in type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 3566,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
@@ -2121,74 +2041,10 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 3812,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4022,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 4249,
         "code": "TS2741",
         "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4369,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4513,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4736,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 4970,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 5196,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 5472,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrBuildInfo.tsx",
@@ -2329,14 +2185,6 @@
       {
         "file": "components/SpectrLatencySettings.tsx",
         "line": 93,
-        "column": 309,
-        "code": "TS2739",
-        "message": "Type '{ label: any; hint: any; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrLatencySettings.tsx",
-        "line": 93,
         "column": 386,
         "code": "TS2741",
         "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => void; opts: any; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
@@ -2395,7 +2243,7 @@
         "line": 39,
         "column": 36,
         "code": "TS2322",
-        "message": "Type '{ key: any; label: any; }' is not assignable to type '{ label: any; hint: any; children: any; hidden: any; }'.",
+        "message": "Type '{ key: any; label: any; }' is not assignable to type 'SpectrSettingsFieldProps'.",
         "category": "prop-or-type"
       },
       {
@@ -2412,14 +2260,6 @@
         "column": 265,
         "code": "TS2554",
         "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 283,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
         "category": "prop-or-type"
       },
       {
@@ -2444,14 +2284,6 @@
         "column": 924,
         "code": "TS2554",
         "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 942,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
         "category": "prop-or-type"
       },
       {
@@ -2489,14 +2321,6 @@
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
-        "column": 2038,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
         "column": 2342,
         "code": "TS2339",
         "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
@@ -2509,14 +2333,6 @@
         "code": "TS2339",
         "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 2510,
-        "code": "TS2739",
-        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrOutputMeter.tsx",
@@ -2746,12 +2562,12 @@
     "counts": {
       "browser-window": 159,
       "other-semantic": 64,
-      "prop-or-type": 64
+      "prop-or-type": 41
     },
     "counts_by_code": {
       "TS2339": 169,
       "TS2741": 48,
-      "TS2739": 53,
+      "TS2739": 30,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
@@ -2761,6 +2577,16 @@
       "TS2322": 4
     },
     "unknown_binding_names": []
+  },
+  "prop_contract_effect": {
+    "before_diagnostics": 287,
+    "after_diagnostics": 264,
+    "delta": -23,
+    "control_counts": {
+      "browser-window": 159,
+      "other-semantic": 64,
+      "prop-or-type": 64
+    }
   },
   "negative_control": {
     "status": "passed",
@@ -2774,7 +2600,54 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 288
+    "planted_diagnostic_count": 265
+  },
+  "prop_contracts": [
+    {
+      "name": "SpectrSettingsField",
+      "type": "label required; hint/children/hidden optional",
+      "value_type": "label:string; hint?:string; children?:SpectrSettingsFieldChild; hidden?:boolean"
+    }
+  ],
+  "prop_negative_control": {
+    "status": "passed",
+    "name": "SpectrSettingsField",
+    "diagnostic": {
+      "file": "components/SpectrSettingsField.tsx",
+      "line": 9,
+      "column": 40,
+      "code": "TS2741",
+      "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
+      "category": "other-semantic"
+    },
+    "planted_diagnostic_count": 266
+  },
+  "prop_type_negative_control": {
+    "status": "passed",
+    "name": "SpectrSettingsField",
+    "properties": [
+      "label",
+      "hidden"
+    ],
+    "diagnostics": [
+      {
+        "file": "components/SpectrSettingsField.tsx",
+        "line": 11,
+        "column": 58,
+        "code": "TS2322",
+        "message": "Type 'number' is not assignable to type 'string'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrSettingsField.tsx",
+        "line": 12,
+        "column": 72,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'boolean'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "planted_diagnostic_count": 268
   },
   "scope": {
     "runtime_artifact_changed": false,
