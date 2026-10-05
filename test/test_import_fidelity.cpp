@@ -943,7 +943,7 @@ TEST_CASE("materialized mode and visual contracts detect every severed fix") {
         ContractMarker{"selected-preset-identity", "const [selectedPatternId, setSelectedPatternId] = useAppS(null);"},
         ContractMarker{"selected-preset-authoritative-label", "[...window.Spectr.FACTORY_PATTERNS, ...userPatterns].find((pattern) => pattern.id === selectedPatternId)?.name || \\\"PRESETS\\\";"},
         ContractMarker{"selected-preset-applied-identity", "setSelectedPatternId(p.id);"},
-        ContractMarker{"build-info-component", "function SpectrBuildInfo({ showGpuStats = true }) {"},
+        ContractMarker{"build-info-component", "function SpectrBuildInfo({ showGpuStats = false }) {"},
         ContractMarker{"build-info-get", "postMessage(\\\"build_info_get\\\""},
         ContractMarker{"build-info-copy", "postMessage(\\\"build_info_copy\\\""},
         ContractMarker{"build-info-copy-success", "settleCopyState(\\\"COPIED\\\")"},
