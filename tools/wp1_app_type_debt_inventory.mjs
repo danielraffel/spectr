@@ -193,6 +193,16 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
       };
       authored = authored.replace(marker, `type SpectrSettingsFieldChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<SpectrSettingsFieldChild> } | ReadonlyArray<SpectrSettingsFieldChild>;\ntype SpectrSettingsFieldProps = { label: string; hint?: string; children?: SpectrSettingsFieldChild; hidden?: boolean };\nfunction SpectrSettingsField({ label, hint, children, hidden }: SpectrSettingsFieldProps) {`);
     }
+    if (applyPropContracts && component.name === 'MBtn') {
+      const marker = 'function MBtn({ children, onClick, primary, danger, action }) {';
+      if (!authored.includes(marker)) fail('MBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'all props optional; action:string; primary/danger:boolean; onClick:callable',
+        value_type: 'children?:MBtnChild; onClick?:(...args:any[])=>unknown; primary?:boolean; danger?:boolean; action?:string',
+      };
+      authored = authored.replace(marker, `type MBtnChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<MBtnChild> } | ReadonlyArray<MBtnChild>;\ntype MBtnProps = { children?: MBtnChild; onClick?: (...args: any[]) => unknown; primary?: boolean; danger?: boolean; action?: string };\nfunction MBtn({ children, onClick, primary, danger, action }: MBtnProps) {`);
+    }
     const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
     components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}) });
@@ -215,7 +225,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -269,6 +279,19 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (typedControls.length !== 2) fail(`planted wrong prop types for ${plantPropType} did not produce exact label/hidden TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
       propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let mbtnPropTypeNegativeControl = { status: 'not-run' };
+    if (plantMbtnPropType) {
+      if (plantMbtnPropType !== 'MBtn') fail(`MBtn prop-type control must target MBtn, got ${plantMbtnPropType}`);
+      const target = path.join(stage, 'components', 'MBtn.tsx');
+      if (!fs.existsSync(target)) fail('MBtn prop-type control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_planted_mbtn_wrong_primary__ = <MBtn primary={"yes"} />;\nconst __wp1_planted_mbtn_wrong_action__ = <MBtn action={1} />;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/MBtn.tsx';
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const typedControls = typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /number/.test(diagnostic.message) && /string/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong MBtn prop types did not produce exact primary/action TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      mbtnPropTypeNegativeControl = { status: 'passed', name: 'MBtn', properties: ['primary', 'action'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
+    }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {
       schema: SCHEMA, version: 1,
@@ -294,6 +317,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       prop_contracts: modules.filter((module) => module.prop_contract).map((module) => module.prop_contract),
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
+      mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
     fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
@@ -308,13 +332,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -324,7 +348,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);
