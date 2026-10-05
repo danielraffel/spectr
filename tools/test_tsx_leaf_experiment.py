@@ -51,6 +51,65 @@ class TsxLeafExperimentTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("spread props", result.stderr)
 
+    def test_react_fragment_member_tag_is_converted(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "fragment.jsx"
+            source.write_text(
+                'function MBtn({ok}) { return React.createElement(React.Fragment, null, '
+                'ok && React.createElement("button", { title: "x" })); }')
+            with tempfile.NamedTemporaryFile() as output:
+                result = run("--source", str(source), "--component", "MBtn", "--out", output.name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                converted = pathlib.Path(output.name).read_text()
+            self.assertIn("<React.Fragment>", converted)
+            self.assertIn("<button", converted)
+            self.assertNotIn("React.createElement", converted)
+
+    def test_unknown_member_tags_remain_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "member.jsx"
+            source.write_text(
+                'function MBtn() { return React.createElement(ui.Row, null); }')
+            result = run("--source", str(source), "--component", "MBtn")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("dynamic element tag", result.stderr)
+
+    def test_computed_props_become_single_property_spreads(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "computed.jsx"
+            source.write_text(
+                'function MBtn({name}) { return React.createElement("div", '
+                '{ [name]: true, "aria-hidden": true }); }')
+            with tempfile.NamedTemporaryFile() as output:
+                result = run("--source", str(source), "--component", "MBtn", "--out", output.name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                converted = pathlib.Path(output.name).read_text()
+            self.assertIn("{...{[name]: true}}", converted)
+            self.assertIn('aria-hidden', converted)
+            self.assertNotIn("React.createElement", converted)
+
+    def test_object_assign_props_become_spread(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "assign.jsx"
+            source.write_text(
+                'function MBtn({attrs}) { return React.createElement("div", '
+                'Object.assign({ role: "button" }, attrs), "x"); }')
+            with tempfile.NamedTemporaryFile() as output:
+                result = run("--source", str(source), "--component", "MBtn", "--out", output.name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                converted = pathlib.Path(output.name).read_text()
+            self.assertIn('{...Object.assign({ role: "button" }, attrs)}', converted)
+            self.assertNotIn("React.createElement", converted)
+
+    def test_arbitrary_non_object_props_remain_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "props.jsx"
+            source.write_text(
+                'function MBtn({props}) { return React.createElement("div", props); }')
+            result = run("--source", str(source), "--component", "MBtn")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("non-object props", result.stderr)
+
     def test_multiple_conditional_return_trees_are_converted(self):
         with tempfile.TemporaryDirectory() as td:
             source = pathlib.Path(td) / "many.jsx"

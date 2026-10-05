@@ -94,6 +94,15 @@ function isCreateElement(node) {
 }
 function jsxName(node, source) {
   if (node?.type === 'StringLiteral') return node.value;
+  // React.Fragment is the one member tag emitted by the frozen artifact. It
+  // has a direct JSX spelling and does not represent a user supplied dynamic
+  // component. Keep every other member expression fail-closed: converting a
+  // value such as `ui.Row` without resolving its owner would hide a missing
+  // module dependency in the authored source.
+  if (node?.type === 'MemberExpression' && !node.computed
+      && node.object?.type === 'Identifier' && node.object.name === 'React'
+      && node.property?.type === 'Identifier' && node.property.name === 'Fragment')
+    return 'React.Fragment';
   // Lowercase identifiers are runtime values in createElement and would be
   // interpreted as intrinsic JSX names if copied verbatim. Uppercase names
   // are stable component identifiers; member expressions remain outside this
@@ -105,6 +114,16 @@ function attrName(node, source) {
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'StringLiteral' && /^[A-Za-z_$][\w$:-]*$/.test(node.value)) return node.value;
   fail(`unsupported property key at byte ${node.start}`);
+}
+function computedAttribute(property, source) {
+  // JSX has no computed attribute-name syntax. A spread of a one-property
+  // object preserves the exact React.createElement props semantics while
+  // keeping evaluation order and the expression's lexical bindings visible
+  // to a later dependency/type pass, e.g. {[name]: true} becomes
+  // {...{[name]: true}}.
+  const key = rewriteNestedCreateElements(property.key, source);
+  const value = rewriteNestedCreateElements(property.value, source);
+  return `{...{[${key}]: ${value}}}`;
 }
 function expressionAttribute(name, value, source) {
   if (value?.type === 'BooleanLiteral' && value.value === true) return name;
@@ -137,17 +156,33 @@ function createElementToJsx(call, source) {
   if (tag?.type === 'SpreadElement' || props?.type === 'SpreadElement')
     fail(`spread createElement argument at byte ${call.start}`);
   const tagText = jsxName(tag, source);
-  if (props && props.type !== 'ObjectExpression' && props.type !== 'NullLiteral')
-    fail(`non-object props for ${tagText} at byte ${props.start}`);
+  if (props && props.type !== 'ObjectExpression' && props.type !== 'NullLiteral') {
+    // The materialized artifact uses Object.assign({}, attrs) for one helper
+    // so it can merge a stable base object with dynamic attributes. JSX's
+    // object spread has the same props object semantics for this explicit
+    // shape. Arbitrary identifiers, calls, literals, and conditional values
+    // remain unsupported until their dependency and type contracts are known.
+    const objectAssign = props.type === 'CallExpression'
+      && props.callee?.type === 'MemberExpression'
+      && !props.callee.computed
+      && props.callee.object?.type === 'Identifier'
+      && props.callee.object.name === 'Object'
+      && props.callee.property?.type === 'Identifier'
+      && props.callee.property.name === 'assign';
+    if (!objectAssign) fail(`non-object props for ${tagText} at byte ${props.start}`);
+  }
   const attrs = [];
   if (props?.type === 'ObjectExpression') {
     for (const property of props.properties) {
       if (property.type === 'SpreadElement') fail(`spread props for ${tagText} at byte ${property.start}`);
-      if (property.type !== 'ObjectProperty' || property.computed || property.method)
+      if (property.type !== 'ObjectProperty' || property.method)
         fail(`unsupported prop shape for ${tagText} at byte ${property.start}`);
-      attrs.push(expressionAttribute(attrName(property.key, source), property.value, source));
+      if (property.computed) attrs.push(computedAttribute(property, source));
+      else attrs.push(expressionAttribute(attrName(property.key, source), property.value, source));
     }
   }
+  if (props?.type === 'CallExpression')
+    attrs.push(`{...${rewriteNestedCreateElements(props, source)}}`);
   const opening = `<${tagText}${attrs.length ? ` ${attrs.join(' ')}` : ''}`;
   if (!childrenArgs.length) return `${opening} />`;
   const body = childrenArgs.map((child) => {

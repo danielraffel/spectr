@@ -12,17 +12,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CLI = ROOT / "tools" / "wp1_tsx_conversion_report.mjs"
 ARTIFACT = ROOT / "native-ui" / "materialized" / "materialized-document.runtime.json"
-EXPECTED_BLOCKED = {
-    "ContextMenu": "dynamic-element-tag",
-    "PatternManager": "dynamic-element-tag",
-    "SpectrLengthScrollbar": "unsupported-prop-shape",
-    "SpectrKnob": "unsupported-prop-shape",
-    "Chrome": "dynamic-element-tag",
-    "PickerDropdown": "dynamic-element-tag",
-    "ThemeDropdown": "dynamic-element-tag",
-    "MetaphorDropdown": "dynamic-element-tag",
-    "SpectrModulationSettings": "non-object-props",
-}
+EXPECTED_BLOCKED = {}
 
 
 def run(artifact: pathlib.Path, output: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -49,13 +39,9 @@ class ConversionReportTest(unittest.TestCase):
             self.assertEqual(report["artifact"]["sha256"], hashlib.sha256(before).hexdigest())
             self.assertEqual(report["counts"], {
                 "components": 63,
-                "converted": 54,
-                "blocked": 9,
-                "blocked_by_category": {
-                    "dynamic-element-tag": 6,
-                    "non-object-props": 1,
-                    "unsupported-prop-shape": 2,
-                },
+                "converted": 63,
+                "blocked": 0,
+                "blocked_by_category": {},
             })
             blocked = {entry["name"]: entry["rejection"]["category"]
                        for entry in report["components"] if entry["status"] == "blocked"}
@@ -80,7 +66,7 @@ class ConversionReportTest(unittest.TestCase):
             mbtn = next(entry for entry in report["components"] if entry["name"] == "MBtn")
             self.assertEqual(mbtn["status"], "blocked")
             self.assertEqual(mbtn["rejection"]["category"], "spread-props")
-            self.assertEqual(report["counts"]["blocked"], 10)
+            self.assertEqual(report["counts"]["blocked"], 1)
 
     def test_malformed_artifact_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:
