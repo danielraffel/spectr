@@ -370,11 +370,11 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       fs.appendFileSync(railTarget, '\nconst __wp1_planted_rail_missing_required__ = <RailBtn active={false}>{"x"}</RailBtn>;\nconst __wp1_planted_rail_wrong_active__ = <RailBtn onClick={() => {}} active={"yes"}>{"x"}</RailBtn>;\n');
       fs.appendFileSync(snapTarget, '\nconst __wp1_planted_snap_missing_required__ = <SnapBtn action={"x"} slot={"A"} filled={false} onClick={() => {}} label={"A"} />;\nconst __wp1_planted_snap_wrong_filled__ = <SnapBtn id={"x"} action={"x"} slot={"A"} filled={"yes"} onClick={() => {}} label={"A"} />;\n');
       const planted = runTypeScript(stage);
-      const railDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith('components/RailBtn.tsx'));
-      const snapDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith('components/SnapBtn.tsx'));
-      const railWrong = railDiagnostics.find((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const railDiagnostics = planted.diagnostics.filter((diagnostic) => ['TS2322', 'TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith('components/RailBtn.tsx'));
+      const snapDiagnostics = planted.diagnostics.filter((diagnostic) => ['TS2322', 'TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith('components/SnapBtn.tsx'));
+      const railWrong = railDiagnostics.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
       const railMissing = railDiagnostics.find((diagnostic) => /RailBtnProps/.test(diagnostic.message));
-      const snapWrong = snapDiagnostics.find((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const snapWrong = snapDiagnostics.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
       const snapMissing = snapDiagnostics.find((diagnostic) => /SnapBtnProps/.test(diagnostic.message));
       if (!railWrong || !railMissing || !snapWrong || !snapMissing) fail(`planted toolbar button controls did not fail closed: ${JSON.stringify({ railDiagnostics, snapDiagnostics })}`);
       chromePropTypeNegativeControl = { status: 'passed', components: ['RailBtn', 'SnapBtn'], diagnostics: [railWrong, snapWrong], missing_diagnostics: [railMissing, snapMissing], planted_diagnostic_count: planted.diagnostics.length };
