@@ -33,6 +33,26 @@ The adapter rejects reports without a gesture p95 metric.
 
 ## Hosted WP-0 receipt
 
+The real AU producer runs the Cocoa host probe in a fresh child for each
+sample, captures child RSS with `/usr/bin/time -l`, and requires the native
+editor's product-owned `spectr_wp0_hosted_measure_v1` seam for bridge calls,
+layout time, and raw RGBA paint time. It also records the real AU bundle
+digest and build-info source SHAs; dirty artifacts are rejected by default.
+
+```sh
+python3 tools/bench/wp0_hosted_producer.py \
+  --probe build-wp0-counter/Spectr-editor-open-probe \
+  --bundle 'build-wp0-counter/AU/Spectr Wp0Counter Dev.component' \
+  --host-id spectr-gate-fast-m5 \
+  --out build-wp0-counter/wp0-au-hosted.json
+```
+
+The producer fails closed when the seam is absent, raw RGBA is unavailable,
+or any row has an unavailable metric. It currently supports AU Cocoa only;
+requesting `--format VST3` reports an explicit unsupported-format error until a
+real VST3 GUI host exposes the same measurements. Every receipt carries a
+planted zero-paint negative-control result and a sidecar negative log.
+
 Before publishing a hosted baseline, combine the three-or-more-run UI receipt
 with the native importer/runtime receipt through the fail-closed adapter:
 

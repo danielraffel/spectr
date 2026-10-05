@@ -52,6 +52,9 @@
 //        On-brand-but-empty (first present -> first frame that looks like the
 //        settled editor, when nothing before it was off-brand) is reported
 //        per open and in the JSON as onbrand_empty_ms; tracked, not gated.
+//       [--hosted-metrics] require the loaded native editor to expose the
+//        product-owned bridge/layout/raw-RGBA receipt seam; missing support is
+//        a setup failure rather than a zero measurement
 //       [--view-size WxH] resize the returned view before showing it, as a
 //        host does (e.g. the minimum editor size)
 // Exit: 0 ok, 1 a gate failed, 2 setup error, 4 no window server (skip).
@@ -90,6 +93,15 @@ double g_first_drawable = -1.0;
 double g_first_present = -1.0;
 long g_presents = 0;
 std::vector<double> g_present_times;
+
+// Optional product-owned seam for a strict hosted WP-0 receipt. The AU probe
+// still measures open/present timing without it; `--hosted-metrics` turns the
+// seam into a gate and fails closed when the loaded component cannot provide a
+// real bridge/layout/paint sample.
+using HostedMetricsFn = int (*)(double*, double*, std::uint64_t*,
+                                std::uint32_t*, std::uint32_t*, std::uint64_t*);
+HostedMetricsFn g_hosted_metrics = nullptr;
+bool g_require_hosted_metrics = false;
 
 IMP g_orig_next_drawable = nullptr;
 id probe_next_drawable(id self, SEL cmd) {
@@ -355,6 +367,9 @@ AudioComponent register_bundle(const std::string& path) {
               CFBundleGetFunctionPointerForName(bundle, factory_name))
         : nullptr;
     if (!factory) return nullptr;
+    g_hosted_metrics = reinterpret_cast<HostedMetricsFn>(
+        CFBundleGetFunctionPointerForName(bundle,
+                                          CFSTR("spectr_wp0_hosted_measure_v1")));
     return AudioComponentRegister(&desc, CFSTR("Pulp: editor-open probe (in-process)"), 1, factory);
 }
 
@@ -366,6 +381,7 @@ struct OpenResult {
     double factory_begin = 0, factory_end = 0;
     double view_w = 0, view_h = 0;
     double attached = 0, first_drawable = -1, first_present = -1, idle = -1;
+    double frame_p95_ms = -1.0;
     double max_stall_ms = 0;
     double last_stall_end = -1;   // end of the last main-thread stall > 100 ms
     double content_present = -1;  // first present after that stall
@@ -387,6 +403,12 @@ struct OpenResult {
     // Per-frame colour class counts (see classify_frame).
     long class_background = 0, class_ui = 0, class_navy = 0, class_other = 0;
     std::vector<const char*> frame_class;
+    bool hosted_metrics_available = false;
+    double hosted_layout_ms = -1.0;
+    double hosted_paint_ms = -1.0;
+    std::uint64_t hosted_bridge_calls = 0;
+    std::uint32_t hosted_width = 0, hosted_height = 0;
+    std::uint64_t hosted_rgba_bytes = 0;
 };
 
 // The SDK's former pre-document colour. Named so a frame showing it is
@@ -608,6 +630,7 @@ int main(int argc, char** argv) {
             }
         }
         else if (a == "--pixels-verify") g_sample_pixels = g_verify_pixels = true;
+        else if (a == "--hosted-metrics") g_require_hosted_metrics = true;
         else if (a == "--max-offbrand-frames") max_offbrand = std::atol(next());
         else if (a == "--settled-bg") g_settled_bg = std::strtol(next(), nullptr, 16);
         else if (a == "--expect-first-rgb") expect_first = std::strtol(next(), nullptr, 16);
@@ -749,7 +772,39 @@ int main(int argc, char** argv) {
             }
             r.first_present = g_first_present;
             r.presents = g_presents;
+            if (g_present_times.size() >= 2) {
+                std::vector<double> intervals;
+                intervals.reserve(g_present_times.size() - 1);
+                for (std::size_t i = 1; i < g_present_times.size(); ++i)
+                    intervals.push_back(g_present_times[i] - g_present_times[i - 1]);
+                std::sort(intervals.begin(), intervals.end());
+                const auto p95 = static_cast<std::size_t>(
+                    0.95 * static_cast<double>(intervals.size() - 1));
+                r.frame_p95_ms = intervals[p95];
+            }
             spin(60.0);  // let in-flight readbacks land
+            if (g_require_hosted_metrics) {
+                if (g_hosted_metrics == nullptr) {
+                    std::printf("FAIL: loaded component exports no hosted WP-0 metrics seam\n");
+                    ++failures;
+                } else {
+                    r.hosted_metrics_available = g_hosted_metrics(
+                        &r.hosted_layout_ms, &r.hosted_paint_ms,
+                        &r.hosted_bridge_calls, &r.hosted_width,
+                        &r.hosted_height, &r.hosted_rgba_bytes) != 0;
+                    if (!r.hosted_metrics_available) {
+                        std::printf("FAIL: hosted WP-0 metrics are unsupported or unavailable\n");
+                        ++failures;
+                    } else {
+                        std::printf("    hosted metrics: bridge %llu | layout %.3f ms | "
+                                     "paint %.3f ms | rgba %ux%u (%llu bytes)\n",
+                                     static_cast<unsigned long long>(r.hosted_bridge_calls),
+                                     r.hosted_layout_ms, r.hosted_paint_ms,
+                                     r.hosted_width, r.hosted_height,
+                                     static_cast<unsigned long long>(r.hosted_rgba_bytes));
+                    }
+                }
+            }
             if (g_sample_pixels) {
                 analyse_pixels(r);
                 write_capture(r, n + 1, r.factory_begin);
@@ -766,10 +821,11 @@ int main(int argc, char** argv) {
             const auto rel = [&](double t) { return t < 0.0 ? -1.0 : t - r.factory_begin; };
             std::printf("open %d (%s): factory %.1f ms -> view %.0fx%.0f | drawable +%.1f "
                         "present +%.1f content +%.1f idle +%.1f ms | presents %ld | "
-                        "worst main stall %.1f ms\n",
+                        "frame p95 %.3f ms | worst main stall %.1f ms\n",
                         n + 1, n == 0 ? "cold" : "warm", r.factory_end - r.factory_begin,
                         r.view_w, r.view_h, rel(r.first_drawable), rel(r.first_present),
-                        rel(r.content_present), rel(r.idle), r.presents, r.max_stall_ms);
+                        rel(r.content_present), rel(r.idle), r.presents, r.frame_p95_ms,
+                        r.max_stall_ms);
             for (auto& [t, s] : r.frames)
                 std::printf("    frame change +%.1f ms -> %s\n", t - r.factory_begin, s.c_str());
             if (g_sample_pixels) {
@@ -867,17 +923,28 @@ int main(int argc, char** argv) {
                                     "\"first_drawable_ms\":%.3f,\"first_present_ms\":%.3f,"
                                     "\"content_present_ms\":%.3f,\"idle_ms\":%.3f,"
                                     "\"presents\":%ld,\"max_stall_ms\":%.3f,"
+                                    "\"frame_p95_ms\":%.3f,"
                                     "\"look_ready_ms\":%.3f,\"offbrand_frames\":%ld,"
                                     "\"offbrand_visible_ms\":%.3f,\"onbrand_empty_ms\":%.3f,"
-                                    "\"first_frame_rgb\":\"%06X\",\"settled_rgb\":\"%06X\"}",
+                                    "\"first_frame_rgb\":\"%06X\",\"settled_rgb\":\"%06X\","
+                                    "\"hosted_metrics_available\":%s,"
+                                    "\"hosted_bridge_calls\":%llu,\"hosted_layout_ms\":%.3f,"
+                                    "\"hosted_paint_ms\":%.3f,\"hosted_width\":%u,"
+                                    "\"hosted_height\":%u,\"hosted_rgba_bytes\":%llu}",
                                  i ? "," : "", r.factory_end - r.factory_begin, r.view_w, r.view_h,
                                  rel(r.first_drawable), rel(r.first_present),
                                  rel(r.content_present), rel(r.idle), r.presents, r.max_stall_ms,
+                                 r.frame_p95_ms,
                                  rel(r.look_ready), r.class_navy + r.class_other,
                                  r.offbrand_visible_ms,
                                  r.class_navy + r.class_other == 0 ? r.onbrand_empty_ms : -1.0,
                                  r.samples.empty() ? 0u : dominant(r.samples.front()).first,
-                                 r.settled_bg);
+                                 r.settled_bg,
+                                 r.hosted_metrics_available ? "true" : "false",
+                                 static_cast<unsigned long long>(r.hosted_bridge_calls),
+                                 r.hosted_layout_ms, r.hosted_paint_ms,
+                                 r.hosted_width, r.hosted_height,
+                                 static_cast<unsigned long long>(r.hosted_rgba_bytes));
                 }
                 std::fprintf(f, "]}\n");
                 std::fclose(f);

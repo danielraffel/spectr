@@ -1005,6 +1005,19 @@ public:
         return modulated_field_publication_.read();
     }
 
+#if defined(SPECTR_NATIVE_EDITOR)
+    // Opt-in hosted WP-0 receipt seam. The AU Cocoa probe calls this only
+    // after the real host view has mounted and settled. It intentionally
+    // exposes measurements already owned by the native editor (the bridge,
+    // layout tree, and raw RGBA renderer) without making those internals part
+    // of the product API. A false result means this build cannot provide a
+    // truthful hosted measurement and must be reported as unsupported.
+    bool wp0_hosted_measure_v1(double* layout_ms, double* paint_ms,
+                               std::uint64_t* bridge_calls,
+                               std::uint32_t* width, std::uint32_t* height,
+                               std::uint64_t* rgba_bytes) noexcept;
+#endif
+
 private:
     double sample_rate_ = 48000.0;
     int    max_block_   = 512;

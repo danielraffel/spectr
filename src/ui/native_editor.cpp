@@ -212,6 +212,28 @@ namespace spectr {
 
 namespace {
 std::atomic<bool> g_editor_owns_resize_grip{false};
+// The hosted receipt probe runs in the same process as the AU component. Keep
+// one process-local pointer to the instance whose native editor is currently
+// alive so the probe can ask the product for measurements without reaching
+// into private SDK objects or fabricating a standalone result. AU v2 opens a
+// single editor per probe process; a replacement editor supersedes this value.
+std::atomic<Spectr*> g_wp0_active_editor{nullptr};
+
+template <typename Bridge>
+constexpr bool has_wp0_bridge_counter() {
+    return requires(const Bridge& bridge) { bridge.bridge_call_count(); };
+}
+
+template <typename Bridge>
+std::uint64_t wp0_bridge_calls(const Bridge& bridge, bool& supported) {
+    if constexpr (has_wp0_bridge_counter<Bridge>()) {
+        supported = true;
+        return bridge.bridge_call_count();
+    } else {
+        supported = false;
+        return 0;
+    }
+}
 }  // namespace
 
 void set_editor_owns_resize_grip(bool value) {
@@ -1007,7 +1029,61 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     }
 
     native_editor_root_ = root.get();
+    g_wp0_active_editor.store(this, std::memory_order_release);
     return root;
+}
+
+bool Spectr::wp0_hosted_measure_v1(
+        double* layout_ms, double* paint_ms, std::uint64_t* bridge_calls,
+        std::uint32_t* width, std::uint32_t* height,
+        std::uint64_t* rgba_bytes) noexcept {
+    if (layout_ms == nullptr || paint_ms == nullptr || bridge_calls == nullptr
+        || width == nullptr || height == nullptr || rgba_bytes == nullptr
+        || native_editor_root_ == nullptr || native_scripted_ui_ == nullptr
+        || native_scripted_ui_->bridge() == nullptr
+        || !pulp::view::raw_rgba_render_available())
+        return false;
+
+    // This method is intentionally a measurement seam, not a second render
+    // path: it invokes the production layout and raw-RGBA helpers on the live
+    // tree returned through the real hosted editor path. If the SDK does not
+    // carry the experimental bridge counter, report unsupported rather than
+    // turning an unavailable count into zero.
+    try {
+            const auto bounds = native_editor_root_->bounds();
+            const auto w = static_cast<std::uint32_t>(std::max(1.0f, bounds.width));
+            const auto h = static_cast<std::uint32_t>(std::max(1.0f, bounds.height));
+            const auto layout_start = std::chrono::steady_clock::now();
+            native_editor_root_->invalidate_layout();
+            native_editor_root_->layout_children();
+            const auto layout_end = std::chrono::steady_clock::now();
+
+            std::uint32_t rendered_width = 0;
+            std::uint32_t rendered_height = 0;
+            const auto paint_start = std::chrono::steady_clock::now();
+            const auto rgba = pulp::view::render_to_rgba(
+                *native_editor_root_, w, h, 1.0f,
+                &rendered_width, &rendered_height);
+            const auto paint_end = std::chrono::steady_clock::now();
+            if (rgba.empty() || rendered_width == 0 || rendered_height == 0)
+                return false;
+
+            *layout_ms = std::chrono::duration<double, std::milli>(
+                layout_end - layout_start).count();
+            *paint_ms = std::chrono::duration<double, std::milli>(
+                paint_end - paint_start).count();
+            bool bridge_counter_supported = false;
+            *bridge_calls = wp0_bridge_calls(
+                *native_scripted_ui_->bridge(), bridge_counter_supported);
+            if (!bridge_counter_supported) return false;
+            *width = rendered_width;
+            *height = rendered_height;
+            *rgba_bytes = static_cast<std::uint64_t>(rgba.size());
+            return *layout_ms >= 0.0 && *paint_ms >= 0.0 && *bridge_calls > 0
+                && *rgba_bytes > 0;
+    } catch (...) {
+        return false;
+    }
 }
 
 void Spectr::load_native_document_() {
@@ -3885,6 +3961,9 @@ void Spectr::close_native_editor_() {
     gesture_perf_done_ = false;
 #endif
     native_editor_root_ = nullptr;
+    Spectr* expected = this;
+    (void)g_wp0_active_editor.compare_exchange_strong(
+        expected, nullptr, std::memory_order_acq_rel);
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(
             *native_scripted_ui_, "__spectrEditorDispatch");
@@ -3893,6 +3972,17 @@ void Spectr::close_native_editor_() {
     // The package is shared by every editor in this process and is reused by
     // the next open (see package_path_for); forget it, do not delete it.
     native_package_path_.clear();
+}
+
+extern "C" int spectr_wp0_hosted_measure_v1(
+        double* layout_ms, double* paint_ms, std::uint64_t* bridge_calls,
+        std::uint32_t* width, std::uint32_t* height,
+        std::uint64_t* rgba_bytes) noexcept {
+    auto* editor = g_wp0_active_editor.load(std::memory_order_acquire);
+    return editor != nullptr
+        && editor->wp0_hosted_measure_v1(
+            layout_ms, paint_ms, bridge_calls, width, height, rgba_bytes)
+        ? 1 : 0;
 }
 
 } // namespace spectr

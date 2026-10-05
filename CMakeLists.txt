@@ -4052,7 +4052,8 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     # it. The counter is read-only and lock-free (mask_renderer.hpp).
     target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
         "LINKER:-exported_symbol,_spectr_mask_design_backlog_v1"
-        "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1")
+        "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1"
+        "LINKER:-exported_symbol,_spectr_wp0_hosted_measure_v1")
     add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
     target_link_libraries(Spectr-au-level-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
