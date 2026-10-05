@@ -150,6 +150,58 @@ function Panel() {
         self.assertEqual([entry["name"] for entry in manifest["components"]], ["Panel"])
         self.assertIn("spectrMenuKit", manifest["components"][0]["external_bindings"])
 
+    def test_object_expression_value_is_an_external_reference(self):
+        # Object-expression values are reads. They must not be mistaken for
+        # destructuring declarations merely because Babel uses ObjectProperty
+        # for both forms.
+        source_text = """
+const iconBtn = { color: "red" };
+function Panel() {
+  return React.createElement("div", { style: iconBtn });
+}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "object-expression.jsx"
+            source.write_text(source_text)
+            result = run_manifest(source=source, root="Panel")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        panel = manifest["components"][0]
+        self.assertIn("iconBtn", panel["external_bindings"])
+        self.assertEqual(panel["unresolved"], [])
+
+    def test_object_pattern_value_remains_a_local_binding(self):
+        source_text = """
+const options = { style: { color: "red" } };
+function Panel() {
+  const { style: localStyle } = options;
+  return React.createElement("div", { style: localStyle });
+}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "object-pattern.jsx"
+            source.write_text(source_text)
+            result = run_manifest(source=source, root="Panel")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        panel = manifest["components"][0]
+        self.assertIn("options", panel["external_bindings"])
+        self.assertNotIn("localStyle", panel["external_bindings"])
+        self.assertNotIn("localStyle", panel["unresolved"])
+
+    def test_unknown_object_expression_value_fails_closed(self):
+        source_text = """
+function Panel() {
+  return React.createElement("div", { style: missingStyle });
+}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "unknown-object-expression.jsx"
+            source.write_text(source_text)
+            result = run_manifest(source=source, root="Panel")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unresolved identifiers for Panel: missingStyle", result.stderr)
+
     def test_direct_nested_component_still_resolves_as_dependency(self):
         result = run_manifest(source=FIXTURE, root="Panel")
         self.assertEqual(result.returncode, 0, result.stderr)

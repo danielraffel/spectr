@@ -110,7 +110,7 @@ function collectComponents(ast, scriptIndex, source) {
   visit(ast, []);
   return found;
 }
-function declarationBinding(node, parent, key) {
+function declarationBinding(node, parent, key, grandparent) {
   if (!parent) return false;
   if (key === 'id' && [
     'FunctionDeclaration', 'FunctionExpression', 'ClassDeclaration', 'ClassExpression',
@@ -120,12 +120,19 @@ function declarationBinding(node, parent, key) {
       && key === 'params') return true;
   if (['CatchClause'].includes(parent.type) && key === 'param') return true;
   if (['VariableDeclarator'].includes(parent.type) && key === 'id') return true;
-  if (['RestElement', 'AssignmentPattern', 'ArrayPattern', 'ObjectPattern', 'ObjectProperty'].includes(parent.type)
+  if (['RestElement', 'AssignmentPattern', 'ArrayPattern', 'ObjectPattern'].includes(parent.type)
       && (key === 'argument' || key === 'left' || key === 'value' || key === 'properties' || key === 'elements')) return true;
+  // An ObjectProperty value is a declaration only when the property belongs
+  // to an ObjectPattern (for example `const { style: localStyle } = opts`).
+  // The same AST shape in an ObjectExpression (`{ style: iconBtn }`) is a
+  // runtime reference and must remain in the dependency/external-binding
+  // analysis. Treating every ObjectProperty value as a declaration silently
+  // dropped authored references from the import closure.
+  if (parent.type === 'ObjectProperty' && key === 'value' && grandparent?.type === 'ObjectPattern') return true;
   return false;
 }
-function isNonReferenceIdentifier(node, parent, key) {
-  if (declarationBinding(node, parent, key)) return true;
+function isNonReferenceIdentifier(node, parent, key, grandparent) {
+  if (declarationBinding(node, parent, key, grandparent)) return true;
   if (parent?.type === 'MemberExpression' && key === 'property' && !parent.computed) return true;
   if (parent?.type === 'OptionalMemberExpression' && key === 'property' && !parent.computed) return true;
   if (parent?.type === 'ObjectProperty' && key === 'key' && !parent.computed && !parent.shorthand) return true;
@@ -194,14 +201,14 @@ function directReferences(component) {
   const refs = [];
   const root = componentFunctionNode(component);
   const rootBindings = directScopeBindings(component);
-  function visit(node, parent, key, scopes) {
+  function visit(node, parent, key, scopes, grandparent = null) {
     if (!isNode(node)) return;
     if (node !== root && isComponentNode(node)) return;
     let nextScopes = scopes;
     if (node !== root && ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
       nextScopes = [...scopes, nestedFunctionBindings(node)];
     }
-    if (node.type === 'Identifier' && !isNonReferenceIdentifier(node, parent, key)) {
+    if (node.type === 'Identifier' && !isNonReferenceIdentifier(node, parent, key, grandparent)) {
       refs.push({ name: node.name, resolved: [...nextScopes].some((scope) => scope.has(node.name)) });
     }
     // Babel represents JSX tag names separately from JavaScript identifiers.
@@ -218,7 +225,7 @@ function directReferences(component) {
         && key === 'name') {
       refs.push({ name: `JSX tag ${jsxMemberText(node)}`, resolved: false });
     }
-    forEachChild(node, (child, childKey) => visit(child, node, childKey, nextScopes));
+    forEachChild(node, (child, childKey) => visit(child, node, childKey, nextScopes, parent));
   }
   visit(root, null, null, [rootBindings]);
   return refs;
