@@ -157,24 +157,63 @@ function directScopeBindings(component) {
   visit(root);
   return bindings;
 }
+function nestedFunctionBindings(node) {
+  const bindings = new Set();
+  if (node.type === 'FunctionDeclaration' && node.id) bindings.add(node.id.name);
+  node.params?.forEach((param) => namesFromPattern(param, bindings));
+  function visit(child) {
+    if (!isNode(child)) return;
+    if (child !== node && isComponentNode(child)) return;
+    if (child !== node && ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(child.type)) {
+      if (child.type === 'FunctionDeclaration' && child.id) bindings.add(child.id.name);
+      return;
+    }
+    if (child.type === 'VariableDeclarator') namesFromPattern(child.id, bindings);
+    if (child.type === 'ClassDeclaration' && child.id) bindings.add(child.id.name);
+    if (child.type === 'CatchClause') namesFromPattern(child.param, bindings);
+    forEachChild(child, visit);
+  }
+  visit(node.body);
+  return bindings;
+}
+function jsxMemberText(node) {
+  if (!node) return '<unknown>';
+  if (node.type === 'JSXIdentifier') return node.name;
+  if (node.type === 'JSXMemberExpression') return `${jsxMemberText(node.object)}.${jsxMemberText(node.property)}`;
+  if (node.type === 'JSXNamespacedName') return `${jsxMemberText(node.namespace)}:${jsxMemberText(node.name)}`;
+  return '<unknown>';
+}
 function directReferences(component) {
-  const refs = new Set();
+  const refs = [];
   const root = componentFunctionNode(component);
-  function visit(node, parent, key) {
+  const rootBindings = directScopeBindings(component);
+  function visit(node, parent, key, scopes) {
     if (!isNode(node)) return;
     if (node !== root && isComponentNode(node)) return;
-    if (node !== root && ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) return;
-    if (node.type === 'Identifier' && !isNonReferenceIdentifier(node, parent, key)) refs.add(node.name);
+    let nextScopes = scopes;
+    if (node !== root && ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
+      nextScopes = [...scopes, nestedFunctionBindings(node)];
+    }
+    if (node.type === 'Identifier' && !isNonReferenceIdentifier(node, parent, key)) {
+      refs.push({ name: node.name, resolved: [...nextScopes].some((scope) => scope.has(node.name)) });
+    }
     // Babel represents JSX tag names separately from JavaScript identifiers.
-    // Count only direct uppercase tags as component references; lowercase tags
-    // are intrinsic DOM elements and JSX member tags remain unsupported rather
-    // than being guessed into a false dependency.
+    // Count direct uppercase tags as component references. JSX member and
+    // namespaced tags are explicitly unsupported and become unresolved so a
+    // future TSX conversion cannot silently omit them.
     if (node.type === 'JSXIdentifier' && parent
         && (parent.type === 'JSXOpeningElement' || parent.type === 'JSXClosingElement')
-        && key === 'name' && COMPONENT.test(node.name)) refs.add(node.name);
-    forEachChild(node, (child, childKey) => visit(child, node, childKey));
+        && key === 'name' && COMPONENT.test(node.name)) {
+      refs.push({ name: node.name, resolved: [...nextScopes].some((scope) => scope.has(node.name)) });
+    }
+    if ((node.type === 'JSXMemberExpression' || node.type === 'JSXNamespacedName')
+        && parent && (parent.type === 'JSXOpeningElement' || parent.type === 'JSXClosingElement')
+        && key === 'name') {
+      refs.push({ name: `JSX tag ${jsxMemberText(node)}`, resolved: false });
+    }
+    forEachChild(node, (child, childKey) => visit(child, node, childKey, nextScopes));
   }
-  visit(root, null, null);
+  visit(root, null, null, [rootBindings]);
   return refs;
 }
 function parseJavaScript(source, label, scriptIndex = 0) {
@@ -274,13 +313,14 @@ function makeManifest(args) {
     const captures = [];
     const externalBindings = [];
     const unresolved = [];
-    for (const name of [...refs].sort()) {
+    const orderedRefs = [...refs].sort((a, b) => a.name.localeCompare(b.name));
+    for (const { name, resolved } of orderedRefs) {
       const dependency = byName.get(name);
       if (dependency && dependency !== component) {
         dependencies.push(dependency);
         continue;
       }
-      if (ownBindings.has(name)) continue;
+      if (resolved || ownBindings.has(name)) continue;
       if (ownerBindings.has(name)) { captures.push(name); continue; }
       if (scriptBindings.has(name) || RUNTIME_GLOBALS.has(name)) { externalBindings.push(name); continue; }
       unresolved.push(name);
@@ -298,9 +338,9 @@ function makeManifest(args) {
       sha256: component.sha256,
       source_sha256: sha256(raw),
       dependencies: [...new Map(dependencies.map((x) => [x.sha256, x])).values()].sort((a, b) => a.name.localeCompare(b.name)).map((x) => `component:${x.name}:${x.sha256}`),
-      captures,
-      external_bindings: externalBindings,
-      unresolved,
+      captures: [...new Set(captures)],
+      external_bindings: [...new Set(externalBindings)],
+      unresolved: [...new Set(unresolved)],
     });
   }
   const roots = [...new Set(args.roots)].sort();
