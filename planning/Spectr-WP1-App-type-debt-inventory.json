@@ -77,7 +77,7 @@
       "TweaksPanel",
       "App"
     ],
-    "graph_sha256": "2711b3661996dcbd4ccd98e48fd5d6dda646fc3caf2370f411d5040c76c33731"
+    "graph_sha256": "a5fe1eb73a086978f3b2ef3e94675447d903acc8aae0cc33e03798cefc280ae2"
   },
   "bindings": {
     "groups": {
@@ -1681,22 +1681,6 @@
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
-        "column": 2612,
-        "code": "TS2322",
-        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
-        "column": 2821,
-        "code": "TS2322",
-        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SettingsModal.tsx",
-        "line": 119,
         "column": 3452,
         "code": "TS2345",
         "message": "Argument of type 'SpectrSettingsChipValue' is not assignable to parameter of type 'string'.",
@@ -1865,25 +1849,9 @@
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
-        "column": 733,
-        "code": "TS2322",
-        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
         "column": 924,
         "code": "TS2554",
         "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 1395,
-        "code": "TS2322",
-        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -2057,12 +2025,12 @@
     ],
     "counts": {
       "browser-window": 159,
-      "prop-or-type": 26,
+      "prop-or-type": 22,
       "other-semantic": 16
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2322": 17,
+      "TS2322": 13,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
@@ -2075,8 +2043,8 @@
   },
   "prop_contract_effect": {
     "before_diagnostics": 254,
-    "after_diagnostics": 201,
-    "delta": -53,
+    "after_diagnostics": 197,
+    "delta": -57,
     "control_counts": {
       "browser-window": 159,
       "prop-or-type": 79,
@@ -2095,7 +2063,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 202
+    "planted_diagnostic_count": 198
   },
   "prop_contracts": [
     {
@@ -2112,6 +2080,11 @@
       "name": "SpectrSettingsChips",
       "type": "value and opts required; onChange callable; wrap optional",
       "value_type": "value:string|number; onChange:(value:string|number)=>unknown; opts:ReadonlyArray<ReadonlyArray<string|number>>; wrap?:boolean"
+    },
+    {
+      "name": "SpectrSettingsSlider",
+      "type": "value/min/max/step/onChange required; fmt/gestureId/disabled/target optional",
+      "value_type": "value:number; min:number; max:number; step:number; onChange:(value:number)=>unknown; fmt?:(value:number)=>string; gestureId?:number; disabled?:boolean; target?:string"
     }
   ],
   "prop_negative_control": {
@@ -2125,7 +2098,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 203
+    "planted_diagnostic_count": 199
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2152,7 +2125,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 205
+    "planted_diagnostic_count": 201
   },
   "mbtn_prop_type_negative_control": {
     "status": "passed",
@@ -2179,7 +2152,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 207
+    "planted_diagnostic_count": 203
   },
   "settings_chips_prop_type_negative_control": {
     "status": "passed",
@@ -2218,7 +2191,36 @@
       "message": "Type '{ onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsChipsProps'.",
       "category": "prop-or-type"
     },
-    "planted_diagnostic_count": 210
+    "planted_diagnostic_count": 206
+  },
+  "settings_slider_prop_type_negative_control": {
+    "status": "passed",
+    "name": "SpectrSettingsSlider",
+    "properties": [
+      "disabled"
+    ],
+    "missing_property": [
+      "value"
+    ],
+    "diagnostics": [
+      {
+        "file": "components/SpectrSettingsSlider.tsx",
+        "line": 35,
+        "column": 126,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'boolean'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "missing_diagnostic": {
+      "file": "components/SpectrSettingsSlider.tsx",
+      "line": 34,
+      "column": 50,
+      "code": "TS2322",
+      "message": "Type '{ min: number; max: number; step: number; onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsSliderProps'.",
+      "category": "prop-or-type"
+    },
+    "planted_diagnostic_count": 208
   },
   "jsx_children_negative_control": {
     "status": "passed",
@@ -2244,7 +2246,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 212
+    "planted_diagnostic_count": 210
   },
   "scope": {
     "runtime_artifact_changed": false,
