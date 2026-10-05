@@ -1,0 +1,2988 @@
+{
+  "schema": "spectr-owned-app-type-debt-inventory-v1",
+  "version": 1,
+  "artifact": {
+    "path": "materialized-document.runtime.json",
+    "sha256": "ddf68506810ce2bc013ce719cb2f42d9fe686ee52858d6d94f692f2e81db6453",
+    "bytes": 1134468
+  },
+  "dependency_manifest": {
+    "path": "manifest.json",
+    "sha256": "3707ffb4b79438d801bc2492e752dee8b9a6c2d9d75a40c310526a27c9ac7d1d"
+  },
+  "emission": {
+    "path": "emitted",
+    "sha256": "6e774c81d70351c23024b89f4084761213915a1094be3eacbb5e221fcfbd0b3b",
+    "modules": 57
+  },
+  "graph": {
+    "root": "App",
+    "modules": 57,
+    "module_names": [
+      "FilterBank",
+      "ListHeader",
+      "MiniPreview",
+      "PatternRow",
+      "MBtn",
+      "PatternDetail",
+      "PatternDeleteDialog",
+      "PatternManager",
+      "SpectrControlMenu",
+      "SpectrModulationOverrideDialog",
+      "PatternSaveDialog",
+      "SpectrFreezeToggle",
+      "SpectrLengthScrollbar",
+      "SpectrLengthCheck",
+      "SpectrLengthRow",
+      "SpectrLengthFractionList",
+      "SpectrLengthEditor",
+      "SpectrFreezeLength",
+      "SpectrKnob",
+      "SpectrAutoGainPill",
+      "SpectrOutputMeter",
+      "SpectrTracingBadge",
+      "SpectrZoomReadout",
+      "SpectrLatencyRail",
+      "EditModeGlyph",
+      "AnalyzerGlyph",
+      "EditModePopover",
+      "AnalyzerPopover",
+      "SpectrBandsLabel",
+      "SpectrSettingsGroup",
+      "SpectrSettingsField",
+      "SpectrSettingsChips",
+      "SpectrSettingsSlider",
+      "SpectrSettingsToggle",
+      "SpectrBuildInfo",
+      "SpectrModulationSettings",
+      "SpectrLatencySettings",
+      "SpectrTooltipSetting",
+      "SpectrSettingsCloseButton",
+      "SpectrRangeSetting",
+      "SettingsModal",
+      "StatusBanner",
+      "SnapBtn",
+      "HelpGuideOverlay",
+      "Hrow",
+      "HelpPopover",
+      "Segmented",
+      "RailBtn",
+      "MorphSlider",
+      "Chrome",
+      "Section",
+      "Row",
+      "Chips",
+      "Slider",
+      "Toggle",
+      "TweaksPanel",
+      "App"
+    ],
+    "graph_sha256": "83a0990a6fe2e8c487e3a4e517bd9d5b90997cf765575da0aee0d48edf9e96ec"
+  },
+  "bindings": {
+    "groups": {
+      "facade_provided": [
+        "React",
+        "claimDocumentNavigationFocus",
+        "releaseDocumentNavigationFocus"
+      ],
+      "browser_runtime": [
+        "Blob",
+        "FileReader",
+        "URL",
+        "cancelAnimationFrame",
+        "clearInterval",
+        "clearTimeout",
+        "console",
+        "document",
+        "globalThis",
+        "navigator",
+        "performance",
+        "requestAnimationFrame",
+        "setInterval",
+        "setTimeout",
+        "window"
+      ],
+      "authored_script_scope": [
+        "ANALYZER_OPTS",
+        "EDIT_MODES",
+        "SPECTR_CONTROL_MENUS",
+        "SPECTR_FRACTION_ROW",
+        "SPECTR_HEADER_SHOW_MIX",
+        "SPECTR_HEADER_SHOW_TAGLINE",
+        "SPECTR_LENGTH_GAP",
+        "SPECTR_LENGTH_PANEL",
+        "SPECTR_LENGTH_ROW",
+        "SPECTR_LENGTH_SEPARATOR",
+        "SPECTR_PARAM_AUTO_GAIN",
+        "SPECTR_PARAM_INTENSITY",
+        "SPECTR_PARAM_MIX",
+        "StableContextMenu",
+        "clamp",
+        "isMuted",
+        "lerp",
+        "menuItem",
+        "parseSpectrModulationFrame",
+        "parseSpectrNativeLiveState",
+        "sameBandSet",
+        "smooth",
+        "specColor",
+        "spectrApplyTextScale",
+        "spectrBandMenuLayerStyle",
+        "spectrBandMenuPortal",
+        "spectrCommitFreezeLength",
+        "spectrControlMenuStore",
+        "spectrDrawnBandCount",
+        "spectrEditModeShortcut",
+        "spectrFractionListMetrics",
+        "spectrFractionText",
+        "spectrFreezeLengthCall",
+        "spectrFreezeShown",
+        "spectrFreezeStore",
+        "spectrHelpBlocks",
+        "spectrHelpContentHeight",
+        "spectrHelpLines",
+        "spectrHelpPlainText",
+        "spectrInputValue",
+        "spectrKnobArc",
+        "spectrLengthRowStyle",
+        "spectrLfosDriving",
+        "spectrMenuItemCaptionStyle",
+        "spectrMenuKit",
+        "spectrModControlsStore",
+        "spectrModControlsSubscribe",
+        "spectrModulatedKnobValue",
+        "spectrModulationHeadRows",
+        "spectrModulationRouteList",
+        "spectrOpenControlMenu",
+        "spectrOpenControlTargets",
+        "spectrOverrideAsks",
+        "spectrOverrideModulated",
+        "spectrOverrideStore",
+        "spectrPadBandRow",
+        "spectrPlaceStatusBanner",
+        "spectrPresetLabelText",
+        "spectrResetControl",
+        "spectrSaveAskBeforeOverride",
+        "spectrSendPresetNeighbourhood",
+        "spectrSetKeyboardShortcutsInDaw",
+        "spectrSetPathD",
+        "spectrShortcutChipStyle",
+        "spectrStatusBannerLeft",
+        "spectrStatusBannerTop",
+        "spectrStatusBannerWidth",
+        "spectrToggleFreeze",
+        "spectrToggleLatencyMode",
+        "useAppC",
+        "useAppE",
+        "useAppR",
+        "useAppS",
+        "useCallback",
+        "useEffect",
+        "useEffectChrome",
+        "useMemoPM",
+        "usePE",
+        "usePM",
+        "usePR",
+        "useRef",
+        "useRefChrome",
+        "useSpectrKeyboardPolicy",
+        "useSpectrLfosDriving",
+        "useSpectrModulatedDisplay",
+        "useSpectrModulationState",
+        "useState",
+        "useStateChrome",
+        "useTE",
+        "useTS"
+      ],
+      "JavaScript_runtime": [
+        "Array",
+        "Boolean",
+        "Date",
+        "Error",
+        "Float32Array",
+        "Infinity",
+        "JSON",
+        "Map",
+        "Math",
+        "NaN",
+        "Number",
+        "Object",
+        "Promise",
+        "Set",
+        "String",
+        "arguments",
+        "isFinite",
+        "parseFloat",
+        "parseInt",
+        "undefined"
+      ],
+      "unclassified_external": []
+    },
+    "authored_script_bindings": [
+      "ANALYZER_OPTS",
+      "AnalyzerGlyph",
+      "AnalyzerPopover",
+      "App",
+      "CANONICAL_RES",
+      "Chips",
+      "Chrome",
+      "ContextMenu",
+      "EDIT_MODES",
+      "EditModeGlyph",
+      "EditModePopover",
+      "FACTORY_PATTERNS",
+      "FilterBank",
+      "HelpGuideOverlay",
+      "HelpPopover",
+      "Hrow",
+      "LS_DEFAULT_KEY",
+      "LS_KEY",
+      "ListHeader",
+      "MBtn",
+      "METAPHORS",
+      "MetaphorDropdown",
+      "MetaphorPreview",
+      "MiniPreview",
+      "MorphSlider",
+      "PATTERN_SCHEMA_VERSION",
+      "PatternDeleteDialog",
+      "PatternDetail",
+      "PatternManager",
+      "PatternRow",
+      "PatternSaveDialog",
+      "PickerDropdown",
+      "RailBtn",
+      "Row",
+      "SPECTR_CONTROL_MENUS",
+      "SPECTR_FRACTION_GAP",
+      "SPECTR_FRACTION_HIGHLIGHT",
+      "SPECTR_FRACTION_ROW",
+      "SPECTR_FRACTION_VISIBLE",
+      "SPECTR_HEADER_MONO",
+      "SPECTR_HEADER_SHOW_MIX",
+      "SPECTR_HEADER_SHOW_TAGLINE",
+      "SPECTR_LENGTH_ACCENT",
+      "SPECTR_LENGTH_ACCENT_EDGE",
+      "SPECTR_LENGTH_DECORATION",
+      "SPECTR_LENGTH_FACE",
+      "SPECTR_LENGTH_GAP",
+      "SPECTR_LENGTH_HIGHLIGHT",
+      "SPECTR_LENGTH_PANEL",
+      "SPECTR_LENGTH_REACH",
+      "SPECTR_LENGTH_ROW",
+      "SPECTR_LENGTH_SEPARATOR",
+      "SPECTR_PARAM_AUTO_GAIN",
+      "SPECTR_PARAM_INTENSITY",
+      "SPECTR_PARAM_MIX",
+      "SPECTR_PARAM_OUTPUT",
+      "SPECTR_TEXT_SCALES",
+      "Section",
+      "Segmented",
+      "SettingsModal",
+      "Slider",
+      "SnapBtn",
+      "SpectrAutoGainPill",
+      "SpectrBandsLabel",
+      "SpectrBuildInfo",
+      "SpectrControlMenu",
+      "SpectrFreezeLength",
+      "SpectrFreezeToggle",
+      "SpectrKnob",
+      "SpectrLatencyRail",
+      "SpectrLatencySettings",
+      "SpectrLengthCheck",
+      "SpectrLengthEditor",
+      "SpectrLengthFractionList",
+      "SpectrLengthRow",
+      "SpectrLengthScrollbar",
+      "SpectrModulationOverrideDialog",
+      "SpectrModulationSettings",
+      "SpectrOutputMeter",
+      "SpectrRangeSetting",
+      "SpectrSettingsChips",
+      "SpectrSettingsCloseButton",
+      "SpectrSettingsField",
+      "SpectrSettingsGroup",
+      "SpectrSettingsSlider",
+      "SpectrSettingsToggle",
+      "SpectrTooltipSetting",
+      "SpectrTracingBadge",
+      "SpectrZoomReadout",
+      "StableContextMenu",
+      "StatusBanner",
+      "THEMES",
+      "ThemeDropdown",
+      "ThemeSwatch",
+      "Toggle",
+      "TweaksPanel",
+      "__spectrBandMenuGlobalLayer",
+      "__spectrBandMenuItems",
+      "clamp",
+      "exportEnvelope",
+      "factoryGains",
+      "fromCanonical",
+      "gainDb",
+      "gainToY",
+      "genAirLift",
+      "genAlternate",
+      "genComb",
+      "genFlat",
+      "genHarmonic",
+      "genSubOnly",
+      "genTilt",
+      "genVocal",
+      "iconBtn",
+      "isMuted",
+      "lerp",
+      "loadDefaultId",
+      "loadStore",
+      "makeUserPattern",
+      "menuItem",
+      "parseEnvelope",
+      "parseSpectrModulationFrame",
+      "parseSpectrNativeLiveState",
+      "remapGains",
+      "resolveGains",
+      "round3",
+      "sameBandSet",
+      "saveDefaultId",
+      "saveStore",
+      "smooth",
+      "specColor",
+      "specColorPrefix",
+      "specColorPrefixes",
+      "spectrApplyTextScale",
+      "spectrAskOverride",
+      "spectrBandMenuLayerStyle",
+      "spectrBandMenuPortal",
+      "spectrCloseControlMenu",
+      "spectrCommitFreezeLength",
+      "spectrCommitFreezeLengthNow",
+      "spectrControlMenuStore",
+      "spectrDrawnBandCount",
+      "spectrEditModeShortcut",
+      "spectrFractionListMetrics",
+      "spectrFractionText",
+      "spectrFreezeAccept",
+      "spectrFreezeLengthCall",
+      "spectrFreezeNotify",
+      "spectrFreezeShown",
+      "spectrFreezeStore",
+      "spectrHelpBlocks",
+      "spectrHelpContentHeight",
+      "spectrHelpLines",
+      "spectrHelpMeasure",
+      "spectrHelpPlainText",
+      "spectrHelpRuns",
+      "spectrInputValue",
+      "spectrKnobArc",
+      "spectrLengthRowStyle",
+      "spectrLfosDriving",
+      "spectrLfosDrivingIn",
+      "spectrMenuItemCaptionStyle",
+      "spectrMenuKit",
+      "spectrModControlsStore",
+      "spectrModControlsSubscribe",
+      "spectrModulatedKnobValue",
+      "spectrModulationFromNative",
+      "spectrModulationHeadRows",
+      "spectrModulationRouteList",
+      "spectrOpenControlMenu",
+      "spectrOpenControlTargets",
+      "spectrOverrideAsks",
+      "spectrOverrideModulated",
+      "spectrOverrideStore",
+      "spectrPadBandRow",
+      "spectrPlaceStatusBanner",
+      "spectrPresetLabelText",
+      "spectrResetControl",
+      "spectrSaveAskBeforeOverride",
+      "spectrSendPresetNeighbourhood",
+      "spectrSetFrozen",
+      "spectrSetKeyboardShortcutsInDaw",
+      "spectrSetPathD",
+      "spectrShortcutChipStyle",
+      "spectrStatusBannerLeft",
+      "spectrStatusBannerTop",
+      "spectrStatusBannerWidth",
+      "spectrTextSize",
+      "spectrToggleFreeze",
+      "spectrToggleLatencyMode",
+      "toCanonical",
+      "useAppC",
+      "useAppE",
+      "useAppR",
+      "useAppS",
+      "useCallback",
+      "useEffect",
+      "useEffectChrome",
+      "useMemo",
+      "useMemoPM",
+      "usePE",
+      "usePM",
+      "usePR",
+      "useRef",
+      "useRefChrome",
+      "useSpectrKeyboardPolicy",
+      "useSpectrLfosDriving",
+      "useSpectrModulatedDisplay",
+      "useSpectrModulationState",
+      "useState",
+      "useStateChrome",
+      "useTE",
+      "useTS"
+    ]
+  },
+  "baseline": {
+    "exit_status": 2,
+    "diagnostics": [
+      {
+        "file": "components/App.tsx",
+        "line": 17,
+        "column": 59,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 26,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 28,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 29,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 31,
+        "column": 23,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativePatterns' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 35,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 40,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 40,
+        "column": 64,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 40,
+        "column": 104,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 49,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativePatterns' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 60,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 95,
+        "column": 41,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 96,
+        "column": 18,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 97,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 98,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 105,
+        "column": 41,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 106,
+        "column": 18,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 107,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrRecordModulationFrame' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 115,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 122,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 136,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 171,
+        "column": 10,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 174,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 187,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 190,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 192,
+        "column": 40,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 195,
+        "column": 40,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 225,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 229,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 270,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativePatterns' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 281,
+        "column": 35,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 304,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 328,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 332,
+        "column": 18,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 333,
+        "column": 18,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 335,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 356,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 357,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 379,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 382,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 444,
+        "column": 32,
+        "code": "TS2339",
+        "message": "Property 'spectrDismissBandMenu' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 446,
+        "column": 38,
+        "code": "TS2339",
+        "message": "Property 'spectrToggleFreeze' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 447,
+        "column": 20,
+        "code": "TS2339",
+        "message": "Property 'spectrToggleFreeze' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 464,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'spectrDismissBandMenu' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 509,
+        "column": 27,
+        "code": "TS2339",
+        "message": "Property 'spectrDismissBandMenu' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 530,
+        "column": 32,
+        "code": "TS2339",
+        "message": "Property 'spectrDismissBandMenu' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 537,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 586,
+        "column": 38,
+        "code": "TS2339",
+        "message": "Property 'spectrToggleFreeze' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 587,
+        "column": 20,
+        "code": "TS2339",
+        "message": "Property 'spectrToggleFreeze' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 598,
+        "column": 109,
+        "code": "TS2741",
+        "message": "Property 'onStateChange' is missing in type '{ settings: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; nativeHydrated: any; initialNativeState: any; onNativeState: any; onEditModeChange: (v: any) => void; }' but required in type '{ settings: any; onStateChange: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; onEditModeChange: any; nativeHydrated: any; onNativeState: any; initialNativeState: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 600,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 607,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 611,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 615,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 191,
+        "column": 7,
+        "code": "TS2739",
+        "message": "Type '{ railAction: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, active, popupKind, dropdown, onContextMenu",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 191,
+        "column": 156,
+        "code": "TS2739",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 216,
+        "column": 228,
+        "code": "TS2739",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 219,
+        "column": 133,
+        "code": "TS2739",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 222,
+        "column": 227,
+        "code": "TS2739",
+        "message": "Type '{ popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 237,
+        "column": 120,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 249,
+        "column": 650,
+        "code": "TS2741",
+        "message": "Property 'onClear' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 249,
+        "column": 808,
+        "code": "TS2741",
+        "message": "Property 'onClear' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 249,
+        "column": 966,
+        "code": "TS2741",
+        "message": "Property 'capture' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/Chrome.tsx",
+        "line": 249,
+        "column": 1162,
+        "code": "TS2741",
+        "message": "Property 'capture' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 8,
+        "column": 10,
+        "code": "TS2339",
+        "message": "Property 'SPECTR_MODULATION_LOOKS' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 178,
+        "column": 9,
+        "code": "TS2349",
+        "message": "This expression is not callable.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 278,
+        "column": 19,
+        "code": "TS2339",
+        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 285,
+        "column": 23,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerShow' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 286,
+        "column": 19,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerShow' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 333,
+        "column": 25,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerKeepAlive' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 333,
+        "column": 76,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerKeepAlive' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 536,
+        "column": 33,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 546,
+        "column": 31,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 619,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 619,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 620,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 698,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 698,
+        "column": 51,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 699,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 843,
+        "column": 23,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 886,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 901,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 913,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 965,
+        "column": 29,
+        "code": "TS2339",
+        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 979,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 983,
+        "column": 29,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 984,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1259,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1259,
+        "column": 46,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1260,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1262,
+        "column": 27,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1266,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1731,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1766,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1766,
+        "column": 87,
+        "code": "TS2339",
+        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1810,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1810,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1819,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1943,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1943,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1944,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1968,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1969,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1972,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1978,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1988,
+        "column": 55,
+        "code": "TS2362",
+        "message": "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1988,
+        "column": 59,
+        "code": "TS2363",
+        "message": "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1994,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1994,
+        "column": 68,
+        "code": "TS2339",
+        "message": "Property 'spectrStartOracle' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1995,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1996,
+        "column": 25,
+        "code": "TS2339",
+        "message": "Property 'spectrStartOracle' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2081,
+        "column": 13,
+        "code": "TS2339",
+        "message": "Property 'paint' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2089,
+        "column": 13,
+        "code": "TS2339",
+        "message": "Property 'editedBand' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2090,
+        "column": 13,
+        "code": "TS2339",
+        "message": "Property 'changed' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2094,
+        "column": 13,
+        "code": "TS2339",
+        "message": "Property 'paint' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2352,
+        "column": 70,
+        "code": "TS2362",
+        "message": "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2354,
+        "column": 47,
+        "code": "TS2538",
+        "message": "Type 'unknown' cannot be used as an index type.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2487,
+        "column": 19,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2487,
+        "column": 41,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2498,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2514,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2514,
+        "column": 64,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2524,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2533,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2748,
+        "column": 11,
+        "code": "TS2554",
+        "message": "Expected 4 arguments, but got 3.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2773,
+        "column": 11,
+        "code": "TS2554",
+        "message": "Expected 4 arguments, but got 3.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2789,
+        "column": 11,
+        "code": "TS2554",
+        "message": "Expected 4 arguments, but got 3.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 2956,
+        "column": 28,
+        "code": "TS17001",
+        "message": "JSX elements cannot have multiple attributes with the same name.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpGuideOverlay.tsx",
+        "line": 15,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 146,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 250,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 296,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 334,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 389,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 445,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 497,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 546,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 590,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 636,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 694,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 736,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 820,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 867,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/HelpPopover.tsx",
+        "line": 22,
+        "column": 964,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 4,
+        "column": 59,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 46,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 46,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 54,
+        "column": 25,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 55,
+        "column": 25,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternDeleteDialog.tsx",
+        "line": 28,
+        "column": 31,
+        "code": "TS2339",
+        "message": "Property '__pulpId' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/PatternDeleteDialog.tsx",
+        "line": 28,
+        "column": 55,
+        "code": "TS2339",
+        "message": "Property '__pulpId' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/PatternDeleteDialog.tsx",
+        "line": 45,
+        "column": 362,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDeleteDialog.tsx",
+        "line": 45,
+        "column": 429,
+        "code": "TS2739",
+        "message": "Type '{ action: string; danger: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 11,
+        "column": 40,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 46,
+        "column": 181,
+        "code": "TS2304",
+        "message": "Cannot find name 'iconBtn'.",
+        "category": "unknown-binding",
+        "unknown_name": "iconBtn"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 635,
+        "code": "TS2739",
+        "message": "Type '{ action: string; primary: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 700,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 808,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 908,
+        "code": "TS2739",
+        "message": "Type '{ onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 998,
+        "code": "TS2739",
+        "message": "Type '{ action: string; danger: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 1093,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternDetail.tsx",
+        "line": 55,
+        "column": 1179,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 121,
+        "column": 26,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 178,
+        "column": 53,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 178,
+        "column": 95,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 179,
+        "column": 22,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 191,
+        "column": 81,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 214,
+        "column": 216,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 214,
+        "column": 242,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 215,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 242,
+        "column": 24,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 267,
+        "column": 43,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 342,
+        "column": 71,
+        "code": "TS2304",
+        "message": "Cannot find name 'iconBtn'.",
+        "category": "unknown-binding",
+        "unknown_name": "iconBtn"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 347,
+        "column": 211,
+        "code": "TS2322",
+        "message": "Type '{ key: any; pattern: any; selected: boolean; isDefault: boolean; onClick: () => void; N: any; }' is not assignable to type '{ pattern: any; selected: any; isDefault: any; onClick: any; N: any; }'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 347,
+        "column": 826,
+        "code": "TS2322",
+        "message": "Type '{ key: any; pattern: any; selected: boolean; isDefault: boolean; onClick: () => void; N: any; }' is not assignable to type '{ pattern: any; selected: any; isDefault: any; onClick: any; N: any; }'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 353,
+        "column": 7,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: () => any; primary: true; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 353,
+        "column": 90,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 353,
+        "column": 164,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 353,
+        "column": 220,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 367,
+        "column": 82,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 367,
+        "column": 142,
+        "code": "TS2739",
+        "message": "Type '{ primary: true; onClick: () => void; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 382,
+        "column": 134,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternManager.tsx",
+        "line": 382,
+        "column": 202,
+        "code": "TS2739",
+        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternRow.tsx",
+        "line": 4,
+        "column": 40,
+        "code": "TS2339",
+        "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/PatternSaveDialog.tsx",
+        "line": 27,
+        "column": 31,
+        "code": "TS2339",
+        "message": "Property '__pulpId' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/PatternSaveDialog.tsx",
+        "line": 27,
+        "column": 55,
+        "code": "TS2339",
+        "message": "Property '__pulpId' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/PatternSaveDialog.tsx",
+        "line": 62,
+        "column": 99,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/PatternSaveDialog.tsx",
+        "line": 62,
+        "column": 164,
+        "code": "TS2739",
+        "message": "Type '{ action: string; primary: true; onClick: () => void; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 19,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 40,
+        "column": 31,
+        "code": "TS2339",
+        "message": "Property '__pulpRefreshMaterializedState__' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 40,
+        "column": 87,
+        "code": "TS2339",
+        "message": "Property '__pulpRefreshMaterializedState__' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 590,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 693,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 848,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => any; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1093,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1172,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1368,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1443,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1633,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 1878,
+        "code": "TS2339",
+        "message": "Property 'SPECTR_MODULATION_LOOKS' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 2142,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 2524,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 2612,
+        "code": "TS2739",
+        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': fmt, gestureId, disabled, target",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 2749,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 2821,
+        "code": "TS2739",
+        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': fmt, gestureId, disabled, target",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3004,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3112,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3264,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3350,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3566,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3640,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 3812,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4022,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4249,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4369,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4513,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4736,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 4970,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 5196,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 5472,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrAutoGainPill.tsx",
+        "line": 13,
+        "column": 19,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_HEADER_MONO"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 11,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrBuildInfoRequestSerial' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 11,
+        "column": 60,
+        "code": "TS2339",
+        "message": "Property '__spectrBuildInfoRequestSerial' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 12,
+        "column": 55,
+        "code": "TS2339",
+        "message": "Property '__spectrBuildInfoRequestSerial' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 20,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 20,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 29,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 30,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 35,
+        "column": 32,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 83,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 88,
+        "column": 27,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrControlMenu.tsx",
+        "line": 16,
+        "column": 56,
+        "code": "TS2339",
+        "message": "Property 'useSpectrModulationState' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrControlMenu.tsx",
+        "line": 65,
+        "column": 40,
+        "code": "TS2304",
+        "message": "Cannot find name 'spectrCloseControlMenu'.",
+        "category": "unknown-binding",
+        "unknown_name": "spectrCloseControlMenu"
+      },
+      {
+        "file": "components/SpectrControlMenu.tsx",
+        "line": 165,
+        "column": 244,
+        "code": "TS2304",
+        "message": "Cannot find name 'spectrCloseControlMenu'.",
+        "category": "unknown-binding",
+        "unknown_name": "spectrCloseControlMenu"
+      },
+      {
+        "file": "components/SpectrFreezeLength.tsx",
+        "line": 245,
+        "column": 45,
+        "code": "TS2322",
+        "message": "Type '{ key: any; label: any; value: any; selected: boolean; highlighted: boolean; action: string; onHover: () => void; onPick: () => void; }' is not assignable to type '{ label: any; selected: any; highlighted: any; action: any; onPick: any; onHover: any; value: any; }'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrFreezeLength.tsx",
+        "line": 248,
+        "column": 50,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_REACH'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_REACH"
+      },
+      {
+        "file": "components/SpectrFreezeLength.tsx",
+        "line": 248,
+        "column": 192,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_REACH'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_REACH"
+      },
+      {
+        "file": "components/SpectrFreezeLength.tsx",
+        "line": 256,
+        "column": 9,
+        "code": "TS2554",
+        "message": "Expected 2 arguments, but got 1.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrFreezeLength.tsx",
+        "line": 265,
+        "column": 54,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_FACE"
+      },
+      {
+        "file": "components/SpectrKnob.tsx",
+        "line": 193,
+        "column": 17,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_HEADER_MONO"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 67,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 67,
+        "column": 33,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 68,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 93,
+        "column": 27,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 93,
+        "column": 309,
+        "code": "TS2739",
+        "message": "Type '{ label: any; hint: any; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrLatencySettings.tsx",
+        "line": 93,
+        "column": 386,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => void; opts: any; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 94,
+        "column": 33,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 96,
+        "column": 46,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 98,
+        "column": 165,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'. Did you mean 'SPECTR_LENGTH_ROW'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 107,
+        "column": 48,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_FACE"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 107,
+        "column": 497,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 108,
+        "column": 109,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_DECORATION"
+      },
+      {
+        "file": "components/SpectrLengthEditor.tsx",
+        "line": 110,
+        "column": 28,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthFractionList.tsx",
+        "line": 90,
+        "column": 19,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_FRACTION_GAP'. Did you mean 'SPECTR_FRACTION_ROW'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthFractionList.tsx",
+        "line": 93,
+        "column": 59,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_FRACTION_HIGHLIGHT'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_FRACTION_HIGHLIGHT"
+      },
+      {
+        "file": "components/SpectrLengthFractionList.tsx",
+        "line": 94,
+        "column": 64,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_FRACTION_HIGHLIGHT'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_FRACTION_HIGHLIGHT"
+      },
+      {
+        "file": "components/SpectrLengthFractionList.tsx",
+        "line": 94,
+        "column": 150,
+        "code": "TS2552",
+        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'. Did you mean 'SPECTR_LENGTH_ROW'?",
+        "category": "unknown-binding"
+      },
+      {
+        "file": "components/SpectrLengthRow.tsx",
+        "line": 4,
+        "column": 374,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_LENGTH_DECORATION"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 10,
+        "column": 10,
+        "code": "TS2339",
+        "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 51,
+        "column": 27,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 51,
+        "column": 49,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 55,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 94,
+        "column": 184,
+        "code": "TS2739",
+        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationOverrideDialog.tsx",
+        "line": 94,
+        "column": 271,
+        "code": "TS2739",
+        "message": "Type '{ action: string; primary: true; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 39,
+        "column": 36,
+        "code": "TS2322",
+        "message": "Type '{ key: any; label: any; }' is not assignable to type '{ label: any; hint: any; children: any; hidden: any; }'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 69,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 265,
+        "code": "TS2554",
+        "message": "Expected 2 arguments, but got 1.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 283,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 521,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 733,
+        "code": "TS2739",
+        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': disabled, target",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 924,
+        "code": "TS2554",
+        "message": "Expected 2 arguments, but got 1.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 942,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 1182,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 1395,
+        "code": "TS2739",
+        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': disabled, target",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 1667,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 2018,
+        "code": "TS2554",
+        "message": "Expected 2 arguments, but got 1.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 2038,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 2342,
+        "code": "TS2339",
+        "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 2392,
+        "code": "TS2339",
+        "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrModulationSettings.tsx",
+        "line": 44,
+        "column": 2510,
+        "code": "TS2739",
+        "message": "Type '{ label: string; hint: string; }' is missing the following properties from type '{ label: any; hint: any; children: any; hidden: any; }': children, hidden",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 63,
+        "column": 59,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 114,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'offsetWidth' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 278,
+        "column": 17,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 278,
+        "column": 39,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 284,
+        "column": 32,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 368,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 383,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 454,
+        "column": 773,
+        "code": "TS2741",
+        "message": "Property 'after' is missing in type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' but required in type '{ paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; title: any; readoutWidth: any; onEdit: any; after: any; tip: any; modTarget: any; modName: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 454,
+        "column": 1272,
+        "code": "TS2741",
+        "message": "Property 'after' is missing in type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' but required in type '{ paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; title: any; readoutWidth: any; onEdit: any; after: any; tip: any; modTarget: any; modName: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 454,
+        "column": 1818,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_PARAM_OUTPUT'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_PARAM_OUTPUT"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 461,
+        "column": 21,
+        "code": "TS2304",
+        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
+        "category": "unknown-binding",
+        "unknown_name": "SPECTR_HEADER_MONO"
+      },
+      {
+        "file": "components/SpectrRangeSetting.tsx",
+        "line": 8,
+        "column": 71,
+        "code": "TS2741",
+        "message": "Property 'wrap' is missing in type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrTooltipSetting.tsx",
+        "line": 19,
+        "column": 19,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrTooltipSetting.tsx",
+        "line": 19,
+        "column": 41,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrTooltipSetting.tsx",
+        "line": 20,
+        "column": 30,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/SpectrTracingBadge.tsx",
+        "line": 6,
+        "column": 59,
+        "code": "TS2339",
+        "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/StatusBanner.tsx",
+        "line": 48,
+        "column": 10,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerShow' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/StatusBanner.tsx",
+        "line": 71,
+        "column": 10,
+        "code": "TS2339",
+        "message": "Property 'spectrStatusBannerKeepAlive' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/StatusBanner.tsx",
+        "line": 153,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property 'style' does not exist on type 'Element'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 9,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'spectrPublishMode' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 30,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 56,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 243,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 427,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 555,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 720,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 749,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 956,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 1118,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/TweaksPanel.tsx",
+        "line": 57,
+        "column": 1232,
+        "code": "TS2741",
+        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
+        "category": "other-semantic"
+      }
+    ],
+    "counts": {
+      "browser-window": 159,
+      "other-semantic": 64,
+      "prop-or-type": 64,
+      "unknown-binding": 23
+    },
+    "counts_by_code": {
+      "TS2339": 169,
+      "TS2741": 48,
+      "TS2739": 53,
+      "TS2349": 1,
+      "TS2362": 2,
+      "TS2363": 1,
+      "TS2538": 1,
+      "TS2554": 7,
+      "TS17001": 1,
+      "TS2304": 16,
+      "TS2322": 4,
+      "TS2552": 7
+    },
+    "unknown_binding_names": [
+      "SPECTR_FRACTION_HIGHLIGHT",
+      "SPECTR_HEADER_MONO",
+      "SPECTR_LENGTH_DECORATION",
+      "SPECTR_LENGTH_FACE",
+      "SPECTR_LENGTH_REACH",
+      "SPECTR_PARAM_OUTPUT",
+      "iconBtn",
+      "spectrCloseControlMenu"
+    ]
+  },
+  "negative_control": {
+    "status": "passed",
+    "name": "PlantedInventoryType",
+    "diagnostic": {
+      "file": "components/FilterBank.tsx",
+      "line": 3030,
+      "column": 32,
+      "code": "TS2304",
+      "message": "Cannot find name 'PlantedInventoryType'.",
+      "category": "unknown-binding",
+      "unknown_name": "PlantedInventoryType"
+    },
+    "planted_diagnostic_count": 311
+  },
+  "scope": {
+    "runtime_artifact_changed": false,
+    "semantic_full_app": false,
+    "runtime_facade": "not-applied",
+    "staging_only": true
+  }
+}

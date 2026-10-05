@@ -112,6 +112,18 @@ class AuthoredModuleEmitterTest(unittest.TestCase):
             self.assertNotEqual(checked.returncode, 0)
             self.assertIn("emission module path changed", checked.stderr)
 
+    def test_destination_on_checkout_volume_uses_same_filesystem_staging(self):
+        # tempfile.TemporaryDirectory(dir=ROOT) deliberately keeps the output
+        # beside this checkout. The emitter must not stage in /var/folders and
+        # then fail its final atomic rename with EXDEV.
+        with tempfile.TemporaryDirectory(dir=ROOT) as td:
+            root = pathlib.Path(td)
+            manifest = self.make_manifest(root)
+            output = root / "emitted"
+            result = run_emitter(ARTIFACT, manifest, output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((output / "authored-modules.manifest.json").exists())
+
     def test_full_app_root_emits_dependency_closure(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)

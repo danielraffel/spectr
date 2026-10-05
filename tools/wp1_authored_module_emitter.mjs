@@ -12,7 +12,6 @@
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
@@ -257,11 +256,16 @@ function validateEmission(raw, emissionPath, artifactPath, manifestPath, outDir)
 
 function emit({ artifactPath, manifestPath, outDir, converter }) {
   if (fs.existsSync(outDir)) fail(`output directory already exists: ${outDir}`);
+  // Stage beside the destination so the final atomic rename remains on one
+  // filesystem. A system temp directory can be a different volume from a
+  // checkout (for example /var/folders versus /Volumes/Workshop), which turns
+  // renameSync into EXDEV and breaks otherwise valid imports.
+  fs.mkdirSync(path.dirname(outDir), { recursive: true });
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { manifest, byId } = validateManifest(manifestBytes, artifactBytes);
   const ordered = dependencyOrder(manifest, byId);
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-emitter-'));
+  const stage = fs.mkdtempSync(path.join(path.dirname(outDir), `.${path.basename(outDir)}.staging-`));
   try {
     const componentsDir = path.join(stage, 'components'); fs.mkdirSync(componentsDir, { recursive: true });
     const modules = [];
