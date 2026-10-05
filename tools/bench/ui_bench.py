@@ -8,7 +8,7 @@ placeholders to select a workload.  A command is executed three times by
 default; missing required metrics are errors, never reported as zero.
 """
 from __future__ import annotations
-import argparse, json, pathlib, re, shlex, subprocess, time
+import argparse, json, pathlib, re, shlex, subprocess, sys, time
 
 SCENARIOS = ("open", "frame", "bridge", "layout", "paint", "size")
 REQUIRED = {
@@ -46,7 +46,10 @@ def _child_rss_kb(stderr: str) -> float:
     return float(value) / 1024.0
 
 def run(command: str, scenario: str, run_no: int) -> dict:
-    rendered = command.format(scenario=scenario, run=run_no)
+    try:
+        rendered = command.format(scenario=scenario, run=run_no)
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError(f"{scenario} run {run_no} has invalid command template: {exc}") from exc
     started = time.monotonic()
     # Keep the caller's shell syntax (pipes, redirects, and quoted probes) but
     # put one ``time`` envelope around exactly this child invocation.
