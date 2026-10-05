@@ -204,6 +204,9 @@ checks = {
         and "auval -v aufx Spec Pulp" in workflow),
     "PKG": ("pkgbuild --root" in workflow
             and 'ditto "$SPECTR_BUILD_DIR/Spectr.app"' in workflow
+            and 'CMAKE_PROJECT_VERSION:STATIC=' in workflow
+            and 'project_version" --install-location /' in workflow
+            and "--version 1.0.0" not in workflow
             and "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
             and all(pattern in workflow for pattern in (
                 r"^(\./)?Applications/Spectr\.app/",
