@@ -60,9 +60,12 @@ class RuntimeFacadeContractTest(unittest.TestCase):
             self.assertEqual(report["schema"], "spectr-owned-runtime-facade-contract-v1")
             self.assertEqual(report["typescript"]["diagnostics"], 0)
             self.assertEqual(report["runtime_facade"]["smoke"]["status"], "passed")
+            self.assertEqual(report["runtime_facade"]["smoke"]["component"], "Panel")
+            self.assertEqual(report["runtime_facade"]["smoke"]["component_path"], "compiled/components/Panel.js")
             self.assertIn("React", report["runtime_facade"]["source"]["exports"])
             self.assertIn("claimDocumentNavigationFocus", report["runtime_facade"]["source"]["exports"])
             self.assertEqual(report["modules"][0]["runtime_imports"], ["React", "claimDocumentNavigationFocus"])
+            self.assertTrue(all("compiled" in module for module in report["modules"]))
             verified = run_facade(ARTIFACT, manifest, emission, output, verify=True)
             self.assertEqual(verified.returncode, 0, verified.stderr)
             self.assertIn('"verified": true', verified.stdout)
@@ -105,7 +108,20 @@ class RuntimeFacadeContractTest(unittest.TestCase):
             globals_file.write_text(globals_file.read_text() + "declare const forgedRuntime: any;\n")
             checked = run_facade(ARTIFACT, manifest, emission, output, verify=True)
             self.assertNotEqual(checked.returncode, 0)
-            self.assertIn("runtime facade globals identity changed", checked.stderr)
+            self.assertIn("runtime facade file identity changed for globals.d.ts", checked.stderr)
+
+    def test_tampered_compiled_component_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            manifest, emission = self.prepare(root)
+            output = root / "facade"
+            built = run_facade(ARTIFACT, manifest, emission, output)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            compiled = output / "compiled" / "components" / "Panel.js"
+            compiled.write_text(compiled.read_text() + "\n// forged compiled component\n")
+            checked = run_facade(ARTIFACT, manifest, emission, output, verify=True)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertIn("compiled runtime facade module identity changed for Panel", checked.stderr)
 
 
 if __name__ == "__main__":

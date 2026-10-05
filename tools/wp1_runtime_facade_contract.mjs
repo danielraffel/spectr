@@ -102,23 +102,41 @@ function runTypeScript(stage) {
   return diagnostics;
 }
 
-function compileFacade(stage) {
+function compileFacade(stage, componentNames) {
   const compiledDir = path.join(stage, 'compiled');
   fs.mkdirSync(compiledDir);
-  const result = spawnSync(process.execPath, [tscPath, 'runtime-bindings.mts', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--skipLibCheck', '--declaration', 'false', '--pretty', 'false', '--outDir', 'compiled'], {
+  const componentFiles = componentNames.map((name) => path.join('components', `${name}.tsx`));
+  const result = spawnSync(process.execPath, [tscPath, 'globals.d.ts', 'runtime-bindings.mts', ...componentFiles,
+    '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--jsx', 'react',
+    '--skipLibCheck', '--declaration', 'false', '--pretty', 'false', '--outDir', 'compiled'], {
     cwd: stage, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   });
-  if (result.error) fail(`facade compilation process failed: ${result.error.message}`);
-  if (result.status !== 0) fail(`runtime facade compilation failed:\n${(result.stdout || '') + (result.stderr || '')}`);
-  const output = path.join(compiledDir, 'runtime-bindings.mjs');
-  if (!fs.existsSync(output)) fail('compiled runtime facade is missing');
-  return output;
+  if (result.error) fail(`facade/component compilation process failed: ${result.error.message}`);
+  if (result.status !== 0) fail(`runtime facade/component compilation failed:\n${(result.stdout || '') + (result.stderr || '')}`);
+  const facadePath = path.join(compiledDir, 'runtime-bindings.mjs');
+  if (!fs.existsSync(facadePath)) fail('compiled runtime facade is missing');
+  const componentPaths = new Map();
+  for (const name of componentNames) {
+    const componentPath = path.join(compiledDir, 'components', `${name}.js`);
+    if (!fs.existsSync(componentPath)) fail(`compiled component ${name} is missing`);
+    componentPaths.set(name, componentPath);
+  }
+  // TypeScript emits .js for TSX under ESNext. Mark this isolated compilation
+  // tree as ESM so Node imports the compiled component closure with the same
+  // semantics as the facade's .mjs output.
+  fs.writeFileSync(path.join(compiledDir, 'package.json'), '{"type":"module"}\n');
+  return { facadePath, componentPaths, packagePath: path.join(compiledDir, 'package.json') };
 }
 
-function runNodeSmoke(compiledPath) {
-  const script = `const facade = await import(process.env.WP1_FACADE_URL);\nif (typeof facade.React?.createElement !== 'function') throw new Error('React.createElement export is not callable');\nif (typeof facade.claimDocumentNavigationFocus !== 'function') throw new Error('claimDocumentNavigationFocus export is not callable');\nconst element = facade.React.createElement('button', { id: 'smoke' }, 'ok');\nif (element.type !== 'button' || element.props.id !== 'smoke' || element.children[0] !== 'ok') throw new Error('React facade behavior mismatch');\nif (facade.claimDocumentNavigationFocus() !== true) throw new Error('navigation helper behavior mismatch');`;
+function runNodeSmoke(compiledPath, rootComponentPath, rootComponentName) {
+  const script = `const facade = await import(process.env.WP1_FACADE_URL);\nif (typeof facade.React?.createElement !== 'function') throw new Error('React.createElement export is not callable');\nif (typeof facade.claimDocumentNavigationFocus !== 'function') throw new Error('claimDocumentNavigationFocus export is not callable');\nconst element = facade.React.createElement('button', { id: 'smoke' }, 'ok');\nif (element.type !== 'button' || element.props.id !== 'smoke' || element.children[0] !== 'ok') throw new Error('React facade behavior mismatch');\nif (facade.claimDocumentNavigationFocus() !== true) throw new Error('navigation helper behavior mismatch');\nconst component = await import(process.env.WP1_COMPONENT_URL);\nif (typeof component[process.env.WP1_COMPONENT_NAME] !== 'function') throw new Error('compiled root component export is not callable');\nconst root = component[process.env.WP1_COMPONENT_NAME]();\nif (!root || typeof root.type !== 'function' || !root.props || root.props.label !== 'ok') throw new Error('compiled root component did not produce the expected child element');\nconst child = root.type(root.props);\nif (child?.type !== 'button' || child?.children?.[0] !== 'ok' || typeof child?.props?.onClick !== 'function') throw new Error('compiled component closure did not render through React facade');\nif (child.props.onClick() !== true) throw new Error('compiled component helper behavior mismatch');`;
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-    cwd: scriptDir, env: { ...process.env, WP1_FACADE_URL: pathToFileURL(compiledPath).href }, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+    cwd: scriptDir, env: {
+      ...process.env,
+      WP1_FACADE_URL: pathToFileURL(compiledPath).href,
+      WP1_COMPONENT_URL: pathToFileURL(rootComponentPath).href,
+      WP1_COMPONENT_NAME: rootComponentName,
+    }, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   });
   if (result.error) fail(`Node runtime smoke failed: ${result.error.message}`);
   if (result.status !== 0) fail(`Node runtime smoke rejected facade: ${(result.stderr || result.stdout || 'no diagnostic').trim()}`);
@@ -145,7 +163,17 @@ function build({ artifactPath, manifestPath, emissionDir, outDir }) {
       const runtimeImports = facadeImports(component, byId);
       const source = readBytes(path.join(baseDir, record.path), `base module ${record.name}`);
       const prefix = runtimeImports.length ? `import { ${runtimeImports.join(', ')} } from '../runtime-bindings.mjs';\n` : '';
-      const output = Buffer.from(`${prefix}${source.toString('utf8')}`);
+      let sourceText = source.toString('utf8');
+      // The staging contract uses extensionless TypeScript imports so the
+      // checker can resolve TSX sources. Node's ESM loader requires an
+      // explicit extension after compilation; rewrite only the dependency
+      // edges proven by this manifest, leaving authored strings untouched.
+      for (const dependencyId of component.dependencies) {
+        const dependency = byId.get(dependencyId);
+        if (!dependency) fail(`component ${component.name} dependency ${dependencyId} is unknown`);
+        sourceText = sourceText.replaceAll(`from './${dependency.name}'`, `from './${dependency.name}.js'`);
+      }
+      const output = Buffer.from(`${prefix}${sourceText}`);
       const outputPath = path.join(stage, record.path);
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
       fs.writeFileSync(outputPath, output);
@@ -159,9 +187,25 @@ function build({ artifactPath, manifestPath, emissionDir, outDir }) {
     fs.writeFileSync(path.join(stage, 'runtime-bindings.mts'), facadeSource);
     fs.writeFileSync(path.join(stage, 'globals.d.ts'), 'declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } }\n');
     const diagnostics = runTypeScript(stage);
-    const compiledPath = compileFacade(stage);
-    const compiledBytes = readBytes(compiledPath, 'compiled runtime facade');
-    runNodeSmoke(compiledPath);
+    const componentNames = modules.map((module) => module.name);
+    const compiled = compileFacade(stage, componentNames);
+    const compiledBytes = readBytes(compiled.facadePath, 'compiled runtime facade');
+    const rootId = manifest.roots?.[0];
+    const rootComponent = byId.get(rootId);
+    if (!rootComponent) fail('runtime facade fixture has no resolvable root component');
+    const rootComponentPath = compiled.componentPaths.get(rootComponent.name);
+    if (!rootComponentPath) fail(`compiled root component ${rootComponent.name} is missing`);
+    runNodeSmoke(compiled.facadePath, rootComponentPath, rootComponent.name);
+    for (const module of modules) {
+      const componentPath = compiled.componentPaths.get(module.name);
+      const componentBytes = readBytes(componentPath, `compiled component ${module.name}`);
+      module.compiled = {
+        path: path.relative(stage, componentPath),
+        sha256: sha256(componentBytes),
+        bytes: componentBytes.length,
+      };
+    }
+    const packageBytes = readBytes(compiled.packagePath, 'compiled ESM package marker');
     const contract = {
       schema: SCHEMA, version: 1,
       artifact: { path: path.basename(artifactPath), sha256: sha256(artifactBytes), bytes: artifactBytes.length },
@@ -171,10 +215,17 @@ function build({ artifactPath, manifestPath, emissionDir, outDir }) {
       runtime_facade: {
         source: { path: 'runtime-bindings.mts', sha256: sha256(facadeSource), bytes: facadeSource.length, exports: [...facadeExportNames(facadeSource.toString('utf8'))].sort() },
         compiled: { path: 'compiled/runtime-bindings.mjs', sha256: sha256(compiledBytes), bytes: compiledBytes.length },
-        smoke: { runner: 'node', status: 'passed' },
+        smoke: {
+          runner: 'node', status: 'passed',
+          component: rootComponent.name,
+          component_path: path.relative(stage, rootComponentPath),
+        },
       },
       modules,
-      files: [{ path: 'globals.d.ts', sha256: sha256(readBytes(path.join(stage, 'globals.d.ts')),), bytes: fs.statSync(path.join(stage, 'globals.d.ts')).size }],
+      files: [
+        { path: 'globals.d.ts', sha256: sha256(readBytes(path.join(stage, 'globals.d.ts')),), bytes: fs.statSync(path.join(stage, 'globals.d.ts')).size },
+        { path: 'compiled/package.json', sha256: sha256(packageBytes), bytes: packageBytes.length },
+      ],
     };
     fs.writeFileSync(path.join(stage, 'runtime-facade-contract.json'), `${JSON.stringify(contract, null, 2)}\n`);
     fs.renameSync(stage, outDir);
@@ -197,6 +248,10 @@ function verify({ artifactPath, manifestPath, emissionDir, outDir }) {
   assertInteger(contract.runtime_facade.compiled.bytes, 'runtime facade compiled bytes');
   assertDigest(contract.runtime_facade.source.sha256, 'runtime facade source sha256');
   assertDigest(contract.runtime_facade.compiled.sha256, 'runtime facade compiled sha256');
+  assertKeys(contract.runtime_facade.smoke, new Set(['runner', 'status', 'component', 'component_path']), 'runtime facade smoke receipt');
+  if (contract.runtime_facade.smoke.runner !== 'node' || contract.runtime_facade.smoke.status !== 'passed') fail('runtime facade smoke receipt is not passed');
+  if (!NAME_RE.test(contract.runtime_facade.smoke.component) || contract.runtime_facade.smoke.component_path !== path.join('compiled', 'components', `${contract.runtime_facade.smoke.component}.js`))
+    fail('runtime facade component smoke identity is invalid');
   const facadePath = path.join(outDir, contract.runtime_facade.source.path);
   const facadeSource = readBytes(facadePath, 'runtime facade source').toString('utf8');
   const actualExports = facadeExportNames(facadeSource);
@@ -206,29 +261,39 @@ function verify({ artifactPath, manifestPath, emissionDir, outDir }) {
   const compiled = readBytes(compiledPath, 'compiled runtime facade');
   if (sha256(compiled) !== contract.runtime_facade.compiled.sha256 || compiled.length !== contract.runtime_facade.compiled.bytes)
     fail('compiled runtime facade identity changed');
-  assertKeys(contract.files?.[0], new Set(['path', 'sha256', 'bytes']), 'runtime facade globals receipt');
-  if (contract.files.length !== 1 || contract.files[0].path !== 'globals.d.ts') fail('runtime facade globals receipt changed');
-  assertDigest(contract.files[0].sha256, 'runtime facade globals sha256');
-  assertInteger(contract.files[0].bytes, 'runtime facade globals bytes');
-  const globals = readBytes(path.join(outDir, 'globals.d.ts'), 'runtime facade globals');
-  if (sha256(globals) !== contract.files[0].sha256 || globals.length !== contract.files[0].bytes)
-    fail('runtime facade globals identity changed');
+  if (!Array.isArray(contract.files) || contract.files.length !== 2) fail('runtime facade files receipt changed');
+  for (const file of contract.files) {
+    assertKeys(file, new Set(['path', 'sha256', 'bytes']), 'runtime facade file receipt');
+    assertDigest(file.sha256, `${file.path} sha256`);
+    assertInteger(file.bytes, `${file.path} bytes`);
+    const bytes = readBytes(path.join(outDir, file.path), `runtime facade file ${file.path}`);
+    if (sha256(bytes) !== file.sha256 || bytes.length !== file.bytes) fail(`runtime facade file identity changed for ${file.path}`);
+  }
+  if (contract.files[0].path !== 'globals.d.ts' || contract.files[1].path !== 'compiled/package.json') fail('runtime facade files are not canonical');
   if (!Array.isArray(contract.modules)) fail('runtime facade module receipt is missing');
   const moduleIds = new Set();
   for (const record of contract.modules) {
-    assertKeys(record, new Set(['id', 'name', 'path', 'base_output_sha256', 'base_output_bytes', 'runtime_imports', 'output_sha256', 'output_bytes']), `runtime facade module ${record.name || '<unknown>'}`);
+    assertKeys(record, new Set(['id', 'name', 'path', 'base_output_sha256', 'base_output_bytes', 'runtime_imports', 'output_sha256', 'output_bytes', 'compiled']), `runtime facade module ${record.name || '<unknown>'}`);
     if (!NAME_RE.test(record.name) || record.path !== path.join('components', `${record.name}.tsx`)) fail(`runtime facade module path is unsafe for ${record.name}`);
     if (moduleIds.has(record.id)) fail(`runtime facade module identity is duplicated for ${record.name}`);
     moduleIds.add(record.id);
     assertDigest(record.output_sha256, `${record.name}.output_sha256`);
     assertInteger(record.output_bytes, `${record.name}.output_bytes`);
+    assertKeys(record.compiled, new Set(['path', 'sha256', 'bytes']), `${record.name}.compiled receipt`);
+    if (record.compiled.path !== path.join('compiled', 'components', `${record.name}.js`)) fail(`runtime facade compiled module path is unsafe for ${record.name}`);
+    assertDigest(record.compiled.sha256, `${record.name}.compiled.sha256`);
+    assertInteger(record.compiled.bytes, `${record.name}.compiled.bytes`);
     if (!Array.isArray(record.runtime_imports) || record.runtime_imports.some((name) => !FACADE_DEFINITIONS.has(name)))
       fail(`runtime facade imports are invalid for ${record.name}`);
     const moduleBytes = readBytes(path.join(outDir, record.path), `runtime facade module ${record.name}`);
     if (sha256(moduleBytes) !== record.output_sha256 || moduleBytes.length !== record.output_bytes)
       fail(`runtime facade module output identity changed for ${record.name}`);
+    const compiledModuleBytes = readBytes(path.join(outDir, record.compiled.path), `compiled runtime facade module ${record.name}`);
+    if (sha256(compiledModuleBytes) !== record.compiled.sha256 || compiledModuleBytes.length !== record.compiled.bytes)
+      fail(`compiled runtime facade module identity changed for ${record.name}`);
   }
-  const result = runNodeSmoke(compiledPath);
+  const smoke = contract.runtime_facade.smoke;
+  const result = runNodeSmoke(compiledPath, path.join(outDir, smoke.component_path), smoke.component);
   if (result !== undefined) fail('unexpected runtime smoke result');
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-facade-verify-'));
   try {
