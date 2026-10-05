@@ -168,7 +168,7 @@ function runTypeScript(stage) {
   return { status: result.status ?? 1, output, diagnostics: parseDiagnostics(output) };
 }
 
-function stageModules(manifest, emission, emissionDir, stage) {
+function stageModules(manifest, emission, emissionDir, stage, { applyPropContracts = true } = {}) {
   const byId = new Map(manifest.components.map((component) => [component.id, component]));
   const components = [];
   fs.mkdirSync(path.join(stage, 'components'), { recursive: true });
@@ -181,9 +181,21 @@ function stageModules(manifest, emission, emissionDir, stage) {
       if (!dependency) fail(`dependency ${id} for ${component.name} is unknown`);
       return `import { ${dependency.name} } from './${dependency.name}';`;
     });
-    const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${source.toString('utf8')}\nexport { ${component.name} };\n`);
+    let authored = source.toString('utf8');
+    let propContract = null;
+    if (applyPropContracts && component.name === 'SpectrSettingsField') {
+      const marker = 'function SpectrSettingsField({ label, hint, children, hidden }) {';
+      if (!authored.includes(marker)) fail('SpectrSettingsField prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'label required; hint/children/hidden optional',
+        value_type: 'label:string; hint?:string; children?:SpectrSettingsFieldChild; hidden?:boolean',
+      };
+      authored = authored.replace(marker, `type SpectrSettingsFieldChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<SpectrSettingsFieldChild> } | ReadonlyArray<SpectrSettingsFieldChild>;\ntype SpectrSettingsFieldProps = { label: string; hint?: string; children?: SpectrSettingsFieldChild; hidden?: boolean };\nfunction SpectrSettingsField({ label, hint, children, hidden }: SpectrSettingsFieldProps) {`);
+    }
+    const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
-    components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name) });
+    components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}) });
   }
   return components;
 }
@@ -203,7 +215,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -214,10 +226,14 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const { raw: emissionRaw, value: emission } = readJson(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
   if (emission.schema !== EMISSION_SCHEMA || !Array.isArray(emission.modules)) fail('unsupported emission manifest');
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-'));
+  const controlStage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-control-'));
   try {
     const modules = stageModules(manifest, emission, emissionDir, stage);
     fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest));
     const baseline = runTypeScript(stage);
+    stageModules(manifest, emission, emissionDir, controlStage, { applyPropContracts: false });
+    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest));
+    const controlBaseline = runTypeScript(controlStage);
     let negativeControl = { status: 'not-run' };
     if (plantUnknown) {
       if (!NAME_RE.test(plantUnknown)) fail(`planted name is not an identifier: ${plantUnknown}`);
@@ -227,6 +243,30 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       const found = planted.diagnostics.some((diagnostic) => diagnostic.code === 'TS2304' && diagnostic.message.includes(plantUnknown));
       if (!found) fail(`planted unknown binding ${plantUnknown} did not produce TS2304`);
       negativeControl = { status: 'passed', name: plantUnknown, diagnostic: planted.diagnostics.find((diagnostic) => diagnostic.message.includes(plantUnknown)), planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let propNegativeControl = { status: 'not-run' };
+    if (plantProp) {
+      if (!NAME_RE.test(plantProp)) fail(`planted prop component is not an identifier: ${plantProp}`);
+      const target = path.join(stage, 'components', `${plantProp}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted prop component ${plantProp} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_missing_props__ = <${plantProp} children={\"planted\"} />;\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantProp}.tsx`;
+      const found = planted.diagnostics.some((diagnostic) => ['TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith(targetSuffix) && /label/.test(diagnostic.message));
+      if (!found) fail(`planted missing props for ${plantProp} did not produce a required-label diagnostic: ${JSON.stringify(planted.diagnostics.filter((diagnostic) => diagnostic.file.endsWith(targetSuffix)))}`);
+      propNegativeControl = { status: 'passed', name: plantProp, diagnostic: planted.diagnostics.find((diagnostic) => ['TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith(targetSuffix) && /label/.test(diagnostic.message)), planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let propTypeNegativeControl = { status: 'not-run' };
+    if (plantPropType) {
+      if (!NAME_RE.test(plantPropType)) fail(`planted prop-type component is not an identifier: ${plantPropType}`);
+      const target = path.join(stage, 'components', `${plantPropType}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted prop-type component ${plantPropType} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_wrong_label__ = <${plantPropType} label={1} />;\nconst __wp1_planted_wrong_hidden__ = <${plantPropType} label={\"ok\"} hidden={\"yes\"} />;\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantPropType}.tsx`;
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      if (typeDiagnostics.length < 2) fail(`planted wrong prop types for ${plantPropType} did not produce two TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typeDiagnostics.slice(0, 2), planted_diagnostic_count: planted.diagnostics.length };
     }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {
@@ -243,25 +283,37 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
         counts_by_code: Object.fromEntries(Object.entries(Object.groupBy(baseline.diagnostics, (diagnostic) => diagnostic.code)).map(([key, values]) => [key, values.length])),
         unknown_binding_names: [...new Set(baseline.diagnostics.filter((diagnostic) => diagnostic.unknown_name).map((diagnostic) => diagnostic.unknown_name))].sort(),
       },
+      prop_contract_effect: {
+        before_diagnostics: controlBaseline.diagnostics.length,
+        after_diagnostics: baseline.diagnostics.length,
+        delta: baseline.diagnostics.length - controlBaseline.diagnostics.length,
+        control_counts: Object.fromEntries(Object.entries(Object.groupBy(controlBaseline.diagnostics, (diagnostic) => diagnostic.category)).map(([key, values]) => [key, values.length])),
+      },
       negative_control: negativeControl,
+      prop_contracts: modules.filter((module) => module.prop_contract).map((module) => module.prop_contract),
+      prop_negative_control: propNegativeControl,
+      prop_type_negative_control: propTypeNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
     fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
     return report;
-  } finally { fs.rmSync(stage, { recursive: true, force: true }); }
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+    fs.rmSync(controlStage, { recursive: true, force: true });
+  }
 }
 
 function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown') args[arg.slice(2).replace('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -271,7 +323,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

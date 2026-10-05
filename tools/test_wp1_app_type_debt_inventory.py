@@ -34,7 +34,8 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             report_path = root / "app-type-debt.json"
             result = subprocess.run(
                 ["node", str(INVENTORY), "--artifact", str(ARTIFACT), "--manifest", str(manifest),
-                 "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType"],
+                 "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType",
+                 "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -49,6 +50,13 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertIn("prop-or-type", report["baseline"]["counts"])
             self.assertEqual(report["negative_control"]["status"], "passed")
             self.assertEqual(report["negative_control"]["diagnostic"]["code"], "TS2304")
+            self.assertEqual(report["prop_negative_control"]["status"], "passed")
+            self.assertIn(report["prop_negative_control"]["diagnostic"]["code"], ("TS2739", "TS2741"))
+            self.assertEqual(report["prop_type_negative_control"]["status"], "passed")
+            self.assertEqual(len(report["prop_type_negative_control"]["diagnostics"]), 2)
+            self.assertTrue(all(item["code"] == "TS2322" for item in report["prop_type_negative_control"]["diagnostics"]))
+            self.assertEqual(report["prop_contracts"][0]["name"], "SpectrSettingsField")
+            self.assertLessEqual(report["prop_contract_effect"]["delta"], 0)
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 
     def test_unproven_manifest_external_binding_fails_closed(self):
