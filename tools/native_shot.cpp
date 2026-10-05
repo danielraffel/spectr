@@ -1799,6 +1799,22 @@ int main(int argc, char** argv) {
                         read_surface().c_str(), latency_chip().c_str(),
                         int(rig.processor.gpu_processing()), rig.processor.latency_samples());
             capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
+            // The GPU stats pill is diagnostics: off until Settings > GPU stats
+            // is turned on. Then turned on the way a user does it, so the rest
+            // of this probe reads the pill.
+            const std::string pill_default = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill by default: %s\n", pill_default.c_str());
+            if (pill_default != "(absent)") steps_ok = false;
+            rig.activate("[data-spectr-settings-open]");
+            rig.activate("[data-spectr-gpu-audio-stats-toggle]");
+            rig.activate("[data-spectr-settings-close]");
+            pump_ms(300);
+            const std::string pill_enabled = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill after Settings > GPU stats: %s\n",
+                        pill_enabled.c_str());
+            if (pill_enabled != "present") steps_ok = false;
             // Tracking is CPU-only: a press on the indicator answers with a
             // notice saying why, and changes nothing in the processor -- no
             // renderer is built, the mode, the GPU choice and the latency the
@@ -1828,8 +1844,37 @@ int main(int argc, char** argv) {
             // The notice was not there before the press and is after it, and
             // the hover tooltip says the same.
             if (notice_before != "(absent)"
-                || notice.find("available in Mixing only") == std::string::npos
-                || title.find("available in Mixing only") == std::string::npos) steps_ok = false;
+                || notice.find("GPU runs in Mixing only") == std::string::npos
+                || title.find("switch to Mixing for GPU") == std::string::npos) steps_ok = false;
+            // The notice is one line in a box that holds it: its painted
+            // height is a single line, and its text fits inside the box's
+            // padding at the editor's scale (it used to break after the dash
+            // and paint the dash past the padding).
+            {
+                const std::string id = js_value(std::string("const e=") + notice_q
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* box_view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                float nx = 0.0f, ny = 0.0f;
+                if (box_view) root_origin(*box_view, nx, ny);
+                const auto box = box_view ? box_view->bounds() : pulp::view::Rect{};
+                float text_w = 0.0f;
+                std::function<void(const pulp::view::View&)> widest =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            text_w = std::max(text_w, label->max_content_width());
+                        for (std::size_t i = 0; i < v.child_count(); ++i) widest(*v.child_at(i));
+                    };
+                if (box_view) widest(*box_view);
+                // 9 px padding and a 1 px border each side; one 9.5 px line at
+                // 1.35 line-height is ~27 px tall, two are ~40.
+                const bool one_line = box.height > 0.0f && box.height <= 30.0f;
+                const bool fits = box.width > 0.0f && text_w > 0.0f
+                    && text_w <= box.width - 20.0f + 1.0f
+                    && nx >= 0.0f && nx + box.width <= kDesignWidth;
+                std::printf("[gpu-status] tracking notice box %.0fx%.0f text %.0f: one line %s, fits %s\n",
+                            box.width, box.height, text_w, one_line ? "yes" : "no", fits ? "yes" : "no");
+                if (!one_line || !fits) steps_ok = false;
+            }
             // The Settings GPU choice in Tracking is recorded for Mixing and is
             // otherwise inert: no renderer, no mode change.
             rig.eval("spectrSetGpuProcessing(true);", "spectr-gpu-status-tracking-settings-on");
