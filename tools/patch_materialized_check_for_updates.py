@@ -89,8 +89,10 @@ function SpectrUpdatesSettings({ listening }) {
 
 EDITS = [
     ("the UPDATES group component sits before the ABOUT one",
-     "function SpectrBuildInfo({ showGpuStats = true }) {",
-     COMPONENT + "function SpectrBuildInfo({ showGpuStats = true }) {"),
+     # Anchored before the default value: patch_materialized_gpu_ui_polish.py
+     # turns that default to false, and either order must leave both applied.
+     "function SpectrBuildInfo({ showGpuStats = ",
+     COMPONENT + "function SpectrBuildInfo({ showGpuStats = "),
     ("Settings shows it after MODULATION and before ABOUT",
      "React.createElement(SpectrModulationSettings, { listening: open }), settings.showBuildInfo !== false && ",
      "React.createElement(SpectrModulationSettings, { listening: open }), React.createElement(SpectrUpdatesSettings, { listening: open }), settings.showBuildInfo !== false && "),
