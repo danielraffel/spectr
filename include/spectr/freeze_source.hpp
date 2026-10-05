@@ -115,7 +115,7 @@
 #include <pulp/runtime/trace.hpp>
 #include "spectr/test_seams.hpp"
 #include <pulp/signal/fft.hpp>
-#include "spectr/upstream/freeze_hold.hpp"
+#include <pulp/signal/freeze_hold.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 
 #include <algorithm>
@@ -142,7 +142,7 @@ public:
 
     /// Hold length: the capture window the next latch averages.
     static constexpr double kDefaultHoldSeconds =
-        pulp_candidate::signal::FreezeHoldReferenceTiming::kCaptureSeconds;
+        pulp::signal::FreezeHoldReferenceTiming::kCaptureSeconds;
     static constexpr double kMinHoldSeconds = 0.05;
     /// The spectral capture's longest window (FreezeHold's history). A hold
     /// that long loops; the spectral hold only ever uses the start of it.
@@ -352,7 +352,7 @@ public:
         channels_ = channels;
         bins_ = kFftSize / 2 + 1;
 
-        pulp_candidate::signal::FreezeHold::Config config;
+        pulp::signal::FreezeHold::Config config;
         config.fft_size = kFftSize;
         config.channels = channels;
         config.analysis_hop = kHop;
@@ -546,7 +546,7 @@ public:
         signal_floor_power_ = std::max(0.0, power);
     }
 
-    [[nodiscard]] const pulp_candidate::signal::FreezeHold& hold() const noexcept { return hold_; }
+    [[nodiscard]] const pulp::signal::FreezeHold& hold() const noexcept { return hold_; }
     /// The gain the hold's noise-like part plays at: its level matched,
     /// once, to the live window it was taken from (for tests and
     /// diagnostics). Its tonal part always plays at the input's level.
@@ -1596,7 +1596,7 @@ private:
     }
     // SPECTR-RENDER-PATH END
 
-    pulp_candidate::signal::FreezeHold hold_{};
+    pulp::signal::FreezeHold hold_{};
     pulp::signal::Fft fft_{};
     std::vector<float> window_;
     std::vector<float> synthesis_window_;         // window_ * synthesis_scale_

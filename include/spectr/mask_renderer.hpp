@@ -21,7 +21,6 @@
 
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
-#include "spectr/upstream/spectral_mask_processor.hpp"
 
 #include <chrono>
 #include <cstdint>

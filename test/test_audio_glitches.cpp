@@ -26,7 +26,7 @@
 #include "spectr/level_controls.hpp"
 #include "spectr/modulation.hpp"
 #include "spectr/param_surface.hpp"
-#include "spectr/upstream/processing_switch_crossfade.hpp"
+#include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
@@ -407,7 +407,7 @@ const char* mode_name(MaskRenderMode m) {
 
 TEST_CASE("The switch plan warms the incoming renderer and then fades at equal power",
           "[render-mode][render-switch]") {
-    namespace sw = pulp_candidate::signal;
+    namespace sw = pulp::signal;
     const auto plan = sw::plan_processing_switch(10240, 0, 48000.0, 0.03);
     CHECK(plan.warm_samples == 10240);
     CHECK(plan.fade_samples == 1440);

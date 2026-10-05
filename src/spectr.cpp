@@ -820,7 +820,7 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
     // Hand both renderers to the audio thread. It keeps rendering the old one
     // (still `active_renderer_`), warms the new one on the same input until
     // its delay line and impulse history are full, then crossfades into it
-    // and publishes it as active (spectr/upstream/processing_switch_crossfade.hpp). A cut here
+    // and publishes it as active (pulp/signal/processing_switch_crossfade.hpp). A cut here
     // was audible twice: the new renderer's own latency of silence -- 213 ms
     // into Mixing -- and a step where the old one stopped mid-waveform.
     //
@@ -828,11 +828,11 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
     // a mask edited during the fade is the one it fades into.
     const int history = mode == MaskRenderMode::zero_latency
         ? incoming->design_grid_size() : 0;
-    switch_plan_ = pulp_candidate::signal::plan_processing_switch(
+    switch_plan_ = pulp::signal::plan_processing_switch(
         incoming->latency_samples(), history, sample_rate_, kRenderSwitchFadeSeconds);
     // Negative control: the cut this replaced -- the new renderer heard from
     // its first, history-less sample.
-    if (render_switch_plants_hard_cut_()) switch_plan_ = pulp_candidate::signal::ProcessingSwitchPlan{0, 1};
+    if (render_switch_plants_hard_cut_()) switch_plan_ = pulp::signal::ProcessingSwitchPlan{0, 1};
     switch_incoming_ = incoming;
     switch_outgoing_ = std::move(outgoing);
     switch_wet_wired_ = freeze_source_.prepared();
@@ -958,7 +958,7 @@ MaskRenderer* Spectr::claim_render_switch_(MaskRenderer* outgoing) noexcept {
         // session's mode before it starts the stream): the new renderer
         // starts the stream itself, as it would after a prepare.
         switch_xfade_.begin(stream_rendered_
-            ? switch_plan_ : pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
+            ? switch_plan_ : pulp::signal::ProcessingSwitchPlan{0, 1});
         // Both renderers now listen to one run of the freeze source per
         // block (render_through_), not one each.
         if (switch_wet_wired_ && outgoing != nullptr) {
@@ -1807,7 +1807,7 @@ void Spectr::process(
         // the old one.
         if (switch_in != nullptr) {
             switch_in->reset();
-            switch_xfade_.begin(pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
+            switch_xfade_.begin(pulp::signal::ProcessingSwitchPlan{0, 1});
         }
         // A transport jump forgets the input analysed so far and nothing
         // else: a playing hold keeps playing across it.

@@ -489,7 +489,7 @@ private:
         return disabled;
     }
 
-    pulp_candidate::signal::SpectralMaskProcessor processor_{};
+    pulp::signal::SpectralMaskProcessor processor_{};
     MaskRendererConfig                  config_{};
     std::atomic<unsigned long long>     generation_{0};
     WetSource*                          wet_source_ = nullptr;

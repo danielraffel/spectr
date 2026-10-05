@@ -9,13 +9,9 @@
 
 #include <pulp/format/processor.hpp>
 // The SDK compiles a scripted editor's scripts and verifies its document on a
-// background worker when a host instantiates the plug-in, if the plug-in says
-// what they are (Processor::editor_prewarm). Older SDKs have no hook.
-#if __has_include(<pulp/format/editor_prewarm.hpp>)
-#define SPECTR_HAS_EDITOR_PREWARM 1
-#else
-#define SPECTR_HAS_EDITOR_PREWARM 0
-#endif
+// background worker when a host instantiates the plug-in, from what the
+// plug-in says they are (Processor::editor_prewarm).
+#include <pulp/format/editor_prewarm.hpp>
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -65,7 +61,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
-#include "spectr/upstream/processing_switch_crossfade.hpp"
+#include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
@@ -486,7 +482,7 @@ public:
     ///
     /// The switch is heard as a crossfade, not a cut: the audio thread warms
     /// the new renderer on the live input while the old one is still heard,
-    /// then crossfades into it (spectr/upstream/processing_switch_crossfade.hpp). It completes
+    /// then crossfades into it (pulp/signal/processing_switch_crossfade.hpp). It completes
     /// on the audio thread, a few hundred milliseconds of audio later; a
     /// second switch, a prepare or a release first settles the one in flight.
     bool set_render_mode(MaskRenderMode mode);
@@ -594,7 +590,7 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
-#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_NATIVE_EDITOR)
     /// The materialized editor's runtime, design and help scripts and its
     /// captured document, byte-identical to what an open evaluates.
     EditorPrewarm editor_prewarm() const override;
@@ -1121,10 +1117,10 @@ private:
     // by the audio thread only after it claims the switch.
     MaskRenderer*                          switch_incoming_ = nullptr;
     std::unique_ptr<MaskRenderer>          switch_outgoing_{};
-    pulp_candidate::signal::ProcessingSwitchPlan switch_plan_{};
+    pulp::signal::ProcessingSwitchPlan switch_plan_{};
     bool                                   switch_wet_wired_ = false;
     // Audio thread only.
-    pulp_candidate::signal::ProcessingSwitchCrossfade switch_xfade_{};
+    pulp::signal::ProcessingSwitchCrossfade switch_xfade_{};
     // Audio thread: whether any block has rendered since the last prepare or
     // stream reset. A switch before the stream has started has nothing heard
     // to fade from, so it completes at once.

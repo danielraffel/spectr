@@ -804,7 +804,7 @@ bool Spectr::perform_command(pulp::view::CommandID id) {
     }
 }
 
-#if SPECTR_HAS_EDITOR_PREWARM && defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_NATIVE_EDITOR)
 pulp::format::Processor::EditorPrewarm Spectr::editor_prewarm() const {
     // Views of the embedded package, the same bytes write_embedded_package()
     // puts on disk and the editor reads back: runtime.js is evaluated whole,
