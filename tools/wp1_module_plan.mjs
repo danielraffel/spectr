@@ -48,8 +48,11 @@ function validateManifest(raw, manifestPath) {
   try { manifest = JSON.parse(raw); } catch (error) { fail(`manifest JSON is invalid: ${error.message}`); }
   assertKeys(manifest, MANIFEST_KEYS, 'manifest');
   if (manifest.schema !== MANIFEST_SCHEMA) fail(`unexpected manifest schema ${JSON.stringify(manifest.schema)}`);
-  if (!isRecord(manifest.parser)) fail('manifest parser must be an object');
-  if (!isRecord(manifest.source)) fail('manifest source must be an object');
+  assertKeys(manifest.parser, new Set(['name', 'version', 'plugins', 'source_type']), 'manifest parser');
+  if (manifest.parser.name !== '@babel/parser' || manifest.parser.version !== '7.28.4'
+      || JSON.stringify(manifest.parser.plugins) !== JSON.stringify(['jsx', 'typescript'])
+      || manifest.parser.source_type !== 'script') fail('unsupported parser identity');
+  assertKeys(manifest.source, new Set(['kind', 'path', 'sha256', 'bytes']), 'manifest source');
   assertDigest(manifest.source.sha256, 'manifest source.sha256');
   assertNonNegativeInteger(manifest.source.bytes, 'manifest source.bytes');
   if (!Array.isArray(manifest.roots) || !manifest.roots.length) fail('manifest roots must be a non-empty array');
