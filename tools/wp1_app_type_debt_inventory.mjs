@@ -203,6 +203,16 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
       };
       authored = authored.replace(marker, `type MBtnChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<MBtnChild> } | ReadonlyArray<MBtnChild>;\ntype MBtnProps = { children?: MBtnChild; onClick?: (...args: any[]) => unknown; primary?: boolean; danger?: boolean; action?: string };\nfunction MBtn({ children, onClick, primary, danger, action }: MBtnProps) {`);
     }
+    if (applyPropContracts && component.name === 'SpectrSettingsChips') {
+      const marker = 'function SpectrSettingsChips({ value, onChange, opts, wrap }) {';
+      if (!authored.includes(marker)) fail('SpectrSettingsChips prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'value and opts required; onChange callable; wrap optional',
+        value_type: 'value:string|number; onChange:(value:string|number)=>unknown; opts:ReadonlyArray<ReadonlyArray<string|number>>; wrap?:boolean',
+      };
+      authored = authored.replace(marker, `type SpectrSettingsChipValue = string | number;\ntype SpectrSettingsChipsProps = { value: SpectrSettingsChipValue; onChange: (value: SpectrSettingsChipValue) => unknown; opts: ReadonlyArray<ReadonlyArray<SpectrSettingsChipValue>>; wrap?: boolean };\nfunction SpectrSettingsChips({ value, onChange, opts, wrap }: SpectrSettingsChipsProps) {`);
+    }
     const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
     components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}) });
@@ -225,7 +235,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -292,6 +302,19 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (typedControls.length !== 2) fail(`planted wrong MBtn prop types did not produce exact primary/action TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
       mbtnPropTypeNegativeControl = { status: 'passed', name: 'MBtn', properties: ['primary', 'action'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let settingsChipsPropTypeNegativeControl = { status: 'not-run' };
+    if (plantSettingsChipsPropType) {
+      if (plantSettingsChipsPropType !== 'SpectrSettingsChips') fail(`settings chips prop-type control must target SpectrSettingsChips, got ${plantSettingsChipsPropType}`);
+      const target = path.join(stage, 'components', 'SpectrSettingsChips.tsx');
+      if (!fs.existsSync(target)) fail('SpectrSettingsChips prop-type control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_planted_chips_wrong_wrap__ = <SpectrSettingsChips value={0} opts={[[0, "ok"]]} onChange={() => {}} wrap={"yes"} />;\nconst __wp1_planted_chips_wrong_value__ = <SpectrSettingsChips value={true} opts={[[0, "ok"]]} onChange={() => {}} />;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrSettingsChips.tsx';
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const typedControls = typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /boolean/.test(diagnostic.message) && /SpectrSettingsChipValue/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong SpectrSettingsChips prop types did not produce exact value/wrap TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      settingsChipsPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsChips', properties: ['wrap', 'value'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
+    }
     let jsxChildrenNegativeControl = { status: 'not-run' };
     if (plantJsxChildren) {
       const target = path.join(stage, 'components', 'Hrow.tsx');
@@ -331,6 +354,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
       mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
+      settings_chips_prop_type_negative_control: settingsChipsPropTypeNegativeControl,
       jsx_children_negative_control: jsxChildrenNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
@@ -346,13 +370,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -362,7 +386,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);
