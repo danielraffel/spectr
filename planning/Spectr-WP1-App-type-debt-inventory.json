@@ -77,7 +77,7 @@
       "TweaksPanel",
       "App"
     ],
-    "graph_sha256": "a5fe1eb73a086978f3b2ef3e94675447d903acc8aae0cc33e03798cefc280ae2"
+    "graph_sha256": "17aa4610c7c25c9368b0b593d2aeb66bfabee85471db164332653ef56bc32942"
   },
   "bindings": {
     "groups": {
@@ -880,83 +880,11 @@
       },
       {
         "file": "components/Chrome.tsx",
-        "line": 191,
-        "column": 7,
-        "code": "TS2322",
-        "message": "Type '{ children: string; railAction: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 191,
-        "column": 156,
-        "code": "TS2322",
-        "message": "Type '{ children: string; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 216,
-        "column": 228,
-        "code": "TS2322",
-        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 219,
-        "column": 133,
-        "code": "TS2322",
-        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 222,
-        "column": 227,
-        "code": "TS2322",
-        "message": "Type '{ children: any[]; popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
         "line": 237,
         "column": 120,
         "code": "TS2339",
         "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 249,
-        "column": 650,
-        "code": "TS2322",
-        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 249,
-        "column": 808,
-        "code": "TS2322",
-        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 249,
-        "column": 966,
-        "code": "TS2322",
-        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/Chrome.tsx",
-        "line": 249,
-        "column": 1162,
-        "code": "TS2322",
-        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/FilterBank.tsx",
@@ -2025,12 +1953,12 @@
     ],
     "counts": {
       "browser-window": 159,
-      "prop-or-type": 22,
+      "prop-or-type": 13,
       "other-semantic": 16
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2322": 13,
+      "TS2322": 4,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
@@ -2043,8 +1971,8 @@
   },
   "prop_contract_effect": {
     "before_diagnostics": 254,
-    "after_diagnostics": 197,
-    "delta": -57,
+    "after_diagnostics": 188,
+    "delta": -66,
     "control_counts": {
       "browser-window": 159,
       "prop-or-type": 79,
@@ -2063,7 +1991,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 198
+    "planted_diagnostic_count": 189
   },
   "prop_contracts": [
     {
@@ -2085,6 +2013,16 @@
       "name": "SpectrSettingsSlider",
       "type": "value/min/max/step/onChange required; fmt/gestureId/disabled/target optional",
       "value_type": "value:number; min:number; max:number; step:number; onChange:(value:number)=>unknown; fmt?:(value:number)=>string; gestureId?:number; disabled?:boolean; target?:string"
+    },
+    {
+      "name": "SnapBtn",
+      "type": "id/action/slot/filled/onClick/label required; onClear/capture optional",
+      "value_type": "id:string; action:string; slot:string; filled:boolean; onClick:(...args:any[])=>unknown; onClear?:(...args:any[])=>unknown; capture?:boolean; label:string"
+    },
+    {
+      "name": "RailBtn",
+      "type": "children/onClick required; active/popupKind/railAction/dropdown/onContextMenu optional",
+      "value_type": "children:ReactChild; onClick:(...args:any[])=>unknown; active?:boolean; popupKind?:string; railAction?:string; dropdown?:string; onContextMenu?:(...args:any[])=>unknown"
     }
   ],
   "prop_negative_control": {
@@ -2098,7 +2036,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 199
+    "planted_diagnostic_count": 190
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2125,7 +2063,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 201
+    "planted_diagnostic_count": 192
   },
   "mbtn_prop_type_negative_control": {
     "status": "passed",
@@ -2152,7 +2090,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 203
+    "planted_diagnostic_count": 194
   },
   "settings_chips_prop_type_negative_control": {
     "status": "passed",
@@ -2191,7 +2129,7 @@
       "message": "Type '{ onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsChipsProps'.",
       "category": "prop-or-type"
     },
-    "planted_diagnostic_count": 206
+    "planted_diagnostic_count": 197
   },
   "settings_slider_prop_type_negative_control": {
     "status": "passed",
@@ -2220,7 +2158,51 @@
       "message": "Type '{ min: number; max: number; step: number; onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsSliderProps'.",
       "category": "prop-or-type"
     },
-    "planted_diagnostic_count": 208
+    "planted_diagnostic_count": 199
+  },
+  "chrome_prop_type_negative_control": {
+    "status": "passed",
+    "components": [
+      "RailBtn",
+      "SnapBtn"
+    ],
+    "diagnostics": [
+      {
+        "file": "components/RailBtn.tsx",
+        "line": 33,
+        "column": 71,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'boolean'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SnapBtn.tsx",
+        "line": 50,
+        "column": 85,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'boolean'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "missing_diagnostics": [
+      {
+        "file": "components/RailBtn.tsx",
+        "line": 32,
+        "column": 48,
+        "code": "TS2322",
+        "message": "Type '{ children: string; active: false; }' is not assignable to type 'IntrinsicAttributes & RailBtnProps'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SnapBtn.tsx",
+        "line": 49,
+        "column": 48,
+        "code": "TS2322",
+        "message": "Type '{ action: string; slot: string; filled: false; onClick: () => void; label: string; }' is not assignable to type 'IntrinsicAttributes & SnapBtnProps'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "planted_diagnostic_count": 203
   },
   "jsx_children_negative_control": {
     "status": "passed",
@@ -2246,7 +2228,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 210
+    "planted_diagnostic_count": 205
   },
   "scope": {
     "runtime_artifact_changed": false,
