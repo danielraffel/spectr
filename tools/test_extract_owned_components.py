@@ -52,6 +52,74 @@ class OwnedComponentSlicesTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "module changed"):
                 verify(ARTIFACT, pathlib.Path(td))
 
+    def test_verify_rejects_tampered_manifest_schema(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td)
+            extract(ARTIFACT, output)
+            manifest_path = output / "owned-components.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["schema"] = "tampered"
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "schema"):
+                verify(ARTIFACT, output)
+
+    def test_verify_rejects_missing_manifest_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td)
+            extract(ARTIFACT, output)
+            manifest_path = output / "owned-components.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["components"].pop()
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "component count"):
+                verify(ARTIFACT, output)
+
+    def test_verify_rejects_extra_manifest_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td)
+            extract(ARTIFACT, output)
+            manifest_path = output / "owned-components.manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["components"].append(dict(manifest["components"][0]))
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "duplicate component"):
+                verify(ARTIFACT, output)
+
+    def test_verify_rejects_stale_component_module(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td)
+            extract(ARTIFACT, output)
+            (output / "components" / "Removed.tsx").write_text("stale")
+            with self.assertRaisesRegex(ValueError, "unexpected component module"):
+                verify(ARTIFACT, output)
+
+    def test_extract_removes_stale_tsx_but_preserves_other_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td)
+            components = output / "components"
+            components.mkdir(parents=True)
+            stale = components / "Removed.tsx"
+            note = components / "README.md"
+            stale.write_text("stale")
+            note.write_text("keep")
+            extract(ARTIFACT, output)
+            self.assertFalse(stale.exists())
+            self.assertEqual(note.read_text(), "keep")
+
+    def test_extract_unlinks_stale_symlink_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            output = root / "output"
+            components = output / "components"
+            components.mkdir(parents=True)
+            target = root / "outside.tsx"
+            target.write_text("outside")
+            stale = components / "Removed.tsx"
+            stale.symlink_to(target)
+            extract(ARTIFACT, output)
+            self.assertFalse(stale.exists())
+            self.assertEqual(target.read_text(), "outside")
+
     def test_unterminated_component_fails_closed(self):
         with self.assertRaises(ValueError):
             component_slices(b"function Broken() { return React.createElement(\"div\")")
