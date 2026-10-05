@@ -65,6 +65,13 @@ def _function_end(text: str, body_start: int) -> int | None:
 
 def component_slices(source: bytes) -> list[dict[str, object]]:
     text = source.decode("utf-8")
+    # Regex offsets are positions in the decoded Python string, while the
+    # owned modules and their hashes are byte slices.  Build the explicit
+    # UTF-8 boundary map once so a non-ASCII character before a component
+    # cannot shift the emitted module into the preceding declaration.
+    char_to_byte = [0]
+    for char in text:
+        char_to_byte.append(char_to_byte[-1] + len(char.encode("utf-8")))
     out: list[dict[str, object]] = []
     for match in FUNCTION.finditer(text):
         name = match.group(1)
@@ -79,11 +86,13 @@ def component_slices(source: bytes) -> list[dict[str, object]]:
         body = text[match.end():end]
         if "React.createElement" not in body:
             continue
-        raw = source[match.start():end]
+        start_byte = char_to_byte[match.start()]
+        end_byte = char_to_byte[end]
+        raw = source[start_byte:end_byte]
         out.append({
             "name": name,
-            "start": match.start(),
-            "end": end,
+            "start": start_byte,
+            "end": end_byte,
             "bytes": len(raw),
             "sha256": hashlib.sha256(raw).hexdigest(),
             "source": raw,

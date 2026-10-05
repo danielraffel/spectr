@@ -22,7 +22,17 @@ class OwnedComponentSlicesTest(unittest.TestCase):
         self.assertEqual(len({c["name"] for c in components}), 63)
         for component in components:
             raw = source[component["start"]:component["end"]]
+            self.assertTrue(raw.startswith(f"function {component['name']}".encode()))
             self.assertEqual(hashlib.sha256(raw).hexdigest(), component["sha256"])
+
+    def test_utf8_offsets_are_byte_exact_and_not_decoded_character_offsets(self):
+        source = json.loads(ARTIFACT.read_text())["html"].encode()
+        components = component_slices(source)
+        self.assertGreater(sum(byte > 127 for byte in source), 0)
+        for component in components:
+            raw = source[component["start"]:component["end"]]
+            self.assertEqual(raw, component["source"])
+            self.assertEqual(raw[:len(b"function ")], b"function ")
 
     def test_extract_writes_exact_slices_and_manifest(self):
         with tempfile.TemporaryDirectory() as td:
