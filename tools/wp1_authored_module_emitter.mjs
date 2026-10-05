@@ -62,12 +62,6 @@ function assertInteger(value, label) {
 function readBytes(file, label) {
   try { return fs.readFileSync(file); } catch (error) { fail(`cannot read ${label}: ${error.message}`); }
 }
-function readJson(file, label) {
-  const raw = readBytes(file, label);
-  try { return { raw, value: JSON.parse(raw) }; }
-  catch (error) { fail(`${label} JSON is invalid: ${error.message}`); }
-}
-
 function utf8Offsets(source) {
   const offsets = new Array(source.length + 1);
   let byte = 0;
@@ -98,7 +92,7 @@ function htmlScripts(html) {
   return scripts;
 }
 
-function validateManifest(raw, manifestPath, artifactBytes) {
+function validateManifest(raw, artifactBytes) {
   let manifest;
   try { manifest = JSON.parse(raw); } catch (error) { fail(`dependency manifest JSON is invalid: ${error.message}`); }
   assertKeys(manifest, MANIFEST_KEYS, 'dependency manifest');
@@ -236,7 +230,7 @@ function validateEmission(raw, emissionPath, artifactPath, manifestPath, outDir)
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   if (emission.artifact.sha256 !== sha256(artifactBytes) || emission.artifact.bytes !== artifactBytes.length) fail('emission artifact identity changed');
   if (emission.dependency_manifest.sha256 !== sha256(manifestBytes)) fail('emission dependency manifest identity changed');
-  const { manifest, byId } = validateManifest(manifestBytes, manifestPath, artifactBytes);
+  const { manifest, byId } = validateManifest(manifestBytes, artifactBytes);
   const ordered = dependencyOrder(manifest, byId);
   if (JSON.stringify(emission.roots) !== JSON.stringify(manifest.roots)) fail('emission roots changed');
   if (JSON.stringify(emission.order) !== JSON.stringify(ordered.map(component => component.id))) fail('emission dependency order changed');
@@ -265,7 +259,7 @@ function emit({ artifactPath, manifestPath, outDir, converter }) {
   if (fs.existsSync(outDir)) fail(`output directory already exists: ${outDir}`);
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
-  const { manifest, byId } = validateManifest(manifestBytes, manifestPath, artifactBytes);
+  const { manifest, byId } = validateManifest(manifestBytes, artifactBytes);
   const ordered = dependencyOrder(manifest, byId);
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-emitter-'));
   try {
