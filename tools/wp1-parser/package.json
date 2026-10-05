@@ -4,5 +4,8 @@
   "version": "0.0.0",
   "dependencies": {
     "@babel/parser": "7.28.4"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
   }
 }

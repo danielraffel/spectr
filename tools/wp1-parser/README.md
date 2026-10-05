@@ -12,3 +12,8 @@ python3 tools/test_wp1_dependency_manifest.py
 The parser is intentionally scoped to this experiment. It does not compile or
 rewrite Spectr's materialized runtime. A missing install is a hard failure in
 the parser CLI, so a regex fallback cannot produce a false-green manifest.
+
+The lockfile also pins TypeScript 5.9.3 for the read-only authored-module
+build probe. Run the syntax/build and semantic slice checks with
+`tools/wp1_typecheck_authored_modules.mjs`; the probe never replaces the
+canonical runtime artifact.
