@@ -45,7 +45,7 @@
 #include <pulp/view/widget_bridge.hpp>
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
-#include "shim/pulp_frame_cost_probe.hpp"
+#include <pulp/view/frame_cost_probe.hpp>
 #include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
@@ -2260,8 +2260,7 @@ int main(int argc, char** argv) {
 
             // ── Frame cost and damage ──
             //
-            // Pulp's FrameCostProbe (tools/shim/pulp_frame_cost_probe.hpp until
-            // the pinned SDK ships it) puts a recording plug-in host on the
+            // Pulp's FrameCostProbe (pulp/view/frame_cost_probe.hpp) puts a recording plug-in host on the
             // root, so every repaint request is classified: bounded (its rect)
             // or whole-surface.
             for (const auto& line : single_breaches)
@@ -2303,7 +2302,7 @@ int main(int argc, char** argv) {
                 std::printf("[modctl-esc] walk done\n");
                 return 0;
             }
-            using Probe = spectr::shim::FrameCostProbe;
+            using Probe = pulp::view::FrameCostProbe;
             const bool paint_frames = std::getenv("SPECTR_MODCTL_PAINT") != nullptr;
             // SPECTR_MODCTL_TRACE=FILE.pftrace: a Perfetto capture of the
             // frame-cost runs (a PULP_TRACING=ON SDK only).
@@ -2435,7 +2434,6 @@ int main(int argc, char** argv) {
             if (!kSdkBoundsAnimatedPaints)
                 std::printf("[modctl-gate] damage NOT gated: this SDK predates bounded "
                             "script/transform repaints\n");
-            (void)SPECTR_SDK_HAS_FRAME_COST_PROBE;
             Probe::Budget budget;
             budget.max_p95_ms = kModCtlBudgetMs;
             // Whatever the idle editor already repaints whole (none, on an SDK

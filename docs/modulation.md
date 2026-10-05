@@ -160,8 +160,7 @@ thumb, and that run must fail.
 `SPECTR_MODULATION_CONTROLS=1 Spectr-native-shot` drives LFO 1 at 1 beat (2 Hz
 at 120 BPM) on the controls, captures six frames across a cycle (with Freeze
 off and on), and holds the editor's display tick to a budget with Pulp's
-`FrameCostProbe` (`tools/shim/pulp_frame_cost_probe.hpp` until the pinned SDK
-ships `pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
+`FrameCostProbe` (`pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
 requested, the layout passes run, React commits, and wall time against an
 unmodulated baseline. The knobs scenario must run no layout pass, make no
 commit, keep its damage inside the controls' boxes (on an SDK whose SVG paths
