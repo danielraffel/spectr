@@ -1,3 +1,3 @@
 {
-  "html": "<script>// comments can mention import/export without changing module syntax\nfunction Leaf(props) { return React.createElement(\"button\", { type: \"button\" }, props.label); }\nfunction Panel() { return React.createElement(Leaf, { label: \"ok\" }); }</script>"
+  "html": "<script>// comments can mention import/export without changing module syntax\nfunction Leaf(props) { return React.createElement(\"button\", { type: \"button\", onClick: () => claimDocumentNavigationFocus() }, props.label); }\nfunction Panel() { return React.createElement(Leaf, { label: \"ok\" }); }</script>"
 }

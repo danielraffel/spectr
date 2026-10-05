@@ -43,6 +43,11 @@ const STANDARD_BINDINGS = new Set([
   'parseInt', 'parseFloat', 'isFinite', 'Intl', 'RegExp', 'queueMicrotask',
   'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus',
 ]);
+// Browser/runtime helpers are accepted as proven manifest bindings, but the
+// staged facade experiment must still make their compile-time declaration
+// visible until it replaces them with an actual import.
+const AMBIENT_BUILTINS = new Set([...STANDARD_BINDINGS].filter((name) =>
+  !['claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus'].includes(name)));
 
 function fail(message) { throw new Error(`WP-1 module import contract failed: ${message}`); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
@@ -126,7 +131,7 @@ function ambientDeclarations(manifest, artifact) {
     for (const name of component.external_bindings || []) {
       if (!NAME_RE.test(name)) fail(`component ${component.name} external binding is not an identifier: ${name}`);
       if (!allowed.has(name)) fail(`component ${component.name} external binding ${name} is not proven by artifact scope`);
-      if (!STANDARD_BINDINGS.has(name)) names.add(name);
+      if (!AMBIENT_BUILTINS.has(name)) names.add(name);
     }
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
