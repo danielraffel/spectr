@@ -38,6 +38,11 @@ sample, captures child RSS with `/usr/bin/time -l`, and requires the native
 editor's product-owned `spectr_wp0_hosted_measure_v1` seam for bridge calls,
 layout time, and raw RGBA paint time. It also records the real AU bundle
 digest and build-info source SHAs; dirty artifacts are rejected by default.
+The seam is compiled only for an explicit diagnostic build:
+
+```sh
+cmake -S . -B build-wp0-counter -DSPECTR_WP0_HOSTED_PROBE=ON
+```
 
 ```sh
 python3 tools/bench/wp0_hosted_producer.py \

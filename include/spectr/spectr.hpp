@@ -1005,7 +1005,7 @@ public:
         return modulated_field_publication_.read();
     }
 
-#if defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_NATIVE_EDITOR) && defined(SPECTR_WP0_HOSTED_PROBE)
     // Opt-in hosted WP-0 receipt seam. The AU Cocoa probe calls this only
     // after the real host view has mounted and settled. It intentionally
     // exposes measurements already owned by the native editor (the bridge,

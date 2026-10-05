@@ -212,6 +212,7 @@ namespace spectr {
 
 namespace {
 std::atomic<bool> g_editor_owns_resize_grip{false};
+#if defined(SPECTR_WP0_HOSTED_PROBE)
 // The hosted receipt probe runs in the same process as the AU component. Keep
 // one process-local pointer to the instance whose native editor is currently
 // alive so the probe can ask the product for measurements without reaching
@@ -234,6 +235,7 @@ std::uint64_t wp0_bridge_calls(const Bridge& bridge, bool& supported) {
         return 0;
     }
 }
+#endif
 }  // namespace
 
 void set_editor_owns_resize_grip(bool value) {
@@ -1029,10 +1031,13 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     }
 
     native_editor_root_ = root.get();
+#if defined(SPECTR_WP0_HOSTED_PROBE)
     g_wp0_active_editor.store(this, std::memory_order_release);
+#endif
     return root;
 }
 
+#if defined(SPECTR_WP0_HOSTED_PROBE)
 bool Spectr::wp0_hosted_measure_v1(
         double* layout_ms, double* paint_ms, std::uint64_t* bridge_calls,
         std::uint32_t* width, std::uint32_t* height,
@@ -1085,6 +1090,7 @@ bool Spectr::wp0_hosted_measure_v1(
         return false;
     }
 }
+#endif
 
 void Spectr::load_native_document_() {
     if (!native_scripted_ui_) return;
@@ -3961,9 +3967,11 @@ void Spectr::close_native_editor_() {
     gesture_perf_done_ = false;
 #endif
     native_editor_root_ = nullptr;
+#if defined(SPECTR_WP0_HOSTED_PROBE)
     Spectr* expected = this;
     (void)g_wp0_active_editor.compare_exchange_strong(
         expected, nullptr, std::memory_order_acq_rel);
+#endif
     if (native_scripted_ui_) {
         native_editor_bridge_.detach_native_runtime(
             *native_scripted_ui_, "__spectrEditorDispatch");
@@ -3974,6 +3982,7 @@ void Spectr::close_native_editor_() {
     native_package_path_.clear();
 }
 
+#if defined(SPECTR_WP0_HOSTED_PROBE)
 extern "C" int spectr_wp0_hosted_measure_v1(
         double* layout_ms, double* paint_ms, std::uint64_t* bridge_calls,
         std::uint32_t* width, std::uint32_t* height,
@@ -3984,5 +3993,6 @@ extern "C" int spectr_wp0_hosted_measure_v1(
             layout_ms, paint_ms, bridge_calls, width, height, rgba_bytes)
         ? 1 : 0;
 }
+#endif
 
 } // namespace spectr

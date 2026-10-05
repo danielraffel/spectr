@@ -301,6 +301,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_WP0_HOSTED_PROBE
+       "Compile the opt-in AU hosted WP-0 measurement seam" OFF)
+
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
@@ -356,6 +359,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        $<$<BOOL:${SPECTR_WP0_HOSTED_PROBE}>:SPECTR_WP0_HOSTED_PROBE=1>
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
@@ -4052,8 +4056,11 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     # it. The counter is read-only and lock-free (mask_renderer.hpp).
     target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
         "LINKER:-exported_symbol,_spectr_mask_design_backlog_v1"
-        "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1"
-        "LINKER:-exported_symbol,_spectr_wp0_hosted_measure_v1")
+        "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1")
+    if(SPECTR_WP0_HOSTED_PROBE)
+        target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
+            "LINKER:-exported_symbol,_spectr_wp0_hosted_measure_v1")
+    endif()
     add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
     target_link_libraries(Spectr-au-level-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
