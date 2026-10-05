@@ -51,6 +51,34 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(report["negative_control"]["diagnostic"]["code"], "TS2304")
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 
+    def test_unproven_manifest_external_binding_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            manifest = root / "manifest.json"
+            made = subprocess.run(
+                ["node", str(MANIFEST_CLI), "--artifact", str(ARTIFACT), "--root", "App", "--out", str(manifest)],
+                cwd=ROOT, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(made.returncode, 0, made.stderr)
+            data = json.loads(manifest.read_text())
+            data["components"][0]["external_bindings"].append("InjectedWp1Binding")
+            manifest.write_text(json.dumps(data, indent=2) + "\n")
+            emission = root / "emitted"
+            emitted = subprocess.run(
+                ["node", str(EMITTER), "--artifact", str(ARTIFACT), "--manifest", str(manifest), "--out", str(emission)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
+            )
+            self.assertEqual(emitted.returncode, 0, emitted.stderr)
+            report_path = root / "app-type-debt.json"
+            result = subprocess.run(
+                ["node", str(INVENTORY), "--artifact", str(ARTIFACT), "--manifest", str(manifest),
+                 "--emission", str(emission), "--out-report", str(report_path)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("external binding InjectedWp1Binding is not proven", result.stderr)
+            self.assertFalse(report_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

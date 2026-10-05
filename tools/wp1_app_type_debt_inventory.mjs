@@ -100,6 +100,26 @@ function authoredScriptBindings(artifact) {
   return names;
 }
 
+function validateExternalBindings(manifest, artifact) {
+  const allowed = new Set([
+    ...FACADE_BINDINGS,
+    ...BROWSER_RUNTIME_BINDINGS,
+    ...JS_RUNTIME_BINDINGS,
+    ...authoredScriptBindings(artifact),
+  ]);
+  for (const component of manifest.components) {
+    if (!Array.isArray(component.external_bindings)
+        || component.external_bindings.some((name) => typeof name !== 'string'))
+      fail(`external bindings are invalid for ${component.name}`);
+    if (new Set(component.external_bindings).size !== component.external_bindings.length)
+      fail(`external bindings contain duplicates for ${component.name}`);
+    for (const name of component.external_bindings) {
+      if (!NAME_RE.test(name)) fail(`external binding is not an identifier: ${name}`);
+      if (!allowed.has(name)) fail(`external binding ${name} is not proven by artifact scope`);
+    }
+  }
+}
+
 function runEmitterVerify(artifactPath, manifestPath, emissionDir) {
   const result = spawnSync(process.execPath, [emitterPath, '--artifact', artifactPath, '--manifest', manifestPath, '--out', emissionDir, '--verify'], {
     cwd: scriptDir, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
@@ -189,6 +209,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const { value: artifact } = readJson(artifactPath, 'artifact');
   const { value: manifest } = readJson(manifestPath, 'dependency manifest');
   if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.components)) fail('dependency manifest schema/components are invalid');
+  validateExternalBindings(manifest, artifact);
   runEmitterVerify(artifactPath, manifestPath, emissionDir);
   const { raw: emissionRaw, value: emission } = readJson(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
   if (emission.schema !== EMISSION_SCHEMA || !Array.isArray(emission.modules)) fail('unsupported emission manifest');
