@@ -21,10 +21,11 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 - **AUTO listens to your sound.** Auto Gain now keeps the level steady by weighing your shape against the long-term balance of the sound going through Spectr, so boosting the highs of a bass line no longer turns it down. It holds through silence and does not pump, catches up in about a second when the sound changes or Freeze is released, remembers the sound across stops, locates and reopened projects, and while Freeze holds it listens to the held sound. It keeps listening while it is off, so switching it on starts from the sound that is playing. **AUTO is now on by default** in a new instance; projects keep the AUTO they saved, and one saved before AUTO existed opens with it off. A project that saved AUTO on with an earlier version keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.
 - **Range and Display settings** for the editor.
 
-### GPU processing (Mixing)
-- **Optional GPU processing for Mixing.** Mixing can run its spectral processing on the Mac's GPU. It is off by default: turn it on with the CPU / GPU chip in the header while in Mixing, or under **Settings > GPU processing**.
-- **Same sound, more latency.** GPU processing sounds the same as the CPU. It reports more latency to your DAW, which your DAW compensates: at 48 kHz Mixing reports about 320 ms on the GPU instead of 213 ms on the CPU. Settings shows the figure for your session's sample rate.
-- **Tracking stays on the CPU** for the lowest latency. In Tracking the chip says so and changes nothing.
+### GPU processing (Mixing, experimental)
+- **Optional, and off by default.** Mixing can run its spectral processing on the Mac's GPU. Turn it on with the CPU / GPU chip in the header while in Mixing, or under **Settings > GPU processing**. Tracking always runs on the CPU for the lowest latency; in Tracking the chip says so and changes nothing.
+- **Same sound, more latency.** The output is identical to the CPU path. GPU processing adds about 107 ms of latency at 48 kHz, which your DAW compensates: Mixing reports about 320 ms instead of 213 ms. Settings shows the figure for your session's sample rate.
+- **No CPU saving yet.** In this version GPU processing does not lower Spectr's CPU use.
+- **Never drops out.** When the GPU is busy or the Mac is heavily loaded, the affected blocks render on the CPU at the same latency, so playback continues. On Macs with fewer GPU cores, or while other apps use the GPU heavily, more blocks may fall back (the audio is unaffected); if the GPU stats show frequent fallback, turn GPU processing off.
 - **GPU stats.** A Settings switch shows what the GPU is doing; it is off by default.
 
 ### Audio

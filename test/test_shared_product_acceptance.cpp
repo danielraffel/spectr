@@ -582,6 +582,35 @@ TEST_CASE("An offline bounce waits for GPU output instead of falling back",
           "[shared-product][installed-sdk][offline-gpu]") {
     using namespace std::chrono;
     constexpr unsigned block = 512;
+    // The delivery counters come from the worker's terminal drain, which can
+    // trail the last process() call: a fast machine finishes the unpaced
+    // render long before the records of its last quanta arrive. Read them
+    // only once every quantum has a record -- `expected` (the first run's
+    // total; every run renders the same 375 blocks) when known, else once the
+    // total stops moving -- and fail rather than read a partial count.
+    std::uint64_t expected = 0;
+    const auto settled_status = [&](spectr::Spectr* p) {
+        const auto total = [](const auto& d) {
+            return d.gpu_selected + d.cpu_fallback + d.cancelled + d.lost_terminal_records;
+        };
+        const auto deadline = steady_clock::now() + seconds(5);
+        std::uint64_t last = 0;
+        int unchanged = 0;
+        for (;;) {
+            std::this_thread::sleep_for(milliseconds(10));
+            const auto s = p->gpu_audio_status();
+            const std::uint64_t now = s.delivery ? total(*s.delivery) : 0;
+            unchanged = (now == last && now > 0) ? unchanged + 1 : 0;
+            last = now;
+            const bool done = expected > 0 ? now >= expected : unchanged >= 20;
+            if (done || steady_clock::now() > deadline) {
+                INFO("delivery records " << now << ", expected "
+                     << (expected > 0 ? std::to_string(expected) : std::string("stable")));
+                REQUIRE(done);
+                return s;
+            }
+        }
+    };
     const auto bounce = [&](bool offline, bool force_cpu, std::vector<float>* rendered) {
         pulp::format::HeadlessHost host(spectr::create_spectr);
         auto* p = static_cast<spectr::Spectr*>(host.processor());
@@ -607,9 +636,14 @@ TEST_CASE("An offline bounce waits for GPU output instead of falling back",
             if (rendered) rendered->insert(rendered->end(), output.channel(0).begin(), output.channel(0).end());
         }
         const double seconds = duration<double>(steady_clock::now() - start).count();
-        std::this_thread::sleep_for(milliseconds(30));
-        const auto s = p->gpu_audio_status();
+        // The forced-CPU run is the reference waveform only; its counters
+        // are not read.
+        if (force_cpu) std::this_thread::sleep_for(milliseconds(30));
+        const auto s = force_cpu ? p->gpu_audio_status() : settled_status(p);
         REQUIRE(s.delivery.has_value());
+        if (expected == 0 && !force_cpu)
+            expected = s.delivery->gpu_selected + s.delivery->cpu_fallback
+                + s.delivery->cancelled + s.delivery->lost_terminal_records;
         std::printf("bounce offline=%d force_cpu=%d: gpu_selected=%llu cpu_fallback=%llu in %.2f s\n",
                     int(offline), int(force_cpu), (unsigned long long)s.delivery->gpu_selected,
                     (unsigned long long)s.delivery->cpu_fallback, seconds);
