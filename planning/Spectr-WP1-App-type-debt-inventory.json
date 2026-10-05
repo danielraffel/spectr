@@ -8,11 +8,11 @@
   },
   "dependency_manifest": {
     "path": "manifest.json",
-    "sha256": "3707ffb4b79438d801bc2492e752dee8b9a6c2d9d75a40c310526a27c9ac7d1d"
+    "sha256": "a25fb0ad2e929d05119ef487430817db353abeb823a636182fc89718a6072eb6"
   },
   "emission": {
     "path": "emitted",
-    "sha256": "6e774c81d70351c23024b89f4084761213915a1094be3eacbb5e221fcfbd0b3b",
+    "sha256": "8cb4d28a10729cb28327aea7cf1d59c05ef6444121953fd5c8e616aad389e5e3",
     "modules": 57
   },
   "graph": {
@@ -107,18 +107,26 @@
         "ANALYZER_OPTS",
         "EDIT_MODES",
         "SPECTR_CONTROL_MENUS",
+        "SPECTR_FRACTION_GAP",
+        "SPECTR_FRACTION_HIGHLIGHT",
         "SPECTR_FRACTION_ROW",
+        "SPECTR_HEADER_MONO",
         "SPECTR_HEADER_SHOW_MIX",
         "SPECTR_HEADER_SHOW_TAGLINE",
+        "SPECTR_LENGTH_DECORATION",
+        "SPECTR_LENGTH_FACE",
         "SPECTR_LENGTH_GAP",
         "SPECTR_LENGTH_PANEL",
+        "SPECTR_LENGTH_REACH",
         "SPECTR_LENGTH_ROW",
         "SPECTR_LENGTH_SEPARATOR",
         "SPECTR_PARAM_AUTO_GAIN",
         "SPECTR_PARAM_INTENSITY",
         "SPECTR_PARAM_MIX",
+        "SPECTR_PARAM_OUTPUT",
         "StableContextMenu",
         "clamp",
+        "iconBtn",
         "isMuted",
         "lerp",
         "menuItem",
@@ -130,6 +138,7 @@
         "spectrApplyTextScale",
         "spectrBandMenuLayerStyle",
         "spectrBandMenuPortal",
+        "spectrCloseControlMenu",
         "spectrCommitFreezeLength",
         "spectrControlMenuStore",
         "spectrDrawnBandCount",
@@ -1671,15 +1680,6 @@
       },
       {
         "file": "components/PatternDetail.tsx",
-        "line": 46,
-        "column": 181,
-        "code": "TS2304",
-        "message": "Cannot find name 'iconBtn'.",
-        "category": "unknown-binding",
-        "unknown_name": "iconBtn"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 635,
         "code": "TS2739",
@@ -1813,15 +1813,6 @@
         "code": "TS2339",
         "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 342,
-        "column": 71,
-        "code": "TS2304",
-        "message": "Cannot find name 'iconBtn'.",
-        "category": "unknown-binding",
-        "unknown_name": "iconBtn"
       },
       {
         "file": "components/PatternManager.tsx",
@@ -2200,15 +2191,6 @@
         "category": "prop-or-type"
       },
       {
-        "file": "components/SpectrAutoGainPill.tsx",
-        "line": 13,
-        "column": 19,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_HEADER_MONO"
-      },
-      {
         "file": "components/SpectrBuildInfo.tsx",
         "line": 11,
         "column": 12,
@@ -2297,24 +2279,6 @@
         "category": "browser-window"
       },
       {
-        "file": "components/SpectrControlMenu.tsx",
-        "line": 65,
-        "column": 40,
-        "code": "TS2304",
-        "message": "Cannot find name 'spectrCloseControlMenu'.",
-        "category": "unknown-binding",
-        "unknown_name": "spectrCloseControlMenu"
-      },
-      {
-        "file": "components/SpectrControlMenu.tsx",
-        "line": 165,
-        "column": 244,
-        "code": "TS2304",
-        "message": "Cannot find name 'spectrCloseControlMenu'.",
-        "category": "unknown-binding",
-        "unknown_name": "spectrCloseControlMenu"
-      },
-      {
         "file": "components/SpectrFreezeLength.tsx",
         "line": 245,
         "column": 45,
@@ -2324,47 +2288,11 @@
       },
       {
         "file": "components/SpectrFreezeLength.tsx",
-        "line": 248,
-        "column": 50,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_REACH'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_REACH"
-      },
-      {
-        "file": "components/SpectrFreezeLength.tsx",
-        "line": 248,
-        "column": 192,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_REACH'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_REACH"
-      },
-      {
-        "file": "components/SpectrFreezeLength.tsx",
         "line": 256,
         "column": 9,
         "code": "TS2554",
         "message": "Expected 2 arguments, but got 1.",
         "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrFreezeLength.tsx",
-        "line": 265,
-        "column": 54,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_FACE"
-      },
-      {
-        "file": "components/SpectrKnob.tsx",
-        "line": 193,
-        "column": 17,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_HEADER_MONO"
       },
       {
         "file": "components/SpectrLatencySettings.tsx",
@@ -2413,107 +2341,6 @@
         "code": "TS2741",
         "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => void; opts: any; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 94,
-        "column": 33,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 96,
-        "column": 46,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 98,
-        "column": 165,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'. Did you mean 'SPECTR_LENGTH_ROW'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 107,
-        "column": 48,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_FACE"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 107,
-        "column": 497,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 108,
-        "column": 109,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_DECORATION"
-      },
-      {
-        "file": "components/SpectrLengthEditor.tsx",
-        "line": 110,
-        "column": 28,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_FACE'. Did you mean 'SPECTR_LENGTH_GAP'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthFractionList.tsx",
-        "line": 90,
-        "column": 19,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_FRACTION_GAP'. Did you mean 'SPECTR_FRACTION_ROW'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthFractionList.tsx",
-        "line": 93,
-        "column": 59,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_FRACTION_HIGHLIGHT'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_FRACTION_HIGHLIGHT"
-      },
-      {
-        "file": "components/SpectrLengthFractionList.tsx",
-        "line": 94,
-        "column": 64,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_FRACTION_HIGHLIGHT'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_FRACTION_HIGHLIGHT"
-      },
-      {
-        "file": "components/SpectrLengthFractionList.tsx",
-        "line": 94,
-        "column": 150,
-        "code": "TS2552",
-        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'. Did you mean 'SPECTR_LENGTH_ROW'?",
-        "category": "unknown-binding"
-      },
-      {
-        "file": "components/SpectrLengthRow.tsx",
-        "line": 4,
-        "column": 374,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_LENGTH_DECORATION'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_LENGTH_DECORATION"
       },
       {
         "file": "components/SpectrModulationOverrideDialog.tsx",
@@ -2764,24 +2591,6 @@
         "category": "other-semantic"
       },
       {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 454,
-        "column": 1818,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_PARAM_OUTPUT'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_PARAM_OUTPUT"
-      },
-      {
-        "file": "components/SpectrOutputMeter.tsx",
-        "line": 461,
-        "column": 21,
-        "code": "TS2304",
-        "message": "Cannot find name 'SPECTR_HEADER_MONO'.",
-        "category": "unknown-binding",
-        "unknown_name": "SPECTR_HEADER_MONO"
-      },
-      {
         "file": "components/SpectrRangeSetting.tsx",
         "line": 8,
         "column": 71,
@@ -2937,8 +2746,7 @@
     "counts": {
       "browser-window": 159,
       "other-semantic": 64,
-      "prop-or-type": 64,
-      "unknown-binding": 23
+      "prop-or-type": 64
     },
     "counts_by_code": {
       "TS2339": 169,
@@ -2950,20 +2758,9 @@
       "TS2538": 1,
       "TS2554": 7,
       "TS17001": 1,
-      "TS2304": 16,
-      "TS2322": 4,
-      "TS2552": 7
+      "TS2322": 4
     },
-    "unknown_binding_names": [
-      "SPECTR_FRACTION_HIGHLIGHT",
-      "SPECTR_HEADER_MONO",
-      "SPECTR_LENGTH_DECORATION",
-      "SPECTR_LENGTH_FACE",
-      "SPECTR_LENGTH_REACH",
-      "SPECTR_PARAM_OUTPUT",
-      "iconBtn",
-      "spectrCloseControlMenu"
-    ]
+    "unknown_binding_names": []
   },
   "negative_control": {
     "status": "passed",
@@ -2977,7 +2774,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 311
+    "planted_diagnostic_count": 288
   },
   "scope": {
     "runtime_artifact_changed": false,
