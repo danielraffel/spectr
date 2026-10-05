@@ -55,6 +55,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iomanip>
 #include <typeinfo>
 #include <exception>
 #include <filesystem>
@@ -69,6 +70,22 @@
 #include <initializer_list>
 #include <thread>
 #include <vector>
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
+#ifndef SPECTR_PRODUCT_GIT_SHA
+#define SPECTR_PRODUCT_GIT_SHA ""
+#endif
+#ifndef SPECTR_PRODUCT_GIT_DIRTY
+#define SPECTR_PRODUCT_GIT_DIRTY 1
+#endif
+#ifndef SPECTR_PULP_SDK_SOURCE_GIT_SHA
+#define SPECTR_PULP_SDK_SOURCE_GIT_SHA ""
+#endif
+#ifndef SPECTR_PULP_SDK_PROVENANCE_EXACT
+#define SPECTR_PULP_SDK_PROVENANCE_EXACT 0
+#endif
 
 namespace {
 
@@ -1559,6 +1576,107 @@ const char* backend_name(pulp::view::ScreenshotBackend backend) {
     }
 }
 
+template <typename Bridge>
+constexpr bool sdk_has_bridge_call_counter() {
+    return requires(const Bridge& bridge) { bridge.bridge_call_count(); };
+}
+
+template <typename Bridge>
+std::uint64_t bridge_call_count(const Bridge& bridge) {
+    if constexpr (sdk_has_bridge_call_counter<Bridge>())
+        return bridge.bridge_call_count();
+    return 0;
+}
+
+template <typename Bridge>
+void reset_bridge_call_count(Bridge& bridge) {
+    if constexpr (requires { bridge.reset_bridge_call_count(); })
+        bridge.reset_bridge_call_count();
+}
+
+std::uint64_t process_max_rss_bytes() {
+#if defined(_WIN32)
+    // Keep the receipt schema portable. Windows support can add a
+    // GetProcessMemoryInfo implementation without making the baseline mode
+    // depend on a POSIX header.
+    return 0;
+#else
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
+#if defined(__APPLE__)
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024u;
+#endif
+#endif
+}
+
+std::uintmax_t file_size_or_zero(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    return error ? 0 : size;
+}
+
+// WP-0 is deliberately a small, machine-readable baseline rather than a new
+// benchmark framework. It records the importer mount counter, the runtime
+// layout and raw-RGBA paint cost, process RSS, generated artifact sizes, and
+// exact source provenance in one receipt. The mode is opt-in so ordinary
+// native-shot fixtures retain their existing stdout and exit contract.
+bool write_wp0_baseline_receipt(
+    const std::filesystem::path& dir,
+    const std::filesystem::path& executable,
+    const char* capture_backend,
+    float capture_scale,
+    std::uint64_t mount_bridge_calls,
+    bool bridge_counter_available,
+    bool resize_control_reached,
+    bool negative_control_requested,
+    bool negative_control_rejected,
+    const std::string& negative_control_id,
+    const std::vector<std::string>& rows) {
+    const auto path = dir / "wp0-baseline.json";
+    const auto max_rss = process_max_rss_bytes();
+    std::ofstream out(path);
+    if (!out) return false;
+    out << "{\n"
+        << "  \"schema\": \"spectr-wp0-runtime-baseline-v1\",\n"
+        << "  \"mode\": \""
+        << (bridge_counter_available ? "counter-enabled-native-shot"
+                                     : "native-shot-counter-unavailable")
+        << "\",\n"
+        << "  \"layout_mode\": \"forced_full_tree\",\n"
+        << "  \"paint_measurement\": \"raw_rgba_skia_including_layout\",\n"
+        << "  \"resize_measurement\": \"host_resize_plus_24_synthetic_frames\",\n"
+        << "  \"capture_backend\": " << js_string(capture_backend) << ",\n"
+        << "  \"capture_scale\": " << capture_scale << ",\n"
+        << "  \"bridge_counter_available\": "
+        << (bridge_counter_available ? "true" : "false") << ",\n"
+        << "  \"bridge_counter_scope\": \"registered_native_api_only\",\n"
+        << "  \"mount_bridge_calls\": " << mount_bridge_calls << ",\n"
+        << "  \"resize_control_reached\": "
+        << (resize_control_reached ? "true" : "false") << ",\n"
+        << "  \"negative_control_requested\": "
+        << (negative_control_requested ? "true" : "false") << ",\n"
+        << "  \"negative_control_rejected\": "
+        << (negative_control_rejected ? "true" : "false") << ",\n"
+        << "  \"negative_control_id\": " << js_string(negative_control_id) << ",\n"
+        << "  \"max_rss_bytes\": " << max_rss << ",\n"
+        << "  \"rss_supported\": "
+        << (max_rss > 0 ? "true" : "false") << ",\n"
+        << "  \"executable_bytes\": " << file_size_or_zero(executable) << ",\n"
+        << "  \"product_source_sha\": \"" << SPECTR_PRODUCT_GIT_SHA << "\",\n"
+        << "  \"product_source_dirty\": "
+        << (SPECTR_PRODUCT_GIT_DIRTY ? "true" : "false") << ",\n"
+        << "  \"pulp_sdk_source_sha\": \"" << SPECTR_PULP_SDK_SOURCE_GIT_SHA << "\",\n"
+        << "  \"pulp_sdk_provenance_exact\": "
+        << (SPECTR_PULP_SDK_PROVENANCE_EXACT ? "true" : "false") << ",\n"
+        << "  \"rows\": [\n";
+    for (std::size_t index = 0; index < rows.size(); ++index)
+        out << rows[index] << (index + 1 == rows.size() ? "\n" : ",\n");
+    out << "  ]\n}\n";
+    return static_cast<bool>(out);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1633,6 +1751,152 @@ int main(int argc, char** argv) {
         rig.resize(kDesignWidth, kDesignHeight);
         rig.feed_tone(96);
         settle(rig.clock, 24);
+
+        // Opt-in WP-0 importer/runtime receipt. The mount count is sampled
+        // before resetting the experimental counter so it captures the real
+        // materialized import, while each row reports the incremental calls
+        // caused by the host resize path. Layout and paint are measured around
+        // the production tree, and the regular capture helper still emits
+        // the PNG plus layout/depth artifacts beside the receipt.
+        if (std::getenv("SPECTR_WP0_BASELINE") != nullptr) {
+            // Refuse reuse so a failed capture cannot inherit an old artifact.
+            for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+                if (entry.path().filename().string().starts_with("wp0-"))
+                    throw std::runtime_error("WP-0 output directory contains prior artifacts; use a fresh directory");
+            }
+            const bool counter_available =
+                sdk_has_bridge_call_counter<pulp::view::WidgetBridge>();
+            auto& bridge = rig.bridge();
+            const auto mount_calls = bridge_call_count(bridge);
+            reset_bridge_call_count(bridge);
+
+            const bool resize_control_reached =
+                rig.prove_resize_reaches_runtime(990.0f, 645.0f);
+            if (!resize_control_reached) ++g_failures;
+            rig.resize(kDesignWidth, kDesignHeight);
+            settle(rig.clock, 24);
+
+            const char* plant_env = std::getenv("SPECTR_WP0_PLANT_OFFSCREEN");
+            const bool negative_control_requested = plant_env != nullptr;
+            const std::string negative_control_id =
+                plant_env != nullptr && *plant_env != '\0'
+                    ? plant_env
+                    : "__behavior_pr_e1";
+            bool negative_control_rejected = false;
+            if (negative_control_requested) {
+                rig.plant_offscreen(negative_control_id);
+                const auto id = js_string(negative_control_id);
+                negative_control_rejected = rig.truth(
+                    "(() => { const el = document.getElementById(" + id
+                    + "); if (!el) return false; const r = el.getBoundingClientRect();"
+                    " return r.left < -0.5 || r.top < -0.5 || r.right > "
+                    + std::to_string(kDesignWidth)
+                    + " + 0.5 || r.bottom > " + std::to_string(kDesignHeight)
+                    + " + 0.5; })()");
+                std::printf("[wp0] planted negative control id=%s rejected=%s\n",
+                            negative_control_id.c_str(),
+                            negative_control_rejected ? "yes" : "NO");
+                if (negative_control_rejected)
+                    std::printf("[wp0] OFFSCREEN %s\n",
+                                negative_control_id.c_str());
+                if (!negative_control_rejected) ++g_failures;
+            }
+
+            struct HostSize { float width; float height; };
+            const HostSize sizes[] = {
+                {990.0f, 645.0f},
+                {1100.0f, 700.0f},
+                {1320.0f, 860.0f},
+                {1600.0f, 1000.0f},
+            };
+            std::vector<std::string> rows;
+            rows.reserve(std::size(sizes));
+            for (const auto [width, height] : sizes) {
+                const auto resize_start = std::chrono::steady_clock::now();
+                rig.resize(width, height);
+                const auto resize_end = std::chrono::steady_clock::now();
+                const auto resize_calls = bridge_call_count(bridge);
+                reset_bridge_call_count(bridge);
+
+                // Keep the importer contract visible in the row even though
+                // raw-RGBA capture accepts an explicit viewport. The capture
+                // helper is passed the authored dimensions below so it does
+                // not replace the host-pinned root with the host rectangle.
+                const auto root_after_resize = rig.root->bounds();
+                rig.root->invalidate_layout();
+                const auto layout_start = std::chrono::steady_clock::now();
+                rig.root->layout_children();
+                const auto layout_end = std::chrono::steady_clock::now();
+
+                std::uint32_t rendered_width = 0;
+                std::uint32_t rendered_height = 0;
+                const auto paint_start = std::chrono::steady_clock::now();
+                const auto rgba = pulp::view::render_to_rgba(
+                    *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+                    static_cast<std::uint32_t>(kDesignHeight), scale,
+                    &rendered_width, &rendered_height);
+                const auto paint_end = std::chrono::steady_clock::now();
+                if (rgba.empty()) {
+                    std::fprintf(stderr,
+                                 "FAIL wp0 baseline %.0fx%.0f: raw RGBA render empty\n",
+                                 width, height);
+                    ++g_failures;
+                }
+
+                char name[64];
+                std::snprintf(name, sizeof name, "wp0-%.0fx%.0f", width, height);
+                capture_view_tree(*rig.root,
+                                  static_cast<std::uint32_t>(kDesignWidth),
+                                  static_cast<std::uint32_t>(kDesignHeight), dir, name,
+                                  backend, scale, true);
+                const auto png_path = dir / (std::string(name) + ".png");
+                const auto layout_path = dir / (std::string(name) + ".layout.json");
+                const auto resize_ms = std::chrono::duration<double, std::milli>(
+                    resize_end - resize_start).count();
+                const auto layout_ms = std::chrono::duration<double, std::milli>(
+                    layout_end - layout_start).count();
+                const auto paint_ms = std::chrono::duration<double, std::milli>(
+                    paint_end - paint_start).count();
+                const auto rss = process_max_rss_bytes();
+                std::ostringstream row;
+                row << std::fixed << std::setprecision(3)
+                    << "    {\"host_width\": " << width
+                    << ", \"host_height\": " << height
+                    << ", \"root_width\": " << root_after_resize.width
+                    << ", \"root_height\": " << root_after_resize.height
+                    << ", \"resize_ms\": " << resize_ms
+                    << ", \"layout_ms\": " << layout_ms
+                    << ", \"paint_ms\": " << paint_ms
+                    << ", \"resize_bridge_calls\": " << resize_calls
+                    << ", \"rgba_bytes\": " << rgba.size()
+                    << ", \"rendered_width\": " << rendered_width
+                    << ", \"rendered_height\": " << rendered_height
+                    << ", \"rss_bytes\": " << rss
+                    << ", \"png_bytes\": " << file_size_or_zero(png_path)
+                    << ", \"layout_bytes\": " << file_size_or_zero(layout_path)
+                    << "}";
+                rows.push_back(row.str());
+            }
+
+            const auto executable = std::filesystem::path(argv[0]);
+            if (!write_wp0_baseline_receipt(
+                    dir, executable, backend_name(backend), scale,
+                    mount_calls, counter_available,
+                    resize_control_reached,
+                    negative_control_requested, negative_control_rejected,
+                    negative_control_id, rows)) {
+                std::fprintf(stderr, "FAIL wp0 baseline: cannot write %s\n",
+                             (dir / "wp0-baseline.json").string().c_str());
+                ++g_failures;
+            } else {
+                std::printf("WP0 baseline receipt: %s (mount bridge calls=%llu, "
+                             "counter=%s)\n",
+                             (dir / "wp0-baseline.json").string().c_str(),
+                             static_cast<unsigned long long>(mount_calls),
+                             counter_available ? "available" : "unavailable");
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
 
         // COR-4: sweep host sizes through the SHIPPING resize path
         // (on_view_resized -> __spectrResizeNativeEditor), censusing every
