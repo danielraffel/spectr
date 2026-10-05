@@ -51,13 +51,50 @@ class TsxLeafExperimentTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("spread props", result.stderr)
 
-    def test_multiple_return_trees_are_rejected(self):
+    def test_multiple_conditional_return_trees_are_converted(self):
         with tempfile.TemporaryDirectory() as td:
             source = pathlib.Path(td) / "many.jsx"
-            source.write_text('function MBtn({ok}) { if (ok) return React.createElement("button"); return React.createElement("span"); }')
+            source.write_text('function MBtn({ok}) { if (ok) return React.createElement("button", { title: "yes" }); return React.createElement("span", { title: "no" }); }')
+            result = run("--source", str(source), "--component", "MBtn")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            json.loads(result.stdout)
+            with tempfile.NamedTemporaryFile() as output:
+                written = run("--source", str(source), "--component", "MBtn", "--out", output.name)
+                self.assertEqual(written.returncode, 0, written.stderr)
+                text = pathlib.Path(output.name).read_text()
+            self.assertIn("<button", text)
+            self.assertIn("<span", text)
+            self.assertNotIn("React.createElement", text)
+
+    def test_nested_callback_returns_are_converted(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "callback.jsx"
+            source.write_text('function MBtn({items}) { return React.createElement("div", null, items.map((item) => item.ok ? React.createElement("button", { title: item.title }) : React.createElement("span", { title: item.title }))); }')
+            result = run("--source", str(source), "--component", "MBtn")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with tempfile.NamedTemporaryFile() as output:
+                written = run("--source", str(source), "--component", "MBtn", "--out", output.name)
+                self.assertEqual(written.returncode, 0, written.stderr)
+                text = pathlib.Path(output.name).read_text()
+            self.assertIn("<button", text)
+            self.assertIn("<span", text)
+            self.assertNotIn("React.createElement", text)
+
+    def test_dynamic_element_tags_are_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "dynamic.jsx"
+            source.write_text('function MBtn({tag}) { return React.createElement(tag, { title: "x" }); }')
             result = run("--source", str(source), "--component", "MBtn")
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("expected one returned createElement tree", result.stderr)
+            self.assertIn("dynamic element tag", result.stderr)
+
+    def test_malformed_source_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "malformed.jsx"
+            source.write_text('function MBtn({ok}) { return React.createElement("button", { title: ok ? "yes" : "no" };')
+            result = run("--source", str(source), "--component", "MBtn")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("parser rejected", result.stderr)
 
 
 if __name__ == "__main__":

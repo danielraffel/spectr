@@ -21,19 +21,20 @@ python3 -m unittest -v tools/test_wp1_tsx_conversion_report.py
 Current artifact evidence:
 
 - 63 top-level function components discovered.
-- 53 pass the bounded one-return/object-prop JSX codemod.
-- 10 fail closed: 6 multiple-return trees, 2 dynamic element tags, and 2
-  unsupported prop shapes.
-- Blocked components are `ContextMenu`, `MiniPreview`,
-  `SpectrLengthScrollbar`, `SpectrFreezeLength`, `SpectrKnob`, `Chrome`,
-  `EditModePopover`, `AnalyzerPopover`, `PickerDropdown`, and
-  `HelpGuideOverlay`.
+- 54 pass the bounded object-prop JSX codemod, including conditional returns
+  and nested callback return trees.
+- 9 fail closed: 6 dynamic element tags, 2 unsupported prop shapes, and 1
+  non-object props expression.
+- Blocked components are `ContextMenu`, `PatternManager`,
+  `SpectrLengthScrollbar`, `SpectrKnob`, `Chrome`,
+  `PickerDropdown`, `ThemeDropdown`, `MetaphorDropdown`, and
+  `SpectrModulationSettings`.
 - The report is byte-identical across repeated runs and carries artifact and
   per-component source hashes.
 - A planted spread-prop mutation changes artifact identity and moves `MBtn`
   into the `spread-props` blocked class; malformed artifact JSON is rejected.
 
-The report does not claim that the 53 converted components can already be
+The report does not claim that the 54 converted components can already be
 built as a shared application, because dependency resolution, owner scopes,
 TSX type-checking, runtime regeneration, and native/browser parity remain
-separate gates. The ten blocked rows are the next codemod experiments.
+separate gates. The nine blocked rows are the next codemod experiments.

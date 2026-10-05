@@ -14,15 +14,14 @@ CLI = ROOT / "tools" / "wp1_tsx_conversion_report.mjs"
 ARTIFACT = ROOT / "native-ui" / "materialized" / "materialized-document.runtime.json"
 EXPECTED_BLOCKED = {
     "ContextMenu": "dynamic-element-tag",
-    "MiniPreview": "multiple-return-trees",
+    "PatternManager": "dynamic-element-tag",
     "SpectrLengthScrollbar": "unsupported-prop-shape",
-    "SpectrFreezeLength": "multiple-return-trees",
     "SpectrKnob": "unsupported-prop-shape",
     "Chrome": "dynamic-element-tag",
-    "EditModePopover": "multiple-return-trees",
-    "AnalyzerPopover": "multiple-return-trees",
-    "PickerDropdown": "multiple-return-trees",
-    "HelpGuideOverlay": "multiple-return-trees",
+    "PickerDropdown": "dynamic-element-tag",
+    "ThemeDropdown": "dynamic-element-tag",
+    "MetaphorDropdown": "dynamic-element-tag",
+    "SpectrModulationSettings": "non-object-props",
 }
 
 
@@ -50,11 +49,11 @@ class ConversionReportTest(unittest.TestCase):
             self.assertEqual(report["artifact"]["sha256"], hashlib.sha256(before).hexdigest())
             self.assertEqual(report["counts"], {
                 "components": 63,
-                "converted": 53,
-                "blocked": 10,
+                "converted": 54,
+                "blocked": 9,
                 "blocked_by_category": {
-                    "dynamic-element-tag": 2,
-                    "multiple-return-trees": 6,
+                    "dynamic-element-tag": 6,
+                    "non-object-props": 1,
                     "unsupported-prop-shape": 2,
                 },
             })
@@ -81,7 +80,7 @@ class ConversionReportTest(unittest.TestCase):
             mbtn = next(entry for entry in report["components"] if entry["name"] == "MBtn")
             self.assertEqual(mbtn["status"], "blocked")
             self.assertEqual(mbtn["rejection"]["category"], "spread-props")
-            self.assertEqual(report["counts"]["blocked"], 11)
+            self.assertEqual(report["counts"]["blocked"], 10)
 
     def test_malformed_artifact_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:

@@ -3,9 +3,9 @@
  * Convert one small React.createElement component to readable TSX.
  *
  * This is intentionally a bounded WP-1 experiment, not the production
- * compiler: it accepts exactly one function component with one returned
- * React.createElement tree and fails closed on unsupported props/tags or
- * multiple return trees. The output is deterministic and remains valid JSX
+ * compiler: it accepts exactly one function component and fails closed on
+ * unsupported props/tags. Multiple conditional or callback return trees are
+ * converted independently. The output is deterministic and remains valid JSX
  * only when every source expression is preserved verbatim in braces.
  */
 import crypto from 'node:crypto';
@@ -41,6 +41,11 @@ function children(node, fn) {
     if (Array.isArray(value)) value.forEach((child) => { if (isNode(child)) fn(child, key); });
     else if (isNode(value)) fn(value, key);
   }
+}
+function walk(node, fn) {
+  if (!isNode(node)) return;
+  fn(node);
+  children(node, child => walk(child, fn));
 }
 function parseScript(source, label) {
   try {
@@ -81,7 +86,6 @@ function componentNodes(ast, out = []) {
   return out;
 }
 function componentName(node) { return node.type === 'FunctionDeclaration' ? node.id.name : node.id.name; }
-function functionBody(node) { return node.type === 'FunctionDeclaration' ? node.body : node.init.body; }
 function raw(source, node) { return source.slice(node.start, node.end); }
 function isCreateElement(node) {
   return node?.type === 'CallExpression' && node.callee?.type === 'MemberExpression'
@@ -89,7 +93,12 @@ function isCreateElement(node) {
     && node.callee.property?.type === 'Identifier' && node.callee.property.name === 'createElement';
 }
 function jsxName(node, source) {
-  if (node?.type === 'StringLiteral' || node?.type === 'Identifier') return node.value ?? node.name;
+  if (node?.type === 'StringLiteral') return node.value;
+  // Lowercase identifiers are runtime values in createElement and would be
+  // interpreted as intrinsic JSX names if copied verbatim. Uppercase names
+  // are stable component identifiers; member expressions remain outside this
+  // bounded codemod and fail closed as dynamic tags.
+  if (node?.type === 'Identifier' && /^[A-Z]/.test(node.name)) return node.name;
   fail(`dynamic element tag at byte ${node?.start ?? 'unknown'}`);
 }
 function attrName(node, source) {
@@ -101,7 +110,25 @@ function expressionAttribute(name, value, source) {
   if (value?.type === 'BooleanLiteral' && value.value === true) return name;
   // Keep source expressions exact. In particular, object expressions become
   // style={{ ... }} and shorthand props stay equivalent to their JS source.
-  return `${name}={${raw(source, value)}}`;
+  return `${name}={${rewriteNestedCreateElements(value, source)}}`;
+}
+function rewriteNestedCreateElements(node, source) {
+  const calls = [];
+  walk(node, child => {
+    if (isCreateElement(child)) calls.push(child);
+  });
+  // A child call is rendered by its nearest createElement ancestor. Rendering
+  // only the outermost calls here prevents overlapping source replacements;
+  // createElementToJsx recursively rewrites their own children.
+  const outer = calls.filter(call => !calls.some(parent =>
+    parent !== call && parent.start <= call.start && parent.end >= call.end));
+  let output = raw(source, node);
+  for (const call of outer.sort((a, b) => b.start - a.start)) {
+    const offset = call.start - node.start;
+    const end = call.end - node.start;
+    output = output.slice(0, offset) + createElementToJsx(call, source) + output.slice(end);
+  }
+  return output;
 }
 function createElementToJsx(call, source) {
   if (!isCreateElement(call)) fail(`nested expression is not React.createElement at byte ${call.start}`);
@@ -127,32 +154,35 @@ function createElementToJsx(call, source) {
     if (isCreateElement(child)) return createElementToJsx(child, source);
     if (child?.type === 'JSXElement') return raw(source, child);
     if (child?.type === 'JSXText') return raw(source, child);
-    return `{${raw(source, child)}}`;
+    return `{${rewriteNestedCreateElements(child, source)}}`;
   }).join('');
   return `${opening}>${body}</${tagText}>`;
 }
-function returnTrees(body) {
-  const trees = [];
-  function visit(node) {
-    if (!isNode(node)) return;
-    if (node.type === 'ReturnStatement' && isCreateElement(node.argument)) trees.push(node.argument);
-    children(node, visit);
-  }
-  visit(body);
-  return trees;
+function createElementCalls(component) {
+  const calls = [];
+  walk(component, node => {
+    if (isCreateElement(node)) calls.push(node);
+  });
+  return calls.filter(call => !calls.some(parent =>
+    parent !== call && parent.start <= call.start && parent.end >= call.end));
 }
 function convertOne(source, component) {
   const ast = parseScript(source, `${component} input`);
   const nodes = componentNodes(ast).filter((node) => componentName(node) === component);
   if (nodes.length !== 1) fail(`expected one component ${component}, found ${nodes.length}`);
   const node = nodes[0];
-  const trees = returnTrees(functionBody(node));
-  if (trees.length !== 1) fail(`expected one returned createElement tree for ${component}, found ${trees.length}`);
-  const replacement = createElementToJsx(trees[0], source);
   const declaration = raw(source, node);
-  const relativeStart = trees[0].start - node.start;
-  const relativeEnd = trees[0].end - node.start;
-  const converted = declaration.slice(0, relativeStart) + replacement + declaration.slice(relativeEnd);
+  const trees = createElementCalls(node);
+  if (!trees.length) fail(`expected at least one React.createElement tree for ${component}`);
+  let converted = declaration;
+  // Descending offsets keep every replacement anchored to the original
+  // declaration. Conditional returns and callback returns are both covered;
+  // nested calls are rendered recursively by createElementToJsx.
+  for (const tree of trees.sort((a, b) => b.start - a.start)) {
+    const relativeStart = tree.start - node.start;
+    const relativeEnd = tree.end - node.start;
+    converted = converted.slice(0, relativeStart) + createElementToJsx(tree, source) + converted.slice(relativeEnd);
+  }
   // Parse the result as TSX before emitting it. This catches invalid attribute
   // names/braces while leaving semantic compilation to the later build step.
   parse(converted, { sourceType: 'module', sourceFilename: `${component}.tsx`, plugins: ['jsx', 'typescript'] });
