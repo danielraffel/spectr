@@ -842,9 +842,9 @@
         "file": "components/App.tsx",
         "line": 598,
         "column": 109,
-        "code": "TS2741",
-        "message": "Property 'onStateChange' is missing in type '{ settings: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; nativeHydrated: any; initialNativeState: any; onNativeState: any; onEditModeChange: (v: any) => void; }' but required in type '{ settings: any; onStateChange: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; onEditModeChange: any; nativeHydrated: any; onNativeState: any; initialNativeState: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ settings: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; nativeHydrated: any; initialNativeState: any; onNativeState: any; onEditModeChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { settings: any; onStateChange: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; onEditModeChange: any; nativeHydrated: any; onNativeState: any; initialNativeState: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/App.tsx",
@@ -882,40 +882,40 @@
         "file": "components/Chrome.tsx",
         "line": 191,
         "column": 7,
-        "code": "TS2739",
-        "message": "Type '{ railAction: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, active, popupKind, dropdown, onContextMenu",
+        "code": "TS2322",
+        "message": "Type '{ railAction: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 191,
         "column": 156,
-        "code": "TS2739",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "code": "TS2322",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 216,
         "column": 228,
-        "code": "TS2739",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "code": "TS2322",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 219,
         "column": 133,
-        "code": "TS2739",
-        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction, onContextMenu",
+        "code": "TS2322",
+        "message": "Type '{ popupKind: string; dropdown: string; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 222,
         "column": 227,
-        "code": "TS2739",
-        "message": "Type '{ popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is missing the following properties from type '{ children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }': children, railAction",
+        "code": "TS2322",
+        "message": "Type '{ popupKind: string; dropdown: string; onContextMenu: (e: any) => void; onClick: (e: any, wasOpen: any) => any; active: boolean; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; active: any; popupKind: any; railAction: any; dropdown: any; onContextMenu: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -930,33 +930,33 @@
         "file": "components/Chrome.tsx",
         "line": 249,
         "column": 650,
-        "code": "TS2741",
-        "message": "Property 'onClear' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 249,
         "column": 808,
-        "code": "TS2741",
-        "message": "Property 'onClear' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; capture: true; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 249,
         "column": 966,
-        "code": "TS2741",
-        "message": "Property 'capture' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/Chrome.tsx",
         "line": 249,
         "column": 1162,
-        "code": "TS2741",
-        "message": "Property 'capture' is missing in type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' but required in type '{ id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ id: string; action: string; slot: string; filled: any; onClick: () => void; onClear: () => void; label: string; }' is not assignable to type 'IntrinsicAttributes & { id: any; action: any; slot: any; filled: any; onClick: any; onClear: any; capture: any; label: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/FilterBank.tsx",
@@ -1482,121 +1482,121 @@
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 146,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 250,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 296,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 334,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 389,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 445,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 497,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 546,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 590,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 636,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 694,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 736,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 820,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 867,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/HelpPopover.tsx",
         "line": 22,
         "column": 964,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ k: string; }' but required in type '{ k: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/MorphSlider.tsx",
@@ -1658,16 +1658,16 @@
         "file": "components/PatternDeleteDialog.tsx",
         "line": 45,
         "column": 362,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDeleteDialog.tsx",
         "line": 45,
         "column": 429,
-        "code": "TS2739",
-        "message": "Type '{ action: string; danger: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary",
+        "code": "TS2322",
+        "message": "Type '{ action: string; danger: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1682,56 +1682,56 @@
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 635,
-        "code": "TS2739",
-        "message": "Type '{ action: string; primary: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; primary: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 700,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 808,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 908,
-        "code": "TS2739",
-        "message": "Type '{ onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 998,
-        "code": "TS2739",
-        "message": "Type '{ action: string; danger: true; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary",
+        "code": "TS2322",
+        "message": "Type '{ action: string; danger: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 1093,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternDetail.tsx",
         "line": 55,
         "column": 1179,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1816,82 +1816,66 @@
       },
       {
         "file": "components/PatternManager.tsx",
-        "line": 347,
-        "column": 211,
-        "code": "TS2322",
-        "message": "Type '{ key: any; pattern: any; selected: boolean; isDefault: boolean; onClick: () => void; N: any; }' is not assignable to type '{ pattern: any; selected: any; isDefault: any; onClick: any; N: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 347,
-        "column": 826,
-        "code": "TS2322",
-        "message": "Type '{ key: any; pattern: any; selected: boolean; isDefault: boolean; onClick: () => void; N: any; }' is not assignable to type '{ pattern: any; selected: any; isDefault: any; onClick: any; N: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
         "line": 353,
         "column": 7,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: () => any; primary: true; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: () => any; primary: true; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 353,
         "column": 90,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 353,
         "column": 164,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 353,
         "column": 220,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 367,
         "column": 82,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 367,
         "column": 142,
-        "code": "TS2739",
-        "message": "Type '{ primary: true; onClick: () => void; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ primary: true; onClick: () => void; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 382,
         "column": 134,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
         "line": 382,
         "column": 202,
-        "code": "TS2739",
-        "message": "Type '{ onClick: () => Promise<void>; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger, action",
+        "code": "TS2322",
+        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1922,16 +1906,16 @@
         "file": "components/PatternSaveDialog.tsx",
         "line": 62,
         "column": 99,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/PatternSaveDialog.tsx",
         "line": 62,
         "column": 164,
-        "code": "TS2739",
-        "message": "Type '{ action: string; primary: true; onClick: () => void; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; primary: true; onClick: () => void; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -1962,33 +1946,33 @@
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 590,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 848,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => any; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (v: any) => any; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 1172,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 1443,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
@@ -2002,49 +1986,57 @@
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 2612,
-        "code": "TS2739",
-        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': fmt, gestureId, disabled, target",
+        "code": "TS2322",
+        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 2821,
-        "code": "TS2739",
-        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': fmt, gestureId, disabled, target",
+        "code": "TS2322",
+        "message": "Type '{ value: any; min: number; max: number; step: number; onChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 3004,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 3350,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 3640,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
         "line": 119,
         "column": 4249,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/SettingsModal.tsx",
+        "line": 119,
+        "column": 5826,
+        "code": "TS2322",
+        "message": "Type '{ listening: boolean; }' is not assignable to type 'IntrinsicAttributes'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrBuildInfo.tsx",
@@ -2122,9 +2114,9 @@
         "file": "components/SpectrBuildInfo.tsx",
         "line": 88,
         "column": 27,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrControlMenu.tsx",
@@ -2133,14 +2125,6 @@
         "code": "TS2339",
         "message": "Property 'useSpectrModulationState' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrFreezeLength.tsx",
-        "line": 245,
-        "column": 45,
-        "code": "TS2322",
-        "message": "Type '{ key: any; label: any; value: any; selected: boolean; highlighted: boolean; action: string; onHover: () => void; onPick: () => void; }' is not assignable to type '{ label: any; selected: any; highlighted: any; action: any; onPick: any; onHover: any; value: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrFreezeLength.tsx",
@@ -2178,17 +2162,17 @@
         "file": "components/SpectrLatencySettings.tsx",
         "line": 93,
         "column": 27,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrLatencySettings.tsx",
         "line": 93,
         "column": 386,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => void; opts: any; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (next: any) => void; opts: any; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationOverrideDialog.tsx",
@@ -2226,33 +2210,25 @@
         "file": "components/SpectrModulationOverrideDialog.tsx",
         "line": 94,
         "column": 184,
-        "code": "TS2739",
-        "message": "Type '{ action: string; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, primary, danger",
+        "code": "TS2322",
+        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationOverrideDialog.tsx",
         "line": 94,
         "column": 271,
-        "code": "TS2739",
-        "message": "Type '{ action: string; primary: true; onClick: () => any; }' is missing the following properties from type '{ children: any; onClick: any; primary: any; danger: any; action: any; }': children, danger",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 39,
-        "column": 36,
         "code": "TS2322",
-        "message": "Type '{ key: any; label: any; }' is not assignable to type 'SpectrSettingsFieldProps'.",
+        "message": "Type '{ action: string; primary: true; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 69,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ marker: string; title: string; subtitle: string; }' but required in type '{ title: any; subtitle: any; children: any; marker: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ marker: string; title: string; subtitle: string; }' is not assignable to type 'IntrinsicAttributes & { title: any; subtitle: any; children: any; marker: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
@@ -2266,16 +2242,16 @@
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 521,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 733,
-        "code": "TS2739",
-        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': disabled, target",
+        "code": "TS2322",
+        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
         "category": "prop-or-type"
       },
       {
@@ -2290,25 +2266,25 @@
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 1182,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 1395,
-        "code": "TS2739",
-        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is missing the following properties from type '{ value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }': disabled, target",
+        "code": "TS2322",
+        "message": "Type '{ gestureId: number; value: any; min: number; max: number; step: number; onChange: (next: any) => any; fmt: (next: any) => any; }' is not assignable to type 'IntrinsicAttributes & { value: any; min: any; max: any; step: any; onChange: any; fmt: any; gestureId: any; disabled: any; target: any; }'.",
         "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
         "line": 44,
         "column": 1667,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: any; onChange: (next: any) => any; opts: (string | number)[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
@@ -2394,25 +2370,25 @@
         "file": "components/SpectrOutputMeter.tsx",
         "line": 454,
         "column": 773,
-        "code": "TS2741",
-        "message": "Property 'after' is missing in type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' but required in type '{ paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; title: any; readoutWidth: any; onEdit: any; after: any; tip: any; modTarget: any; modName: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' is not assignable to type 'IntrinsicAttributes & { paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; ... 6 more ...; modName: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrOutputMeter.tsx",
         "line": 454,
         "column": 1272,
-        "code": "TS2741",
-        "message": "Property 'after' is missing in type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' but required in type '{ paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; title: any; readoutWidth: any; onEdit: any; after: any; tip: any; modTarget: any; modName: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ paramId: any; name: string; label: string; value: any; min: number; max: number; step: number; fineStep: number; defaultValue: number; origin: number; format: (v: any) => string; readoutWidth: number; ... 5 more ...; modName: string; }' is not assignable to type 'IntrinsicAttributes & { paramId: any; name: any; label: any; value: any; min: any; max: any; step: any; fineStep: any; defaultValue: any; origin: any; format: any; ariaLabel: any; ... 6 more ...; modName: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrRangeSetting.tsx",
         "line": 8,
         "column": 71,
-        "code": "TS2741",
-        "message": "Property 'wrap' is missing in type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' but required in type '{ value: any; onChange: any; opts: any; wrap: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrTooltipSetting.tsx",
@@ -2482,110 +2458,108 @@
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 30,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 56,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 243,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 427,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 555,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 720,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 749,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 956,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 1118,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       },
       {
         "file": "components/TweaksPanel.tsx",
         "line": 57,
         "column": 1232,
-        "code": "TS2741",
-        "message": "Property 'children' is missing in type '{ label: string; }' but required in type '{ label: any; children: any; }'.",
-        "category": "other-semantic"
+        "code": "TS2322",
+        "message": "Type '{ label: string; }' is not assignable to type 'IntrinsicAttributes & { label: any; children: any; }'.",
+        "category": "prop-or-type"
       }
     ],
     "counts": {
       "browser-window": 159,
-      "other-semantic": 64,
-      "prop-or-type": 41
+      "prop-or-type": 86,
+      "other-semantic": 16
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2741": 48,
-      "TS2739": 30,
+      "TS2322": 79,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
       "TS2538": 1,
       "TS2554": 7,
-      "TS17001": 1,
-      "TS2322": 4
+      "TS17001": 1
     },
     "unknown_binding_names": []
   },
   "prop_contract_effect": {
-    "before_diagnostics": 287,
-    "after_diagnostics": 264,
-    "delta": -23,
+    "before_diagnostics": 285,
+    "after_diagnostics": 261,
+    "delta": -24,
     "control_counts": {
       "browser-window": 159,
-      "other-semantic": 64,
-      "prop-or-type": 64
+      "prop-or-type": 110,
+      "other-semantic": 16
     }
   },
   "negative_control": {
@@ -2600,7 +2574,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 265
+    "planted_diagnostic_count": 262
   },
   "prop_contracts": [
     {
@@ -2615,12 +2589,12 @@
     "diagnostic": {
       "file": "components/SpectrSettingsField.tsx",
       "line": 9,
-      "column": 40,
+      "column": 7,
       "code": "TS2741",
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 266
+    "planted_diagnostic_count": 263
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2647,7 +2621,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 268
+    "planted_diagnostic_count": 265
   },
   "scope": {
     "runtime_artifact_changed": false,
