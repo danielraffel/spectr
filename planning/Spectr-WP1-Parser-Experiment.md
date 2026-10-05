@@ -26,3 +26,11 @@ delete patch scripts, or claim authored TSX conversion. Install the pinned
 parser with `npm ci --prefix tools/wp1-parser` before running the tests. The
 CLI exits with a setup error when that dependency is absent; it never falls
 back to regular-expression extraction.
+
+The resolver records browser and optional host names used by the frozen
+artifact (`Blob`, `FileReader`, `navigator`, `arguments`, and the document
+navigation hooks) as external bindings. A local lexical binding wins over an
+unrelated component with the same name; direct nested component declarations
+still become dependency edges. The nine former converter-blocker roots now
+produce unresolved-free closures, while the parser continues to reject an
+actually missing identifier.

@@ -37,6 +37,12 @@ const RUNTIME_GLOBALS = new Set([
   'Infinity', 'NaN', 'undefined', 'setTimeout', 'clearTimeout', 'requestAnimationFrame',
   'cancelAnimationFrame', 'Intl', 'performance', 'parseInt', 'parseFloat', 'isFinite',
   'BigInt', 'Symbol', 'Map', 'Set', 'WeakMap', 'URL', 'URLSearchParams',
+  // JavaScript's implicit function binding and browser globals used by the
+  // frozen editor. These are runtime-provided names, not authored modules.
+  'arguments', 'Blob', 'FileReader', 'navigator',
+  // Optional host navigation hooks are intentionally feature-tested by the
+  // authored UI and are supplied by Pulp when available.
+  'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus',
 ]);
 
 function fail(message) {
@@ -316,11 +322,18 @@ function makeManifest(args) {
     const orderedRefs = [...refs].sort((a, b) => a.name.localeCompare(b.name));
     for (const { name, resolved } of orderedRefs) {
       const dependency = byName.get(name);
-      if (dependency && dependency !== component) {
+      // A local binding wins over the global component index unless that
+      // index entry is the component's direct nested declaration. Without
+      // this check a helper returned by `spectrMenuKit` named `Item` was
+      // incorrectly attached to an unrelated top-level component named
+      // `Item`, producing a false unresolved-capture failure for ContextMenu.
+      const localBinding = resolved || ownBindings.has(name);
+      const directNestedComponent = dependency && dependency.parent === component;
+      if (dependency && dependency !== component && (!ownBindings.has(name) || directNestedComponent)) {
         dependencies.push(dependency);
         continue;
       }
-      if (resolved || ownBindings.has(name)) continue;
+      if (localBinding) continue;
       if (ownerBindings.has(name)) { captures.push(name); continue; }
       if (scriptBindings.has(name) || RUNTIME_GLOBALS.has(name)) { externalBindings.push(name); continue; }
       unresolved.push(name);

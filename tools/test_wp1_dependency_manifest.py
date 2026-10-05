@@ -92,6 +92,24 @@ class ParserDependencyManifestTest(unittest.TestCase):
         expected = json.loads(EXPECTED_MBTN.read_text())
         self.assertEqual(manifest, expected)
 
+    def test_all_frozen_blocker_roots_have_resolved_dependency_closures(self):
+        # These were the nine converter blockers before the explicit JSX
+        # shape allowlist landed. Exercise their parser closure independently
+        # so a successful codemod cannot conceal an unresolved owner or
+        # browser-provided binding.
+        roots = {
+            "ContextMenu", "PatternManager", "SpectrLengthScrollbar",
+            "SpectrKnob", "Chrome", "PickerDropdown", "ThemeDropdown",
+            "MetaphorDropdown", "SpectrModulationSettings",
+        }
+        for root in sorted(roots):
+            result = run_manifest(artifact=ARTIFACT, root=root)
+            self.assertEqual(result.returncode, 0, f"{root}: {result.stderr}")
+            manifest = json.loads(result.stdout)
+            self.assertGreater(manifest["component_count"], 0)
+            for component in manifest["components"]:
+                self.assertEqual(component["unresolved"], [], component["name"])
+
     def test_unresolved_nested_reference_fails_closed(self):
         source = FIXTURE.read_text()
         self.assertIn("MBtn, {", source)
@@ -102,6 +120,34 @@ class ParserDependencyManifestTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unresolved identifiers for Inner: MissingButton", result.stderr)
         self.assertNotIn('"component_count"', result.stdout)
+
+    def test_local_binding_wins_over_unrelated_component_name(self):
+        # An authored helper can destructure a value named like a component
+        # declared elsewhere in the captured bundle. The local binding must
+        # not accidentally pull that unrelated declaration into the closure.
+        source_text = """
+function Item() { return React.createElement(\"span\", null); }
+function spectrMenuKit() { return {}; }
+function Panel() {
+  const { Item } = spectrMenuKit();
+  return React.createElement(Item, null);
+}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            source = pathlib.Path(td) / "shadow.jsx"
+            source.write_text(source_text)
+            result = run_manifest(source=source, root="Panel")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual([entry["name"] for entry in manifest["components"]], ["Panel"])
+        self.assertIn("spectrMenuKit", manifest["components"][0]["external_bindings"])
+
+    def test_direct_nested_component_still_resolves_as_dependency(self):
+        result = run_manifest(source=FIXTURE, root="Panel")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        panel = next(entry for entry in manifest["components"] if entry["name"] == "Panel")
+        self.assertEqual([entry.split(":", 2)[1] for entry in panel["dependencies"]], ["Inner"])
 
     def test_parser_rejects_malformed_source(self):
         with tempfile.TemporaryDirectory() as td:
