@@ -9,7 +9,9 @@ import { pathToFileURL } from 'node:url';
 const [sourcePath, chromePath, outputArg] = process.argv.slice(2);
 assert(sourcePath && chromePath,
   'usage: test_browser_fidelity.mjs resources/editor.html CHROME [OUTPUT_DIR]');
-const source = fs.readFileSync(sourcePath, 'utf8');
+const sourceBytes = fs.readFileSync(sourcePath);
+const source = sourceBytes.toString('utf8');
+const sourceSha256 = crypto.createHash('sha256').update(sourceBytes).digest('hex');
 const output = path.resolve(outputArg || path.join(process.cwd(), 'browser-fidelity-artifacts'));
 fs.mkdirSync(output, { recursive: true });
 
@@ -163,7 +165,10 @@ const run = async () => {
     try { await launch(brokenPath, path.join(output, 'broken-editor.png')); }
     catch (error) { rejected = true; console.log(`negative control rejected: ${error.message}`); }
     assert(rejected, 'broken-editor negative control was accepted');
-    const receipt = { source: path.resolve(sourcePath), positive: first, repeat: second,
+    const receipt = {
+      schema: 'spectr-browser-fidelity-receipt-v2', version: 2,
+      source: path.resolve(sourcePath), sourceSha256,
+      positive: first, repeat: second,
       deterministicDomMarker: true, negativeControl: 'rejected' };
     fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
     console.log(JSON.stringify(receipt, null, 2));
