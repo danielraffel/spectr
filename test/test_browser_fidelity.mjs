@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,33 +47,48 @@ window.pulp = {
 window.confirm = () => true;
 </script>`;
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = ms => delay(ms);
 const launch = async (htmlPath, screenshotPath) => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-browser-fidelity-profile-'));
-  const port = 19000 + (process.pid % 1000);
   const chrome = spawn(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-background-networking',
     '--disable-component-update', '--disable-domain-reliability', '--disable-sync',
     '--no-first-run', '--no-default-browser-check', '--allow-file-access-from-files',
     '--run-all-compositor-stages-before-draw', '--window-size=1320,860',
-    '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`,
+    // Let Chrome choose an unused port.  A PID-derived fixed port made two
+    // concurrent or rapidly repeated captures race, leaving the WebSocket
+    // promise unsettled and Node exit 13 without a receipt.
+    '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
     `--user-data-dir=${profile}`, 'about:blank',
   ], { stdio: 'ignore' });
+  let socket;
   try {
     const deadline = Date.now() + 15000;
+    let port;
     let page;
     while (!page && Date.now() < deadline) {
       try {
-        const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-        page = pages.find(item => item.type === 'page');
+        // Chrome writes the selected port once its DevTools endpoint is
+        // listening.  Reading that file avoids guessing and makes the launch
+        // race explicit and bounded.
+        const active = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n');
+        const selected = Number(active[0]);
+        if (Number.isInteger(selected) && selected > 0) {
+          port = selected;
+          const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+          page = pages.find(item => item.type === 'page');
+        }
       } catch {}
       if (!page) await sleep(50);
     }
     assert(page?.webSocketDebuggerUrl, 'Chrome DevTools endpoint did not start');
-    const socket = new WebSocket(page.webSocketDebuggerUrl);
+    socket = new WebSocket(page.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Chrome DevTools WebSocket did not open within 10000 ms')), 10000);
       socket.addEventListener('open', resolve, { once: true });
       socket.addEventListener('error', reject, { once: true });
+      socket.addEventListener('open', () => clearTimeout(timer), { once: true });
+      socket.addEventListener('error', () => clearTimeout(timer), { once: true });
     });
     let nextId = 1;
     const pending = new Map();
@@ -95,8 +111,21 @@ const launch = async (htmlPath, screenshotPath) => {
     });
     const command = (method, params = {}) => new Promise((resolve, reject) => {
       const id = nextId++;
-      pending.set(id, { resolve, reject });
-      socket.send(JSON.stringify({ id, method, params }));
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`Chrome DevTools command timed out: ${method}`));
+      }, 10000);
+      pending.set(id, {
+        resolve: value => { clearTimeout(timer); resolve(value); },
+        reject: error => { clearTimeout(timer); reject(error); },
+      });
+      try {
+        socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        pending.delete(id);
+        clearTimeout(timer);
+        reject(error);
+      }
     });
     const evaluate = async expression => {
       const result = await command('Runtime.evaluate', {
@@ -137,6 +166,7 @@ const launch = async (htmlPath, screenshotPath) => {
     socket.close();
     return { marker, dom: JSON.parse(dom), consoleErrors, networkFailures, screenshotSha256: crypto.createHash('sha256').update(fs.readFileSync(screenshotPath)).digest('hex') };
   } finally {
+    try { socket?.close(); } catch {}
     chrome.kill('SIGTERM');
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
   }
