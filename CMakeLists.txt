@@ -4797,4 +4797,34 @@ endif()
 if(NOT SPECTR_ENABLE_TEST_SEAMS)
     message(STATUS "Spectr: test seams compiled out of the products (release "
         "configuration). The full ctest needs -DSPECTR_ENABLE_TEST_SEAMS=ON.")
+    # These drive the built Spectr.app through the seams (SPECTR_EVAL,
+    # SPECTR_CLICK, SPECTR_DRAG, SPECTR_MENU_SCENARIO, SPECTR_LAYOUT_DUMP...).
+    # A release build ignores every one of them, so the instruments find no
+    # output and fail closed; they run in the test build instead. Disabled,
+    # not deleted, so a release ctest lists them as "Not Run (Disabled)".
+    set(_spectr_needs_seams
+        Spectr-standalone-band-menu-rows Spectr-standalone-band-menu-64
+        Spectr-standalone-band-menu-keyboard Spectr-standalone-freeze-length
+        Spectr-standalone-settings-wheel Spectr-standalone-modulation-looks
+        Spectr-standalone-modulation-hold-while-editing
+        Spectr-standalone-band-menu-keyboard-negative-control
+        Spectr-standalone-band-menu-rows-negative-control
+        Spectr-status-overlay
+        Spectr-menu-dropdown-affordances
+        Spectr-menu-dropdown-affordances-negative-control
+        Spectr-menu-dropdown-affordances-negative-control-escape
+        Spectr-latency-rail-effect Spectr-latency-rail-effect-disabled-write-control
+        Spectr-group-drag-preserves-mute
+        Spectr-group-drag-preserves-mute-negative-control-unmute
+        Spectr-group-drag-preserves-mute-negative-control-freeze
+        Spectr-menu-arrow-step Spectr-menu-arrow-step-negative-control
+        Spectr-menu-arrow-step-negative-control-eager-cursor
+        Spectr-materialized-captured-state-survives-snapshots-live
+        Spectr-shortcut-panel-single-line
+        Spectr-settings-render-mode-no-reflow-live)
+    foreach(_spectr_seam_test IN LISTS _spectr_needs_seams)
+        if(TEST ${_spectr_seam_test})
+            set_tests_properties(${_spectr_seam_test} PROPERTIES DISABLED TRUE)
+        endif()
+    endforeach()
 endif()
