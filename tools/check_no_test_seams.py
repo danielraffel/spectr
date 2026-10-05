@@ -96,8 +96,9 @@ def main() -> int:
         for r in raw:
             print("  " + r, file=sys.stderr)
         return 2
-    patterns = {n: re.compile(rb"(?<![A-Z0-9_])" + n.encode() + rb"(?![A-Z0-9_])")
-                for n in names}
+    # One pass per binary: every SPECTR_ token, then the ones that are seams.
+    token = re.compile(rb"(?<![A-Z0-9_])SPECTR_[A-Z0-9_]+")
+    name_set = set(names)
 
     groups: list[tuple[Path, list[Path]]] = []
     for p in args.paths:
@@ -119,7 +120,7 @@ def main() -> int:
             if not data:
                 print(f"FAIL: {b} is empty", file=sys.stderr)
                 return 2
-            hits = [n for n, rx in patterns.items() if rx.search(data)]
+            hits = sorted({t.decode() for t in token.findall(data)} & name_set)
             path_hits.update(hits)
             print(f"{len(hits):3d}/{len(names)}  {b}")
             if args.expect == "absent":
