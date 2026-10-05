@@ -82,6 +82,36 @@ class AuthoredModuleEmitterTest(unittest.TestCase):
             self.assertNotEqual(checked.returncode, 0)
             self.assertIn("output hash changed for PatternManager", checked.stderr)
 
+    def test_verify_rejects_duplicate_module_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            manifest = self.make_manifest(root)
+            output = root / "emitted"
+            result = run_emitter(ARTIFACT, manifest, output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            emission = output / "authored-modules.manifest.json"
+            report = json.loads(emission.read_text())
+            report["modules"][1]["id"] = report["modules"][0]["id"]
+            emission.write_text(json.dumps(report, indent=2) + "\n")
+            checked = run_emitter(ARTIFACT, manifest, output, verify=True)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertIn("emission component identity changed", checked.stderr)
+
+    def test_verify_rejects_module_path_traversal(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            manifest = self.make_manifest(root)
+            output = root / "emitted"
+            result = run_emitter(ARTIFACT, manifest, output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            emission = output / "authored-modules.manifest.json"
+            report = json.loads(emission.read_text())
+            report["modules"][0]["path"] = "components/../escape.tsx"
+            emission.write_text(json.dumps(report, indent=2) + "\n")
+            checked = run_emitter(ARTIFACT, manifest, output, verify=True)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertIn("emission module path changed", checked.stderr)
+
     def test_full_app_root_emits_dependency_closure(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)

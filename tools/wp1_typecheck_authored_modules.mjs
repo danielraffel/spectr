@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'spectr-owned-tsx-build-validation-v1';
@@ -25,14 +26,19 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const toolchainDir = path.join(scriptDir, 'wp1-parser');
 const tscPath = path.join(toolchainDir, 'node_modules', 'typescript', 'bin', 'tsc');
+const parserPath = path.join(toolchainDir, 'node_modules', '@babel', 'parser');
+const babel = createRequire(import.meta.url)(parserPath);
+const parse = babel.parse || babel.default?.parse;
+if (typeof parse !== 'function') fail('WP-1 parser toolchain has no parse() API');
 const STANDARD_BINDINGS = new Set([
-  'Array', 'Blob', 'Boolean', 'Date', 'document', 'Error', 'FileReader',
+  'React', 'Array', 'Blob', 'Boolean', 'Date', 'document', 'Error', 'FileReader',
   'Float32Array', 'globalThis', 'Infinity', 'JSON', 'Map', 'Math', 'NaN',
   'navigator', 'Number', 'Object', 'performance', 'Promise', 'Set', 'String',
   'URL', 'URLSearchParams', 'window', 'console', 'undefined', 'arguments',
   'BigInt', 'Symbol', 'WeakMap', 'setTimeout', 'clearTimeout', 'setInterval',
   'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame',
   'parseInt', 'parseFloat', 'isFinite', 'Intl', 'RegExp', 'queueMicrotask',
+  'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus',
 ]);
 
 function fail(message) { throw new Error(`WP-1 TSX build validation failed: ${message}`); }
@@ -51,6 +57,66 @@ function assertKeys(value, expected, label) {
 function readJson(file, label) {
   const raw = readBytes(file, label);
   try { return { raw, value: JSON.parse(raw) }; } catch (error) { fail(`${label} JSON is invalid: ${error.message}`); }
+}
+
+function namesFromPattern(node, out = new Set()) {
+  if (!node) return out;
+  if (node.type === 'Identifier') out.add(node.name);
+  else if (node.type === 'RestElement') namesFromPattern(node.argument, out);
+  else if (node.type === 'AssignmentPattern') namesFromPattern(node.left, out);
+  else if (node.type === 'ArrayPattern') node.elements.forEach((item) => namesFromPattern(item, out));
+  else if (node.type === 'ObjectPattern') node.properties.forEach((property) => {
+    if (property.type === 'RestElement') namesFromPattern(property.argument, out);
+    else namesFromPattern(property.value || property.argument, out);
+  });
+  return out;
+}
+
+function artifactScriptBindings(artifact) {
+  if (!isRecord(artifact) || typeof artifact.html !== 'string' || !artifact.html)
+    fail('artifact html must be a non-empty string');
+  const scripts = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  for (const match of artifact.html.matchAll(re)) {
+    const attrs = match[1] || '';
+    const typeMatch = attrs.match(/\btype\s*=\s*["']([^"']+)["']/i);
+    const type = (typeMatch?.[1] || 'text/javascript').toLowerCase();
+    if (type === 'application/json' || type === 'importmap') continue;
+    if (!/^(?:text|application)\/(?:java|ecma)script$/.test(type) && type !== 'module') continue;
+    let ast;
+    try {
+      ast = parse(match[2], {
+        sourceType: 'script', plugins: ['jsx', 'typescript'],
+        errorRecovery: false, ranges: false, tokens: false, attachComment: false,
+      });
+    } catch (error) {
+      fail(`artifact script parser rejected authored source: ${error.message}`);
+    }
+    const bindings = new Set();
+    for (const statement of ast.program.body) {
+      if (statement.type === 'FunctionDeclaration' && statement.id) bindings.add(statement.id.name);
+      if (statement.type === 'ClassDeclaration' && statement.id) bindings.add(statement.id.name);
+      if (statement.type === 'VariableDeclaration')
+        statement.declarations.forEach((declaration) => namesFromPattern(declaration.id, bindings));
+    }
+    scripts.push(bindings);
+  }
+  return scripts;
+}
+
+function validateExternalBindings(manifest, artifact) {
+  const scriptBindings = artifactScriptBindings(artifact);
+  const allowed = new Set(STANDARD_BINDINGS);
+  for (const bindings of scriptBindings) for (const name of bindings) allowed.add(name);
+  for (const component of manifest.components) {
+    if (new Set(component.external_bindings || []).size !== (component.external_bindings || []).length)
+      fail(`component ${component.name} external_bindings contain duplicates`);
+    for (const name of component.external_bindings || []) {
+      if (!NAME_RE.test(name)) fail(`component ${component.name} external binding is not an identifier: ${name}`);
+      if (!allowed.has(name))
+        fail(`component ${component.name} external binding ${name} is not declared by artifact runtime or script scope`);
+    }
+  }
 }
 
 function runEmitterVerify(artifact, manifest, output) {
@@ -95,6 +161,9 @@ function validateInputs(emissionPath, artifactPath, manifestPath, outputDir) {
   if (!isRecord(manifest) || !Array.isArray(manifest.components)) fail('dependency manifest components are missing');
   const manifestById = new Map(manifest.components.map(component => [component.id, component]));
   const artifact = readBytes(artifactPath, 'artifact');
+  let artifactDocument;
+  try { artifactDocument = JSON.parse(artifact); } catch (error) { fail(`artifact JSON is invalid: ${error.message}`); }
+  validateExternalBindings(manifest, artifactDocument);
   if (!emission.artifact || emission.artifact.sha256 !== sha256(artifact)) fail('emission artifact does not match requested artifact');
   if (!emission.dependency_manifest || emission.dependency_manifest.sha256 !== sha256(readBytes(manifestPath, 'dependency manifest'))) fail('emission dependency manifest changed');
   const modulesDir = path.join(outputDir, 'components');

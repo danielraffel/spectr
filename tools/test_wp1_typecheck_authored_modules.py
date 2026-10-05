@@ -95,6 +95,26 @@ class TypecheckAuthoredModulesTest(unittest.TestCase):
             self.assertIn("Cannot find name 'MissingWp1Type'", result.stderr)
             self.assertFalse(output_report.exists())
 
+    def test_tampered_unknown_external_binding_cannot_mask_missing_type(self):
+        """Ambient declarations may only cover bindings proven by the artifact."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            manifest, emission = self.emit(root)
+            manifest_data = json.loads(manifest.read_text())
+            component = next(item for item in manifest_data["components"] if item["name"] == "MBtn")
+            component["external_bindings"].append("MissingWp1Type")
+            manifest.write_text(json.dumps(manifest_data, indent=2) + "\n")
+
+            emission_data = json.loads(emission.read_text())
+            emission_data["dependency_manifest"]["sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            emission.write_text(json.dumps(emission_data, indent=2) + "\n")
+
+            output_report = root / "tampered-report.json"
+            result = run_typecheck(ARTIFACT, manifest, emission, output_report, semantic=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("external binding MissingWp1Type is not declared", result.stderr)
+            self.assertFalse(output_report.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
