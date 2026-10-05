@@ -77,7 +77,7 @@
       "TweaksPanel",
       "App"
     ],
-    "graph_sha256": "4d829601e8b429944e1e620567da1bfd7ec71af8774225efcd0273355842a802"
+    "graph_sha256": "703719bdd40098c0a1030c9b71e2cb1e08dda5f3a2fdd14a77503092d1f45db4"
   },
   "bindings": {
     "groups": {
@@ -1655,84 +1655,12 @@
         "category": "other-semantic"
       },
       {
-        "file": "components/PatternDeleteDialog.tsx",
-        "line": 45,
-        "column": 362,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDeleteDialog.tsx",
-        "line": 45,
-        "column": 429,
-        "code": "TS2322",
-        "message": "Type '{ action: string; danger: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
         "file": "components/PatternDetail.tsx",
         "line": 11,
         "column": 40,
         "code": "TS2339",
         "message": "Property 'Spectr' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 635,
-        "code": "TS2322",
-        "message": "Type '{ action: string; primary: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 700,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 808,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 908,
-        "code": "TS2322",
-        "message": "Type '{ onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 998,
-        "code": "TS2322",
-        "message": "Type '{ action: string; danger: true; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 1093,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternDetail.tsx",
-        "line": 55,
-        "column": 1179,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/PatternManager.tsx",
@@ -1815,70 +1743,6 @@
         "category": "browser-window"
       },
       {
-        "file": "components/PatternManager.tsx",
-        "line": 353,
-        "column": 7,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: () => any; primary: true; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 353,
-        "column": 90,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 353,
-        "column": 164,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 353,
-        "column": 220,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 367,
-        "column": 82,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 367,
-        "column": 142,
-        "code": "TS2322",
-        "message": "Type '{ primary: true; onClick: () => void; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 382,
-        "column": 134,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternManager.tsx",
-        "line": 382,
-        "column": 202,
-        "code": "TS2322",
-        "message": "Type '{ onClick: () => Promise<void>; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
         "file": "components/PatternRow.tsx",
         "line": 4,
         "column": 40,
@@ -1901,22 +1765,6 @@
         "code": "TS2339",
         "message": "Property '__pulpId' does not exist on type 'Element'.",
         "category": "other-semantic"
-      },
-      {
-        "file": "components/PatternSaveDialog.tsx",
-        "line": 62,
-        "column": 99,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/PatternSaveDialog.tsx",
-        "line": 62,
-        "column": 164,
-        "code": "TS2322",
-        "message": "Type '{ action: string; primary: true; onClick: () => void; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SettingsModal.tsx",
@@ -2205,22 +2053,6 @@
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
-      },
-      {
-        "file": "components/SpectrModulationOverrideDialog.tsx",
-        "line": 94,
-        "column": 184,
-        "code": "TS2322",
-        "message": "Type '{ action: string; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationOverrideDialog.tsx",
-        "line": 94,
-        "column": 271,
-        "code": "TS2322",
-        "message": "Type '{ action: string; primary: true; onClick: () => any; }' is not assignable to type 'IntrinsicAttributes & { children: any; onClick: any; primary: any; danger: any; action: any; }'.",
-        "category": "prop-or-type"
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
@@ -2537,12 +2369,12 @@
     ],
     "counts": {
       "browser-window": 159,
-      "prop-or-type": 86,
+      "prop-or-type": 65,
       "other-semantic": 16
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2322": 79,
+      "TS2322": 58,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
@@ -2554,8 +2386,8 @@
   },
   "prop_contract_effect": {
     "before_diagnostics": 285,
-    "after_diagnostics": 261,
-    "delta": -24,
+    "after_diagnostics": 240,
+    "delta": -45,
     "control_counts": {
       "browser-window": 159,
       "prop-or-type": 110,
@@ -2574,9 +2406,14 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 262
+    "planted_diagnostic_count": 241
   },
   "prop_contracts": [
+    {
+      "name": "MBtn",
+      "type": "all props optional; action:string; primary/danger:boolean; onClick:callable",
+      "value_type": "children?:MBtnChild; onClick?:(...args:any[])=>unknown; primary?:boolean; danger?:boolean; action?:string"
+    },
     {
       "name": "SpectrSettingsField",
       "type": "label required; hint/children/hidden optional",
@@ -2594,7 +2431,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 263
+    "planted_diagnostic_count": 242
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2621,7 +2458,34 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 265
+    "planted_diagnostic_count": 244
+  },
+  "mbtn_prop_type_negative_control": {
+    "status": "passed",
+    "name": "MBtn",
+    "properties": [
+      "primary",
+      "action"
+    ],
+    "diagnostics": [
+      {
+        "file": "components/MBtn.tsx",
+        "line": 20,
+        "column": 50,
+        "code": "TS2322",
+        "message": "Type 'string' is not assignable to type 'boolean'.",
+        "category": "prop-or-type"
+      },
+      {
+        "file": "components/MBtn.tsx",
+        "line": 21,
+        "column": 49,
+        "code": "TS2322",
+        "message": "Type 'number' is not assignable to type 'string'.",
+        "category": "prop-or-type"
+      }
+    ],
+    "planted_diagnostic_count": 246
   },
   "scope": {
     "runtime_artifact_changed": false,
