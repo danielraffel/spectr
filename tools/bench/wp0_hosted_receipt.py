@@ -16,6 +16,7 @@ import argparse
 import json
 import math
 import pathlib
+import hashlib
 import subprocess
 import sys
 import re
@@ -32,6 +33,32 @@ SCENARIOS = {
 NATIVE_ADAPTER = pathlib.Path(__file__).with_name("wp0_baseline_adapter.py")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 FORMATS = {"AU", "VST3", "CLAP", "Standalone"}
+HOSTED_FORMATS = {"AU", "VST3"}
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+
+
+def artifact_digest(path: pathlib.Path) -> tuple[str, int]:
+    """Digest a file or bundle directory deterministically.
+
+    AU and VST3 artifacts are bundles. Hashing only the outer directory's
+    metadata would let a receipt keep the same identity while its payload
+    changes, so the digest covers sorted relative names and file bytes.
+    """
+    if path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_size
+    if not path.is_dir():
+        fail(f"artifact_path is neither a file nor a directory: {path}")
+    digest = hashlib.sha256()
+    total = 0
+    for child in sorted(p for p in path.rglob("*") if p.is_file()):
+        relative = child.relative_to(path).as_posix().encode("utf-8")
+        payload = child.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+        total += len(payload)
+    return digest.hexdigest(), total
 
 
 def fail(message: str) -> "NoReturn":
@@ -62,17 +89,40 @@ def validate_identity(document: dict, label: str) -> dict:
     identity = document.get("identity")
     if not isinstance(identity, dict):
         fail(f"{label} is missing identity")
-    for key in ("host_id", "host_format", "build_id", "artifact_sha256"):
+    for key in ("host_id", "host_format", "build_id", "build_type", "run_id",
+                "artifact_sha256", "product_source_sha", "pulp_sdk_source_sha"):
         if not isinstance(identity.get(key), str) or not identity[key]:
             fail(f"{label}.identity.{key} is missing")
     if identity["host_format"] not in FORMATS:
         fail(f"{label}.identity.host_format is unsupported")
+    if identity["host_format"] not in HOSTED_FORMATS:
+        fail(f"{label}.identity.host_format is not a hosted editor format")
+    if identity["build_type"] not in {"Debug", "RelWithDebInfo", "Release"}:
+        fail(f"{label}.identity.build_type is unsupported")
+    for key in ("product_source_sha", "pulp_sdk_source_sha"):
+        if not SHA40.fullmatch(identity[key]):
+            fail(f"{label}.identity.{key} is not a source SHA")
+        if key in document and document[key] != identity[key]:
+            fail(f"{label}.{key} does not match identity")
     if not SHA256.fullmatch(identity["artifact_sha256"]):
         fail(f"{label}.identity.artifact_sha256 is not a SHA-256")
+    artifact_path = identity.get("artifact_path")
+    if not isinstance(artifact_path, str) or not artifact_path.startswith("/"):
+        fail(f"{label}.identity.artifact_path is not an absolute path")
+    artifact = pathlib.Path(artifact_path)
+    try:
+        stat = artifact.stat()
+    except OSError as error:
+        fail(f"{label}.identity.artifact_path is unavailable: {error}")
+    actual_sha, actual_bytes = artifact_digest(artifact)
+    if actual_sha != identity["artifact_sha256"]:
+        fail(f"{label}.identity.artifact_sha256 does not match artifact_path")
     artifact_bytes = identity.get("artifact_bytes")
     if (isinstance(artifact_bytes, bool) or
             not isinstance(artifact_bytes, int) or artifact_bytes <= 0):
         fail(f"{label}.identity.artifact_bytes is not positive")
+    if actual_bytes != artifact_bytes:
+        fail(f"{label}.identity.artifact_bytes does not match artifact_path")
     return identity
 
 
@@ -114,6 +164,9 @@ def validate_ui(path: pathlib.Path, minimum_runs: int) -> dict:
                 fail(f"scenarios.{scenario}.rss_kb contains zero")
             if metric == "size_bytes" and min(values) <= 0:
                 fail("scenarios.size.size_bytes contains zero")
+            if metric in {"open_ms", "first_frame_ms", "frame_ms", "bridge_calls",
+                          "layout_ms", "paint_ms"} and min(values) <= 0:
+                fail(f"scenarios.{scenario}.{metric} contains zero; measurement is unavailable")
         validated[scenario] = {
             metric: metrics[metric] for metric in (*required, "rss_kb")
         }
@@ -155,6 +208,7 @@ def main(argv=None) -> int:
     output = {
         "schema": "spectr-wp0-hosted-baseline-v1",
         "runs": ui["runs"],
+        "identity": ui["identity"],
         "scenarios": ui["scenarios"],
         "native": native,
         "negative_control": "rejected",

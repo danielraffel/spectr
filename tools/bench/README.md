@@ -45,13 +45,21 @@ python3 tools/bench/wp0_hosted_receipt.py \
 
 The adapter requires all six workload families (`open`, `frame`, `bridge`,
 `layout`, `paint`, and `size`), matching run counts of at least three, and a
-positive `rss_kb` value for every run in every family. It then delegates the
-native receipt to `wp0_baseline_adapter.py`, so host-size, RGBA/layout byte,
-provenance, and planted offscreen-control checks remain fail-closed. A missing
-family, fewer than three runs, or zero RSS is a planted negative control and
-must reject before the receipt can be treated as a hosted baseline. Both input
-receipts must carry the same `identity` object (`host_id`, `host_format`,
-`build_id`, `artifact_sha256`, and positive `artifact_bytes`), and the native
-receipt must explicitly set `hosted_capture: true`; a plain native-shot receipt
-cannot be promoted to hosted evidence. `--negative-log` is required so every
+positive `rss_kb` value for every run in every family. The measured workload
+values must also be positive; a zero bridge, layout, or paint value is an
+unavailable probe, not a valid fast result. `ui_bench.py` measures RSS with one
+`/usr/bin/time` envelope per child, so a large earlier child cannot satisfy a
+later run through cumulative `RUSAGE_CHILDREN.ru_maxrss`.
+
+It then delegates the native receipt to `wp0_baseline_adapter.py`, so host-size,
+RGBA/layout byte, provenance, and planted offscreen-control checks remain
+fail-closed. A missing family, fewer than three runs, or zero RSS is a planted
+negative control and must reject before the receipt can be treated as a hosted
+baseline. Both input receipts must carry the same identity object: hosted `AU`
+or `VST3` format, host/build/run identifiers, exact product and SDK source
+SHAs, an absolute artifact path, and an artifact digest and byte count computed
+from the actual file or bundle directory. Standalone receipts and identities
+that do not match their artifact are rejected. The native receipt must
+explicitly set `hosted_capture: true`; a plain native-shot receipt cannot be
+promoted to hosted evidence. `--negative-log` is required so every
 authoritative output proves the planted offscreen control was actually run.

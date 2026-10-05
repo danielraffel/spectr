@@ -8,26 +8,53 @@ placeholders to select a workload.  A command is executed three times by
 default; missing required metrics are errors, never reported as zero.
 """
 from __future__ import annotations
-import argparse, json, pathlib, resource, shlex, subprocess, sys, tempfile, time
+import argparse, json, pathlib, re, shlex, subprocess, time
 
-SCENARIOS = ("open", "frame", "bridge", "layout", "paint")
+SCENARIOS = ("open", "frame", "bridge", "layout", "paint", "size")
 REQUIRED = {
     "open": ("open_ms", "first_frame_ms"),
     "frame": ("frame_ms",),
     "bridge": ("bridge_calls",),
     "layout": ("layout_ms",),
     "paint": ("paint_ms",),
+    "size": ("size_bytes",),
 }
+_DARWIN_RSS = re.compile(r"\s+([0-9]+)\s+maximum resident set size\s*$", re.MULTILINE)
+_POSIX_RSS = re.compile(r"Maximum resident set size \(kbytes\):\s*([0-9]+)")
 
 def _number(value, key):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{key} must be numeric")
     return float(value)
 
+
+def _child_rss_kb(stderr: str) -> float:
+    """Read the RSS for this child, rather than RUSAGE_CHILDREN's process maximum.
+
+    ``resource.getrusage(RUSAGE_CHILDREN).ru_maxrss`` is cumulative and keeps
+    the largest child seen by the parent.  Reusing it made later runs inherit
+    the first large run's RSS, which can turn an unavailable measurement into
+    a false positive.  ``time -l`` reports the wait4 result for this one
+    command on macOS; GNU time's verbose spelling is accepted for Linux CI.
+    """
+    match = _DARWIN_RSS.search(stderr) or _POSIX_RSS.search(stderr)
+    if not match:
+        raise ValueError("child RSS was not reported by time(1)")
+    value = int(match.group(1))
+    if value <= 0:
+        raise ValueError("child RSS is zero")
+    return float(value) / 1024.0
+
 def run(command: str, scenario: str, run_no: int) -> dict:
     rendered = command.format(scenario=scenario, run=run_no)
     started = time.monotonic()
-    proc = subprocess.run(rendered, shell=True, capture_output=True, text=True)
+    # Keep the caller's shell syntax (pipes, redirects, and quoted probes) but
+    # put one ``time`` envelope around exactly this child invocation.
+    time_cmd = "/usr/bin/time -l" if pathlib.Path("/usr/bin/time").exists() else "/usr/bin/time -v"
+    proc = subprocess.run(
+        f"{time_cmd} /bin/sh -c {shlex.quote(rendered)}",
+        shell=True, capture_output=True, text=True,
+    )
     elapsed = (time.monotonic() - started) * 1000.0
     if proc.returncode:
         raise RuntimeError(f"{scenario} run {run_no} exited {proc.returncode}: {proc.stderr[-500:]}")
@@ -42,8 +69,7 @@ def run(command: str, scenario: str, run_no: int) -> dict:
         raise ValueError(f"{scenario} run {run_no} missing required metrics: {', '.join(missing)}")
     metrics = {k: _number(value[k], k) for k in value}
     metrics["harness_elapsed_ms"] = elapsed
-    raw_rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-    metrics["rss_kb"] = raw_rss / (1024.0 if sys.platform == "darwin" else 1.0)
+    metrics["rss_kb"] = _child_rss_kb(proc.stderr)
     return metrics
 
 def summarize(rows):
@@ -73,6 +99,8 @@ def main(argv=None):
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", type=pathlib.Path)
     ap.add_argument("--artifact", type=pathlib.Path)
+    ap.add_argument("--identity-json", type=pathlib.Path,
+                    help="JSON identity object for hosted receipts")
     ap.add_argument("--self-test", action="store_true")
     ns = ap.parse_args(argv)
     if ns.self_test:
@@ -89,7 +117,13 @@ def main(argv=None):
         rows = [run(command, scenario, i + 1) for i in range(ns.runs)]
         result["scenarios"][scenario] = summarize(rows)
     if ns.artifact:
-        result["artifact"] = {"path": str(ns.artifact), "bytes": ns.artifact.stat().st_size}
+        artifact = ns.artifact.resolve()
+        result["artifact"] = {"path": str(artifact), "bytes": artifact.stat().st_size}
+    if ns.identity_json:
+        identity = json.loads(ns.identity_json.read_text())
+        if not isinstance(identity, dict):
+            raise ValueError("--identity-json must contain an object")
+        result["identity"] = identity
     payload = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if ns.out: ns.out.write_text(payload)
     else: print(payload, end="")

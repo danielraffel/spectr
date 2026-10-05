@@ -2,6 +2,7 @@
 """Positive and planted-negative tests for the hosted WP-0 adapter."""
 
 import json
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -11,6 +12,24 @@ import unittest
 
 ADAPTER = pathlib.Path(__file__).with_name("wp0_hosted_receipt.py")
 HOSTS = ((990, 645), (1100, 700), (1320, 860), (1600, 1000))
+
+
+def make_identity(root: pathlib.Path) -> dict:
+    artifact = root / "Spectr AU.component"
+    if not artifact.exists():
+        artifact.write_bytes(b"hosted-au-artifact")
+    return {
+        "host_id": "spectr-gate-fast-m5",
+        "host_format": "AU",
+        "build_id": "4ffbde645dba833ae8dc88081d2af6676d175c9d",
+        "build_type": "Release",
+        "run_id": "wp0-20261005-au-001",
+        "artifact_path": str(artifact),
+        "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        "artifact_bytes": artifact.stat().st_size,
+        "product_source_sha": "4ffbde645dba833ae8dc88081d2af6676d175c9d",
+        "pulp_sdk_source_sha": "1f43a425652a99383b27ac04d3ac6e74ba1b3e4a",
+    }
 
 
 def native_fixture(root: pathlib.Path, *, negative=True) -> dict:
@@ -27,6 +46,7 @@ def native_fixture(root: pathlib.Path, *, negative=True) -> dict:
             "rendered_width": 1320, "rendered_height": 860,
             "rss_bytes": 100, "png_bytes": 17, "layout_bytes": 23,
         })
+    identity = make_identity(root)
     return {
         "schema": "spectr-wp0-runtime-baseline-v1",
         "mode": "counter-enabled-native-shot",
@@ -48,16 +68,12 @@ def native_fixture(root: pathlib.Path, *, negative=True) -> dict:
         "pulp_sdk_source_sha": "1f43a425652a99383b27ac04d3ac6e74ba1b3e4a",
         "pulp_sdk_provenance_exact": True, "rows": rows,
         "identity": {
-            "host_id": "spectr-gate-fast-m5",
-            "host_format": "Standalone",
-            "build_id": "4ffbde645dba833ae8dc88081d2af6676d175c9d",
-            "artifact_sha256": "a" * 64,
-            "artifact_bytes": 48647344,
+            **identity,
         },
     }
 
 
-def ui_fixture(runs=3):
+def ui_fixture(identity, runs=3):
     required = {
         "open": ("open_ms", "first_frame_ms"),
         "frame": ("frame_ms",), "bridge": ("bridge_calls",),
@@ -71,11 +87,7 @@ def ui_fixture(runs=3):
         scenarios[scenario] = {"runs": runs, "metrics": records}
     return {"schema": "spectr-ui-bench-v1", "runs": runs,
             "scenarios": scenarios, "identity": {
-                "host_id": "spectr-gate-fast-m5",
-                "host_format": "Standalone",
-                "build_id": "4ffbde645dba833ae8dc88081d2af6676d175c9d",
-                "artifact_sha256": "a" * 64,
-                "artifact_bytes": 48647344,
+            **identity,
             }}
 
 
@@ -86,8 +98,9 @@ class HostedReceiptTests(unittest.TestCase):
         self.ui = self.root / "ui.json"
         self.native = self.root / "native.json"
         self.log = self.root / "negative.log"
-        self.ui.write_text(json.dumps(ui_fixture()))
         self.native.write_text(json.dumps(native_fixture(self.root)))
+        self.identity = json.loads(self.native.read_text())["identity"]
+        self.ui.write_text(json.dumps(ui_fixture(self.identity)))
         self.log.write_text(
             "[wp0] planted negative control id=__behavior_pr_e1 rejected=yes\n"
             "[wp0] OFFSCREEN __behavior_pr_e1\n"
@@ -132,8 +145,16 @@ class HostedReceiptTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("identity records do not match", result.stderr)
 
+    def test_standalone_host_is_rejected(self):
+        document = json.loads(self.native.read_text())
+        document["identity"]["host_format"] = "Standalone"
+        self.native.write_text(json.dumps(document))
+        result = self.run_adapter("--negative-log", str(self.log))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a hosted editor format", result.stderr)
+
     def test_missing_scenario_is_planted_negative(self):
-        document = ui_fixture()
+        document = ui_fixture(self.identity)
         del document["scenarios"]["paint"]
         self.ui.write_text(json.dumps(document))
         result = self.run_adapter()
@@ -141,13 +162,13 @@ class HostedReceiptTests(unittest.TestCase):
         self.assertIn("missing scenarios", result.stderr)
 
     def test_two_runs_are_rejected(self):
-        self.ui.write_text(json.dumps(ui_fixture(runs=2)))
+        self.ui.write_text(json.dumps(ui_fixture(self.identity, runs=2)))
         result = self.run_adapter()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("at least 3 runs", result.stderr)
 
     def test_zero_rss_is_rejected(self):
-        document = ui_fixture()
+        document = ui_fixture(self.identity)
         document["scenarios"]["open"]["metrics"]["rss_kb"]["values"][0] = 0
         self.ui.write_text(json.dumps(document))
         result = self.run_adapter()
@@ -155,7 +176,7 @@ class HostedReceiptTests(unittest.TestCase):
         self.assertIn("rss_kb contains zero", result.stderr)
 
     def test_zero_size_is_rejected(self):
-        document = ui_fixture()
+        document = ui_fixture(self.identity)
         document["scenarios"]["size"]["metrics"]["size_bytes"]["values"][0] = 0
         self.ui.write_text(json.dumps(document))
         result = self.run_adapter()
