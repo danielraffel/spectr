@@ -126,4 +126,48 @@ function(spectr_configure_sparkle target kind)
         AUTOMATIC_CHECKS ON
         RELEASES_URL "${SPECTR_RELEASES_PAGE}"
         INSTALLER package)
+    # Nothing installs without the user choosing Install: Sparkle offers an
+    # "automatically download and install" opt-in unless the app declares
+    # SUAllowsAutomaticUpdates false. Deferred after pulp_add_sparkle's own
+    # template step (registered by the call above), so it reads the final
+    # Sparkle keys whatever the SDK writes.
+    cmake_language(EVAL CODE
+        "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL _spectr_sparkle_no_automatic_install [[${target}]])")
+endfunction()
+
+# Adds SUAllowsAutomaticUpdates = false and SUAutomaticallyUpdate = false to
+# the target's Info.plist template. A key the SDK already writes is kept when
+# it is false and refused when it is true, so there is never a duplicate or a
+# conflict. tools/ship/check_sparkle.py bundles checks the built Info.plist.
+function(_spectr_sparkle_no_automatic_install target)
+    get_target_property(_template "${target}" MACOSX_BUNDLE_INFO_PLIST)
+    if(NOT _template)
+        set(_template "${CMAKE_ROOT}/Modules/MacOSXBundleInfo.plist.in")
+    endif()
+    file(READ "${_template}" _text)
+    set(_add "")
+    foreach(_key SUAllowsAutomaticUpdates SUAutomaticallyUpdate)
+        if(_text MATCHES "<key>${_key}</key>[ \t\r\n]*<([a-z]+)/>")
+            if(NOT CMAKE_MATCH_1 STREQUAL "false")
+                message(FATAL_ERROR "Spectr: ${_template} declares ${_key} "
+                    "${CMAKE_MATCH_1}; Spectr never installs an update automatically")
+            endif()
+        elseif(_text MATCHES "<key>${_key}</key>")
+            message(FATAL_ERROR "Spectr: ${_template} declares ${_key} with a non-boolean value")
+        else()
+            string(APPEND _add "\t<key>${_key}</key>\n\t<false/>\n")
+        endif()
+    endforeach()
+    if(_add STREQUAL "")
+        return()
+    endif()
+    string(FIND "${_text}" "</dict>" _close REVERSE)
+    if(_close EQUAL -1)
+        message(FATAL_ERROR "Spectr: ${_template} has no </dict> to add the Sparkle install keys before")
+    endif()
+    string(SUBSTRING "${_text}" 0 ${_close} _head)
+    string(SUBSTRING "${_text}" ${_close} -1 _tail)
+    set(_out "${CMAKE_BINARY_DIR}/SpectrSparkle/${target}-Info.plist.in")
+    file(WRITE "${_out}" "${_head}${_add}${_tail}")
+    set_target_properties("${target}" PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${_out}")
 endfunction()

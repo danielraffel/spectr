@@ -35,7 +35,9 @@ CLAP plug-ins show neither):
   GitHub release notes, styled like Spectr's dark editor, with a link to the
   full release page — then **Install Update**. A package update always asks
   for an administrator password; it never installs silently
-  (`SUAllowsAutomaticUpdates` is false).
+  (`SUAllowsAutomaticUpdates` and `SUAutomaticallyUpdate` are false, written
+  by `cmake/SpectrSparkle.cmake` whatever the SDK writes, and checked on the
+  built app by `check_sparkle.py bundles`).
 
 Where the wiring lives: Pulp's standalone host builds the app menu and owns the
 update service; `src/editor_bridge.cpp` registers Pulp's `pulp_updates_*`
