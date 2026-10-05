@@ -46,6 +46,6 @@ Spectr 1.0.7 brings musical Freeze lengths, multi-target modulation, new level c
 ### Updates
 - **The standalone app updates itself.** Spectr.app checks for updates and installs them with **Check for Updates…**, right under **About Spectr** in the app menu or in **Settings → Updates**, where you can also turn automatic checks off. This is the first version that can update itself; earlier versions need this installer once.
 
-Built with the Pulp v0.907.0 SDK.
+Built with the Pulp v0.910.0 SDK.
 
 **Having trouble?** Open **Spectr Diagnostics** from Applications. It saves a report you can email to support.
