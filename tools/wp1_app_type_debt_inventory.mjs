@@ -441,12 +441,14 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (plantFilterBankPropContract !== 'FilterBank') fail(`FilterBank prop-contract control must target FilterBank, got ${plantFilterBankPropContract}`);
       const target = path.join(stage, 'components', 'FilterBank.tsx');
       if (!fs.existsSync(target)) fail('FilterBank prop-contract control target is not staged');
-      fs.appendFileSync(target, '\nconst __wp1_filter_bank_prop_missing_required__: FilterBankProps = { sharedState: null, onStatus: null, dspMode: null, editMode: null, analyzerMode: null, visualizationMode: null, onEditModeChange: () => {}, nativeHydrated: false, onNativeState: () => {}, initialNativeState: null };\n');
+      fs.appendFileSync(target, '\nconst __wp1_filter_bank_prop_optional_callback__: FilterBankProps = { settings: null, sharedState: null, onStatus: null, dspMode: null, editMode: null, analyzerMode: null, visualizationMode: null, onEditModeChange: () => {}, nativeHydrated: false, onNativeState: () => {}, initialNativeState: null };\nconst __wp1_filter_bank_prop_missing_required__: FilterBankProps = { sharedState: null, onStatus: null, dspMode: null, editMode: null, analyzerMode: null, visualizationMode: null, onEditModeChange: () => {}, nativeHydrated: false, onNativeState: () => {}, initialNativeState: null };\n');
       const planted = runTypeScript(stage);
       const targetSuffix = 'components/FilterBank.tsx';
       const diagnostic = planted.diagnostics.find((item) => ['TS2741', 'TS2739'].includes(item.code) && item.file.endsWith(targetSuffix) && /settings/.test(item.message));
       if (!diagnostic) fail(`planted FilterBank missing required prop did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
-      filterBankPropContractNegativeControl = { status: 'passed', component: 'FilterBank', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+      const callbackDiagnostic = planted.diagnostics.find((item) => item.file.endsWith(targetSuffix) && /onStateChange/.test(item.message));
+      if (callbackDiagnostic) fail(`optional FilterBank onStateChange was reported as required: ${JSON.stringify(callbackDiagnostic)}`);
+      filterBankPropContractNegativeControl = { status: 'passed', component: 'FilterBank', optional_callback_omission: 'passed', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
     }
     let freezeMenuContractNegativeControl = { status: 'not-run' };
     if (plantFreezeMenuContract) {

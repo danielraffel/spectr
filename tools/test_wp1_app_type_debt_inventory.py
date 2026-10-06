@@ -78,6 +78,7 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(report["filter_command_contract_negative_control"]["status"], "passed")
             self.assertEqual(report["filter_command_contract_negative_control"]["diagnostic"]["code"], "TS2345")
             self.assertEqual(report["filter_bank_prop_contract_negative_control"]["status"], "passed")
+            self.assertEqual(report["filter_bank_prop_contract_negative_control"]["optional_callback_omission"], "passed")
             self.assertIn(report["filter_bank_prop_contract_negative_control"]["diagnostic"]["code"], ("TS2739", "TS2741"))
             self.assertEqual(report["freeze_menu_contract_negative_control"]["status"], "passed")
             self.assertEqual(report["freeze_menu_contract_negative_control"]["diagnostic"]["code"], "TS2345")
