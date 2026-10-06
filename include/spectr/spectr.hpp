@@ -12,6 +12,7 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
+#include "spectr/level_controls.hpp"
 #include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
@@ -53,6 +54,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
+#include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
@@ -161,6 +163,13 @@ struct ModulatedFieldSnapshot {
     /// almost-always.
     SnapshotBank       snapshots{};
     float              host_morph = 0.0f;
+    /// The viewport the audio owner modulated from (the user's window, after
+    /// any morph derivation) and the audible one it rendered. Equal when no
+    /// viewport destination is routed. Viewport modulation is audible only --
+    /// the editor keeps drawing the user's window -- so these are the one
+    /// place the rendered window can be read back (tests, probes).
+    Viewport           base_viewport{};
+    Viewport           viewport{};
     double             phase = 0.0;   ///< LFO 1 phase at `published_ns`
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
@@ -533,18 +542,62 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
-    /// Freeze's hold length: how many seconds of input the next freeze
-    /// averages into its held spectrum. Shorter holds closer to "now",
-    /// longer blends more of the recent past into a smoother hold. Clamped
-    /// to [FreezeSource::kMinHoldSeconds, kMaxHoldSeconds]; defaults to the
-    /// reference feel. A Settings value persisted in the supplemental
-    /// plugin-state blob, not a host parameter. Any thread.
-    [[nodiscard]] double freeze_hold_seconds() const noexcept {
-        return freeze_hold_seconds_.load(std::memory_order_relaxed);
+    /// The editor's Range: the plot's vertical scale and the reach of a
+    /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
+    /// state persisted in the supplemental blob, never a host parameter, and
+    /// never part of what the plug-in sounds like.
+    [[nodiscard]] int editor_range_db() const noexcept;
+    /// Refuses (false) anything but one of kEditorRangeChoicesDb.
+    bool set_editor_range_db(int range_db) noexcept;
+
+    /// Auto Gain compensation the audio owner is applying now, in dB. Any
+    /// thread; a reading, not a control.
+    [[nodiscard]] float auto_gain_applied_db() const noexcept {
+        return auto_gain_applied_db_.load(std::memory_order_relaxed);
     }
-    void set_freeze_hold_seconds(double seconds) noexcept {
-        freeze_hold_seconds_.store(FreezeSource::clamp_hold_seconds(seconds),
-                                   std::memory_order_relaxed);
+
+    /// Freeze's musical Length: how much of the incoming sound the next
+    /// freeze takes in (freeze_length.hpp). Host parameter 4 (Freeze Length)
+    /// picks one of the header's common lengths or "Custom", the custom
+    /// length below, which is persisted in the supplemental plugin-state
+    /// blob. The length in force, from either. Any thread.
+    [[nodiscard]] FreezeLength freeze_length() const noexcept;
+    /// The Freeze Length parameter as a preset index; kLengthPresetCustom
+    /// selects freeze_custom_length().
+    [[nodiscard]] int freeze_length_preset() const noexcept;
+    [[nodiscard]] FreezeLength freeze_custom_length() const noexcept {
+        return unpack_length(freeze_custom_length_.load(std::memory_order_relaxed));
+    }
+    /// Store a custom length. Refuses (false) an invalid one. Any thread.
+    bool set_freeze_custom_length(FreezeLength length) noexcept;
+    /// The editor's commit of a length: a common one selects its preset, any
+    /// other becomes the custom length and selects "Custom"; the parameter
+    /// moves inside one host gesture, like set_freeze_from_editor. UI
+    /// thread. False for an invalid length or before the store exists.
+    bool set_freeze_length_from_editor(FreezeLength length) noexcept;
+
+    /// The host transport the audio thread last saw (120 BPM 4/4 until it
+    /// has seen one, and wherever the host gives none). Any thread.
+    [[nodiscard]] double transport_tempo_bpm() const noexcept {
+        return transport_tempo_bpm_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int transport_time_sig_numerator() const noexcept {
+        return transport_time_sig_numerator_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int transport_time_sig_denominator() const noexcept {
+        return transport_time_sig_denominator_.load(std::memory_order_relaxed);
+    }
+    /// The Length in seconds at that transport.
+    [[nodiscard]] double freeze_length_seconds() const noexcept;
+    /// The longest loop this instance holds at its sample rate and channel
+    /// count (FreezeSource::loop_cap_seconds).
+    [[nodiscard]] double freeze_loop_cap_seconds() const noexcept;
+
+    /// Tests and diagnostics: hold exactly `seconds` instead of the Length
+    /// converted at the transport tempo; negative turns it off. Not
+    /// persisted, not reachable from the editor or a host.
+    void set_freeze_seconds_override(double seconds) noexcept {
+        freeze_seconds_override_.store(seconds, std::memory_order_relaxed);
     }
 
     /// The editor's write of Freeze (the LIVE / FROZEN toggle, its keys):
@@ -638,6 +691,43 @@ public:
     void begin_param_gesture_epoch() noexcept;
     void end_param_gesture_epoch() noexcept;
 
+    // ── Editor edits of plain host parameters ──────────────────────────────
+    //
+    // The controls whose parameter IS their whole state -- Mix, Output trim,
+    // and every internal-LFO lane (on/off, shape, rate, depth, target, for
+    // both LFOs) -- are edited by the editor through these, never through a
+    // bare value write. A host recording in Touch, Latch or Write keys on the
+    // edit gesture (begin, value, end); a bare write moves the parameter and
+    // the DSP but leaves such a host nothing to record.
+    //
+    // A press that is one complete act (a toggle, a shape, a target, a step
+    // of the keyboard) calls only `edit_param_from_editor`, which emits a
+    // complete bracket. A drag opens the bracket on press with
+    // `begin_editor_param_gesture`, writes through `edit_param_from_editor`
+    // inside it, and closes it on release -- one bracket per drag. UI thread.
+    //
+    // Other parameters have their own editor routes (bands, morph and
+    // viewport through the field publication; modes through mode_set; Freeze
+    // through freeze_set; macros through macro_set), each already gestured,
+    // so these refuse them rather than offer a second, cache-bypassing path.
+
+    /// True when @p id is edited through the three calls below.
+    [[nodiscard]] static bool is_editor_plain_param(
+        pulp::state::ParamID id) noexcept;
+    /// Write @p value. Inside an open drag gesture for @p id this is the
+    /// value alone; otherwise it is a complete begin/value/end bracket.
+    /// Returns false for a parameter outside the set above or before the
+    /// store exists.
+    bool edit_param_from_editor(pulp::state::ParamID id, float value) noexcept;
+    /// Open a drag gesture on @p id. A second begin on an open id is a no-op.
+    bool begin_editor_param_gesture(pulp::state::ParamID id) noexcept;
+    /// Close the drag gesture on @p id. Closing one that is not open is a
+    /// no-op, so a release the editor reports twice cannot unbalance a host.
+    bool end_editor_param_gesture(pulp::state::ParamID id) noexcept;
+    /// Close every editor drag gesture still open (the editor went away
+    /// mid-drag).
+    void end_editor_param_gestures() noexcept;
+
     // ── Pattern library ────────────────────────────────────────────────
     //
     // Each Spectr owns a PatternLibrary pre-populated with the factory
@@ -685,12 +775,33 @@ public:
         /// The Output trim in force, dB, so the editor's control and its
         /// meter cannot disagree about which gain produced the reading.
         float trim_db = 0.0f;
+        /// Intensity (param 5000), percent, as the store holds it.
+        float intensity_percent = kIntensityDefaultPercent;
+        /// Auto Gain (param 5001) switch, and the compensation the audio
+        /// owner is applying right now (dB; 0 when off and settled).
+        bool  auto_gain = false;
+        float auto_gain_db = 0.0f;
+        /// Mix (param 1), percent, for the editor's MIX knob.
+        float mix_percent = 100.0f;
     };
     OutputLevelReading read_output_level();
 
     /// Latest post-LFO band field from the audio owner, for drawing only.
     /// Lock-free; always a complete frame. `active == false` means no
     /// modulator is running and the editor should draw canonical state.
+    /// Whether the audio owner is asking for a freeze right now, Freeze
+    /// target included, and whether an LFO's Freeze target drives it.
+    [[nodiscard]] bool freeze_effective() const noexcept {
+        return freeze_effective_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool freeze_gate_driven() const noexcept {
+        return freeze_gate_driven_.load(std::memory_order_relaxed);
+    }
+    /// The LENGTH-list index the next freeze takes under the Length target,
+    /// or -1 when no LFO drives Length.
+    [[nodiscard]] int freeze_modulated_length_index() const noexcept {
+        return freeze_modulated_length_index_.load(std::memory_order_relaxed);
+    }
     const ModulatedFieldSnapshot& read_modulated_field() {
         return modulated_field_publication_.read();
     }
@@ -791,12 +902,58 @@ private:
         return config;
     }
     pulp::signal::SmoothedValue<float>     output_gain_{1.0f};
+    // ── Level controls (level_controls.hpp) ──────────────────────────────
+    // Audio thread only, except the reference (built in prepare) and the
+    // published reading.
+    AutoGainReference                      auto_gain_reference_{};
+    // Linear Auto Gain multiplier, ramped over kAutoGainRampSeconds. Exactly
+    // 1.0f once Auto Gain is off and settled, so the multiply is an identity.
+    pulp::signal::SmoothedValue<float>     auto_gain_{1.0f};
+    float                                  auto_gain_target_db_ = 0.0f;
+    bool                                   auto_gain_primed_ = false;
+    // Slewed Intensity factor (0..1) and whether it has adopted its first
+    // value; plus the cursor baselines, like audio_mix_percent_.
+    float                                  audio_intensity_ = 1.0f;
+    /// The Output LFO destination's dB at the end of the last slice: the
+    /// start of the next slice's ramp (modulation.hpp, level destinations).
+    float                                  audio_output_mod_db_ = 0.0f;
+    bool                                   audio_output_mod_primed_ = false;
+    bool                                   audio_intensity_primed_ = false;
+    float                                  audio_intensity_percent_ = kIntensityDefaultPercent;
+    float                                  audio_auto_gain_param_ =
+        kAutoGainDefaultForNewInstances ? 1.0f : 0.0f;
+    std::atomic<float>                     auto_gain_applied_db_{0.0f};
+    // Editor Range, dB. Guarded by processing_state_mutex_.
+    int                                    editor_range_db_ = kEditorRangeDefaultDb;
     bool                                   processor_prepared_ = false;
+    // During prepare, adopt host-written parameters as state. Legacy LFO
+    // target/depth lanes are commands during live automation, but AU hosts
+    // commonly write the full parameter set before Initialize().
+    bool                                   suppress_legacy_lane_commands_ = false;
     // Owned here, not by a renderer, so a Latency switch hands the running
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.
     FreezeSource                           freeze_source_{};
-    std::atomic<double> freeze_hold_seconds_{FreezeSource::kDefaultHoldSeconds};
+    std::atomic<std::uint32_t> freeze_custom_length_{pack_length(kDefaultFreezeLength)};
+    std::atomic<double> transport_tempo_bpm_{kFallbackTempoBpm};
+    std::atomic<int> transport_time_sig_numerator_{4};
+    std::atomic<int> transport_time_sig_denominator_{4};
+    std::atomic<double> freeze_seconds_override_{-1.0};
+    // Audio -> worker: build bigger loop rings off the audio thread, and free
+    // the ones the source let go of (FreezeSource LOOP MEMORY). Declared
+    // after freeze_source_ so it is joined before the source is destroyed.
+    struct FreezeStorageTask { double seconds = 0.0; };
+    pulp::format::BackgroundTaskLane<FreezeStorageTask, 8> freeze_storage_lane_;
+    bool freeze_storage_collect_sent_ = false;   // audio thread
+    static void freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept;
+    void start_freeze_storage_lane_();
+    /// The seconds the next freeze takes in at a transport (or the override).
+    /// The next freeze's hold length with the Length target applied: the
+    /// LENGTH-list index the LFOs reach at this moment. Audio thread.
+    [[nodiscard]] double modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                                   int denominator) noexcept;
+    [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
+                                                 int denominator) const noexcept;
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
@@ -818,9 +975,9 @@ private:
     // 129 viewport center, 130 viewport width, 131 band count, then motion,
     // analyzer, edit, and visualization at 132..135, then internal LFO
     // enabled/shape/rate/depth/target at 136..140, LFO 2
-    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148, and
-    // Freeze at 149.
-    static constexpr std::size_t kSurfaceCacheSlots = 150;
+    // enabled/shape/rate/depth at 141..144, Macro 1..4 at 145..148,
+    // Freeze at 149 and Freeze Length at 150.
+    static constexpr std::size_t kSurfaceCacheSlots = detail::kSurfaceSlots;
     static_assert(kSurfaceCacheSlots == detail::kSurfaceSlots);
     std::array<std::atomic<float>, kSurfaceCacheSlots> applied_param_cache_{};
     // The audio thread's OWN record of the surface values it last pushed into
@@ -851,6 +1008,37 @@ private:
     LfoShapeFade audio_lfo_shape_fade_{};
     LfoShapeFade audio_lfo_2_shape_fade_{};
     bool         audio_lfo_shape_fade_primed_ = false;
+    // Each LFO's slewed audible level (enabled ? depth : 0); see
+    // slew_lfo_level. Adopted without a ramp on the first block, like the
+    // shape, so a session that opens with an LFO running starts on it.
+    std::array<float, 2> audio_lfo_level_{};
+    bool                 audio_lfo_level_primed_ = false;
+    // Each route's slewed level (enabled ? amount : 0), per LFO and
+    // destination, at the same rate as the LFO level: a destination toggled on
+    // or off, or an amount automated, fades its contribution rather than
+    // stepping it. Primed with the LFO level above.
+    std::array<std::array<float, kModulationTargetCount>, 2> audio_route_level_{};
+    // The Freeze target. `freeze_gate_last_` / `freeze_param_last_` are the
+    // previous block's gate and Freeze-parameter values; a change of the
+    // parameter while a gate drives the freeze (the user's press, or host
+    // automation) takes effect until the gate's next transition.
+    bool freeze_gate_last_ = false;
+    bool freeze_param_last_ = false;
+    bool freeze_user_override_ = false;
+    bool freeze_user_value_ = false;
+    // An editor press (button, key, chord) while the Freeze target drives the
+    // freeze: the value it asks for, or -1. Taken on the audio thread, where
+    // it holds the freeze there until the gate's next change -- even when the
+    // parameter already had that value, which is the usual case while a gate
+    // is showing the opposite state.
+    std::atomic<int> freeze_press_request_{-1};
+    // What the audio owner actually asked the freeze source for, and whether
+    // an LFO was driving it: the editor's LIVE/FROZEN face shows this.
+    std::atomic<bool> freeze_effective_{false};
+    std::atomic<bool> freeze_gate_driven_{false};
+    // The LENGTH-list index the next freeze takes while the Length target
+    // drives it, else -1 (diagnostics and tests).
+    std::atomic<int> freeze_modulated_length_index_{-1};
     // Audio owner -> UI publication of the post-LFO band field, so the editor
     // can draw the modulation it is playing. Write-only on the audio thread,
     // read-only through read_modulated_field().
@@ -907,6 +1095,8 @@ private:
     // Open paint-drag epoch (UI thread only): params already begin-gestured.
     std::vector<pulp::state::ParamID> epoch_gesture_params_{};
     bool param_gesture_epoch_open_ = false;
+    // Editor drag gestures open on plain parameters (UI thread only).
+    std::vector<pulp::state::ParamID> editor_param_gestures_{};
 
     // A morph derives non-overridden bands from the snapshot bank while the
     // sparse override mask identifies later band edits whose values live in
@@ -1035,10 +1225,19 @@ private:
     float native_output_level_peak_ = std::numeric_limits<float>::max();
     bool  native_output_level_over_ = false;
     float native_output_level_trim_db_ = std::numeric_limits<float>::max();
+    // The level controls ride the same publication (Intensity, Mix, Auto
+    // Gain and the gain it applies, held at 0.1 dB).
+    float native_output_level_intensity_ = std::numeric_limits<float>::max();
+    float native_output_level_mix_ = std::numeric_limits<float>::max();
+    int   native_output_level_auto_gain_ = -1;
+    float native_output_level_auto_gain_db_ = std::numeric_limits<float>::max();
     std::uint64_t native_analyzer_sequence_ = 0;
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;
+    // Last freeze display sent: bit 0 frozen, 1 driven, 2-3 Freeze LFOs,
+    // 4-5 Length LFOs; -1 before the first.
+    int native_freeze_display_ = -1;
     // Scratch for the display-time LFO reconstruction. A member rather than a
     // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};
@@ -1051,6 +1250,20 @@ private:
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
+
+    // Hands the materialized document to the constructed session. Pulp
+    // evaluates it at once in-process, or from the session's second idle poll
+    // inside a host's view-creation call (view-first open).
+    void load_native_document_();
+    // Runs the post-load scripts once the session has (or has not) mounted
+    // the document; from the session's document-loaded callback, or directly
+    // when the script could not even be read.
+    void finish_native_document_load_(bool session_loaded, const std::string& error,
+                                      bool from_session);
+    // Destroys a session marked failed from inside its own callback.
+    void retire_failed_native_session_();
+    bool native_session_failed_ = false;
+    bool native_document_load_reported_ = false;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
     void open_native_editor_(pulp::view::View& view);
     void close_native_editor_();
@@ -1059,6 +1272,9 @@ private:
     /// this frame's time from the audio owner's published inputs and hand it
     /// to the editor. Display only -- it never re-enters canonical state.
     void publish_modulation_frame_();
+    /// Tell the editor when the LFOs drive Freeze or Length, and the
+    /// LIVE/FROZEN state the audio owner is playing. Sent on change only.
+    void publish_freeze_display_();
     // Fixture-only. Writes the laid-out tree plus its depth sidecar under
     // SPECTR_DRAG_DUMP_PREFIX for one named stage of a gesture, so "during"
     // and "after" are two artifacts rather than one interpretation.

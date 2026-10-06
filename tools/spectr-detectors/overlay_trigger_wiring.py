@@ -65,12 +65,12 @@ TRIGGER = re.compile(r'"data-spectr-menu-trigger":\s*(?:true|popupKind[^,]*),'
 SETTINGS = re.compile(r'"data-spectr-settings-open":\s*true,(?P<props>.{0,400})',
                       re.S)
 
-# Two menu-trigger sites are authored inline (the band-count button and the
-# help button) and one is the shared `RailBtn`, which produces the other four
-# at runtime. Three declarations is therefore the whole population; a different
-# count means the component was restructured and this detector is aimed at the
-# wrong surface.
-EXPECTED_TRIGGER_DECLARATIONS = 3
+# Three menu-trigger sites are authored inline (the Length, band-count, and
+# help buttons) and one is the shared `RailBtn`, which produces the remaining
+# triggers at runtime. Four declarations is therefore the whole population; a
+# different count means the component was restructured and this detector is
+# aimed at the wrong surface.
+EXPECTED_TRIGGER_DECLARATIONS = 4
 
 PLANTS = {
     # The exact state that shipped: the attribute is declared, the runtime
@@ -86,9 +86,9 @@ PLANTS = {
                        ('"data-spectr-menu-trigger": true, '
                         '"aria-haspopup": "listbox",',
                         '"data-spectr-menu-trigger": true,')),
-    # The shared RailBtn, which produces four of the six triggers at runtime --
-    # a separate control because the two inline buttons could stay correct
-    # while the component that makes the majority of them regressed.
+    # The shared RailBtn produces the remaining runtime triggers -- a separate
+    # control because the inline buttons could stay correct while the
+    # component that makes the majority of them regressed.
     "silent-railbtn": ("doc",
                        ('"aria-haspopup": popupKind || void 0,\n', '')),
     # The Settings gear reverted to the odd-one-out it was.

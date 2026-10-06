@@ -25,18 +25,11 @@
 // of mounting. The invariant this suite protects is therefore stronger than an
 // order check: the label sequence must be IDENTICAL in all four enable states.
 //
-// Neither destination control is vestigial, so neither is deleted. They write
-// the SAME field at two authority levels and
-// resolve_modulation_target_mask (include/spectr/modulation.hpp) is the single
-// decider: the `target_mask == 0xFF` sentinel means "follow the `target` enum",
-// anything else means "use the mask". `Target` is kParamLfoTarget (4004), a
-// registered host-automatable Enum parameter and the only destination lane a
-// DAW can automate; `Destinations` is `target_mask`, editor-only state written
-// by the `modulation_targets_set` bridge message and the only way to select
-// more than one destination. src/spectr.cpp copies the whole settings struct
-// into the second LFO's pass, overriding only shape/rate/depth, so BOTH are
-// shared by BOTH LFOs -- which is why neither belongs inside one LFO's
-// disclosure, and why gating `Target` on LFO 1 was the actual defect.
+// The destination rows are the per-LFO target list the band menu shows
+// (spectrModulationRouteList): a switch row and a Depth row per target, for the
+// LFO the "LFO targets" chips select. They replaced the both-LFO "Target" and
+// "Destinations" rows from before per-LFO routing. Switching LFO changes the
+// rows' VALUES, never which rows exist, for the same mount-order reason.
 //
 // Three gates, because the cheap ones are known to lie about this document:
 //
@@ -115,23 +108,20 @@ function replaceExactlyOnce(source, needle, replacement, label) {
 }
 
 const SEP = ',\n    ';
-const TARGET_ROW =
-  '/* @__PURE__ */ React.createElement(SpectrSettingsField, { hidden: '
-  + '!(value.enabled || value.lfo2Enabled), label: "Target", '
-  + 'hint: "Automatable; clears Destinations" }, '
-  + '/* @__PURE__ */ React.createElement(SpectrSettingsChips, { value: value.target, '
-  + 'onChange: (next) => publish("target", 4004, next), '
-  + 'opts: [[0,"Bank"],[1,"A"],[2,"B"],[3,"Morph"] ] }))';
+const TARGETS_ROW =
+  'React.createElement(SpectrSettingsField, { label: "LFO targets", hint: "The band menu\'s '
+  + 'Modulation targets" }, React.createElement("div", { "data-spectr-settings-targets-lfo": lfo }, '
+  + 'React.createElement(SpectrSettingsChips, { value: lfo, onChange: (next) => setLfo(next), '
+  + 'opts: [[1, "LFO 1"], [2, "LFO 2"]] }))),\n    ...rows';
 const LFO2_TOGGLE_ROW =
   'React.createElement(SpectrSettingsField, { label: "LFO 2", hint: "Enable second '
   + 'modulation source" }, React.createElement(SpectrSettingsToggle, { value: '
   + 'value.lfo2Enabled || false, onChange: (next) => publish("lfo2Enabled", 4010, next) }))';
 
 if (plantOrder) {
-  // The pre-fix arrangement: Target sits inside LFO 1's run, above LFO 2, so
-  // the shared destination rows are no longer last and adjacent.
-  html = replaceExactlyOnce(html, SEP + TARGET_ROW, '', 'plant-order lift');
-  html = replaceExactlyOnce(html, LFO2_TOGGLE_ROW, TARGET_ROW + SEP + LFO2_TOGGLE_ROW,
+  // The target list lifted inside LFO 1's run, above LFO 2.
+  html = replaceExactlyOnce(html, SEP + TARGETS_ROW, '', 'plant-order lift');
+  html = replaceExactlyOnce(html, LFO2_TOGGLE_ROW, TARGETS_ROW + SEP + LFO2_TOGGLE_ROW,
                             'plant-order drop');
 }
 if (plantRemount) {
@@ -141,7 +131,7 @@ if (plantRemount) {
   // a late-mounted widget, so the group re-scrambles the moment the user flips
   // the toggle. Here it shows up as a label sequence that CHANGES with state,
   // which is exactly the property the fix buys.
-  for (const label of ['LFO 2 shape', 'LFO 2 rate', 'LFO 2 depth']) {
+  for (const label of ['LFO 2 shape', 'LFO 2 rate']) {
     html = replaceExactlyOnce(
       html,
       'React.createElement(SpectrSettingsField, { hidden: !value.lfo2Enabled, label: "'
@@ -153,13 +143,12 @@ if (plantRemount) {
 }
 if (plantScope) {
   // Free identifier in an LFO 2 row. Parses clean; only running it catches it.
-  html = replaceExactlyOnce(html, 'value: value.lfo2Depth || 0',
-                            'value: lfo2DepthUndeclared || 0', 'plant-scope');
+  html = replaceExactlyOnce(html, 'value: value.lfo2Rate || 4',
+                            'value: lfo2RateUndeclared || 4', 'plant-scope');
 }
 if (plantHomograph) {
-  html = replaceExactlyOnce(html, 'label: "Destinations", hint: "Both LFOs; overrides Target"',
-                            'label: "Targets", hint: "Destinations both LFOs modulate"',
-                            'plant-homograph');
+  html = replaceExactlyOnce(html, 'label: "LFO targets", hint:',
+                            'label: "Targets", hint:', 'plant-homograph');
 }
 
 // ---------------------------------------------------------------- extraction
@@ -232,22 +221,22 @@ function rowsOf(tree) {
 
 // Every row, in the one order the group must always have. A row that is not
 // mounted at all fails this outright, which is what catches --plant-remount.
-const ORDER = ['LFO', 'Shape', 'Rate', 'Depth',
-               'LFO 2', 'LFO 2 shape', 'LFO 2 rate', 'LFO 2 depth',
-               'Target', 'Destinations', 'Viewport'];
+const TARGET_LABELS = ['Bank', 'Band shift', 'Band spread', 'Intensity', 'Mix', 'Morph',
+                       'Freeze', 'Length', 'Output', 'Snapshot A', 'Snapshot B'];
+const ORDER = ['LFO', 'Shape', 'Rate',
+               'LFO 2', 'LFO 2 shape', 'LFO 2 rate',
+               'LFO targets', ...TARGET_LABELS.flatMap((t) => [t, 'Depth']),
+               'Ask before overriding modulation', 'Viewport'];
 
-// Which rows the user should SEE in each enable state. LFO 1's three follow
-// LFO 1, LFO 2's three follow LFO 2, and the two shared destination rows show
-// whenever either LFO is on -- they are shared by both (src/spectr.cpp copies
-// the whole settings struct into the second LFO's pass).
-// Viewport is the exception, and deliberately so: it is the only row in this
-// group that does not belong to an LFO. It governs whether the MORPH SLIDER
-// moves the zoom window, which works with both LFOs off, so hiding it with
-// LFO 1 would make a working control disappear. It sits last for the same
-// reason -- placed among the LFO rows it would read as an LFO setting.
+// Which rows the user should SEE in each enable state. LFO 1's rows follow
+// LFO 1 and LFO 2's follow LFO 2. The target list, the override Setting and
+// Viewport show always: targets can be set up before an LFO is switched on,
+// and Viewport governs the MORPH SLIDER, which works with both LFOs off.
 const visibleFor = (lfo1, lfo2) => (label) => {
-  if (label === 'LFO' || label === 'LFO 2' || label === 'Viewport') return true;
-  if (label === 'Target' || label === 'Destinations') return lfo1 || lfo2;
+  if (label === 'LFO' || label === 'LFO 2' || label === 'Viewport'
+      || label === 'LFO targets' || label === 'Depth'
+      || label === 'Ask before overriding modulation' || TARGET_LABELS.includes(label))
+    return true;
   return label.startsWith('LFO 2 ') ? lfo2 : lfo1;
 };
 
@@ -314,26 +303,30 @@ const at = (label) => both.indexOf(label);
 
 if (at('LFO') === 0) pass('GROUPING: LFO 1 opens the group');
 else fail('GROUPING: LFO 1 does not open the group');
-if (at('Depth') > at('LFO') && at('Depth') < at('LFO 2'))
+if (at('Rate') > at('LFO') && at('Rate') < at('LFO 2'))
   pass("GROUPING: LFO 1's settings sit between the two toggles");
 else fail("GROUPING: LFO 1's settings are not between the two toggles");
-if (at('LFO 2 depth') > at('LFO 2') && at('LFO 2 shape') === at('LFO 2') + 1)
+if (at('LFO 2 rate') > at('LFO 2') && at('LFO 2 shape') === at('LFO 2') + 1)
   pass("GROUPING: LFO 2's settings follow its own toggle");
 else fail("GROUPING: LFO 2's settings do not follow its own toggle");
-if (at('Target') === at('LFO 2 depth') + 1 && at('Destinations') === at('Target') + 1)
-  pass('GROUPING: the two shared destination rows sit last, adjacent');
-else fail('GROUPING: the shared destination rows are not last and adjacent');
-if (at('Targets') === -1) pass('NAMING: the Target/Targets homograph is gone');
-else fail('NAMING: a row is still labelled "Targets"');
+if (at('LFO targets') === at('LFO 2 rate') + 1 && at('Bank') === at('LFO targets') + 1)
+  pass('GROUPING: the target list follows both LFOs');
+else fail('GROUPING: the target list does not follow both LFOs');
+if (at('Targets') === -1 && at('Target') === -1 && at('Destinations') === -1)
+  pass('NAMING: no "Target"/"Targets"/"Destinations" row competes with the target list');
+else fail('NAMING: a row is still labelled "Target", "Targets" or "Destinations"');
 
-// Neither control was deleted: both write paths survive. That is the verdict on
-// the Target-vs-Targets report, asserted rather than asserted in prose.
-if (componentSource.includes('publish("target", 4004, next)'))
-  pass('CAPABILITY: Target still writes kParamLfoTarget (4004), the automatable lane');
-else fail('CAPABILITY: the Target parameter write is gone');
-if (componentSource.includes('modulation_targets_set'))
-  pass('CAPABILITY: Destinations still publishes the target mask');
-else fail('CAPABILITY: the destination-mask write is gone');
+// The list is the band menu's, and it writes each target's own lanes.
+if (componentSource.includes('const targets = spectrModulationRouteList();'))
+  pass('CAPABILITY: Settings lists spectrModulationRouteList(), the band menu\'s list');
+else fail('CAPABILITY: Settings does not list the shared target list');
+// On/off is lane(t) -- 4020 + 20 (lfo - 1) + t, or the level targets' own
+// block from 4060 -- and Depth is lane(t) + 10.
+if (componentSource.includes('const lane = (t) => (t >= 8 ? 4052 : 4020) + (lfo - 1) * 20 + t;')
+    && componentSource.includes('publish("routeOn" + lfo + "_" + t, lane(t), next)')
+    && componentSource.includes('publish("routeAmt" + lfo + "_" + t, lane(t) + 10,'))
+  pass('CAPABILITY: each row writes its target\'s on/off and Depth lanes');
+else fail('CAPABILITY: the per-target lane writes are gone');
 
 fs.rmSync(tmp, {recursive: true, force: true});
 
@@ -350,6 +343,6 @@ if (failures.length) {
   console.log('\n' + failures.length + ' FAILURE(S)');
   process.exit(1);
 }
-console.log('\nOK: the modulation group is grouped per LFO and its shared '
-  + 'destination rows are last');
+console.log('\nOK: the modulation group is grouped per LFO and its target list '
+  + 'follows both LFOs');
 process.exit(0);

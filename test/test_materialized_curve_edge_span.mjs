@@ -117,6 +117,12 @@ const plant = (label, from, to, expected = 1) => {
 // dropping it from the `to` side would silently revert the macro overlay while
 // claiming to test band centres.
 
+// The response line's clamp follows the editor Range
+// (tools/patch_materialized_range.py): a band past the Range is drawn pinned.
+const RANGE_LIMIT = "(typeof globalThis.spectrRangeLimit === 'function' ? globalThis.spectrRangeLimit() : 1)";
+const RENDERED_LINE = "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -"
+  + RANGE_LIMIT + ", " + RANGE_LIMIT + ") : 0;\n";
+
 if (plantResponse) {
   // The ORIGINAL painter: band centres only, and straight through a mute.
   plant("the response line goes back to band centres",
@@ -126,7 +132,7 @@ if (plantResponse) {
     + "        inRun = false;\n"
     + "        continue;\n"
     + "      }\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
+    + RENDERED_LINE
     + "      const y = g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (!inRun) {\n"
@@ -138,7 +144,7 @@ if (plantResponse) {
     + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
     + "    }\n",
     "    for (let i = 0; i < N; ++i) {\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
+    + RENDERED_LINE
     + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (i === 0) ctx.moveTo(x, y);\n"
@@ -156,7 +162,7 @@ if (plantResponseMutes) {
     + "        inRun = false;\n"
     + "        continue;\n"
     + "      }\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
+    + RENDERED_LINE
     + "      const y = g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (!inRun) {\n"
@@ -168,7 +174,7 @@ if (plantResponseMutes) {
     + "        ctx.lineTo(bandLeftX(i, g) + g.bandW, y);\n"
     + "    }\n",
     "    for (let i = 0; i < N; ++i) {\n"
-    + "      const rendered = Number.isFinite(rg[i]) ? clamp(macroAdjustedGain(rg[i], i), -1, 1) : 0;\n"
+    + RENDERED_LINE
     + "      const y = isMuted(tg[i]) ? g.zeroY : g.zeroY - rendered * g.halfH;\n"
     + "      const x = bandCenterX(i, g);\n"
     + "      if (i === 0) {\n"

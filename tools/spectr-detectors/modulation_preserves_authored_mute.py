@@ -183,11 +183,12 @@ def plant_header(text: str, plant: str) -> str:
         return text.replace(
             "        else                          out.bands[i].muted = false;\n", "")
     if plant == "dead-modulation":
-        return text.replace(
-            "    BandField out = canonical;\n"
-            "    const float wave = std::clamp(bipolar_lfo, -1.0f, 1.0f);",
-            "    BandField out = canonical;\n    return out;\n"
-            "    const float wave = std::clamp(bipolar_lfo, -1.0f, 1.0f);")
+        needle = "    BandField out = canonical;\n"
+        if text.count(needle) != 1:
+            raise SystemExit(
+                "plant dead-modulation: expected one field-modulation output "
+                "anchor, saw %d -- this control is dead" % text.count(needle))
+        return text.replace(needle, needle + "    return out;\n", 1)
     raise SystemExit("unknown plant %r" % plant)
 
 

@@ -3775,10 +3775,27 @@ window.PatternManager = PatternManager;`,
     // authoritative: the UI never labels a mode GPU until a live shared
     // provider snapshot agrees. Clicking the indicator uses the existing
     // native render-mode command; the UI never changes mode optimistically.
-    replaceSpectrSource(
-      '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
-      '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
-      'GPU status receives app projection');
+    // The release template can reach this point in either of two valid
+    // shapes: older materializations already carry the selected-preset prop,
+    // while the current 1.0.7 source passes status directly to dspMode. The
+    // GPU projection belongs between status and dspMode in both shapes. Keep
+    // the source patch idempotent without treating a genuinely missing point
+    // as success.
+    const gpuProjectionWithPreset =
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}';
+    const gpuProjectionWithoutPreset =
+      '        status={status}\n        dspMode={dspMode}';
+    if (template.includes(gpuProjectionWithPreset)) {
+      replaceSpectrSource(
+        gpuProjectionWithPreset,
+        '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
+        'GPU status receives app projection');
+    } else {
+      replaceSpectrSource(
+        gpuProjectionWithoutPreset,
+        '        status={status}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
+        'GPU status receives app projection');
+    }
     replaceSpectrSource(
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',
       'function Chrome({ settings, setSettings, bankRef, info, status, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus, patterns, onApplyPattern, onOpenPatternManager, onClearAll, onResetAll, allMuted }) {',

@@ -60,7 +60,7 @@ constexpr pulp::state::ParamID kAnalyzerModeId = 3101;
 constexpr pulp::state::ParamID kEditModeId = 3102;
 constexpr pulp::state::ParamID kVisualizationId = 3103;
 
-constexpr std::size_t kExpectedParamCount = 152;  // +4 macros, +freeze
+constexpr std::size_t kExpectedParamCount = 199;  // +4 macros, +freeze, +freeze length, +44 LFO routing, +intensity, +auto gain
 
 const pulp::state::ParamInfo* find(const pulp::state::StateStore& store,
                                    pulp::state::ParamID id) {
@@ -108,6 +108,25 @@ TEST_CASE("#34: the full static parameter surface is registered") {
     CHECK(freeze->name == "Freeze");
     CHECK(freeze->kind == pulp::state::ParamKind::Toggle);
     CHECK(freeze->range.default_value == 0.0f);
+
+    // Freeze Length follows it: the header's lengths (every fraction of a
+    // bar alone, then 1, 2, 4 and 8 bars), then Custom, each named by the
+    // one length formatter.
+    const auto* length = find(w.store, 4);
+    REQUIRE(length != nullptr);
+    CHECK(length->name == "Freeze Length");
+    CHECK(length->kind == pulp::state::ParamKind::Enum);
+    CHECK(length->range.default_value == 16.0f); // 1 bar
+    CHECK(length->range.max == 20.0f);
+    REQUIRE(length->value_labels.size() == 21);
+    CHECK(length->value_labels[0] == "1/32 bar");
+    CHECK(length->value_labels[5] == "3/16 bar");
+    CHECK(length->value_labels[15] == "15/16 bar");
+    CHECK(length->value_labels[16] == "1 bar");
+    CHECK(length->value_labels[17] == "2 bars");
+    CHECK(length->value_labels[18] == "4 bars");
+    CHECK(length->value_labels[19] == "8 bars");
+    CHECK(length->value_labels[20] == "Custom");
 }
 
 TEST_CASE("#34: reserved ID ranges stay empty") {
@@ -117,7 +136,7 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, 1) != nullptr);
 
     // Legacy global growth headroom between Freeze and the band block.
-    CHECK(find(w.store, 4) == nullptr);
+    CHECK(find(w.store, 5) == nullptr);
     CHECK(find(w.store, 99) == nullptr);
     // Reserved tails between the band blocks and the control block.
     CHECK(find(w.store, 1064) == nullptr);
@@ -137,7 +156,40 @@ TEST_CASE("#34: reserved ID ranges stay empty") {
     REQUIRE(find(w.store, spectr::kParamLfo2Rate) != nullptr);
     REQUIRE(find(w.store, spectr::kParamLfo2Depth) != nullptr);
     CHECK(find(w.store, 4005) == nullptr);
-    CHECK(find(w.store, 4031) == nullptr);
+    CHECK(find(w.store, 4014) == nullptr);
+    CHECK(find(w.store, 4019) == nullptr);
+    // LFO routing: on/off 4020..4027 / 4040..4047, Depths 4030..4037 /
+    // 4050..4057; the two IDs after each block are headroom. The level
+    // destinations (Intensity, Mix, Output) take their own block: on/off
+    // 4060..4062 / 4080..4082, Depths 4070..4072 / 4090..4092.
+    for (std::size_t lfo = 0; lfo < 2; ++lfo)
+        for (std::size_t t = 0; t < 11; ++t) {
+            REQUIRE(find(w.store, spectr::lfo_route_enabled_param_id(lfo, t)) != nullptr);
+            REQUIRE(find(w.store, spectr::lfo_route_amount_param_id(lfo, t)) != nullptr);
+        }
+    // The first block is exactly as it shipped; the level block is appended.
+    CHECK(spectr::lfo_route_enabled_param_id(0, 7) == 4027);
+    CHECK(spectr::lfo_route_amount_param_id(1, 7) == 4057);
+    const std::pair<std::size_t, pulp::state::ParamID> level_ids[] = {
+        {8, 4060}, {9, 4061}, {10, 4062}};
+    for (const auto& [t, id] : level_ids) {
+        CHECK(spectr::lfo_route_enabled_param_id(0, t) == id);
+        CHECK(spectr::lfo_route_amount_param_id(0, t) == id + 10);
+        CHECK(spectr::lfo_route_enabled_param_id(1, t) == id + 20);
+        CHECK(spectr::lfo_route_amount_param_id(1, t) == id + 30);
+    }
+    CHECK(find(w.store, 4060)->name == "LFO 1 Intensity");
+    CHECK(find(w.store, 4071)->name == "LFO 1 Mix Depth");
+    CHECK(find(w.store, 4082)->name == "LFO 2 Output");
+    CHECK(find(w.store, 4092)->name == "LFO 2 Output Depth");
+    for (const pulp::state::ParamID id : {4063, 4069, 4073, 4079, 4083, 4093, 4099})
+        CHECK(find(w.store, id) == nullptr);
+    CHECK(find(w.store, 4028) == nullptr);
+    CHECK(find(w.store, 4029) == nullptr);
+    CHECK(find(w.store, 4038) == nullptr);
+    CHECK(find(w.store, 4039) == nullptr);
+    CHECK(find(w.store, 4048) == nullptr);
+    CHECK(find(w.store, 4058) == nullptr);
     CHECK(find(w.store, 4100) == nullptr);
     CHECK(find(w.store, 4199) == nullptr);
     // Beyond the documented scheme entirely.
@@ -342,6 +394,55 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(target->value_labels.size() == 4);
 }
 
+TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
+          "[modulation][automation]") {
+    Wired w;
+    for (const auto id : {spectr::kParamLfoRate, spectr::kParamLfo2Rate}) {
+        const auto* rate = find(w.store, id);
+        REQUIRE(rate != nullptr);
+        REQUIRE(rate->to_string);
+        REQUIRE(rate->from_string);
+        CHECK(rate->to_string(4.0f) == "4 beats");
+        CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(1.0f) == "1 beat");
+        CHECK(rate->from_string("2 beats") == Approx(2.0f));
+        CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));
+        // The string carries the unit, so a host that prints `units` after it
+        // must not print it twice.
+        CHECK(rate->unit.empty());
+    }
+    for (const auto id : {spectr::kParamLfoDepth, spectr::kParamLfo2Depth}) {
+        const auto* depth = find(w.store, id);
+        REQUIRE(depth != nullptr);
+        REQUIRE(depth->to_string);
+        REQUIRE(depth->from_string);
+        CHECK(depth->to_string(0.5f) == "50%");
+        CHECK(depth->to_string(0.0f) == "0%");
+        CHECK(depth->to_string(1.0f) == "100%");
+        CHECK(depth->from_string("37%") == Approx(0.37f));
+        CHECK(depth->from_string("37") == Approx(0.37f));
+        CHECK(depth->from_string("0.37") == Approx(0.37f));
+    }
+    // Toggles and shapes are discrete lanes with labels, so a host steps them
+    // rather than interpolating between "Sine" and "Square".
+    for (const auto id : {spectr::kParamLfoEnabled, spectr::kParamLfo2Enabled}) {
+        const auto* on = find(w.store, id);
+        REQUIRE(on != nullptr);
+        CHECK(on->kind == pulp::state::ParamKind::Toggle);
+        CHECK(on->range.step == Approx(1.0f));
+        REQUIRE(on->value_labels.size() == 2);
+        CHECK(on->value_labels[1] == "On");
+    }
+    for (const auto id : {spectr::kParamLfoShape, spectr::kParamLfo2Shape,
+                          spectr::kParamLfoTarget}) {
+        const auto* e = find(w.store, id);
+        REQUIRE(e != nullptr);
+        CHECK(e->kind == pulp::state::ParamKind::Enum);
+        CHECK(e->range.step == Approx(1.0f));
+        CHECK(e->value_labels.size() == 4);
+    }
+}
+
 TEST_CASE("#34: viewport parameters round-trip without inverted edges") {
     const spectr::Viewport authored{120.0f, 7200.0f};
     const auto [center, width] = spectr::encode_viewport(authored);
@@ -475,6 +576,30 @@ TEST_CASE("#34: process hands host automation to the control worker") {
     w.proc->release();
 }
 
+TEST_CASE("LFO routing written before prepare survives initialization") {
+    Wired w;
+    const auto bank = spectr::lfo_route_enabled_param_id(
+        0, static_cast<std::size_t>(spectr::ModulationTarget::WholeBank));
+    const auto morph = spectr::lfo_route_enabled_param_id(
+        0, static_cast<std::size_t>(spectr::ModulationTarget::Morph));
+    const auto output_depth = spectr::lfo_route_amount_param_id(
+        1, static_cast<std::size_t>(spectr::ModulationTarget::Output));
+    w.store.set_value(bank, 0.0f);
+    w.store.set_value(morph, 1.0f);
+    w.store.set_value(output_depth, 0.81f);
+
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 32;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    w.proc->prepare(prepare);
+
+    CHECK(w.store.get_value(bank) == Approx(0.0f));
+    CHECK(w.store.get_value(morph) == Approx(1.0f));
+    CHECK(w.store.get_value(output_depth) == Approx(0.81f));
+}
+
 TEST_CASE("#34: paint gesture epochs close on end cancel and reset") {
     Wired w;
 
@@ -563,33 +688,76 @@ TEST_CASE("host target automation reclaims the modulation destination") {
     Wired w;
     w.proc->apply_surface_params(false);  // settle the applied-parameter cache
 
-    // The editor selects every destination. This is editor state: it has no
-    // parameter lane of its own.
-    REQUIRE(w.proc->set_modulation_target_mask(spectr::kModulationTargetMaskAll));
-    REQUIRE(mask_int(w.proc->modulation_settings().target_mask)
-            == mask_int(spectr::kModulationTargetMaskAll));
+    // Routing per LFO: LFO 1 drives Bank + Morph + Band shift, LFO 2
+    // Snapshot A. Those are host lanes now.
+    const auto route = [&](std::size_t lfo, spectr::ModulationTarget t, bool on) {
+        w.store.set_value(spectr::lfo_route_enabled_param_id(
+                              lfo, static_cast<std::size_t>(t)), on ? 1.0f : 0.0f);
+    };
+    route(0, spectr::ModulationTarget::Morph, true);
+    route(0, spectr::ModulationTarget::ViewportPosition, true);
+    route(1, spectr::ModulationTarget::WholeBank, false);
+    route(1, spectr::ModulationTarget::SnapshotA, true);
+    REQUIRE(w.proc->apply_surface_params(false));
+    auto settings = w.proc->modulation_settings();
+    CHECK(mask_int(spectr::route_mask(settings.routes[0])) == 0x19);
+    CHECK(mask_int(spectr::route_mask(settings.routes[1])) == 0x02);
 
-    // An unrelated LFO parameter edit must not discard the selection. Before
-    // the fix, apply_surface_params() overwrote the whole settings struct with
-    // one rebuilt from parameters, silently resetting the mask.
+    // An unrelated LFO parameter edit leaves the routing alone.
     w.store.set_value(spectr::kParamLfoDepth, 0.75f);
     REQUIRE(w.proc->apply_surface_params(false));
     CHECK(w.proc->modulation_settings().depth == Approx(0.75f));
-    CHECK(mask_int(w.proc->modulation_settings().target_mask)
-          == mask_int(spectr::kModulationTargetMaskAll));
+    CHECK(mask_int(spectr::route_mask(w.proc->modulation_settings().routes[0])) == 0x19);
 
-    // Moving kParamLfoTarget does discard it: that lane is host-automatable
-    // and must never be silently swallowed by an earlier editor selection.
+    // Moving the legacy kParamLfoTarget lane is a command: it selects that one
+    // FIELD destination for both LFOs (the lane was shared), leaving viewport
+    // routes alone, and writes the routing lanes so they agree.
     w.store.set_value(spectr::kParamLfoTarget,
                       static_cast<float>(spectr::ModulationTarget::SnapshotB));
     REQUIRE(w.proc->apply_surface_params(false));
     const auto after = w.proc->modulation_settings();
     CHECK(after.target == spectr::ModulationTarget::SnapshotB);
-    CHECK(mask_int(after.target_mask)
-          == mask_int(spectr::kModulationTargetMaskUnset));
-    CHECK(mask_int(spectr::resolve_modulation_target_mask(after))
-          == mask_int(spectr::modulation_target_bit(
-                 spectr::ModulationTarget::SnapshotB)));
+    CHECK(mask_int(spectr::route_mask(after.routes[0])) == (0x10 | 0x04));
+    CHECK(mask_int(spectr::route_mask(after.routes[1])) == 0x04);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 2)) == 1.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 0)) == 0.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 4)) == 1.0f);
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(1, 1)) == 0.0f);
+    // The writes were stamped applied: the next pass sees no drift and does
+    // not re-run the command.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+}
+
+TEST_CASE("the legacy LFO Depth lanes set the Depth of every enabled target",
+          "[modulation][routing]") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    // LFO 1: Bank (default) + Band spread; LFO 2: Morph only.
+    w.store.set_value(spectr::lfo_route_enabled_param_id(0, 5), 1.0f);
+    w.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.33f);  // Morph off
+    w.store.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(1, 3), 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+
+    w.store.set_value(spectr::kParamLfoDepth, 0.8f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 0)) == Approx(0.8f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == Approx(0.8f));
+    // A target LFO 1 does not drive keeps its own Depth; LFO 2 is untouched.
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 3)) == Approx(0.33f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(1, 3)) == Approx(0.5f));
+
+    w.store.set_value(spectr::kParamLfo2Depth, 0.1f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(1, 3)) == Approx(0.1f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 0)) == Approx(0.8f));
+    // Stamped applied: the command does not run again.
+    CHECK_FALSE(w.proc->apply_surface_params(false));
+    // A target Depth edit does not move the legacy lane (never written back).
+    w.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 0.4f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.store.get_value(spectr::kParamLfoDepth) == Approx(0.8f));
+    CHECK(w.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == Approx(0.8f));
 }
 
 // An editor edit is authoritative right up to the moment the host starts

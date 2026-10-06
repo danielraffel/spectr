@@ -23,11 +23,35 @@
 #include <sstream>
 #include <limits>
 #include <string>
+#include <cstdlib>
 #include <string_view>
 
 namespace spectr {
 
 namespace {
+
+/// Negative-control seam for the route ramp: `SPECTR_MODULATION_PLANT=route-step`
+/// switches destinations and amounts in one block, the behaviour before routes
+/// were slewed. Read once per process; unset in every shipping run.
+bool modulation_plants_route_step() noexcept {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "route-step";
+    }();
+    return planted;
+}
+
+// SPECTR_MODULATION_PLANT=level-target-step: the Output destination's gain
+// lands once per block instead of ramping across it, the per-block zipper the
+// ramp exists to prevent. The Output-target smoothness gate must fail with it.
+bool modulation_plants_level_target_step() noexcept {
+    static const bool planted = [] {
+        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "level-target-step";
+    }();
+    return planted;
+}
+
 // See set_editor_is_standalone: asserted by the standalone entry points only.
 std::atomic<bool> g_editor_is_standalone{false};
 }  // namespace
@@ -170,6 +194,29 @@ void Spectr::define_parameters(pulp::state::StateStore& store) {
         .range = {-24.0f, 24.0f, 0.0f},
         .group_id = 1,
     });
+    // Level controls (level_controls.hpp; IDs 5000..5009 reserved). Static
+    // like every other lane: registered unconditionally, appended, never moved.
+    store.add_parameter({
+        .id    = kParamIntensity,
+        .name  = "Intensity",
+        .unit  = "%",
+        .range = {kIntensityMinPercent, kIntensityMaxPercent,
+                  kIntensityDefaultPercent},
+        .group_id = 1,
+    });
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamAutoGain;
+        info.name = "Auto Gain";
+        info.range = {0.0f, 1.0f, kAutoGainDefaultForNewInstances ? 1.0f : 0.0f, 1.0f};
+        info.group_id = 1;
+        info.kind = pulp::state::ParamKind::Toggle;
+        info.to_string = [](float v) { return std::string(v >= 0.5f ? "On" : "Off"); };
+        info.from_string = [](const std::string& text) {
+            return (text == "On" || text == "on" || text == "1") ? 1.0f : 0.0f;
+        };
+        store.add_parameter(info);
+    }
 
     // spectr#34 — the full static host-automation surface (64 band gains,
     // 64 band mutes, morph, viewport center/width, band count, 4 modes).
@@ -302,6 +349,12 @@ Spectr::OutputLevelReading Spectr::read_output_level() {
     reading.trim_db = param_store_
         ? param_store_->get_value(kOutputTrim)
         : 0.0f;
+    if (param_store_) {
+        reading.intensity_percent = param_store_->get_value(kParamIntensity);
+        reading.auto_gain = param_store_->get_value(kParamAutoGain) >= 0.5f;
+        reading.mix_percent = param_store_->get_value(kMix);
+    }
+    reading.auto_gain_db = auto_gain_applied_db();
 
     float peak = 0.0f;
     bool  over = false;
@@ -363,6 +416,12 @@ pulp::signal::SpectralBandLayout Spectr::make_mask_layout_() const noexcept {
         mask_layout.bands[i].gain_db = audible.bands[i].gain_db;
         mask_layout.bands[i].muted = audible.bands[i].muted;
     }
+    // Intensity, last, exactly as the audio owner applies it to the mask it
+    // stages, so the two publications agree once the slew has settled. An
+    // identity at 100 %.
+    if (param_store_)
+        apply_intensity(mask_layout,
+                        intensity_factor(param_store_->get_value(kParamIntensity)));
     return mask_layout;
 }
 
@@ -695,8 +754,22 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // No audio thread runs across a prepare. Keep a prepared source whose
     // geometry still fits, so a host re-prepare with the same rate and
     // channels does not throw a playing hold away.
+    // The loop rings are sized for the Length at the last transport seen;
+    // the storage worker is joined first, so nothing it built for the old
+    // geometry can land in the new one.
+    freeze_storage_lane_.stop();
+    const double freeze_seconds = freeze_hold_seconds_at_(
+        transport_tempo_bpm(), transport_time_sig_numerator(),
+        transport_time_sig_denominator());
+    // A musical Length loops exactly that long, so the loop stays on the
+    // host's bar grid pass after pass.
+    freeze_source_.set_exact_loop_length(true);
     if (!freeze_source_.prepared_for(sample_rate_, channels_))
-        (void)freeze_source_.prepare(sample_rate_, channels_);
+        (void)freeze_source_.prepare(sample_rate_, channels_, freeze_seconds);
+    else
+        freeze_source_.ensure_loop_storage_while_stopped(freeze_seconds);
+    freeze_storage_collect_sent_ = false;
+    start_freeze_storage_lane_();
 
     // No audio thread can be running across a prepare, so the previous
     // renderer and anything a mode switch parked are free to go now.
@@ -726,7 +799,12 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // an empty cache makes the first block restage a mask that is already live.
     last_staged_layout_ = last_published_layout_;
     last_staged_layout_valid_ = last_published_layout_valid_;
-    processor_prepared_ = renderer_ != nullptr;
+    // During prepare the host may already have written the complete parameter
+    // set (AUval does this before Initialize).  Treat the first adoption as a
+    // snapshot of those values; the legacy LFO target/depth lanes must not be
+    // interpreted as compatibility commands until the processor is live.
+    processor_prepared_ = false;
+    suppress_legacy_lane_commands_ = true;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         active_design_grid_ = renderer_ ? renderer_->design_grid_size()
@@ -739,6 +817,19 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
+    // Level controls: the reference spectrum belongs to the rate, and the
+    // first block adopts Intensity and the Auto Gain level without a ramp.
+    auto_gain_reference_.prepare(sample_rate_);
+    auto_gain_.set_ramp_time(kAutoGainRampSeconds, static_cast<float>(sample_rate_));
+    auto_gain_.set_immediate(1.0f);
+    auto_gain_target_db_ = 0.0f;
+    auto_gain_primed_ = false;
+    audio_intensity_primed_ = false;
+    audio_output_mod_primed_ = false;
+    audio_output_mod_db_ = 0.0f;
+    audio_intensity_percent_ = state().get_value(kParamIntensity);
+    audio_auto_gain_param_ = state().get_value(kParamAutoGain);
+    auto_gain_applied_db_.store(0.0f, std::memory_order_relaxed);
     // spectr#34: adopt any parameter state written before prepare (a host
     // may restore a session before audio starts). Morph is excluded — the
     // restored field already encodes it; re-deriving would erase post-morph
@@ -757,7 +848,127 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "[Spectr] parameter sync worker failed to start; host automation "
             "of the band surface will not reach the DSP");
     }
+    suppress_legacy_lane_commands_ = false;
+    processor_prepared_ = renderer_ != nullptr;
     configure_bridge_(ctx.output_channels);
+}
+
+// ── Freeze Length ────────────────────────────────────────────────────────
+
+FreezeLength Spectr::freeze_length() const noexcept {
+    const int preset = freeze_length_preset();
+    if (preset >= 0 && preset < kLengthPresetCustom)
+        return kLengthPresets[static_cast<std::size_t>(preset)];
+    return freeze_custom_length();
+}
+
+int Spectr::freeze_length_preset() const noexcept {
+    if (!param_store_) return kDefaultLengthPreset;
+    return length_preset_from_param(param_store_->get_value(kParamFreezeLength));
+}
+
+bool Spectr::set_freeze_custom_length(FreezeLength length) noexcept {
+    if (!valid_length(length)) return false;
+    freeze_custom_length_.store(pack_length(length), std::memory_order_relaxed);
+    return true;
+}
+
+bool Spectr::set_freeze_length_from_editor(FreezeLength length) noexcept {
+    auto* store = param_store_;
+    if (!store || !valid_length(length)) return false;
+    const int preset = preset_index_of(length);
+    // The custom value first, so the audio thread never reads "Custom" with
+    // the previous custom length behind it.
+    if (preset < 0) (void)set_freeze_custom_length(length);
+    store->begin_gesture(kParamFreezeLength);
+    store->set_value(kParamFreezeLength, static_cast<float>(
+        preset < 0 ? kLengthPresetCustom : preset));
+    store->end_gesture(kParamFreezeLength);
+    return true;
+}
+
+double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
+                                       int denominator) const noexcept {
+    const double override_seconds =
+        freeze_seconds_override_.load(std::memory_order_relaxed);
+    if (override_seconds >= 0.0) return override_seconds;
+    return length_seconds(freeze_length(), tempo_bpm, numerator, denominator);
+}
+
+double Spectr::modulated_freeze_seconds_(double tempo_bpm, int numerator,
+                                         int denominator) noexcept {
+    const double base = freeze_hold_seconds_at_(tempo_bpm, numerator, denominator);
+    auto* store = param_store_;
+    constexpr auto kLength = static_cast<std::size_t>(ModulationTarget::Length);
+    if (!store || freeze_seconds_override_.load(std::memory_order_relaxed) >= 0.0) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The Length target's coordinate at this moment: each LFO that is on and
+    // routed to Length adds wave x Depth. The engage this block may perform
+    // takes the length the LFOs reach now; a hold already playing keeps its
+    // own (FreezeSource::set_hold_seconds only shapes the NEXT latch).
+    const pulp::state::ParamID enabled_ids[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+    const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_, &audio_lfo_2_shape_fade_};
+    const double phases[2] = {audio_modulation_phase_, audio_modulation_phase_2_};
+    bool driven = false;
+    float coordinate = 0.0f;
+    for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+        if (store->get_value(enabled_ids[lfo]) < 0.5f) continue;
+        if (store->get_value(lfo_route_enabled_param_id(lfo, kLength)) < 0.5f) continue;
+        driven = true;
+        coordinate += lfo_value(*fades[lfo], phases[lfo])
+            * std::clamp(store->get_value(lfo_route_amount_param_id(lfo, kLength)),
+                         0.0f, 1.0f);
+    }
+    if (!driven) {
+        freeze_modulated_length_index_.store(-1, std::memory_order_relaxed);
+        return base;
+    }
+    // The user's LENGTH is the centre: its list index, or for a custom length
+    // the list entry nearest it.
+    int centre = freeze_length_preset();
+    if (centre < 0 || centre >= kLengthPresetCustom) {
+        const double bars = length_in_bars(freeze_custom_length());
+        centre = 0;
+        for (int i = 1; i < kLengthPresetCustom; ++i)
+            if (std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(i)]) - bars)
+                < std::abs(length_in_bars(kLengthPresets[static_cast<std::size_t>(centre)]) - bars))
+                centre = i;
+    }
+    const int index = modulated_length_index(centre, coordinate, kLengthPresetCustom);
+    freeze_modulated_length_index_.store(index, std::memory_order_relaxed);
+    return length_seconds(kLengthPresets[static_cast<std::size_t>(index)],
+                          tempo_bpm, numerator, denominator);
+}
+
+double Spectr::freeze_length_seconds() const noexcept {
+    return length_seconds(freeze_length(), transport_tempo_bpm(),
+                          transport_time_sig_numerator(),
+                          transport_time_sig_denominator());
+}
+
+double Spectr::freeze_loop_cap_seconds() const noexcept {
+    return FreezeSource::loop_cap_seconds(sample_rate_ > 0.0 ? sample_rate_ : 48000.0,
+                                          std::max(1, channels_));
+}
+
+void Spectr::freeze_storage_trampoline_(void* ctx, const FreezeStorageTask& task) noexcept {
+    auto& source = static_cast<Spectr*>(ctx)->freeze_source_;
+    source.collect_retired_loop_storage();
+    if (task.seconds > 0.0) {
+        auto storage = source.allocate_loop_storage(task.seconds);
+        if (storage) source.offer_loop_storage(std::move(storage));
+    }
+}
+
+void Spectr::start_freeze_storage_lane_() {
+    if (!freeze_storage_lane_.start(&Spectr::freeze_storage_trampoline_, this,
+                                    pulp::format::BackgroundTaskPolicy::Ordered)) {
+        pulp::runtime::log_error(
+            "[Spectr] freeze storage worker failed to start; Freeze lengths "
+            "longer than the prepared loop memory will loop what it holds");
+    }
 }
 
 void Spectr::preroll_surviving_hold_() {
@@ -827,6 +1038,9 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
     if (&view != native_editor_root_ || w == 0 || h == 0) return;
     native_host_width_ = w;
     native_host_height_ = h;
+    // A deferred editor has no document to lay out yet. Keep the host size;
+    // the frame that evaluates the document publishes it.
+    if (native_scripted_ui_ && native_scripted_ui_->document_load_pending()) return;
     if (pulp::format::should_pin_design_viewport(view_size())) {
         // Pinned viewport: the HOST owns the scale, so the root stays at the
         // authored box at every host size and paint maps it onto the surface.
@@ -943,6 +1157,7 @@ void Spectr::release() {
     // Join the sync worker BEFORE touching the mask processor: an in-flight
     // apply publishes into it.
     param_sync_lane_.stop();
+    freeze_storage_lane_.stop();
     active_renderer_.store(nullptr, std::memory_order_release);
     std::unique_ptr<MaskRenderer> outgoing;
     {
@@ -1056,6 +1271,14 @@ void Spectr::process(
     const float mix        = state().get_value(kMix) / 100.0f;
     const float out_trim_db= state().get_value(kOutputTrim);
     const float target_output_gain = std::pow(10.0f, out_trim_db * 0.05f);
+    // Intensity and Auto Gain live on the block-composed path below: either
+    // one engaged -- or still ramping out -- keeps that path running, so the
+    // mask it stages and the post gain it applies are this block's.
+    const bool level_engaged =
+        intensity_factor(state().get_value(kParamIntensity)) < 1.0f
+        || audio_intensity_ < 1.0f
+        || state().get_value(kParamAutoGain) >= 0.5f
+        || auto_gain_.is_smoothing() || auto_gain_.current() != 1.0f;
 
     // An explicit reset or unexpected seek is a hard DSP-history boundary.
     // Preserve the continuously hot WOLA/dry-delay history across an ordinary
@@ -1068,8 +1291,40 @@ void Spectr::process(
         // else: a playing hold keeps playing across it.
         freeze_source_.clear_history();
         output_gain_.set_immediate(target_output_gain);
+        // Level controls re-adopt their values on the next composed block.
+        auto_gain_primed_ = false;
+        audio_intensity_primed_ = false;
+        audio_output_mod_primed_ = false;
+        audio_output_mod_db_ = 0.0f;
     }
-    freeze_source_.set_hold_seconds(freeze_hold_seconds());
+    // Freeze's Length, in seconds at the host's tempo and meter. It only
+    // decides the NEXT latch: a hold already playing keeps the loop it
+    // took, so a tempo change never stretches or cuts a hold mid-phrase.
+    {
+        const double tempo = usable_tempo(ctx.tempo_bpm);
+        const bool meter = ctx.time_sig_numerator > 0 && ctx.time_sig_denominator > 0;
+        const int numerator = meter ? ctx.time_sig_numerator : 4;
+        const int denominator = meter ? ctx.time_sig_denominator : 4;
+        transport_tempo_bpm_.store(tempo, std::memory_order_relaxed);
+        transport_time_sig_numerator_.store(numerator, std::memory_order_relaxed);
+        transport_time_sig_denominator_.store(denominator, std::memory_order_relaxed);
+        const double seconds = modulated_freeze_seconds_(tempo, numerator, denominator);
+        freeze_source_.set_hold_seconds(seconds);
+        // Longer than the rings reach: ask the worker for bigger ones. A
+        // lock-free spawn, at most once per size; the source adopts them at
+        // a hop boundary.
+        if (freeze_source_.wants_loop_storage(seconds)
+            && !freeze_storage_lane_.try_spawn(FreezeStorageTask{seconds}))
+            freeze_source_.forget_loop_storage_request();
+        // ...and hand back the rings it let go of, to be freed there.
+        if (freeze_source_.retired_loop_storage_pending()) {
+            if (!freeze_storage_collect_sent_)
+                freeze_storage_collect_sent_ =
+                    freeze_storage_lane_.try_spawn(FreezeStorageTask{0.0});
+        } else {
+            freeze_storage_collect_sent_ = false;
+        }
+    }
 
     // Gate on the pointer this block actually dereferences, not on a separate
     // bool that could in principle disagree with it.
@@ -1101,10 +1356,17 @@ void Spectr::process(
         // lands, or miss it entirely. Reading the drifted store here through
         // the cursor makes the block that OBSERVES the drift also act on it.
         // The worker still runs: it owns canonical state for the editor.
+        // A level still ramping toward zero after the LFO was switched off
+        // keeps the branch alive too: the ramp IS the switch-off, and a host
+        // that sends nothing after the off event must still hear it finish.
+        // (A route level only matters while its LFO level is non-zero, so
+        // this also covers a destination fading out.)
+        const bool lfo_level_ramping =
+            audio_lfo_level_[0] > 0.0f || audio_lfo_level_[1] > 0.0f;
         if (has_events || modulation_enabled || modulated_field_was_active_
-            || surface_drift.audio) {
+            || lfo_level_ramping || surface_drift.audio || level_engaged) {
             std::array<pulp::format::ParamSnapshotEntry,
-                       kSurfaceCacheSlots + 2> initial{};
+                       kSurfaceCacheSlots + 2 + kLevelParamCount> initial{};
             initial[0] = {kMix, audio_mix_percent_};
             initial[1] = {kOutputTrim, audio_output_trim_db_};
             for (std::size_t slot = 0; slot < kSurfaceCacheSlots; ++slot) {
@@ -1112,6 +1374,23 @@ void Spectr::process(
                     detail::surface_slot_param_id(slot),
                     applied_param_cache_[slot].load(std::memory_order_relaxed)};
             }
+            // The level controls take the previous block's end value only when
+            // this block carries events for them. A store write with no event
+            // (AudioUnitSetParameter, an editor knob) would otherwise be
+            // shadowed by that baseline for as long as OTHER lanes keep
+            // sending events -- measured through the AU: Auto Gain switched
+            // off by set-parameter stayed on under scheduled Intensity
+            // automation.
+            bool intensity_events = false, auto_gain_events = false;
+            if (has_events)
+                for (const auto& event : events->events()) {
+                    intensity_events |= event.param_id == kParamIntensity;
+                    auto_gain_events |= event.param_id == kParamAutoGain;
+                }
+            initial[kSurfaceCacheSlots + 2] = {kParamIntensity, intensity_events
+                ? audio_intensity_percent_ : state().get_value(kParamIntensity)};
+            initial[kSurfaceCacheSlots + 3] = {kParamAutoGain, auto_gain_events
+                ? audio_auto_gain_param_ : state().get_value(kParamAutoGain)};
 
             pulp::format::ParamCursor params(
                 state(), events,
@@ -1216,17 +1495,35 @@ void Spectr::process(
                         static_cast<ModulationTarget>(std::clamp(
                             static_cast<int>(std::lround(
                                 cursor.value(kParamLfoTarget))), 0, 3));
-                    // An explicit destination selection is editor state and
-                    // only reaches this thread through the published snapshot,
-                    // one control-thread pass behind the automation lane. When
-                    // the lane has moved past the target the selection was
-                    // reconciled against, the automated enum wins immediately
+                    // Per-LFO routing, straight off the cursor like every
+                    // other LFO lane, so automating a destination on/off or
+                    // its amount lands at its event's sample offset.
+                    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                            auto& route = modulation_settings.routes[lfo][t];
+                            route.enabled = cursor.value(
+                                lfo_route_enabled_param_id(lfo, t)) >= 0.5f;
+                            route.amount = std::clamp(cursor.value(
+                                lfo_route_amount_param_id(lfo, t)), 0.0f, 1.0f);
+                        }
+                    }
+                    // The legacy single-target lane is a COMMAND (see
+                    // apply_surface_params): a move selects that one field
+                    // destination for both LFOs. The control worker turns it
+                    // into routing-lane writes one pass later; until then the
+                    // published target still names the value the routing was
+                    // reconciled against, and the moved lane wins here at once
                     // rather than being swallowed until that pass lands.
-                    modulation_settings.target_mask =
-                        modulation_settings.target
-                                == audio_modulation.settings.target
-                            ? audio_modulation.settings.target_mask
-                            : kModulationTargetMaskUnset;
+                    if (modulation_settings.target
+                        != audio_modulation.settings.target) {
+                        const auto bit = modulation_target_bit(
+                            modulation_settings.target);
+                        for (auto& routes : modulation_settings.routes)
+                            set_route_mask(routes, static_cast<std::uint16_t>(
+                                (route_mask(routes)
+                                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
+                                | bit));
+                    }
                     modulation_settings.lfo2_enabled =
                         cursor.value(kParamLfo2Enabled) >= 0.5f;
                     modulation_settings.lfo2_shape = static_cast<LfoShape>(
@@ -1236,6 +1533,24 @@ void Spectr::process(
                         cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
+                    // The LFO-level Depth lanes are COMMANDS too (see
+                    // apply_surface_params): each target carries its own
+                    // depth, and a move of an LFO's legacy Depth lane sets the
+                    // depth of every target that LFO currently drives. Applied
+                    // here at once, like the target lane, until the control
+                    // worker has written it into the target lanes.
+                    {
+                        const float lane[2] = {modulation_settings.depth,
+                                               modulation_settings.lfo2_depth};
+                        const float published[2] = {
+                            audio_modulation.settings.depth,
+                            audio_modulation.settings.lfo2_depth};
+                        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+                            if (lane[lfo] == published[lfo]) continue;
+                            for (auto& route : modulation_settings.routes[lfo])
+                                if (route.enabled) route.amount = lane[lfo];
+                        }
+                    }
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
@@ -1264,25 +1579,131 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // ── Freeze target ───────────────────────────────────
+                    // A gate per LFO (the target's Depth is the frozen duty),
+                    // OR-ed. Read before the level slew below: the freeze
+                    // source has its own engage/release crossfade, so the
+                    // gate is a clean on/off.
+                    {
+                        constexpr auto kFreeze =
+                            static_cast<std::size_t>(ModulationTarget::Freeze);
+                        bool driven = false, gate = false;
+                        const bool lfo_on[2] = {modulation_settings.enabled,
+                                                modulation_settings.lfo2_enabled};
+                        const LfoShapeFade* fades[2] = {&audio_lfo_shape_fade_,
+                                                        &audio_lfo_2_shape_fade_};
+                        const double phases[2] = {audio_modulation_phase_,
+                                                  audio_modulation_phase_2_};
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            const auto& route = modulation_settings.routes[lfo][kFreeze];
+                            if (!lfo_on[lfo] || !route.enabled) continue;
+                            driven = true;
+                            gate = gate || lfo_freeze_gate(fades[lfo]->to, phases[lfo],
+                                                           route.amount);
+                        }
+                        const bool param_frozen = cursor.value(kParamFreeze) >= 0.5f;
+                        const int press = freeze_press_request_.exchange(
+                            -1, std::memory_order_relaxed);
+                        bool frozen = param_frozen;
+                        if (driven) {
+                            // The user's press (or the lane's automation)
+                            // holds until the gate next changes.
+                            if (param_frozen != freeze_param_last_) {
+                                freeze_user_override_ = true;
+                                freeze_user_value_ = param_frozen;
+                            }
+                            if (press >= 0) {
+                                freeze_user_override_ = true;
+                                freeze_user_value_ = press == 1;
+                            }
+                            if (gate != freeze_gate_last_)
+                                freeze_user_override_ = false;
+                            frozen = freeze_user_override_ ? freeze_user_value_ : gate;
+                        } else {
+                            freeze_user_override_ = false;
+                        }
+                        freeze_gate_last_ = gate;
+                        freeze_param_last_ = param_frozen;
+                        freeze_source_.set_frozen(frozen);
+                        freeze_effective_.store(frozen, std::memory_order_relaxed);
+                        freeze_gate_driven_.store(driven, std::memory_order_relaxed);
+                    }
+                    // Slew each LFO's audible level, then let the slewed
+                    // value stand in for enabled + depth everywhere below:
+                    // the modulation, the activity flag and the editor's
+                    // publication all see the same ramp, so the drawn overlay
+                    // fades exactly as the sound does.
+                    {
+                        // An LFO's level is its on/off alone: how far it
+                        // moves each target is that target's own Depth.
+                        const float targets[2] = {
+                            modulation_settings.enabled ? 1.0f : 0.0f,
+                            modulation_settings.lfo2_enabled ? 1.0f : 0.0f};
+                        const double level_seconds =
+                            static_cast<double>(out_slice.num_samples())
+                            / (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                     : sample_rate_);
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo) {
+                            audio_lfo_level_[lfo] = audio_lfo_level_primed_
+                                ? slew_lfo_level(audio_lfo_level_[lfo],
+                                                 targets[lfo], level_seconds)
+                                : targets[lfo];
+                            // Each route the same way, and the slewed level
+                            // stands in for enabled + amount below.
+                            for (std::size_t t = 0; t < kModulationTargetCount; ++t) {
+                                auto& route = modulation_settings.routes[lfo][t];
+                                const float target_level =
+                                    route.enabled ? route.amount : 0.0f;
+                                float& level = audio_route_level_[lfo][t];
+                                level = (audio_lfo_level_primed_
+                                         && !modulation_plants_route_step())
+                                    ? slew_lfo_level(level, target_level,
+                                                     level_seconds
+                                                         * kLfoLevelSlewSeconds
+                                                         / route_slew_seconds(t))
+                                    : target_level;
+                                route.enabled = level > 0.0f;
+                                route.amount = level;
+                            }
+                        }
+                        audio_lfo_level_primed_ = true;
+                        modulation_settings.enabled = audio_lfo_level_[0] > 0.0f;
+                        modulation_settings.depth = audio_lfo_level_[0];
+                        modulation_settings.lfo2_enabled =
+                            audio_lfo_level_[1] > 0.0f;
+                        modulation_settings.lfo2_depth = audio_lfo_level_[1];
+                    }
                     const float wave = lfo_value(
                         audio_lfo_shape_fade_, audio_modulation_phase_);
-                    BandField audible = apply_internal_modulation(
+                    const float wave2 = lfo_value(
+                        audio_lfo_2_shape_fade_, audio_modulation_phase_2_);
+                    // Both LFOs, every routed destination, one composition:
+                    // the same pure function the editor evaluates at frame
+                    // time, so what is drawn is what is heard.
+                    const auto composed = compose_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
-                        modulation_settings, wave);
-                    if (modulation_settings.lfo2_enabled) {
-                        const float wave2 = lfo_value(
-                            audio_lfo_2_shape_fade_,
-                            audio_modulation_phase_2_);
-                        ModulationSettings second = modulation_settings;
-                        second.enabled = true;
-                        second.shape = modulation_settings.lfo2_shape;
-                        second.beats_per_cycle =
-                            modulation_settings.lfo2_beats_per_cycle;
-                        second.depth = modulation_settings.lfo2_depth;
-                        audible = apply_internal_modulation(
-                            audible, audio_modulation.snapshots, host_morph,
-                            second, wave2);
-                    }
+                        modulation_settings, wave, wave2);
+                    const BandField& audible = composed.field;
+
+                    const auto authored_viewport = decode_viewport(
+                        cursor.value(kParamViewportCenter),
+                        cursor.value(kParamViewportWidth));
+                    // Gated on `morph_derived` for the same reason the bands
+                    // are, and it has to be the SAME gate: the window and the
+                    // shape drawn inside it must come from one derivation, or
+                    // the mask is built for a window the bands were never
+                    // mapped to.
+                    const auto base_viewport =
+                        (morph_has_both
+                         && audio_modulation.morph_derived
+                         && audio_modulation.morph_applies_viewport)
+                        ? morph_viewports(
+                              audio_modulation.snapshots.a.viewport,
+                              audio_modulation.snapshots.b.viewport,
+                              host_morph)
+                        : authored_viewport;
+                    const Viewport audible_viewport =
+                        apply_viewport_modulation(base_viewport, composed.coords);
 
                     // Hand the post-LFO field to the editor so it can draw the
                     // modulation it is playing. Without this the modulator is
@@ -1301,10 +1722,7 @@ void Spectr::process(
                     // state. This guard is the one apply_internal_modulation
                     // already applies per LFO.
                     const bool modulation_active =
-                        (modulation_settings.enabled
-                         && modulation_settings.depth > 0.0f)
-                        || (modulation_settings.lfo2_enabled
-                            && modulation_settings.lfo2_depth > 0.0f);
+                        modulation_audible(modulation_settings);
                     // While running, every block is a new frame. On the falling
                     // edge one last frame carries active=false, which is the
                     // editor's cue to release the overlay and draw canonical
@@ -1346,6 +1764,8 @@ void Spectr::process(
                                 slot.settings  = modulation_settings;
                                 slot.snapshots = audio_modulation.snapshots;
                                 slot.host_morph = host_morph;
+                                slot.base_viewport = base_viewport;
+                                slot.viewport = audible_viewport;
                                 slot.phase     = phase_1;
                                 slot.phase_2   = phase_2;
                                 slot.phase_per_second   = rate_1;
@@ -1373,23 +1793,11 @@ void Spectr::process(
                     // the strobe range, and remapping every band's frequency
                     // span per block is a different order of cost from the
                     // gain-only modulation they were built for.
-                    const auto authored_viewport = decode_viewport(
-                        cursor.value(kParamViewportCenter),
-                        cursor.value(kParamViewportWidth));
-                    // Gated on `morph_derived` for the same reason the bands
-                    // are, and it has to be the SAME gate: the window and the
-                    // shape drawn inside it must come from one derivation, or
-                    // the mask is built for a window the bands were never
-                    // mapped to.
-                    const auto automated_viewport =
-                        (morph_has_both
-                         && audio_modulation.morph_derived
-                         && audio_modulation.morph_applies_viewport)
-                        ? morph_viewports(
-                              audio_modulation.snapshots.a.viewport,
-                              audio_modulation.snapshots.b.viewport,
-                              host_morph)
-                        : authored_viewport;
+                    // The internal LFOs reach the window only through the
+                    // two viewport destinations, which modulate AROUND the
+                    // window above (see apply_viewport_modulation) -- never
+                    // the stored viewport lanes.
+                    const auto& automated_viewport = audible_viewport;
                     automated.min_hz = automated_viewport.min_hz;
                     automated.max_hz = automated_viewport.max_hz;
                     automated.spacing =
@@ -1407,6 +1815,63 @@ void Spectr::process(
                         automated.bands[band].muted =
                             audible.bands[band].muted;
                     }
+                    // ── Intensity + Auto Gain (level_controls.hpp) ──────
+                    // Intensity scales the COMPOSED shape -- morph, macros
+                    // and LFOs included -- toward flat, once, here. Slewed
+                    // per sub-block like an LFO level, so a jump restages
+                    // in steps the IR crossfade can carry.
+                    {
+                        const double slice_seconds_level =
+                            static_cast<double>(out_slice.num_samples())
+                            / (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                     : sample_rate_);
+                        const float intensity_goal = intensity_factor(
+                            cursor.value(kParamIntensity));
+                        audio_intensity_ = audio_intensity_primed_
+                                && !level_plant("intensity-step")
+                            ? slew_intensity(audio_intensity_, intensity_goal,
+                                             slice_seconds_level)
+                            : intensity_goal;
+                        audio_intensity_primed_ = true;
+                        // The Intensity destination pulls the slewed knob value
+                        // toward flat. Auto Gain below still sees the knob
+                        // alone, so it never cancels the LFO.
+                        if (!level_plant("intensity-ignored"))
+                            apply_intensity(automated, modulated_intensity(
+                                audio_intensity_, composed.coords));
+
+                        // Auto Gain compensates the shape the user DREW (the
+                        // pre-LFO field, after morph and macros) at this
+                        // Intensity and Mix. Computed from the shape, never
+                        // from the output, so a static shape is a constant
+                        // gain and nothing can pump.
+                        float target_db = 0.0f;
+                        if (cursor.value(kParamAutoGain) >= 0.5f
+                            && !level_plant("autogain-follow-output")) {
+                            pulp::signal::SpectralBandLayout shape = automated;
+                            for (std::size_t band = 0;
+                                 band < shape.active_bands; ++band) {
+                                shape.bands[band].gain_db =
+                                    host_field.bands[band].gain_db;
+                                shape.bands[band].muted =
+                                    host_field.bands[band].muted;
+                            }
+                            apply_intensity(shape, audio_intensity_);
+                            target_db = auto_gain_reference_.compensation_db(
+                                shape, std::clamp(cursor.value(kMix) / 100.0f,
+                                                  0.0f, 1.0f));
+                        }
+                        if (!auto_gain_primed_) {
+                            auto_gain_.set_immediate(
+                                std::pow(10.0f, target_db * 0.05f));
+                            auto_gain_target_db_ = target_db;
+                            auto_gain_primed_ = true;
+                        } else if (target_db != auto_gain_target_db_) {
+                            auto_gain_.set_target(
+                                std::pow(10.0f, target_db * 0.05f));
+                            auto_gain_target_db_ = target_db;
+                        }
+                    }
                     // Stage only a mask that is not already live, so a held
                     // automation value does not queue a redesign per block.
                     // Like the publication gate above this is about cost, not
@@ -1419,9 +1884,55 @@ void Spectr::process(
                         last_staged_layout_ = automated;
                         last_staged_layout_valid_ = true;
                     }
-                    renderer->set_mix(std::clamp(
-                        cursor.value(kMix) / 100.0f, 0.0f, 1.0f));
-                    freeze_source_.set_frozen(cursor.value(kParamFreeze) >= 0.5f);
+                    // The Mix destination pulls Mix toward dry (the freeze
+                    // blend); the mixer's own ramp carries each block's move.
+                    renderer->set_mix(modulated_mix(
+                        std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f),
+                        composed.coords));
+                    // The Output destination, in dB, at the end of this
+                    // slice. Ramped from the previous slice's value across
+                    // the samples below, so a running LFO is a smooth gain
+                    // rather than a per-block step.
+                    // The END of the slice, so consecutive slices meet:
+                    // `composed` is evaluated at the slice's first sample,
+                    // and ramping toward that would lag by a slice and steepen
+                    // wherever slice lengths differ.
+                    float output_mod_end_db = 0.0f;
+                    {
+                        const auto output_route = static_cast<std::size_t>(
+                            ModulationTarget::Output);
+                        const bool routed =
+                            modulation_settings.routes[0][output_route].enabled
+                            || modulation_settings.routes[1][output_route].enabled;
+                        if (routed) {
+                            const double slice_beats =
+                                static_cast<double>(out_slice.num_samples())
+                                * (ctx.tempo_bpm > 0.0 ? ctx.tempo_bpm : 120.0)
+                                / (60.0 * (ctx.sample_rate > 0.0 ? ctx.sample_rate
+                                                                 : sample_rate_));
+                            const float wave_end = lfo_value(
+                                audio_lfo_shape_fade_,
+                                audio_modulation_phase_ + slice_beats / std::max(
+                                    0.0625, static_cast<double>(
+                                        modulation_settings.beats_per_cycle)));
+                            const float wave2_end = lfo_value(
+                                audio_lfo_2_shape_fade_,
+                                audio_modulation_phase_2_ + slice_beats / std::max(
+                                    0.0625, static_cast<double>(
+                                        modulation_settings.lfo2_beats_per_cycle)));
+                            output_mod_end_db = output_modulation_db(
+                                modulation_coordinates(modulation_settings,
+                                                       wave_end, wave2_end));
+                        }
+                    }
+                    const float output_mod_start_db =
+                        (audio_output_mod_primed_
+                         && !modulation_plants_level_target_step())
+                        ? audio_output_mod_db_ : output_mod_end_db;
+                    audio_output_mod_db_ = output_mod_end_db;
+                    audio_output_mod_primed_ = true;
+                    const bool output_modulated =
+                        output_mod_start_db != 0.0f || output_mod_end_db != 0.0f;
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {
@@ -1434,20 +1945,78 @@ void Spectr::process(
                         input_channels_.data(), output_channels_.data(),
                         static_cast<int>(out_slice.num_samples()));
                     if (!processed) {
+                        auto_gain_.skip(static_cast<int>(out_slice.num_samples()));
+                        output_gain_.skip(static_cast<int>(out_slice.num_samples()));
                         for (std::size_t channel = 0;
                              channel < out_slice.num_channels(); ++channel) {
                             auto dst = out_slice.channel(channel);
                             std::fill(dst.begin(), dst.end(), 0.0f);
                         }
                     } else {
+                        if (level_plant("autogain-follow-output")
+                            && cursor.value(kParamAutoGain) >= 0.5f) {
+                            // The rejected design: match the output's level
+                            // to the input's, block by block.
+                            double in_e = 0.0, out_e = 0.0;
+                            for (std::size_t channel = 0;
+                                 channel < out_slice.num_channels(); ++channel)
+                                for (std::size_t sample = 0;
+                                     sample < out_slice.num_samples(); ++sample) {
+                                    const double a = input_channels_[channel][sample];
+                                    const double b = output_channels_[channel][sample];
+                                    in_e += a * a;
+                                    out_e += b * b;
+                                }
+                            const float follow_db = (in_e > 0.0 && out_e > 0.0)
+                                ? static_cast<float>(std::clamp(
+                                      10.0 * std::log10(in_e / out_e), -24.0, 12.0))
+                                : 0.0f;
+                            auto_gain_.set_immediate(std::pow(10.0f, follow_db * 0.05f));
+                            auto_gain_target_db_ = follow_db;
+                        }
                         for (std::size_t sample = 0;
                              sample < out_slice.num_samples(); ++sample) {
                             const auto absolute_sample = static_cast<int32_t>(
                                 block_offset + sample);
-                            const float gain = std::pow(
+                            // Auto Gain sits before Output trim: the trim
+                            // stays the user's last word on level. Exactly
+                            // 1.0f when off and settled, an identity.
+                            // Scheduled automation (events) is sample-exact,
+                            // as before. A store write with no event (an
+                            // editor knob, an AU set-parameter) rides the
+                            // block path's 10 ms smoother: this path now runs
+                            // whenever a level control is engaged, and it must
+                            // not step where the block path would not.
+                            const float trim_target = std::pow(
                                 10.0f,
                                 cursor.value_at(kOutputTrim, absolute_sample)
                                     * 0.05f);
+                            float trim_gain = trim_target;
+                            if (has_events) {
+                                output_gain_.set_immediate(trim_target);
+                            } else {
+                                if (trim_target != output_gain_.target())
+                                    output_gain_.set_target(trim_target);
+                                trim_gain = output_gain_.next();
+                            }
+                            float gain = trim_gain * auto_gain_.next();
+                            // The Output destination rides on top of Auto
+                            // Gain and the trim: Auto Gain never sees it, and
+                            // the trim plus the LFO stay inside the lane's
+                            // range.
+                            if (output_modulated) {
+                                const float along =
+                                    static_cast<float>(sample + 1)
+                                    / static_cast<float>(out_slice.num_samples());
+                                const float mod_db = output_mod_start_db
+                                    + (output_mod_end_db - output_mod_start_db) * along;
+                                const float trim_db =
+                                    cursor.value_at(kOutputTrim, absolute_sample);
+                                const float applied_db = std::clamp(
+                                    trim_db + mod_db, kOutputTrimMinDb,
+                                    kOutputTrimMaxDb) - trim_db;
+                                gain *= std::pow(10.0f, applied_db * 0.05f);
+                            }
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)
                                 output_channels_[channel][sample] *= gain;
@@ -1487,6 +2056,14 @@ void Spectr::process(
                 output.num_samples() > 0 ? output.num_samples() - 1 : 0);
             audio_mix_percent_ = params.value_at(kMix, last_sample);
             audio_output_trim_db_ = params.value_at(kOutputTrim, last_sample);
+            audio_intensity_percent_ = params.value_at(kParamIntensity, last_sample);
+            audio_auto_gain_param_ = params.value_at(kParamAutoGain, last_sample);
+            {
+                const float applied = auto_gain_.current();
+                auto_gain_applied_db_.store(
+                    applied > 0.0f ? 20.0f * std::log10(applied) : 0.0f,
+                    std::memory_order_relaxed);
+            }
 
             const auto nc = output.num_channels();
             if (nc > 0 && nc <= 8) {
@@ -1508,9 +2085,19 @@ void Spectr::process(
             output_channels_[channel] = output.channel(channel).data();
         }
         renderer->set_mix(std::clamp(mix, 0.0f, 1.0f));
-        freeze_source_.set_frozen(state().get_value(kParamFreeze) >= 0.5f);
+        {
+            // No LFO is running on this path, so nothing gates the freeze.
+            const bool frozen = state().get_value(kParamFreeze) >= 0.5f;
+            freeze_source_.set_frozen(frozen);
+            freeze_effective_.store(frozen, std::memory_order_relaxed);
+            freeze_gate_driven_.store(false, std::memory_order_relaxed);
+            freeze_param_last_ = frozen;
+            freeze_user_override_ = false;
+        }
         audio_mix_percent_ = mix * 100.0f;
         audio_output_trim_db_ = out_trim_db;
+        audio_intensity_percent_ = state().get_value(kParamIntensity);
+        audio_auto_gain_param_ = state().get_value(kParamAutoGain);
         const bool processed = renderer->process(
             input_channels_.data(), output_channels_.data(),
             static_cast<int>(output.num_samples()));
@@ -1633,6 +2220,14 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // empty selection that would silence modulation.
     root.addMember("modulation_target_mask",
                    static_cast<int32_t>(modulation_.target_mask));
+    // Per-LFO routing lives in its own parameter lanes (4020..4055) and rides
+    // the base blob. This marker only says those lanes are authoritative; a
+    // blob without it predates them and is migrated from the single target
+    // and the LFO Depth above. `modulation_target_mask` keeps being written (LFO 1's field
+    // destinations) so an older build opening this session hears the
+    // nearest thing it can express.
+    // 2: each target's Depth is absolute (no LFO-level depth multiplies it).
+    root.addMember("lfo_routing", static_cast<int32_t>(2));
 
     // Whether a morph also moves the viewport. A playback preference with no
     // parameter lane, so like the destination mask it would be silently lost
@@ -1647,8 +2242,24 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // writer that predates it; readers treat absence as OFF, the default, so
     // an old session keeps the host's keys where a new instance would.
     root.addMember("keyboard_shortcuts_in_daw", keyboard_shortcuts_in_daw_);
-    // The Settings hold length. The held spectrum itself is not saved.
-    root.addMember("freeze_hold_seconds", freeze_hold_seconds());
+    // Level controls. `level_controls` marks a writer that knows Intensity
+    // and Auto Gain: a session WITHOUT it predates them, and opens with Auto
+    // Gain off so its level does not change on reload (the parameters
+    // themselves ride the base blob). `editor_range_db` is the editor's
+    // Range -- editor state with no parameter lane; absent reads as +-24.
+    root.addMember("level_controls", static_cast<int32_t>(1));
+    root.addMember("editor_range_db", static_cast<int32_t>(editor_range_db_));
+    // Freeze's CUSTOM length (the one the Freeze Length parameter's
+    // "Custom" selects; the parameter itself rides the base blob). Exact:
+    // whole bars and the fraction's own text, never a float. The held sound
+    // itself is not saved.
+    {
+        const auto custom = freeze_custom_length();
+        auto length = choc::value::createObject("FreezeLength");
+        length.addMember("bars", static_cast<int32_t>(custom.bars));
+        length.addMember("fraction", std::string(fraction_of(custom).text));
+        root.addMember("freeze_length", length);
+    }
 
     // Macro membership: four arrays of canonical slot indices, shaped exactly
     // like `morph_overrides` above. The macro VALUES are StateStore
@@ -1844,6 +2455,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             if (param_store_) modulation_ = modulation_from_store_();
             else modulation_.target_mask = kModulationTargetMaskUnset;
             morph_applies_viewport_ = true;
+            editor_range_db_ = kEditorRangeDefaultDb;
             morph_derived_ = false;
             morph_overrides_.reset();
             for (auto& members : macro_members_) members.reset();
@@ -1865,6 +2477,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         // Outside the lock, for the same reason as the main path below.
         (void)set_render_mode(kDefaultRenderMode);
+        // A bare parameter blob predates the level controls by construction:
+        // it opens at the level it was mixed at.
+        if (param_store_) param_store_->set_value(kParamAutoGain, 0.0f);
         return true;
     }
 
@@ -2036,16 +2651,63 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         new_keyboard_shortcuts_in_daw = flag.getBool();
     }
 
-    // Absent on a blob written before freeze existed: the default length.
-    double new_freeze_hold_seconds = FreezeSource::kDefaultHoldSeconds;
-    if (root.hasObjectMember("freeze_hold_seconds")) {
+    // Level controls (see serialize_plugin_state). A malformed Range falls
+    // back to the default rather than losing the session: it is a view.
+    const bool knows_level_controls = root.hasObjectMember("level_controls");
+    int new_editor_range_db = kEditorRangeDefaultDb;
+    if (root.hasObjectMember("editor_range_db")) {
+        const auto& range = root["editor_range_db"];
+        if (range.isInt32() && valid_editor_range_db(range.getInt32()))
+            new_editor_range_db = range.getInt32();
+        else if (range.isInt64()
+                 && valid_editor_range_db(static_cast<int>(range.getInt64())))
+            new_editor_range_db = static_cast<int>(range.getInt64());
+        else if (range.isFloat64()
+                 && valid_editor_range_db(static_cast<int>(range.getFloat64())))
+            new_editor_range_db = static_cast<int>(range.getFloat64());
+    }
+
+    // Freeze's custom length. A wrongly TYPED member refuses the blob like
+    // every other member here; a well-formed one naming a length this build
+    // does not accept (a fraction outside the set, bars past the limit)
+    // falls back to the default rather than losing the whole session.
+    std::optional<FreezeLength> new_freeze_custom_length;
+    if (root.hasObjectMember("freeze_length")) {
+        const auto length = root["freeze_length"];
+        if (!length.isObject() || !length.hasObjectMember("bars")
+            || !length.hasObjectMember("fraction"))
+            return false;
+        const auto& bars = length["bars"];
+        const auto& fraction = length["fraction"];
+        if (!(bars.isInt32() || bars.isInt64()) || !fraction.isString()) return false;
+        const auto bars_value = bars.isInt32() ? static_cast<std::int64_t>(bars.getInt32())
+                                               : bars.getInt64();
+        const auto made = bars_value < -1 || bars_value > kMaxLengthBars + 1
+            ? std::nullopt
+            : make_length(static_cast<int>(bars_value),
+                          fraction_index_from_text(fraction.getString()));
+        new_freeze_custom_length = made ? *made : kDefaultFreezeLength;
+    }
+    // A session from before the musical Length kept a Hold length in
+    // seconds. Untouched (the old default) it opens at the new default,
+    // 1 bar; set by the user, it opens at the musical length nearest those
+    // seconds at the transport this instance last saw (120 BPM 4/4 when it
+    // has seen none -- a session usually loads before playback starts).
+    std::optional<FreezeLength> migrated_freeze_length;
+    if (!new_freeze_custom_length && root.hasObjectMember("freeze_hold_seconds")) {
         const auto& seconds = root["freeze_hold_seconds"];
-        if (seconds.isFloat64()) new_freeze_hold_seconds = seconds.getFloat64();
-        else if (seconds.isInt32()) new_freeze_hold_seconds = seconds.getInt32();
-        else if (seconds.isInt64()) new_freeze_hold_seconds =
-            static_cast<double>(seconds.getInt64());
+        double old_seconds = FreezeSource::kDefaultHoldSeconds;
+        if (seconds.isFloat64()) old_seconds = seconds.getFloat64();
+        else if (seconds.isInt32()) old_seconds = seconds.getInt32();
+        else if (seconds.isInt64()) old_seconds = static_cast<double>(seconds.getInt64());
         else return false;
-        if (!std::isfinite(new_freeze_hold_seconds)) return false;
+        if (!std::isfinite(old_seconds)) return false;
+        migrated_freeze_length =
+            std::abs(old_seconds - FreezeSource::kDefaultHoldSeconds) < 1.0e-9
+                ? kDefaultFreezeLength
+                : nearest_length(old_seconds, transport_tempo_bpm(),
+                                 transport_time_sig_numerator(),
+                                 transport_time_sig_denominator());
     }
 
     std::array<MacroMembership<kMaxBands>, kMacroCount> new_macro_members{};
@@ -2071,6 +2733,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     }
 
     std::uint8_t new_target_mask = kModulationTargetMaskUnset;
+    const bool has_lfo_routing = root.hasObjectMember("lfo_routing");
+    int lfo_routing_version = 0;
+    if (has_lfo_routing) {
+        const auto parsed = read_int_(root["lfo_routing"]);
+        if (!parsed) return false;
+        lfo_routing_version = *parsed;
+    }
     if (root.hasObjectMember("modulation_target_mask")) {
         const auto parsed_mask = read_int_(root["modulation_target_mask"]);
         if (!parsed_mask) return false;
@@ -2126,7 +2795,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         morph_overrides_ = new_morph_overrides;
         morph_applies_viewport_ = new_morph_applies_viewport;
         keyboard_shortcuts_in_daw_ = new_keyboard_shortcuts_in_daw;
-        set_freeze_hold_seconds(new_freeze_hold_seconds);
+        editor_range_db_ = new_editor_range_db;
+        if (new_freeze_custom_length)
+            (void)set_freeze_custom_length(*new_freeze_custom_length);
         macro_members_ = new_macro_members;
         // Re-derive the LFO lanes from the restored parameters before the
         // mask rides along: the audio thread only honours a published mask
@@ -2134,9 +2805,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // target left over from before the restore would make it discard the
         // selection this blob just carried.
         if (param_store_) {
-            const std::uint8_t restored_mask = new_target_mask;
             modulation_ = modulation_from_store_();
-            modulation_.target_mask = restored_mask;
         } else {
             modulation_.target_mask = new_target_mask;
         }
@@ -2159,6 +2828,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         render_mode_unknown_on_load_ = true;
     }
+    // A session saved before Intensity and Auto Gain existed was mixed at the
+    // level it plays at; Auto Gain must not change that on reload, whatever
+    // the new-instance default is. Its Intensity lane is absent and keeps the
+    // 100 % default, which is an identity.
+    if (!knows_level_controls && param_store_)
+        param_store_->set_value(kParamAutoGain, 0.0f);
 
     if (version < 3) {
         // Migrate legacy supplemental live state into the new parameter-owned
@@ -2166,6 +2841,61 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // Host restore is listener-silent and may run off the UI thread; it
         // migrates values without synthesizing user gesture callbacks.
         sync_params_from_field(/*emit_gestures=*/false);
+    }
+    // The migrated Hold length lands on the Freeze Length parameter (its
+    // preset, or Custom). Listener-silent like the rest of a restore.
+    if (migrated_freeze_length && param_store_) {
+        const int preset = preset_index_of(*migrated_freeze_length);
+        if (preset < 0) (void)set_freeze_custom_length(*migrated_freeze_length);
+        param_store_->set_value(kParamFreezeLength, static_cast<float>(
+            preset < 0 ? kLengthPresetCustom : preset));
+    }
+    // Per-LFO routing arrived after 1.0.6. A blob without the marker was
+    // written by a build where ONE target selection (the 4004 lane, or the
+    // "Destinations" mask that overrode it) drove BOTH LFOs, and its routing
+    // lanes hold whatever this instance had. Map that selection onto the
+    // routing lanes -- "that one on" for each LFO, full amount, no viewport --
+    // so the session sounds as it did. Listener-silent, like the rest of a
+    // restore.
+    // A blob from a development build that stored routing with amounts
+    // RELATIVE to an LFO-level depth (`lfo_routing: 1`): fold that depth into
+    // each target's Depth so it sounds as it was saved.
+    if (lfo_routing_version == 1 && param_store_) {
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const auto id = lfo_route_amount_param_id(lfo, t);
+                param_store_->set_value(id, param_store_->get_value(id) * depth);
+            }
+        }
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        modulation_ = modulation_from_store_();
+        publish_audio_modulation_state_();
+    }
+    if (!has_lfo_routing && param_store_) {
+        ModulationSettings legacy;
+        legacy.target = static_cast<ModulationTarget>(std::clamp(
+            static_cast<int>(std::lround(param_store_->get_value(kParamLfoTarget))),
+            0, 3));
+        legacy.target_mask = new_target_mask;
+        const std::uint8_t mask = resolve_modulation_target_mask(legacy);
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            // That session's LFO Depth becomes each enabled target's Depth;
+            // a target it did not drive takes the default.
+            const float depth = std::clamp(param_store_->get_value(
+                lfo == 0 ? kParamLfoDepth : kParamLfo2Depth), 0.0f, 1.0f);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const bool on = ((mask >> t) & 1u) != 0;
+                param_store_->set_value(lfo_route_enabled_param_id(lfo, t),
+                                        on ? 1.0f : 0.0f);
+                param_store_->set_value(lfo_route_amount_param_id(lfo, t),
+                                        on ? depth : 0.5f);
+            }
+        }
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        modulation_ = modulation_from_store_();
+        publish_audio_modulation_state_();
     }
     for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {
         applied_param_cache_[slot].store(

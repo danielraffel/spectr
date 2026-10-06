@@ -9,6 +9,21 @@ and fails on any disagreement.
 
     check_release_version.py --expected 1.0.3 --bundle A.component ... \
         [--binary-version-bundle Spectr.clap] [--pkg Spectr-1.0.3.pkg]
+        [--app-build-version 1.0.3.1] [--newer-than-appcast appcast.xml]
+
+Build numbers. Spectr.app's CFBundleVersion is what Sparkle compares with an
+appcast's sparkle:version, so it must rise with every release. A release
+defines it as the product version itself (MAJOR.MINOR.PATCH), which rises
+because the product version does. A practice package for the separate practice
+feed appends one more component (1.0.7.1, 1.0.7.2, ...) to Spectr.app only
+(--app-build-version); every plug-in bundle keeps the product version.
+--newer-than-appcast fails unless the app's build number is strictly higher
+than every build an existing feed already offers.
+
+A PREVIEW of X.Y.Z (Z > 0) numbers Spectr.app X.Y.(Z-1).9nnn instead
+(1.0.7 preview 1 = 1.0.6.9001): below X.Y.Z, so the release of X.Y.Z is
+newer than every preview of it, and each preview newer than the last. Previews
+never get an appcast.
 
 --self-test runs the negative controls: a planted mismatch in each reader
 must be rejected, so a reader that silently returns nothing cannot pass.
@@ -74,9 +89,45 @@ def binary_version_errors(bundle: Path, expected: str) -> list[str]:
 # The Diagnostics helper is its own product with its own version; every other
 # bundle in the installer is Spectr and must carry Spectr's version.
 FOREIGN_BUNDLE_IDS = {"com.pulp.spectr.diagnostics"}
+# Third-party code embedded in Spectr.app keeps its own versions: Sparkle's
+# framework and its Updater.app (org.sparkle-project.*).
+FOREIGN_BUNDLE_PREFIXES = ("org.sparkle-project.",)
 
 
-def distribution_errors(dist_xml: str, name: str, expected: str) -> list[str]:
+def is_foreign_bundle(bundle_id: str | None) -> bool:
+    return bundle_id in FOREIGN_BUNDLE_IDS or (bundle_id or "").startswith(FOREIGN_BUNDLE_PREFIXES)
+
+
+APP_BUNDLE_ID = "com.pulp.spectr"
+
+
+def version_key(v: str) -> tuple[int, ...]:
+    return tuple(int(p) for p in v.split("."))
+
+
+def is_preview_build(expected: str, build: str) -> bool:
+    """A preview of `expected` X.Y.Z: X.Y.(Z-1).9nnn, which sorts below it."""
+    major, minor, patch = (int(p) for p in expected.split("."))
+    return patch > 0 and re.fullmatch(
+        rf"{major}\.{minor}\.{patch - 1}\.9\d{{3}}", build) is not None
+
+
+def appcast_order_errors(appcast_xml: str, build: str) -> list[str]:
+    """build must be strictly newer than every sparkle:version in the feed."""
+    ns = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+    errors = []
+    for item in ET.fromstring(appcast_xml).iter("item"):
+        offered = (item.findtext(f"{ns}version") or "").strip()
+        if not re.fullmatch(r"\d+(\.\d+)*", offered):
+            errors.append(f"appcast item has an unreadable sparkle:version {offered!r}")
+        elif version_key(build) <= version_key(offered):
+            errors.append(f"build {build} is not newer than build {offered} the feed "
+                          f"already offers; Sparkle would never offer it")
+    return errors
+
+
+def distribution_errors(dist_xml: str, name: str, expected: str,
+                        app_build: str | None = None) -> list[str]:
     root = ET.fromstring(dist_xml)
     errors = []
     title = (root.findtext("title") or "").strip()
@@ -89,25 +140,28 @@ def distribution_errors(dist_xml: str, name: str, expected: str) -> list[str]:
         if ref.get("version") != expected:
             errors.append(f"{name}: pkg-ref {ref.get('id')} version is "
                           f"{ref.get('version')!r}, expected {expected!r}")
-    bundles = [b for b in root.iter("bundle") if b.get("id") not in FOREIGN_BUNDLE_IDS]
+    bundles = [b for b in root.iter("bundle") if not is_foreign_bundle(b.get("id"))]
     if not bundles:
         errors.append(f"{name}: declares no Spectr bundle versions")
     for b in bundles:
         for key in ("CFBundleShortVersionString", "CFBundleVersion"):
-            if b.get(key) != expected:
+            want = expected
+            if key == "CFBundleVersion" and app_build and b.get("id") == APP_BUNDLE_ID:
+                want = app_build
+            if b.get(key) != want:
                 errors.append(f"{name}: bundle {b.get('id')} {key} is "
-                              f"{b.get(key)!r}, expected {expected!r}")
+                              f"{b.get(key)!r}, expected {want!r}")
     return errors
 
 
-def pkg_errors(pkg: Path, expected: str) -> list[str]:
+def pkg_errors(pkg: Path, expected: str, app_build: str | None = None) -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "x"
         subprocess.run(["pkgutil", "--expand", str(pkg), str(out)], check=True)
         dist = out / "Distribution"
         if not dist.is_file():
             return [f"{pkg.name}: no Distribution"]
-        errors = distribution_errors(dist.read_text(), pkg.name, expected)
+        errors = distribution_errors(dist.read_text(), pkg.name, expected, app_build)
         infos = sorted(out.glob("*/PackageInfo"))
         if not infos:
             errors.append(f"{pkg.name}: no component PackageInfo")
@@ -155,6 +209,47 @@ def self_test() -> int:
     # said 1.0.x while every bundle inside it still said 1.0.0.
     cases.append(("stale bundle inside a relabelled package rejected",
                   distribution_errors(dist.format(v="1.0.0"), "d", "1.0.3") != []))
+    practice = dist.format(v="1.0.3").replace(
+        '<bundle id="com.pulp.spectr.au"',
+        '<bundle id="com.pulp.spectr" CFBundleShortVersionString="1.0.3" '
+        'CFBundleVersion="1.0.3.2"/><bundle id="com.pulp.spectr.au"')
+    with_sparkle = dist.format(v="1.0.3").replace(
+        '<bundle id="com.pulp.spectr.au"',
+        '<bundle id="org.sparkle-project.Sparkle" CFBundleShortVersionString="2.10.0" '
+        'CFBundleVersion="2064"/><bundle id="com.pulp.spectr.au"')
+    cases.append(("embedded Sparkle keeps its own version",
+                  distribution_errors(with_sparkle, "d", "1.0.3") == []))
+    cases.append(("a Sparkle-prefixed id does not excuse a Spectr bundle",
+                  distribution_errors(with_sparkle.replace("2.10.0", "1.0.3").replace(
+                      'com.pulp.spectr.au" CFBundleShortVersionString="1.0.3"',
+                      'com.pulp.spectr.au" CFBundleShortVersionString="1.0.2"'),
+                      "d", "1.0.3") != []))
+    cases.append(("practice app build accepted when declared",
+                  distribution_errors(practice, "d", "1.0.3", "1.0.3.2") == []))
+    cases.append(("practice app build rejected when not declared",
+                  distribution_errors(practice, "d", "1.0.3") != []))
+    cases.append(("a plug-in may not take the practice build number",
+                  distribution_errors(dist.format(v="1.0.3").replace(
+                      'CFBundleVersion="1.0.3"/><bundle id="com.pulp.spectr.diag',
+                      'CFBundleVersion="1.0.3.2"/><bundle id="com.pulp.spectr.diag'),
+                      "d", "1.0.3", "1.0.3.2") != []))
+    feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+            '<channel><item><sparkle:version>1.0.6</sparkle:version></item>'
+            '<item><sparkle:version>1.0.5</sparkle:version></item></channel></rss>')
+    cases.append(("newer build accepted", appcast_order_errors(feed, "1.0.7") == []))
+    cases.append(("equal build rejected", appcast_order_errors(feed, "1.0.6") != []))
+    cases.append(("older build rejected", appcast_order_errors(feed, "1.0.5") != []))
+    cases.append(("numeric not lexical ordering",
+                  appcast_order_errors(feed.replace("1.0.6", "1.0.9"), "1.0.10") == []))
+    cases.append(("a preview sorts below its release and above the previous one",
+                  is_preview_build("1.0.7", "1.0.6.9001")
+                  and version_key("1.0.6.9001") < version_key("1.0.7")
+                  and version_key("1.0.6.9001") > version_key("1.0.6")
+                  and version_key("1.0.6.9002") > version_key("1.0.6.9001")))
+    cases.append(("a non-preview shape is not a preview",
+                  not is_preview_build("1.0.7", "1.0.6.1")
+                  and not is_preview_build("1.0.7", "1.0.7.9001")
+                  and not is_preview_build("1.0.0", "1.0.-1.9001")))
     for name, ok in cases:
         print(("PASS " if ok else "FAIL ") + name)
         failures += not ok
@@ -167,6 +262,10 @@ def main() -> int:
     ap.add_argument("--bundle", action="append", default=[], type=Path)
     ap.add_argument("--binary-version-bundle", action="append", default=[], type=Path)
     ap.add_argument("--pkg", type=Path)
+    ap.add_argument("--app-build-version",
+                    help="Spectr.app CFBundleVersion when it differs (practice: X.Y.Z.N)")
+    ap.add_argument("--newer-than-appcast", type=Path,
+                    help="fail unless the app build is newer than every build this feed offers")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -174,7 +273,13 @@ def main() -> int:
     if not args.expected or not re.fullmatch(r"\d+\.\d+\.\d+", args.expected):
         print("--expected must be MAJOR.MINOR.PATCH", file=sys.stderr)
         return 2
-    if not (args.bundle or args.binary_version_bundle or args.pkg):
+    if args.app_build_version and not (
+            re.fullmatch(re.escape(args.expected) + r"\.\d+", args.app_build_version)
+            or is_preview_build(args.expected, args.app_build_version)):
+        print("--app-build-version must be <expected>.<n> (practice) or "
+              "<X.Y.Z-1>.9nnn (preview)", file=sys.stderr)
+        return 2
+    if not (args.bundle or args.binary_version_bundle or args.pkg or args.newer_than_appcast):
         print("nothing to check", file=sys.stderr)
         return 2
     errors: list[str] = []
@@ -186,7 +291,11 @@ def main() -> int:
         errors += binary_version_errors(bundle, args.expected)
         checked += 1
     if args.pkg:
-        errors += pkg_errors(args.pkg, args.expected)
+        errors += pkg_errors(args.pkg, args.expected, args.app_build_version)
+        checked += 1
+    if args.newer_than_appcast:
+        errors += appcast_order_errors(args.newer_than_appcast.read_text(),
+                                       args.app_build_version or args.expected)
         checked += 1
     for e in errors:
         print("FAIL " + e)

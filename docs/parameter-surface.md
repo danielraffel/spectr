@@ -12,7 +12,8 @@ layout remain stored but do not enter the active spectral mask.
 | `1` | Mix |
 | `2` | Output trim |
 | `3` | Freeze (Live/Frozen) |
-| `4...999` | Reserved global controls |
+| `4` | Freeze Length (1 bar/2 bars/4 bars/8 bars/Custom) |
+| `5...999` | Reserved global controls |
 | `1000...1063` | Band 01...64 gain |
 | `1064...1999` | Reserved band-gain growth |
 | `2000...2063` | Band 01...64 mute |
@@ -30,19 +31,59 @@ layout remain stored but do not enter the active spectral mask.
 | `4000` | Internal LFO enabled |
 | `4001` | Internal LFO shape (sine/triangle/square/saw) |
 | `4002` | Internal LFO rate (beats per cycle) |
-| `4003` | Internal LFO depth |
-| `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph) |
+| `4003` | Internal LFO depth (legacy command lane: sets every enabled target's Depth) |
+| `4004` | Internal LFO target (whole bank/snapshot A/snapshot B/morph): legacy command lane, see [modulation.md](modulation.md) |
 | `4005...4009` | Reserved modulation growth |
 | `4010` | Internal LFO 2 enabled |
 | `4011` | Internal LFO 2 shape (sine/triangle/square/saw) |
 | `4012` | Internal LFO 2 rate (beats per cycle) |
-| `4013` | Internal LFO 2 depth |
-| `4014...4199` | Reserved modulation growth |
+| `4013` | Internal LFO 2 depth (legacy command lane, as `4003`) |
+| `4014...4019` | Reserved modulation growth |
+| `4020...4027` | LFO 1 targets on/off: Bank, Snapshot A, Snapshot B, Morph, Band shift, Band spread, Freeze, Length |
+| `4028...4029` | Reserved LFO 1 target growth |
+| `4030...4037` | LFO 1 target Depths (0-1, shown "50%"), same order |
+| `4038...4039` | Reserved LFO 1 target growth |
+| `4040...4047` | LFO 2 targets on/off, same order |
+| `4048...4049` | Reserved LFO 2 target growth |
+| `4050...4057` | LFO 2 target Depths, same order |
+| `4058...4059` | Reserved modulation growth |
+| `4060...4062` | LFO 1 level targets on/off: Intensity, Mix, Output |
+| `4063...4069` | Reserved LFO 1 level-target growth |
+| `4070...4072` | LFO 1 level target Depths, same order |
+| `4073...4079` | Reserved LFO 1 level-target growth |
+| `4080...4082` | LFO 2 level targets on/off, same order |
+| `4083...4089` | Reserved LFO 2 level-target growth |
+| `4090...4092` | LFO 2 level target Depths, same order |
+| `4093...4199` | Reserved modulation growth |
 | `4200...4203` | Macro 1...4 |
 | `4204...4299` | Reserved macro growth |
+| `5000` | Intensity, 0...100 % (scales the composed shape toward flat) |
+| `5001` | Auto Gain, Off/On |
+| `5002...5009` | Reserved level controls |
 
 The gain and mute names are zero-padded (`Band 01 Gain` through
 `Band 64 Gain`) so hosts that flatten groups still sort them correctly.
+
+The level targets (ModulationTarget 8...10) came after the first block had
+shipped, so they take a block of their own rather than its two-ID headroom:
+for LFO `l` (0 or 1) and target `t`, on/off is `4020 + 20 l + t` for
+`t < 8` and `4060 + 20 l + (t - 8)` from Intensity on, and a target's Depth
+is always its on/off ID + 10 (`lfo_route_enabled_param_id` /
+`lfo_route_amount_param_id` in `param_surface.hpp`). Host names follow the
+first block: `LFO 1 Intensity`, `LFO 1 Intensity Depth`, ..., `LFO 2 Output
+Depth`.
+
+## Display and recording
+
+LFO rate reads in a host's lane as beats ("4 beats", "1 beat"), and depth as a
+percentage ("50%"); typed values accept the same forms. LFO on/off, shape and
+target are discrete, labelled lanes, as are the per-LFO route switches
+("LFO 1 Band spread"); target Depths read as percentages ("LFO 2 Morph
+Depth"). Defaults reproduce a fresh 1.0.x instance: both LFOs on Bank at 50 %,
+every other target off, every Depth 50 %. The ID order (Bank, Snapshot A,
+Snapshot B, Morph, Band shift, Band spread, Freeze, Length) is the order the
+lanes were added; the editor lists them most-modulated first. How each control records an edit gesture
+and follows playback is in [automation.md](automation.md).
 
 ## Freeze
 
@@ -53,10 +94,42 @@ LFOs keep acting on the held sound, and the dry leg of Mix stays live. While a
 freeze is requested or its hold is still audible, Spectr reports an infinite
 tail.
 
-How much input a freeze averages ("Hold length") is a Settings value persisted
-in the supplemental plugin-state blob as `freeze_hold_seconds`, not a lane. The
-held spectrum itself is not saved: a session that stored Freeze on re-arms and
-holds the first stretch of input it plays.
+## Freeze Length
+
+`4` is how much input the next freeze takes in, as a musical length: an enum
+of the header dropdown's lengths -- the sixteen fractions of a bar alone
+(1/32 ... 15/16), then 1, 2, 4 and 8 bars, ascending -- plus `Custom`, which
+selects the custom length the editor's Custom length… popover last committed.
+A length is exact: whole bars `0...128` plus one bar fraction from a fixed set
+(`include/spectr/freeze_length.hpp` is the only definition). The custom length
+persists in the supplemental plugin-state blob as
+`freeze_length: {bars: <int>, fraction: "<n/d>"}`, never as a float, so
+`1 1/12` round-trips exactly.
+
+Why an enum and not every length: there are 129 x 17 - 1 valid lengths, and a
+lane of 2,192 steps is unusable to draw automation on. The common lengths are
+one step apart, and anything else is still reachable by automating to Custom.
+The enum may grow only by appending before `Custom` would move, so it is
+frozen at five values; a new common length would need a new parameter.
+
+Seconds come from the host transport: bars x quarter notes per bar
+(`numerator x 4 / denominator`) x 60 / tempo. With no transport (the
+standalone, or a host that reports none) it is 120 BPM 4/4. A tempo or meter
+change applies to the next freeze; a hold that is playing keeps the loop it
+took. Below a quarter of a second the hold is spectral (a steady tone), from
+there up it loops the audio, exactly that many samples per pass. Loops are
+capped at 60 s (lower where 256 MB of loop memory would not cover 60 s at the
+instance's channel count and rate); the editor says so only when the cap
+bites.
+
+A session written before Freeze Length stored a seconds value,
+`freeze_hold_seconds`. Untouched (the old default) it opens at 1 bar;
+otherwise at the musical length nearest those seconds at the transport the
+instance has seen (120 BPM 4/4 if none, as a session usually loads before
+playback), selecting its common length or Custom.
+
+The held sound itself is not saved: a session that stored Freeze on re-arms
+and holds the first stretch of input it plays.
 
 ## Macros
 
@@ -101,3 +174,21 @@ The viewport is encoded as center plus width in the same log-frequency domain
 used by the display. This makes pan and zoom independent automation lanes and
 prevents independently automated edges from crossing. Decoding clamps the
 window to 20 Hz...20 kHz and enforces a one-octave minimum width.
+
+## Level controls (5000...5009)
+
+Intensity and Auto Gain are appended in their own reserved block so they never
+collide with modulation growth (`4005...4199`). Like Mix and Output they are not
+in the surface slot cache: the audio owner reads them from the store or the
+block's parameter cursor. See `include/spectr/level_controls.hpp`.
+
+- **Intensity** (`5000`, default 100 %): `effective_db = intensity x composed_db`,
+  applied once after morph, macros and LFOs; a muted band's linear gain becomes
+  `1 - intensity`. Slewed at 200 ms full scale. 100 % is an exact identity.
+- **Auto Gain** (`5001`): a post gain before Output trim, `-10 log10(sum w g^2 / sum w)`
+  over the effective (pre-LFO) shape blended with Mix, weighted by a K-weighted
+  pink reference; clamped to -24...+12 dB; 300 ms ramp; exactly 1.0 when off.
+  New instances default On (`kAutoGainDefaultForNewInstances`); a session saved
+  without the `level_controls` marker opens with it Off.
+- **Range** is not a parameter: it is editor state (`editor_range_db` in the
+  supplemental blob, default 24) and never changes the sound.
