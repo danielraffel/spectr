@@ -1618,6 +1618,18 @@ void Spectr::publish_modulation_frame_() {
     payload.addMember("n_visible", static_cast<std::int32_t>(visible));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
+    // Send the audible window on the paint lane, never the authored-state
+    // lane: displaying modulation must not ratchet the user's baseline.
+    const bool viewport_on = modulated.active
+        && (modulation_drives(modulated.settings, ModulationTarget::ViewportPosition)
+            || modulation_drives(modulated.settings, ModulationTarget::ViewportZoom));
+    const auto drawn_viewport = apply_viewport_modulation(
+        modulated.base_viewport,
+        modulation_coordinates(modulated.settings, lfo_value(fade_1, phase_1),
+                               lfo_value(fade_2, phase_2)));
+    payload.addMember("viewport_on", viewport_on);
+    payload.addMember("min_hz", static_cast<double>(drawn_viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(drawn_viewport.max_hz));
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage",
