@@ -1,0 +1,167 @@
+name: Spectr Release
+
+# A release is cut by pushing a prepared release/vX.Y.Z branch. The package,
+# Sparkle feed and GitHub release are made on one exact head; nothing is
+# published until the draft contains both assets and the live latest feed
+# verifies the package signature. workflow_dispatch is retained for a rerun
+# after an infrastructure failure, never for an arbitrary main commit.
+on:
+  push:
+    branches:
+      - 'release/v*'
+  workflow_dispatch:
+    inputs:
+      release_notes_file:
+        description: Path to the checked-in Markdown release notes
+        required: true
+        default: release-notes.md
+        type: string
+
+concurrency:
+  group: spectr-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build and publish Spectr release
+    runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm]
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PULP_ROOT_REF: v0.915.0
+      RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
+      # Identity hashes are public selectors, not private credentials. The
+      # signing keychain and notarization profile stay on the trusted runner.
+      APP_ID: ${{ vars.SPECTR_DEVELOPER_ID_APPLICATION_HASH }}
+      INST_ID: ${{ vars.SPECTR_DEVELOPER_ID_INSTALLER_HASH }}
+    steps:
+      - name: Check out exact Spectr head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+
+      - name: Check out the pinned Pulp installer recipe
+        uses: actions/checkout@v4
+        with:
+          repository: Generous-Corp/pulp
+          ref: ${{ env.PULP_ROOT_REF }}
+          path: pulp
+          fetch-depth: 1
+          clean: true
+          persist-credentials: false
+
+      - name: Read the release version and notes
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('CMakeLists.txt').read_text(encoding='utf-8')
+          match = re.search(r'project\s*\(\s*Spectr\s+VERSION\s+(\d+\.\d+\.\d+)', text)
+          if not match:
+              raise SystemExit('CMakeLists.txt has no Spectr product version')
+          print(match.group(1))
+          PY
+          )
+          [[ "$GITHUB_REF_NAME" == "release/v$version" || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ -s "$RELEASE_NOTES_FILE" ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes=$RELEASE_NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the exact released Pulp SDK
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin=tools/ci/pulp-sdk-release.json
+          asset=$(python3 -c 'import json; print(json.load(open("'$pin'"))["asset"])')
+          digest=$(python3 -c 'import json; print(json.load(open("'$pin'"))["asset_sha256"])')
+          sdk_sha=$(python3 -c 'import json; print(json.load(open("'$pin'"))["source_git_sha"])')
+          sdk_root="$RUNNER_TEMP/spectr-sdk-$sdk_sha"
+          archive="$RUNNER_TEMP/$asset"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/Generous-Corp/pulp/releases/download/v0.915.0/$asset"
+          printf '%s  %s\n' "$digest" "$archive" | shasum -a 256 --check
+          mkdir -p "$sdk_root"
+          tar -xzf "$archive" -C "$sdk_root" --strip-components=1
+          marker=$(find "$sdk_root" -name sdk-provenance.json -type f -print -quit)
+          [[ -n "$marker" ]]
+          sdk_root=$(dirname "$marker")
+          {
+            echo "root=$sdk_root"
+            echo "sha=$sdk_sha"
+            echo "digest=$digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure the exact Release build
+        shell: bash
+        env:
+          PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
+          PULP_SDK_SHA: ${{ steps.sdk.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
+            -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"
+          python3 tools/ci/validate_release_sdk.py \
+            --sdk-root "$PULP_SDK_ROOT" --build-dir build \
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
+
+      - name: Build the signed package inputs through the governed builder
+        env:
+          PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
+        run: |
+          set -euo pipefail
+          pulp/tools/ci/governed-build.sh cmake --build build --parallel 4 \
+            --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
+
+      - name: Sign, notarize and verify the installer
+        env:
+          PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
+          PULP_SDK_SHA: ${{ steps.sdk.outputs.sha }}
+          SPECTR_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ -f "$HOME/.config/pulp/secrets/sparkle/spectr_ed25519" ]]
+          PULP_ROOT="$GITHUB_WORKSPACE/pulp" \
+          PULP_DIR_EXPECTED="$PULP_SDK_ROOT/lib/cmake/Pulp" \
+          PULP_SDK_SHA_EXPECTED="$PULP_SDK_SHA" \
+          SPECTR_SHA_EXPECTED="$SPECTR_SHA" \
+          APP_ID="$APP_ID" INST_ID="$INST_ID" \
+          ./package.sh
+          pkg="artifacts/Spectr-${{ steps.version.outputs.version }}.pkg"
+          [[ -f "$pkg" ]]
+          shasum -a 256 "$pkg" | tee artifacts/package.sha256
+
+      - name: Generate and verify the signed Sparkle feed
+        env:
+          PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
+        run: |
+          set -euo pipefail
+          pkg="artifacts/Spectr-${{ steps.version.outputs.version }}.pkg"
+          python3 tools/ship/make_appcast.py \
+            --pkg "$pkg" --version "${{ steps.version.outputs.version }}" \
+            --notes "${{ steps.version.outputs.notes }}" --app build/Spectr.app \
+            --out artifacts/appcast.xml
+          python3 tools/ship/check_sparkle.py appcast \
+            --appcast artifacts/appcast.xml --pkg "$pkg" \
+            --expect-version "${{ steps.version.outputs.version }}" \
+            --channel release --require-notes
+
+      - name: Publish draft, upload assets, then verify the live latest feed
+        run: |
+          set -euo pipefail
+          PATH=/opt/homebrew/bin:$PATH python3 tools/ship/publish_release.py \
+            --version "${{ steps.version.outputs.version }}" \
+            --target "$GITHUB_SHA" \
+            --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
+            --appcast artifacts/appcast.xml \
+            --notes "${{ steps.version.outputs.notes }}"

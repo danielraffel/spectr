@@ -167,6 +167,13 @@ number.
    minutes (CDN propagation) and fails loudly if "latest" never moves -- a
    prerelease, a missing asset, or a tag on an older commit.
 
+The supported release path is automated by `.github/workflows/release.yml`:
+push a prepared `release/vX.Y.Z` branch with its checked-in `release-notes.md`,
+and CI builds the exact head against the pinned Pulp SDK, signs and notarizes the
+package, generates the feed, then runs the draft → upload → publish → live-feed
+verification sequence. A manual dispatch is available for an infrastructure
+rerun and still requires an explicit notes file.
+
 The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
 serves release assets with `Content-Disposition: attachment`, which Sparkle's
 web view would receive as a download, not a page.
