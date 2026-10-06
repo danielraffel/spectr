@@ -1077,7 +1077,9 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // Mix and Output, and 3051.58 -> 2829.78 when MODULATION disclosed a
         // target's Depth row only while it is on (and gained its LFO 1 / LFO 2
         // / TARGETS / OPTIONS headings and the Bands and Preset targets), and
-        // FEEDBACK gained Show tooltips. If you add a group and this fails, that is the window
+        // FEEDBACK gained Show tooltips, and 2829.78 -> 2951.78 when Latency
+        // gained GPU processing in a build that has it (the window shifts by
+        // that row only there). If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1087,7 +1089,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 2750 && s.content_height < 2910"
+        // The GPU processing row (122 px) exists only where the processor
+        // reports GPU processing available.
+        " && (() => { const gpu = globalThis.__spectrLatency?.state?.gpu_available === true ? 122 : 0;"
+        "      return s.content_height > 2750 + gpu && s.content_height < 2910 + gpu; })()"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -11696,9 +11701,11 @@ TEST_CASE("LENGTH, BANDS and the preset label show what their LFO plays",
 
 TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO plays",
           "[native-n1][state-parity][modulation][modulated-controls]") {
-    // The base each control shows stays the user's (and the host's): the
-    // played value is drawn over it and never written. BANDS re-lays the plot
-    // at the count playing, without a React commit.
+    // The base each control holds stays the user's (and the host's) and is
+    // never written. Each knob shows ONE indicator: its needle and value arc
+    // move to the value playing, in violet, its readout prints that value,
+    // and the base is a tick on the ring. BANDS re-lays the plot at the count
+    // playing, without a React commit.
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
@@ -11729,11 +11736,18 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     CHECK(state("String(globalThis.__spectrModControls.state.outputOn)") == "true");
     CHECK(state("String(globalThis.__spectrModControls.state.intensityPull > 0.99)") == "true");
     CHECK(state("String(globalThis.__spectrModControls.state.outputDb > 5.9)") == "true");
-    // Each knob paints a played marker...
-    for (const char* name : {"intensity", "mix", "output-trim"})
-        CHECK(state((std::string("String((globalThis.__spectrModControls.drawn['") + name
-                     + "'] || '').length > 0)").c_str()) == "true");
-    // ...over the base, which neither the knob nor the host lane moved.
+    // Each knob's one needle shows the value playing, in violet, its readout
+    // prints it, and the base is a tick...
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "true");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "rgb(205,180,255)");
+        CHECK(state(("String((" + drawn + ".base || '').length > 0)").c_str()) == "true");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " !== document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
+    // ...of the base, which neither the knob nor the host lane moved.
     CHECK(state("String(document.querySelector('[data-spectr-knob=\"intensity\"]').getAttribute('aria-valuenow'))") == "100");
     CHECK(rig.store.get_value(spectr::kParamIntensity) == intensity_before);
     CHECK(rig.store.get_value(spectr::kMix) == mix_before);
@@ -11751,15 +11765,22 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     CHECK(state("String(globalThis.__spectrModControls.state.intensityPull < 0.01)") == "true");
     CHECK(commits() == before_flip);
 
-    // Control: the routes off, nothing is drawn over any knob.
+    // Control: the routes off, each knob is back to its base -- a white needle,
+    // no tick, the base readout.
     for (const unsigned t : {8u, 9u, 10u, 11u})
         rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 0.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
     feed_audio_blocks(rig, 40);
     settle(rig.clock, 12);
-    for (const char* name : {"intensity", "mix", "output-trim"})
-        CHECK(state((std::string("String(globalThis.__spectrModControls.drawn['") + name
-                     + "'] || '')").c_str()) == "");
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "false");
+        CHECK(state(("String(" + drawn + ".base || '')").c_str()) == "");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "#fff");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " === document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
     CHECK(state("String(spectrDrawnBandCount(32))") == "32");
     storage.require_unchanged();
 }

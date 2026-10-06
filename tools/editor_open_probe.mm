@@ -46,6 +46,11 @@
 //        presented frames are neither the background -- plus chrome already
 //        in its final place -- before the editor reaches its settled look,
 //        nor that look after; a stub/placeholder colour fails this)
+//       [--expect-first-ui] (with --pixels: fail unless the first presented
+//        frame is already the editor's UI -- the content-first contract; the
+//        preferred-size frame a host then scales into a smaller view counts)
+//       [--view-first] with --expect-first-rgb, also require the first
+//        presented frame to be that colour (a view-first open's empty frame)
 //       [--expect-first-rgb RRGGBB] (with --pixels: fail unless the backing
 //        layer shown before the first frame, and the first presented frame at
 //        every sample, are this colour within a small tolerance)
@@ -440,6 +445,34 @@ std::pair<std::uint32_t, int> dominant(const FrameSample& f) {
     return best;
 }
 
+// Mean absolute RGB difference of 16x12 block means, each image sampled at its
+// own size: how far a frame is from the settled look regardless of scale. A
+// content-first editor presents its document at the preferred size inside the
+// host's view-creation call; a host that then resizes the view shows that frame
+// scaled until the next present. Under a pinned design viewport that is the
+// settled UI at another scale, not an off-brand image.
+static double scaled_block_distance(const FrameSample& a, const FrameSample& b) {
+    const int BX = 16, BY = 12;
+    auto means = [&](const FrameSample& f, int bx, int by, double out[3]) {
+        out[0] = out[1] = out[2] = 0;
+        std::size_t n = 0;
+        for (std::uint32_t y = by * f.image_h / BY; y < (by + 1) * f.image_h / BY; ++y)
+            for (std::uint32_t x = bx * f.image_w / BX; x < (bx + 1) * f.image_w / BX; ++x, ++n) {
+                const auto c = pixel_at(*f.image, std::size_t(y) * f.image_w + x);
+                out[0] += (c >> 16) & 255; out[1] += (c >> 8) & 255; out[2] += c & 255;
+            }
+        if (n) for (int k = 0; k < 3; ++k) out[k] /= double(n);
+    };
+    double total = 0;
+    for (int by = 0; by < BY; ++by)
+        for (int bx = 0; bx < BX; ++bx) {
+            double ma[3], mb[3];
+            means(a, bx, by, ma); means(b, bx, by, mb);
+            for (int k = 0; k < 3; ++k) total += std::fabs(ma[k] - mb[k]);
+        }
+    return total / (BX * BY * 3);
+}
+
 void analyse_pixels(OpenResult& r) {
     {
         std::lock_guard<std::mutex> lock(g_samples_mu);
@@ -530,9 +563,12 @@ void analyse_pixels(OpenResult& r) {
                 }
             }
             const bool past = r.look_ready >= 0 && f.t >= r.look_ready;
+            const bool scaled_ui = !past && ready && f.image && ready->image && f.image_w && ready->image_w
+                && (f.image_w != ready->image_w || f.image_h != ready->image_h)
+                && scaled_block_distance(f, *ready) < 3.0;
             if (navy * 4 >= total || (past && navy * 200 > total))
                 cls = "navy";
-            else if (past)
+            else if (past || scaled_ui)
                 cls = "ui";
             else if (off_bg == 0)
                 cls = "background";
@@ -607,6 +643,8 @@ int main(int argc, char** argv) {
     double max_warm_factory_ms = 0;
     long max_offbrand = -1;
     long expect_first = -1;
+    bool expect_view_first = false;
+    bool expect_first_ui = false;
     double view_size_w = 0, view_size_h = 0;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -634,6 +672,8 @@ int main(int argc, char** argv) {
         else if (a == "--max-offbrand-frames") max_offbrand = std::atol(next());
         else if (a == "--settled-bg") g_settled_bg = std::strtol(next(), nullptr, 16);
         else if (a == "--expect-first-rgb") expect_first = std::strtol(next(), nullptr, 16);
+        else if (a == "--view-first") expect_view_first = true;
+        else if (a == "--expect-first-ui") expect_first_ui = true;
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (bundle_path.empty()) { std::fprintf(stderr, "--bundle is required\n"); return 2; }
@@ -868,7 +908,11 @@ int main(int argc, char** argv) {
                                 "not #%06lX\n", r.layer_rgb, expect_first);
                     ++failures;
                 }
-                if (expect_first >= 0 && !r.samples.empty()) {
+                // A content-first editor's first presented frame is its
+                // document, so the first-frame colour check applies only to a
+                // view-first open (PULP_EDITOR_OPEN=view-first): there the
+                // first frame must be the declared background.
+                if (expect_first >= 0 && !r.samples.empty() && expect_view_first) {
                     const auto& f0 = r.samples.front();
                     bool all = f0.ok;
                     for (int i = 0; all && i < kSamples; ++i)
@@ -878,6 +922,15 @@ int main(int argc, char** argv) {
                                     "(dominant #%06X)\n", expect_first, dominant(f0).first);
                         ++failures;
                     }
+                }
+                // Content-first: the host's first image of the editor is its
+                // document, never an empty frame (the SDK mounts it inside the
+                // view-creation call). PULP_EDITOR_OPEN=view-first fails this.
+                if (expect_first_ui && !r.frame_class.empty()
+                    && std::strcmp(r.frame_class.front(), "ui") != 0) {
+                    std::printf("FAIL: the first presented frame is %s, not the editor's UI "
+                                "(content-first open)\n", r.frame_class.front());
+                    ++failures;
                 }
                 if (r.samples.empty()) {
                     std::printf("FAIL: --pixels read no presented frame\n");

@@ -45,7 +45,8 @@
 #include <pulp/view/widget_bridge.hpp>
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
-#include "shim/pulp_frame_cost_probe.hpp"
+#include <pulp/view/frame_cost_probe.hpp>
+#include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
@@ -56,6 +57,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iomanip>
+#include <tuple>
 #include <typeinfo>
 #include <exception>
 #include <filesystem>
@@ -1897,6 +1899,334 @@ int main(int argc, char** argv) {
             }
             return g_failures == 0 ? 0 : 1;
         }
+// SPECTR_GPU_STATUS_PROBE=1: the GPU audio status surface with LIVE
+        // delivery. Presses the header's compute-mode indicator through the
+        // host hit-test path (the same press a user makes), paces real-time
+        // audio through the processor until the shared renderer reports
+        // GPU-selected quanta, lets the component's own 500 ms refresh read
+        // build_info_get, and captures the frame. The pill's text and state
+        // attribute are read back from the runtime, so the verdict does not
+        // rest on the image alone; the image is written for a human to look at.
+        if (std::getenv("SPECTR_GPU_STATUS_PROBE") != nullptr) {
+            using steady_t = std::chrono::steady_clock;
+            const auto js_value = [&rig](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { const v = (() => { " + expr + " })();"
+                             " throw new Error('PULPVALUE:' + v + ':PULPEND'); })();",
+                             "spectr-gpu-status-value");
+                } catch (const std::exception& error) {
+                    const std::string message = error.what();
+                    const auto at = message.find("PULPVALUE:");
+                    const auto end = message.find(":PULPEND");
+                    if (at != std::string::npos && end != std::string::npos && end > at)
+                        return message.substr(at + 10, end - at - 10);
+                }
+                return "(unread)";
+            };
+            const auto pump_ms = [&rig](int ms) {
+                const auto end = steady_t::now() + std::chrono::milliseconds(ms);
+                while (steady_t::now() < end) {
+                    settle(rig.clock, 1);
+                    rig.eval("if (typeof globalThis.__pulpRuntimeSettle__ "
+                             "=== 'function') globalThis.__pulpRuntimeSettle__(1);",
+                             "spectr-gpu-status-pump");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                }
+            };
+            // Real-time paced audio: one 256-sample block per 5.33 ms of wall
+            // clock, so the shared renderer's service thread has the time a
+            // host callback would give it.
+            const auto paced_audio = [&rig](int blocks) {
+                constexpr int block = 256;
+                constexpr double sr = 48000.0;
+                constexpr double pi = 3.14159265358979323846;
+                static std::uint64_t n = 0;
+                std::vector<float> in0(block), in1(block), out0(block), out1(block);
+                const float* inputs[2]{in0.data(), in1.data()};
+                float* outputs[2]{out0.data(), out1.data()};
+                pulp::midi::MidiBuffer midi_in, midi_out;
+                pulp::format::ProcessContext context;
+                context.sample_rate = sr;
+                context.num_samples = block;
+                const auto start = steady_t::now();
+                for (int b = 0; b < blocks; ++b) {
+                    std::this_thread::sleep_until(start + std::chrono::nanoseconds(
+                        static_cast<std::int64_t>(b) * block * 1000000000LL / 48000));
+                    for (int i = 0; i < block; ++i, ++n) {
+                        const auto v = static_cast<float>(
+                            0.3 * std::sin(2.0 * pi * 997.0 * static_cast<double>(n) / sr)
+                            + 0.2 * std::sin(2.0 * pi * 220.0 * static_cast<double>(n) / sr));
+                        in0[i] = v;
+                        in1[i] = v;
+                    }
+                    pulp::audio::BufferView<const float> input(inputs, 2, block);
+                    pulp::audio::BufferView<float> output(outputs, 2, block);
+                    rig.processor.process(output, input, midi_in, midi_out, context);
+                }
+            };
+            const auto status_line = [&rig]() {
+                const auto s = rig.processor.gpu_audio_status();
+                using A = spectr::GpuAudioStatus::Availability;
+                const char* a = s.availability == A::Available ? "available"
+                    : s.availability == A::NotBuilt ? "not_built"
+                    : s.availability == A::NotPrepared ? "not_prepared"
+                    : "non_shared_renderer";
+                char buf[256];
+                if (s.delivery)
+                    std::snprintf(buf, sizeof buf,
+                        "availability=%s provider_state=%u epoch=%llu gpu_selected=%llu "
+                        "cpu_fallback=%llu cancelled=%llu lost=%llu", a,
+                        s.delivery->provider_state,
+                        (unsigned long long)s.delivery->current_epoch,
+                        (unsigned long long)s.delivery->gpu_selected,
+                        (unsigned long long)s.delivery->cpu_fallback,
+                        (unsigned long long)s.delivery->cancelled,
+                        (unsigned long long)s.delivery->lost_terminal_records);
+                else
+                    std::snprintf(buf, sizeof buf, "availability=%s (no delivery)", a);
+                return std::string{buf};
+            };
+            const char* pill_q = "document.querySelector('[data-spectr-gpu-audio-status-pill]')";
+            const char* ind_q = "document.querySelector('[data-spectr-gpu-mode-indicator]')";
+            // The runtime's DOM shim has no textContent, so read the text the
+            // view tree actually paints: the Labels under the element's view.
+            const auto painted_text = [&](const char* query) -> std::string {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return "(absent)";
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            found += std::string{label->text()};
+                        for (std::size_t i = 0; i < v.child_count(); ++i)
+                            walk(*v.child_at(i));
+                    };
+                walk(*view);
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                char rect[96];
+                std::snprintf(rect, sizeof rect, " @[%.0f,%.0f %.0fx%.0f]", x, y,
+                              box.width, box.height);
+                return found + "\"" + rect;
+            };
+            const auto read_surface = [&]() {
+                return "indicator mode=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-mode') : '(absent)';")
+                    + " ready=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-ready') : '(absent)';")
+                    + " label=\"" + painted_text(ind_q)
+                    + " | pill state=" + js_value(std::string("const e=") + pill_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-audio-state') : '(absent)';")
+                    + " text=\"" + painted_text(pill_q);
+            };
+
+            // The latency chip's own text, wherever it paints: the label that
+            // starts "TRACKING" or "MIXING".
+            const auto latency_chip = [&]() -> std::string {
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v)) {
+                            const std::string t{label->text()};
+                            if (found.empty() && (t.rfind("TRACKING", 0) == 0 || t.rfind("MIXING", 0) == 0))
+                                found = t;
+                        }
+                        for (std::size_t i = 0; i < v.child_count(); ++i) walk(*v.child_at(i));
+                    };
+                walk(*rig.root);
+                return found.empty() ? "(absent)" : found;
+            };
+            const std::string ind_id = js_value(std::string("const e=") + ind_q
+                + "; return e ? (e.__pulpId || e.id || '(no id)') : '(absent)';");
+            auto* ind_view = find_by_id(*rig.root, ind_id);
+            if (ind_view == nullptr) {
+                std::printf("[gpu-status] FAIL: compute-mode indicator view not found (id=%s)\n",
+                            ind_id.c_str());
+                return 1;
+            }
+            // Press the indicator where it paints, through the host hit test.
+            const auto press_indicator = [&]() {
+                float ix = 0.0f, iy = 0.0f;
+                root_origin(*ind_view, ix, iy);
+                const auto ib = ind_view->bounds();
+                rig.root->simulate_click(pulp::view::Point{ix + ib.width * 0.5f, iy + ib.height * 0.5f});
+                pump_ms(300);
+            };
+            bool steps_ok = true;
+
+            pump_ms(1200);
+            std::printf("[gpu-status] tracking: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
+            // The GPU stats pill is diagnostics: off until Settings > GPU stats
+            // is turned on. Then turned on the way a user does it, so the rest
+            // of this probe reads the pill.
+            const std::string pill_default = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill by default: %s\n", pill_default.c_str());
+            if (pill_default != "(absent)") steps_ok = false;
+            rig.activate("[data-spectr-settings-open]");
+            rig.activate("[data-spectr-gpu-audio-stats-toggle]");
+            rig.activate("[data-spectr-settings-close]");
+            pump_ms(300);
+            const std::string pill_enabled = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill after Settings > GPU stats: %s\n",
+                        pill_enabled.c_str());
+            if (pill_enabled != "present") steps_ok = false;
+            // Tracking is CPU-only: a press on the indicator answers with a
+            // notice saying why, and changes nothing in the processor -- no
+            // renderer is built, the mode, the GPU choice and the latency the
+            // host is told all stay where they were.
+            const auto builds_before = rig.processor.renderer_build_count();
+            const int latency_before = rig.processor.latency_samples();
+            const char* notice_q = "document.querySelector('[data-spectr-gpu-tracking-notice]')";
+            const std::string notice_before = painted_text(notice_q);
+            press_indicator();
+            const std::string notice = painted_text(notice_q);
+            const std::string title = js_value(std::string("const e=") + ind_q
+                + "; return e ? e.getAttribute('title') : '(absent)';");
+            std::printf("[gpu-status] tracking after press: gpu_processing=%d mode=%s latency=%d builds +%llu\n"
+                        "[gpu-status] tracking notice before press: \"%s\n"
+                        "[gpu-status] tracking notice after press: \"%s\n"
+                        "[gpu-status] tracking chip title: %s\n",
+                        int(rig.processor.gpu_processing()),
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        rig.processor.latency_samples(),
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before),
+                        notice_before.c_str(), notice.c_str(), title.c_str());
+            capture(rig, dir, prefix + "gpu-status-0b-tracking-notice", backend, scale);
+            if (rig.processor.gpu_processing()
+                || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.latency_samples() != latency_before
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
+            // The notice was not there before the press and is after it, and
+            // the hover tooltip says the same.
+            if (notice_before != "(absent)"
+                || notice.find("GPU runs in Mixing only") == std::string::npos
+                || title.find("switch to Mixing for GPU") == std::string::npos) steps_ok = false;
+            // The notice is one line in a box that holds it: its painted
+            // height is a single line, and its text fits inside the box's
+            // padding at the editor's scale (it used to break after the dash
+            // and paint the dash past the padding).
+            {
+                const std::string id = js_value(std::string("const e=") + notice_q
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* box_view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                float nx = 0.0f, ny = 0.0f;
+                if (box_view) root_origin(*box_view, nx, ny);
+                const auto box = box_view ? box_view->bounds() : pulp::view::Rect{};
+                float text_w = 0.0f;
+                std::function<void(const pulp::view::View&)> widest =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            text_w = std::max(text_w, label->max_content_width());
+                        for (std::size_t i = 0; i < v.child_count(); ++i) widest(*v.child_at(i));
+                    };
+                if (box_view) widest(*box_view);
+                // 9 px padding and a 1 px border each side; one 9.5 px line at
+                // 1.35 line-height is ~27 px tall, two are ~40.
+                const bool one_line = box.height > 0.0f && box.height <= 30.0f;
+                const bool fits = box.width > 0.0f && text_w > 0.0f
+                    && text_w <= box.width - 20.0f + 1.0f
+                    && nx >= 0.0f && nx + box.width <= kDesignWidth;
+                std::printf("[gpu-status] tracking notice box %.0fx%.0f text %.0f: one line %s, fits %s\n",
+                            box.width, box.height, text_w, one_line ? "yes" : "no", fits ? "yes" : "no");
+                if (!one_line || !fits) steps_ok = false;
+            }
+            // The Settings GPU choice in Tracking is recorded for Mixing and is
+            // otherwise inert: no renderer, no mode change.
+            rig.eval("spectrSetGpuProcessing(true);", "spectr-gpu-status-tracking-settings-on");
+            pump_ms(300);
+            rig.eval("spectrSetGpuProcessing(false);", "spectr-gpu-status-tracking-settings-off");
+            pump_ms(300);
+            std::printf("[gpu-status] tracking after Settings GPU on/off: mode=%s builds +%llu\n",
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before));
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
+
+            // Mixing through the latency rail's own write path; GPU off.
+            rig.eval("spectrToggleLatencyMode();", "spectr-gpu-status-mixing");
+            pump_ms(600);
+            std::printf("[gpu-status] mixing cpu: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::linear_phase
+                || rig.processor.gpu_processing()) steps_ok = false;
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-1-mixing-cpu", backend, scale);
+
+            // The GPU toggle, pressed where it paints.
+            press_indicator();
+            std::printf("[gpu-status] after GPU press: gpu_processing=%d latency=%d | chip \"%s\"\n",
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples(),
+                        latency_chip().c_str());
+            if (!rig.processor.gpu_processing()) steps_ok = false;
+
+            // Pace audio until the shared renderer reports GPU-selected output.
+            bool delivered = false;
+            const auto deadline = steady_t::now() + std::chrono::seconds(20);
+            while (steady_t::now() < deadline) {
+                paced_audio(96);
+                pump_ms(40);
+                const auto s = rig.processor.gpu_audio_status();
+                if (s.availability == spectr::GpuAudioStatus::Availability::Available
+                    && s.delivery && s.delivery->provider_state == 1
+                    && s.delivery->gpu_selected > 0) {
+                    delivered = true;
+                    break;
+                }
+            }
+            std::printf("[gpu-status] after paced audio: %s\n", status_line().c_str());
+            // Keep audio flowing while the component's 500 ms refresh reads
+            // build_info_get at least twice.
+            for (int i = 0; i < 6; ++i) {
+                paced_audio(48);
+                pump_ms(250);
+            }
+            const auto surface = read_surface();
+            std::printf("[gpu-status] live: %s\n", status_line().c_str());
+            const auto chip_text = latency_chip();
+            std::printf("[gpu-status] live: %s | chip \"%s\"\n", surface.c_str(), chip_text.c_str());
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-2-mixing-gpu-live", backend, scale);
+            // Both surfaces must paint inside the design box: an absolute node
+            // resolved against the wrong containing block lands off-screen and
+            // still reads "live" from its attributes alone.
+            const auto on_screen = [&](const char* query) {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return false;
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                return box.width > 0.0f && box.height > 0.0f && x >= 0.0f && y >= 0.0f
+                    && x + box.width <= kDesignWidth && y + box.height <= kDesignHeight;
+            };
+            const bool placed = on_screen(ind_q) && on_screen(pill_q);
+            std::printf("[gpu-status] indicator and pill inside the design box: %s\n",
+                        placed ? "yes" : "no");
+            // The chip names the latency the host is told, in whole ms.
+            char expected_ms[32];
+            std::snprintf(expected_ms, sizeof expected_ms, "%d ms",
+                          int(std::lround(rig.processor.render_mode_latency_ms(
+                              spectr::MaskRenderMode::linear_phase))));
+            const bool chip_ok = chip_text.find(expected_ms) != std::string::npos;
+            std::printf("[gpu-status] chip shows the reported %s: %s\n", expected_ms, chip_ok ? "yes" : "no");
+            const bool surface_live = placed && steps_ok && chip_ok
+                && surface.find("pill state=gpu") != std::string::npos
+                && surface.find("text=\"GPU | ") != std::string::npos
+                && surface.find("ready=true") != std::string::npos;
+            std::printf("[gpu-status] VERDICT delivered=%s surface_live=%s\n",
+                        delivered ? "yes" : "no", surface_live ? "yes" : "no");
+            return (delivered && surface_live && g_failures == 0) ? 0 : 1;
+        }
 
         // COR-4: sweep host sizes through the SHIPPING resize path
         // (on_view_resized -> __spectrResizeNativeEditor), censusing every
@@ -1972,7 +2302,11 @@ int main(int argc, char** argv) {
         // kModCtlBudgetMs to the p95 tick over the unmodulated baseline.
         // SPECTR_MODCTL_PLANT=full-invalidate adds a painter that touches the
         // document root on every modulation frame (a control whose update
-        // re-lays the tree), and the gate must FAIL.
+        // re-lays the tree), and the gate must FAIL. Every frame also checks
+        // that each modulated control draws ONE indicator (one needle and at
+        // most one value arc per knob, one Morph thumb);
+        // SPECTR_MODCTL_PLANT=two-indicators draws the base as a second full
+        // indicator, and that check must FAIL.
         if (std::getenv("SPECTR_MODULATION_CONTROLS") != nullptr) {
             auto& store = rig.store;
             const char* plant_env = std::getenv("SPECTR_MODCTL_PLANT");
@@ -2050,16 +2384,96 @@ int main(int argc, char** argv) {
                     "(() => { const s = globalThis.__spectrModControls;"
                     " const st = s ? s.state : {}; const d = s ? s.drawn : {};"
                     " const f = typeof spectrFreezeStore === 'function' ? spectrFreezeStore().display : null;"
-                    " const ang = (p) => { if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
+                    " const ang = (k) => { const p = k && k.needle; if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
                     "   return m ? (Math.atan2(+m[3] - 13, 13 - +m[4]) * 180 / Math.PI).toFixed(1) + 'deg' : 'none'; };"
                     " return 'frames=' + (s ? s.frames : -1)"
                     " + ' intensity=' + (st.intensityOn ? (100 * (1 - st.intensityPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.intensity)"
                     " + ' mix=' + (st.mixOn ? (100 * (1 - st.mixPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.mix)"
                     " + ' output=' + (st.outputOn ? (st.outputDb >= 0 ? '+' : '') + st.outputDb.toFixed(2) + 'dB' : 'off') + '@' + ang(d['output-trim'])"
-                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphPath=' + JSON.stringify(d.morph || '').slice(0, 40)"
+                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphThumb=' + JSON.stringify((d.morph && d.morph.thumb) || '')"
                     " + ' bands=' + (f ? f.bands : 'none')"
                     " + ' frozen=' + (typeof spectrFreezeStore === 'function' ? String(spectrFreezeStore().modulated) : '?'); })()");
             };
+            // ── One indicator per control ──
+            //
+            // What each modulated control actually draws, read back from the
+            // native widgets (not from the editor's own bookkeeping): a knob
+            // shows exactly one needle (a two-point stroke from the hub) and
+            // at most one value arc besides its full track, and Morph shows
+            // exactly one thumb (the React thumb, or the played thumb while
+            // an LFO drives it -- never both). The `two-indicators` plant
+            // draws a second needle into each knob's base marker and shows
+            // the base thumb again, and this check must fail.
+            std::vector<std::string> single_breaches;
+            const auto path_points = [](const std::string& d) {
+                std::vector<std::pair<float, float>> pts;
+                std::istringstream in(d);
+                std::string tok;
+                while (in >> tok) {
+                    if (tok == "M" || tok == "L") {
+                        float x = 0.0f, y = 0.0f;
+                        if (in >> x >> y) pts.emplace_back(x, y);
+                    }
+                }
+                return pts;
+            };
+            const auto check_single = [&](const std::string& frame) {
+                for (const char* knob : {"intensity", "mix", "output-trim"}) {
+                    const std::string ids = read_js(
+                        std::string("(() => [...document.querySelectorAll('[data-spectr-knob=\"") + knob
+                        + "\"] path')].map(e => e.__pulpId || e._id || e.id || '').join(','))()");
+                    int needles = 0, arcs = 0, paths = 0;
+                    std::stringstream list(ids);
+                    std::string id;
+                    while (std::getline(list, id, ',')) {
+                        auto* w = dynamic_cast<pulp::view::SvgPathWidget*>(find_by_id(*rig.root, id));
+                        if (w == nullptr) continue;
+                        ++paths;
+                        const auto pts = path_points(w->path_data());
+                        if (pts.size() == 2
+                            && std::hypot(pts[0].first - 13.0f, pts[0].second - 13.0f) < 4.5f)
+                            ++needles;
+                        else if (pts.size() >= 3) {
+                            const float a0 = std::atan2(pts.front().first - 13.0f, 13.0f - pts.front().second);
+                            const float a1 = std::atan2(pts.back().first - 13.0f, 13.0f - pts.back().second);
+                            const bool full_track = a0 < -2.3f && a1 > 2.3f;
+                            if (!full_track) ++arcs;
+                        }
+                    }
+                    if (paths < 3 || needles != 1 || arcs > 1)
+                        single_breaches.push_back(frame + " " + knob + ": " + std::to_string(needles)
+                                                  + " needles, " + std::to_string(arcs)
+                                                  + " value arcs over " + std::to_string(paths) + " paths");
+                }
+                const std::string morph_ids = read_js(
+                    "(() => { const t = document.querySelector('[data-spectr-morph-thumb]');"
+                    " const p = document.querySelector('[data-spectr-morph-played-thumb]');"
+                    " const id = (e) => e ? (e.__pulpId || e._id || e.id || '') : '';"
+                    " return id(t) + ',' + id(p); })()");
+                const auto comma = morph_ids.find(',');
+                if (comma != std::string::npos) {
+                    const auto* thumb = find_by_id(*rig.root, morph_ids.substr(0, comma));
+                    const auto* played = dynamic_cast<pulp::view::SvgPathWidget*>(
+                        find_by_id(*rig.root, morph_ids.substr(comma + 1)));
+                    const int thumbs = (thumb != nullptr && thumb->opacity() > 0.01f ? 1 : 0)
+                        + (played != nullptr && !played->path_data().empty() ? 1 : 0);
+                    if (thumbs != 1)
+                        single_breaches.push_back(frame + " morph: " + std::to_string(thumbs)
+                                                  + " thumbs");
+                } else {
+                    single_breaches.push_back(frame + " morph: thumb not found");
+                }
+            };
+            if (plant == "two-indicators")
+                // The old design: the base keeps its own full needle and thumb
+                // next to the value playing.
+                rig.eval("(() => { spectrModControlsSubscribe(() => {"
+                         " for (const k of ['intensity', 'mix', 'output-trim']) {"
+                         "   const el = document.querySelector('[data-spectr-knob-base=\"' + k + '\"]');"
+                         "   if (el) spectrSetPathD(el, 'M 13.00 9.50 L 13.00 3.50'); }"
+                         " const t = document.querySelector('[data-spectr-morph-thumb]');"
+                         " if (t && t.style) t.style.opacity = '1'; }); })();",
+                         "spectr-modctl-plant");
             // ── Frames across one LFO cycle, looked at ──
             const auto cycle_shots = [&](const std::string& tag) {
                 // 30 blocks of 800 at 48 kHz = one 2 Hz cycle; six frames.
@@ -2073,6 +2487,7 @@ int main(int argc, char** argv) {
                     const std::string name = "modctl-" + tag + "-" + std::to_string(shot);
                     capture(rig, dir, prefix + name, backend, scale);
                     std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    check_single(name);
                 }
             };
             set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
@@ -2084,14 +2499,37 @@ int main(int argc, char** argv) {
             cycle_shots("freeze");
             store.set_value(spectr::kParamFreeze, 0.0f);
             rig.processor.apply_surface_params(false);
+            // The header at the two shipping window sizes, each with the LFO
+            // driving INTENSITY, MIX, OUTPUT and MORPH and with it off.
+            for (const auto& [w, h, tag] : {std::tuple<float, float, const char*>{990.0f, 645.0f, "990"},
+                                            std::tuple<float, float, const char*>{792.0f, 516.0f, "792"}}) {
+                rig.resize(w, h);
+                for (const bool on : {true, false}) {
+                    set_routes(on ? std::initializer_list<MT>{MT::Intensity, MT::Mix, MT::Output, MT::Morph}
+                                  : std::initializer_list<MT>{});
+                    // Long enough for a route switched off to slew out (0.2 s for
+                    // Intensity), so the unmodulated frame shows no LFO at all.
+                    for (int i = 0; i < 40; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+                    rig.service_runtime();
+                    rig.root->layout_children();
+                    const std::string name = std::string("modctl-") + tag + (on ? "-modulated" : "-unmodulated");
+                    capture(rig, dir, prefix + name, backend, scale);
+                    std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    if (on) check_single(name);
+                }
+            }
+            rig.resize(kDesignWidth, kDesignHeight);
+            set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
 
             // ── Frame cost and damage ──
             //
-            // Pulp's FrameCostProbe (tools/shim/pulp_frame_cost_probe.hpp until
-            // the pinned SDK ships it) puts a recording plug-in host on the
+            // Pulp's FrameCostProbe (pulp/view/frame_cost_probe.hpp) puts a recording plug-in host on the
             // root, so every repaint request is classified: bounded (its rect)
             // or whole-surface.
-            if (!plant.empty() && plant != "full-invalidate") {
+            for (const auto& line : single_breaches)
+                std::printf("[modctl-single] FAIL: %s\n", line.c_str());
+            std::printf("[modctl-single] %s\n", single_breaches.empty() ? "PASS" : "FAIL");
+            if (!plant.empty() && plant != "full-invalidate" && plant != "two-indicators") {
                 std::printf("[modctl] UNKNOWN PLANT %s\n", plant.c_str());
                 return 2;
             }
@@ -2108,7 +2546,7 @@ int main(int argc, char** argv) {
             // trips (render transform, filter, scrolling parent).
             if (std::getenv("SPECTR_MODCTL_ESCALATION") != nullptr) {
                 const auto id = read_js("(() => { const el = document.querySelector("
-                                        "'[data-spectr-knob-played=intensity]');"
+                                        "'[data-spectr-knob-needle=intensity]');"
                                         " return el ? (el.__pulpId || el._id || el.id || '(no id)') : '(absent)'; })()");
                 std::printf("[modctl-esc] knob path id=%s\n", id.c_str());
                 const pulp::view::View* v = find_by_id(*rig.root, id);
@@ -2127,7 +2565,7 @@ int main(int argc, char** argv) {
                 std::printf("[modctl-esc] walk done\n");
                 return 0;
             }
-            using Probe = spectr::shim::FrameCostProbe;
+            using Probe = pulp::view::FrameCostProbe;
             const bool paint_frames = std::getenv("SPECTR_MODCTL_PAINT") != nullptr;
             // SPECTR_MODCTL_TRACE=FILE.pftrace: a Perfetto capture of the
             // frame-cost runs (a PULP_TRACING=ON SDK only).
@@ -2259,7 +2697,6 @@ int main(int argc, char** argv) {
             if (!kSdkBoundsAnimatedPaints)
                 std::printf("[modctl-gate] damage NOT gated: this SDK predates bounded "
                             "script/transform repaints\n");
-            (void)SPECTR_SDK_HAS_FRAME_COST_PROBE;
             Probe::Budget budget;
             budget.max_p95_ms = kModCtlBudgetMs;
             // Whatever the idle editor already repaints whole (none, on an SDK
@@ -2282,6 +2719,8 @@ int main(int argc, char** argv) {
             const auto& base = results[0];
             const auto& ctl = results[1];
             auto breaches = Probe::check(ctl.s, budget, &base.s);
+            for (const auto& line : single_breaches)
+                breaches.push_back("single indicator: " + line);
             if (ctl.painted < 100)
                 breaches.push_back("positive control: only " + std::to_string(ctl.painted)
                                    + " modulation_controls publications painted");

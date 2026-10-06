@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <chrono>
+#include <thread>
 
 namespace spectr::experimental {
 namespace {
@@ -118,6 +120,14 @@ bool SharedSpectralBridge::process(const float* const* input,float* const* outpu
     }else{
         const auto target=q-config_.lead_host_blocks;bool delivered=false;
         auto& slot=outputs_[target%slots];unsigned expected=ready;
+        if(offline_ && target<input_count_ && admitted_[target%slots] && gpu_ready_for_wait_()){
+            // Offline only: give the worker the time a paced host would have.
+            const auto give_up=std::chrono::steady_clock::now()+std::chrono::nanoseconds(offline_wait_budget_ns);
+            while(!fenced() && std::chrono::steady_clock::now()<give_up){
+                if(slot.state.load(std::memory_order_acquire)==ready && slot.epoch==epoch_ && slot.sequence==target)break;
+                std::this_thread::sleep_for(std::chrono::microseconds(20));
+            }
+        }
         if(slot.state.compare_exchange_strong(expected,busy,std::memory_order_acquire)){
             if(slot.epoch==epoch_ && slot.sequence==target && !fenced() &&
                ready_epoch_.load(std::memory_order_acquire)==epoch_){
@@ -184,9 +194,11 @@ void SharedSpectralBridge::capture_frame(const MaskRenderer::Table& table,std::u
     slot.state.store(ready,std::memory_order_release);
 }
 bool SharedSpectralBridge::load_hop_gains() noexcept {
-    const auto first_frame=std::uint64_t(config_.renderer.design_grid_size/config_.renderer.analysis_hop-1);
-    if(hop_sequence_<first_frame){hop_gains_loaded_=true;return true;}
-    const auto frame=hop_sequence_-first_frame;
+    // Pulp 0.907's spectral frame engine starts every stream with full
+    // overlap, on the CPU renderer and in the GPU session alike, so both number
+    // frames from the first submitted hop: the effective-frame observer's
+    // ordinal is the hop ordinal, with no priming hops to skip.
+    const auto frame=hop_sequence_;
     auto& slot=controls_[frame%slots];unsigned expected=ready;
     if(!slot.state.compare_exchange_strong(expected,busy,std::memory_order_acquire)){
         fail_worker(FenceReason::MissingControl,worker_epoch_);return false;

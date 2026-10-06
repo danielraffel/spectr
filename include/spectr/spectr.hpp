@@ -8,6 +8,10 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+// The SDK compiles a scripted editor's scripts and verifies its document on a
+// background worker when a host instantiates the plug-in, from what the
+// plug-in says they are (Processor::editor_prewarm).
+#include <pulp/format/editor_prewarm.hpp>
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -57,7 +61,7 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
-#include "spectr/upstream/processing_switch_crossfade.hpp"
+#include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
@@ -387,6 +391,11 @@ class Spectr : public pulp::format::Processor
 public:
     // UI/control thread only. Never stops processing or changes engine selection.
     [[nodiscard]] GpuAudioStatus gpu_audio_status() const;
+    // Whether the renderer built most recently accepted the freeze source.
+    // False means Freeze cannot reach the audio in the current mode.
+    [[nodiscard]] bool freeze_source_wired() const noexcept {
+        return freeze_source_wired_.load(std::memory_order_acquire);
+    }
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     // Stopped/control lane only; never race prepare/release/mode replacement.
     // Quantum output selections before product mix/trim, not GPU completions.
@@ -432,11 +441,35 @@ public:
     /// Delay this mode costs at the live sample rate, in samples and in
     /// milliseconds. Derived from the renderer's own contract so no
     /// user-facing figure is ever a number somebody typed.
-    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept {
-        return mask_render_latency_samples(mode, latency_geometry_());
+    ///
+    /// This is the figure the host is told for that mode (latency_samples()
+    /// reports the same number once prepared): in a build with the shared GPU
+    /// renderer, Mixing adds that renderer's fixed lead to the linear-phase
+    /// latency, whether a block is delivered by the GPU or by its CPU
+    /// fallback -- both keep the same alignment.
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept;
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept;
+
+    /// GPU processing for Mixing. Saved with the session, not a host
+    /// parameter: switching it rebuilds the renderer and moves the latency the
+    /// host is told, exactly like a Tracking/Mixing switch, so it must not be
+    /// automatable. Off by default: GPU output is the CPU linear-phase output
+    /// (no sonic difference) at a higher latency. Tracking is always CPU.
+    /// Control thread only; same failure contract as set_render_mode.
+    bool set_gpu_processing(bool enabled);
+    [[nodiscard]] bool gpu_processing() const noexcept { return gpu_processing_; }
+    /// Whether this build can render Mixing on the GPU at all.
+    [[nodiscard]] static constexpr bool gpu_processing_available() noexcept {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        return true;
+#else
+        return false;
+#endif
     }
     [[nodiscard]] double render_mode_latency_ms(MaskRenderMode mode) const noexcept {
-        return spectr::render_mode_latency_ms(mode, latency_geometry_(), sample_rate_);
+        return sample_rate_ > 0.0
+            ? 1000.0 * static_cast<double>(render_mode_latency_samples(mode)) / sample_rate_
+            : 0.0;
     }
 
     /// Switch modes on a live instance.
@@ -449,7 +482,7 @@ public:
     ///
     /// The switch is heard as a crossfade, not a cut: the audio thread warms
     /// the new renderer on the live input while the old one is still heard,
-    /// then crossfades into it (spectr/upstream/processing_switch_crossfade.hpp). It completes
+    /// then crossfades into it (pulp/signal/processing_switch_crossfade.hpp). It completes
     /// on the audio thread, a few hundred milliseconds of audio later; a
     /// second switch, a prepare or a release first settles the one in flight.
     bool set_render_mode(MaskRenderMode mode);
@@ -466,6 +499,15 @@ public:
     /// another control call).
     [[nodiscard]] bool render_switch_settled() const noexcept {
         return render_switch_state_.load(std::memory_order_acquire) == kSwitchIdle;
+    }
+
+    /// Diagnostics for tests: whether the freeze source's spectral capture is
+    /// suspended (a loop Length nothing can move), and whether a hold plays.
+    [[nodiscard]] bool freeze_source_suspended_for_test() const noexcept {
+        return freeze_source_.spectral_capture_suspended();
+    }
+    [[nodiscard]] bool freeze_engaged_for_test() const noexcept {
+        return freeze_source_.hold_audible();
     }
 
     /// True while a mode switch is still crossfading on the audio thread.
@@ -548,6 +590,11 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if defined(SPECTR_NATIVE_EDITOR)
+    /// The materialized editor's runtime, design and help scripts and its
+    /// captured document, byte-identical to what an open evaluates.
+    EditorPrewarm editor_prewarm() const override;
+#endif
 #if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
 #error "Spectr requires a Pulp SDK with Processor::editor_background()"
 #endif
@@ -1037,12 +1084,15 @@ private:
     // Only pointer publication/removal and the public observer take this lock.
     // Build/join/destruction happen outside it; process() never acquires it.
     // When nested, processing_state_mutex_ precedes this observation mutex.
+    // Nothing has refused the source until a renderer is built.
+    std::atomic<bool> freeze_source_wired_{true};
     mutable std::mutex renderer_observation_mutex_;
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance
     // sounds like and what latency it reports; written by the control thread
     // only, read by process() to notice a pending rebuild.
     MaskRenderMode                         render_mode_ = kDefaultRenderMode;
+    bool                                   gpu_processing_ = false;
     // Set when a restore could not build the renderer the project asked for.
     // The instance keeps the mode it has and says so rather than pretending
     // the project opened cleanly.
@@ -1080,10 +1130,10 @@ private:
     // by the audio thread only after it claims the switch.
     MaskRenderer*                          switch_incoming_ = nullptr;
     std::unique_ptr<MaskRenderer>          switch_outgoing_{};
-    pulp_candidate::signal::ProcessingSwitchPlan switch_plan_{};
+    pulp::signal::ProcessingSwitchPlan switch_plan_{};
     bool                                   switch_wet_wired_ = false;
     // Audio thread only.
-    pulp_candidate::signal::ProcessingSwitchCrossfade switch_xfade_{};
+    pulp::signal::ProcessingSwitchCrossfade switch_xfade_{};
     // Audio thread: whether any block has rendered since the last prepare or
     // stream reset. A switch before the stream has started has nothing heard
     // to fade from, so it completes at once.
@@ -1191,7 +1241,8 @@ private:
     /// Build and fully prepare a renderer for `mode` against the current
     /// geometry, including its initial layout and mix. Returns null when the
     /// mode cannot be prepared; the caller keeps whatever was already live.
-    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode);
+    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode, bool gpu);
+    bool switch_renderer_(MaskRenderMode mode, bool gpu);
     /// Free retired renderers the audio thread can no longer reach. Control
     /// thread only.
     void drain_retired_renderers_() noexcept;

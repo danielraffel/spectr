@@ -77,7 +77,7 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.901.0 REQUIRED)
+find_package(Pulp 0.912.0 REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -304,6 +304,21 @@ option(SPECTR_ENABLE_PERF_FIXTURES
 option(SPECTR_WP0_HOSTED_PROBE
        "Compile the opt-in AU hosted WP-0 measurement seam" OFF)
 
+# Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
+# variables that load a script into the editor (SPECTR_EVAL), synthesise
+# input, dump state, tune Auto Gain, or plant a defect so a negative control
+# can prove its measurement sees it. They are compiled out unless this is ON:
+# a release build reads no SPECTR_* variable and carries none of their names.
+# Test executables that compile Spectr's sources themselves (Spectr-test and
+# the shared-spectral fixtures) always have them. Configure ON for the test
+# build the full ctest runs in; package.sh refuses a build with it ON.
+option(SPECTR_ENABLE_TEST_SEAMS
+       "Compile the SPECTR_* test seams into the plug-in, standalone and probe targets (never for a release)" OFF)
+if(SPECTR_ENABLE_PERF_FIXTURES AND NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(FATAL_ERROR "SPECTR_ENABLE_PERF_FIXTURES reads its fixtures through the test "
+        "seams; configure with -DSPECTR_ENABLE_TEST_SEAMS=ON as well")
+endif()
+
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
@@ -350,6 +365,7 @@ function(spectr_configure_native_target target)
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
         $<$<BOOL:${SPECTR_ENABLE_PERF_FIXTURES}>:SPECTR_ENABLE_PERF_FIXTURES=1>
+        $<$<BOOL:${SPECTR_ENABLE_TEST_SEAMS}>:SPECTR_ENABLE_TEST_SEAMS=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -618,6 +634,8 @@ target_include_directories(Spectr-test PRIVATE
 )
 target_compile_definitions(Spectr-test PRIVATE
     $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
+    # A test binary, never shipped: its negative controls need the plants.
+    SPECTR_ENABLE_TEST_SEAMS=1
     SPECTR_NATIVE_ASSETS=1
     SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
     SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
@@ -642,12 +660,13 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
-# The stream-start case with the priming removed: the measurement must reject
-# it, or it could not see the fade it exists to catch.
+# The stream-start case with the framework's full-overlap stream start turned
+# off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
+# measurement must reject it, or it could not see the fade it exists to catch.
 add_test(NAME Spectr-stream-start-negative-control
     COMMAND Spectr-test "The first samples of a stream reach the output at full level")
 set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
-    ENVIRONMENT SPECTR_PLANT_NO_STREAM_PRIME=1 WILL_FAIL TRUE TIMEOUT 120)
+    ENVIRONMENT SPECTR_PLANT_NO_FULL_OVERLAP=1 WILL_FAIL TRUE TIMEOUT 120)
 # A Latency switch with the warm-up and crossfade removed -- the cut it used to
 # be. The dropout and click measurement must reject it.
 add_test(NAME Spectr-render-switch-negative-control
@@ -659,6 +678,29 @@ add_test(NAME Spectr-deadline-negative-control
     COMMAND Spectr-test "Tracking keeps every callback inside a 32-sample deadline at 48 kHz")
 set_tests_properties(Spectr-deadline-negative-control PROPERTIES
     ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=150000 WILL_FAIL TRUE TIMEOUT 300)
+add_test(NAME Spectr-deadline-96k-negative-control
+    COMMAND Spectr-test "Both modes keep every callback inside a 32-sample deadline at 96 kHz")
+set_tests_properties(Spectr-deadline-96k-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=120000 WILL_FAIL TRUE TIMEOUT 300)
+
+# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
+# the shipping build (the macros are no-ops there) and breaks the first traced
+# build. Checked against the SDK's own declared list, with a planted control.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+get_filename_component(_spectr_pulp_trace_header
+    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
+if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}" --self-test)
+    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
+        PROPERTIES TIMEOUT 60)
+endif()
 
 # The product-independent loudness-compensation unit behind Auto Gain v2
 # (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
@@ -694,7 +736,13 @@ if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     spectr_configure_native_target(Spectr-shared-product-acceptance)
     target_compile_definitions(Spectr-shared-product-acceptance PRIVATE SPECTR_NATIVE_ASSETS=1)
     add_test(NAME Spectr-shared-product-acceptance COMMAND Spectr-shared-product-acceptance)
-    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
+    # The latency matrix with the reported figure planted one sample wrong:
+    # the measurement must reject it.
+    add_test(NAME Spectr-shared-latency-matrix-negative-control
+        COMMAND Spectr-shared-product-acceptance "[latency-matrix]")
+    set_tests_properties(Spectr-shared-latency-matrix-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
 endif()
 
 
@@ -730,6 +778,7 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
         src/experimental/shared_spectral_renderer.cpp src/mask_renderer.cpp)
     target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
     target_compile_definitions(SpectrSharedSpectralBridge PRIVATE SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+    target_compile_definitions(SpectrSharedSpectralBridge PUBLIC SPECTR_ENABLE_TEST_SEAMS=1)
     target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
     add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
         test/test_shared_spectral_fixture.cpp)
@@ -750,6 +799,29 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     target_link_libraries(Spectr-shared-spectral-renderer PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-renderer COMMAND Spectr-shared-spectral-renderer)
     set_tests_properties(Spectr-shared-spectral-renderer PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-scaling EXCLUDE_FROM_ALL test/test_shared_spectral_scaling.cpp)
+    target_link_libraries(Spectr-shared-spectral-scaling PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-scaling COMMAND Spectr-shared-spectral-scaling)
+    set_tests_properties(Spectr-shared-spectral-scaling PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    add_executable(Spectr-shared-spectral-layers EXCLUDE_FROM_ALL test/test_shared_spectral_layers.cpp)
+    target_link_libraries(Spectr-shared-spectral-layers PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-layers COMMAND Spectr-shared-spectral-layers)
+    set_tests_properties(Spectr-shared-spectral-layers PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    # Freeze's held wet source through the shared renderer, against the CPU
+    # linear-phase renderer. The plant installs no source on the shared
+    # renderer and must fail.
+    # Report-only: where and why the shared renderer falls back to its CPU
+    # path in a paced session (steady, transport reset, CPU load, late host).
+    add_executable(Spectr-shared-spectral-fallback-trace EXCLUDE_FROM_ALL test/test_shared_spectral_fallbacks.cpp)
+    target_link_libraries(Spectr-shared-spectral-fallback-trace PRIVATE SpectrSharedSpectralBridge)
+    add_executable(Spectr-shared-spectral-freeze EXCLUDE_FROM_ALL test/test_shared_spectral_freeze.cpp)
+    target_link_libraries(Spectr-shared-spectral-freeze PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-freeze COMMAND Spectr-shared-spectral-freeze)
+    add_test(NAME Spectr-shared-spectral-freeze-negative-control COMMAND Spectr-shared-spectral-freeze)
+    set_tests_properties(Spectr-shared-spectral-freeze-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_FREEZE_PLANT_DROP_SOURCE=1 WILL_FAIL TRUE)
+    set_tests_properties(Spectr-shared-spectral-freeze Spectr-shared-spectral-freeze-negative-control
+        PROPERTIES TIMEOUT 240 RESOURCE_LOCK pulp_gpu)
     add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
     target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)
@@ -1219,6 +1291,19 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
+# The CPU/GPU chip through the host hit test: in Tracking a press shows the
+# "Mixing only" notice and changes nothing in the processor (no renderer
+# built, mode, GPU choice and latency unchanged, Settings' GPU choice inert);
+# in Mixing it switches to GPU and the shared renderer delivers.
+if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    add_test(NAME Spectr-native-gpu-status
+        COMMAND $<TARGET_FILE:Spectr-native-shot> --backend=skia
+            --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-gpu-status)
+    set_tests_properties(Spectr-native-gpu-status PROPERTIES
+        ENVIRONMENT "SPECTR_GPU_STATUS_PROBE=1;PULP_AUDIO_DEVICE=null"
+        TIMEOUT 240 SKIP_RETURN_CODE 77
+        RESOURCE_LOCK "spectr_native_materialized_editor;pulp_gpu")
+endif()
 
 # The menus whose key hints follow the keyboard policy (EDIT MODE, ANALYZER,
 # SHORTCUTS), captured as a plug-in -- where the plain-key shortcuts go to the
@@ -2027,6 +2112,16 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_html_raw_templates.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
     set_tests_properties(Spectr-editor-html-raw-templates PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-gpu-audio-status-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_status_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
+    set_tests_properties(Spectr-gpu-audio-status-ui PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-gpu-audio-materialized-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_materialized_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-gpu-audio-materialized-ui PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
@@ -2299,6 +2394,24 @@ if(SPECTR_NODE_EXECUTABLE)
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
     set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
+    # Settings' UPDATES group (Check for Updates) renders in the standalone
+    # app and nowhere else: it asks the native update service through the
+    # editor bridge, and a plug-in, an SDK without the bridge, or a build
+    # without Sparkle answers "not available". Two planted controls must fail.
+    add_test(NAME Spectr-materialized-check-for-updates
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    foreach(_spectr_updates_plant always-show dead-button)
+        add_test(NAME Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_updates_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+    set_tests_properties(Spectr-materialized-check-for-updates PROPERTIES TIMEOUT 60)
 
     # A header control's context menu names its own LFO target, toggles only
     # that target's lane, and opens the full Modulation submenu marked on it.
@@ -4099,15 +4212,18 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
-    # The first samples of a fresh stream through the built AU, both modes.
-    add_test(NAME Spectr-au-stream-start-mixing
+    # The click probes above score each edge against an unpressed control,
+    # so a freeze that never reaches the output passes them: there is no
+    # edge to click. The hold-presence check asks what the held sound IS --
+    # chord A held after the input moved to chord B, against the same render
+    # unpressed -- in each Latency mode, so a renderer that drops the freeze
+    # source fails it.
+    add_test(NAME Spectr-au-freeze-hold-tracking
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --stream-start-check --mode mixing --block 512)
-    add_test(NAME Spectr-au-stream-start-tracking
+            --hold-presence --mode tracking --block 128)
+    add_test(NAME Spectr-au-freeze-hold-mixing
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --stream-start-check --mode tracking --block 128)
-    set_tests_properties(Spectr-au-stream-start-mixing Spectr-au-stream-start-tracking
-        PROPERTIES TIMEOUT 120 LABELS "au-host")
+            --hold-presence --mode mixing --block 256)
     # Length end to end: a short Length holds only what sounds now, a 1-bar
     # Length loops the 2 s before the press. Its negative control restores
     # the probe's stale Custom index (4.0, from when there were 4 presets),
@@ -4123,8 +4239,50 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --hold-check --mode tracking --block 128)
     set_tests_properties(Spectr-au-freeze-hold-check-negative-control PROPERTIES
         ENVIRONMENT SPECTR_PROBE_PLANT_STALE_CUSTOM=1 WILL_FAIL TRUE)
+    # The delay the built AU's audio has must equal kAudioUnitProperty_Latency,
+    # which is what a host's delay compensation applies: Tracking, Mixing on
+    # the CPU and Mixing on the GPU (paced, so the GPU worker delivers), at
+    # 44.1 and 48 kHz and two block sizes. The negative control plants the
+    # report one sample wrong and must fail.
+    add_test(NAME Spectr-au-latency-tracking-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode tracking --sr 44100 --block 128)
+    add_test(NAME Spectr-au-latency-mixing-cpu-48k-512
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512)
+    add_test(NAME Spectr-au-latency-mixing-cpu-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 44100 --block 128)
+    set(_spectr_au_latency_tests Spectr-au-latency-tracking-44k-128
+        Spectr-au-latency-mixing-cpu-48k-512 Spectr-au-latency-mixing-cpu-44k-128)
+    if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        add_test(NAME Spectr-au-latency-mixing-gpu-48k-512
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 48000 --block 512)
+        add_test(NAME Spectr-au-latency-mixing-gpu-44k-128
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 44100 --block 128)
+        list(APPEND _spectr_au_latency_tests Spectr-au-latency-mixing-gpu-48k-512
+            Spectr-au-latency-mixing-gpu-44k-128)
+    endif()
+    add_test(NAME Spectr-au-latency-negative-control
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512 --latency-plant 1)
+    set_tests_properties(Spectr-au-latency-negative-control PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(${_spectr_au_latency_tests} Spectr-au-latency-negative-control
+        PROPERTIES TIMEOUT 300 LABELS "au-host;latency" RESOURCE_LOCK pulp_gpu)
+    # The first samples of a fresh stream through the built AU, both modes.
+    add_test(NAME Spectr-au-stream-start-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode mixing --block 512)
+    add_test(NAME Spectr-au-stream-start-tracking
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode tracking --block 128)
+    set_tests_properties(Spectr-au-stream-start-mixing Spectr-au-stream-start-tracking
+        PROPERTIES TIMEOUT 120 LABELS "au-host")
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
+        Spectr-au-freeze-hold-tracking Spectr-au-freeze-hold-mixing
         Spectr-au-freeze-hold-check Spectr-au-freeze-hold-check-mixing
         Spectr-au-freeze-hold-check-negative-control
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
@@ -4184,7 +4342,10 @@ endif()
 # in-process, never activated or focused, in a borderless window off every
 # screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
 # without one. Warm opens only for the time gate: the first open of a freshly
-# built binary also pays one-time dyld and Metal shader-cache costs.
+# built binary also pays one-time dyld and Metal shader-cache costs. Since Pulp
+# 0.907 the editor opens content-first: the call includes the document mount
+# and the first frame (warm ~150 ms on an idle M5 Max, 225-320 ms under a
+# build load of 50-80), so the budget is the mount's, with headroom for load.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
@@ -4196,7 +4357,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-editor-open-probe
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
-            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 600)
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
@@ -4222,12 +4383,23 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
                 --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
                 --settled-bg ${_spectr_first_frame_rgb}
                 --expect-first-rgb ${_spectr_first_frame_rgb}
+                --expect-first-ui
                 --max-offbrand-frames 0)
         set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
             TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
             RESOURCE_LOCK spectr_native_materialized_editor
             FIXTURES_REQUIRED spectr_first_frame_dirs)
     endforeach()
+    # The content-first contract has a control: the SDK's view-first order
+    # (the empty background before the document) must fail --expect-first-ui.
+    add_test(NAME Spectr-au-editor-first-frame-view-first-control
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 1 --settle-ms 600 --pixels --expect-first-ui)
+    set_tests_properties(Spectr-au-editor-first-frame-view-first-control PROPERTIES
+        ENVIRONMENT PULP_EDITOR_OPEN=view-first WILL_FAIL TRUE
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
     # Out-of-process variant (AUHostingService + remote view controller). Not a
     # ctest: it needs the component installed where AUHostingService finds it.
     add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
@@ -4342,6 +4514,12 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test SpectrWebViewReference_VST3)
     endif()
     catch_discover_tests(Spectr-artifact-test)
+    # The built CLAP/VST3 latency check with the report planted one sample
+    # wrong: the measurement must reject it.
+    add_test(NAME Spectr-artifact-latency-negative-control
+        COMMAND Spectr-artifact-test "[latency-artifact]")
+    set_tests_properties(Spectr-artifact-latency-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300)
 endif()
 
 # Third-party validators over the exact built bundles: clap-validator
@@ -4610,4 +4788,61 @@ if(APPLE)
             -DSCRATCH=${CMAKE_BINARY_DIR}/min-os-configure-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/test/min_os_configure_test.cmake)
     set_tests_properties(Spectr-bundle-min-os-configure PROPERTIES TIMEOUT 120)
+endif()
+
+# The SPECTR_* test seams in the built product binaries: with
+# SPECTR_ENABLE_TEST_SEAMS OFF (a release) none of their names may appear;
+# with it ON (the test build) every product must carry them -- the positive
+# control that proves the byte search can see a seam at all.
+if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET}
+   AND TARGET ${SPECTR_NATIVE_AU_TARGET} AND TARGET ${SPECTR_NATIVE_VST3_TARGET}
+   AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    if(SPECTR_ENABLE_TEST_SEAMS)
+        set(_spectr_seams_expect present)
+    else()
+        set(_spectr_seams_expect absent)
+    endif()
+    add_test(NAME Spectr-test-seams-${_spectr_seams_expect}
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_no_test_seams.py
+            --expect ${_spectr_seams_expect}
+            ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+            ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+            ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    set_tests_properties(Spectr-test-seams-${_spectr_seams_expect} PROPERTIES TIMEOUT 60)
+endif()
+if(NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(STATUS "Spectr: test seams compiled out of the products (release "
+        "configuration). The full ctest needs -DSPECTR_ENABLE_TEST_SEAMS=ON.")
+    # These drive the built Spectr.app through the seams (SPECTR_EVAL,
+    # SPECTR_CLICK, SPECTR_DRAG, SPECTR_MENU_SCENARIO, SPECTR_LAYOUT_DUMP...).
+    # A release build ignores every one of them, so the instruments find no
+    # output and fail closed; they run in the test build instead. Disabled,
+    # not deleted, so a release ctest lists them as "Not Run (Disabled)".
+    set(_spectr_needs_seams
+        Spectr-standalone-band-menu-rows Spectr-standalone-band-menu-64
+        Spectr-standalone-band-menu-keyboard Spectr-standalone-freeze-length
+        Spectr-standalone-settings-wheel Spectr-standalone-modulation-looks
+        Spectr-standalone-modulation-hold-while-editing
+        Spectr-standalone-band-menu-keyboard-negative-control
+        Spectr-standalone-band-menu-rows-negative-control
+        Spectr-status-overlay
+        Spectr-menu-dropdown-affordances
+        Spectr-menu-dropdown-affordances-negative-control
+        Spectr-menu-dropdown-affordances-negative-control-escape
+        Spectr-latency-rail-effect Spectr-latency-rail-effect-disabled-write-control
+        Spectr-group-drag-preserves-mute
+        Spectr-group-drag-preserves-mute-negative-control-unmute
+        Spectr-group-drag-preserves-mute-negative-control-freeze
+        Spectr-menu-arrow-step Spectr-menu-arrow-step-negative-control
+        Spectr-menu-arrow-step-negative-control-eager-cursor
+        Spectr-materialized-captured-state-survives-snapshots-live
+        Spectr-shortcut-panel-single-line
+        Spectr-settings-render-mode-no-reflow-live)
+    foreach(_spectr_seam_test IN LISTS _spectr_needs_seams)
+        if(TEST ${_spectr_seam_test})
+            set_tests_properties(${_spectr_seam_test} PROPERTIES DISABLED TRUE)
+        endif()
+    endforeach()
 endif()

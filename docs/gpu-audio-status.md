@@ -72,6 +72,15 @@ The compact status surface may be hidden independently through the GPU stats
 setting. Build information remains the place for provenance and detailed
 diagnostics.
 
+Native package note: the installed editor executes
+`native-ui/materialized/materialized-document.runtime.json`, not
+`resources/editor.html`. The GPU controls in the native package are maintained
+by `tools/patch_materialized_gpu_audio_ui.py`; the corresponding
+`Spectr-gpu-audio-materialized-ui` test scans the embedded runtime directly.
+GPU-enabled package builds must also configure
+`SPECTR_EXPERIMENTAL_SHARED_RENDERER=ON`. A green browser-source test alone is
+not evidence that the native package contains the controls.
+
 Before adding a high-band-count control, measure the existing 64-band editor
 with progressively heavier workloads. The first matrix is 8192-point CPU,
 8192-point GPU, and 16384-point GPU, followed by multiple 16384-point layers
@@ -80,3 +89,45 @@ experiment because the current supported profile list ends at 16384. Each
 step needs both an acoustic reason to exist and realtime evidence: output
 parity, CPU/GPU work time, p99.9 deadline behavior, fallback rate, and the
 effect of simultaneous rendering load.
+
+## GPU processing: a Mixing choice, off by default
+
+GPU processing is a saved, non-automatable session setting that selects
+Mixing's renderer: on, Mixing renders through the shared GPU renderer; off
+(the default), through the CPU linear-phase renderer. Tracking always runs on
+the CPU minimum-phase renderer, and the header chip there is a disabled
+"CPU" readout. In Mixing the chip is the CPU/GPU toggle; Settings > Latency
+carries the same switch with both latency figures. Switching it rebuilds the
+renderer through the same path as a Tracking/Mixing switch: one
+latency-changed notification, the new figure reported before the host reads
+it, bounded output, no crossfade.
+
+Reported latency, measured (impulse onset dry, noise cross-correlation peak
+wet, in-process and through the built AU, VST3 and CLAP, at 44.1 and 48 kHz,
+blocks 128 and 512): Tracking 64 samples, Mixing on the CPU 10240 samples
+(213 ms at 48 kHz), Mixing on the GPU 15360 samples (320 ms at 48 kHz). The
+GPU figure is constant: a block the GPU does not deliver in time is rendered
+by the CPU path at the same alignment, so a fallback never changes the
+latency. The latency chip, Settings, the hydration payload and build
+information all show the figure the host is told.
+
+What GPU processing does and does not buy today:
+
+- Sound: none. GPU output equals the CPU linear-phase output to within
+  1.2e-7 (-138 dBFS), and a fallback block is that CPU output.
+- CPU: none, today. The CPU path runs every block so it can stand in for a
+  late GPU result, so the host thread does the CPU renderer's work either way,
+  and the GPU service worker adds roughly 8 to 12 percent of a core for the
+  process. It is an architecture for later work (larger FFT profiles, more
+  spectral layers, long Freeze holds) once the CPU stand-in no longer has to
+  run in full every block.
+- Latency: 5120 samples more than Mixing on the CPU.
+
+Fallbacks: in a paced session (steady, transport reset, all cores loaded, a
+late host, a band edited every block) none were observed. They come from
+callbacks arriving faster than the GPU round trip: an offline bounce or a
+host that renders ahead (148 of 188 quanta fell back in a 4-second
+as-fast-as-possible run), and the first quantum or two after the renderer is
+rebuilt. They are not audible: the substituted block is the same-latency CPU
+rendering of the same input. `Spectr-shared-spectral-fallback-trace` prints
+every fallback with its phase and fence reasons.

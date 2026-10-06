@@ -26,10 +26,11 @@
 #include "spectr/level_controls.hpp"
 #include "spectr/modulation.hpp"
 #include "spectr/param_surface.hpp"
-#include "spectr/upstream/processing_switch_crossfade.hpp"
+#include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -406,7 +407,7 @@ const char* mode_name(MaskRenderMode m) {
 
 TEST_CASE("The switch plan warms the incoming renderer and then fades at equal power",
           "[render-mode][render-switch]") {
-    namespace sw = pulp_candidate::signal;
+    namespace sw = pulp::signal;
     const auto plan = sw::plan_processing_switch(10240, 0, 48000.0, 0.03);
     CHECK(plan.warm_samples == 10240);
     CHECK(plan.fade_samples == 1440);
@@ -645,21 +646,18 @@ TEST_CASE("A Latency switch before the stream starts takes effect at once",
     CHECK(std::abs(out_l[std::size_t(latency)] - 0.5f) < 0.01f);
 }
 
-TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
-          "[render-mode][deadline]") {
-    // Logic at a 32-sample buffer: 0.667 ms per callback at 48 kHz. Per-call
-    // thread CPU (load-robust, unlike wall time) over a steady render and one
-    // with FROZEN pressed and released and a band drag, with the product's
-    // shape and AUTO on. Gate: p99 at most half the deadline, max under it.
-    // Negative control: SPECTR_PLANT_CALLBACK_BURST adds a fixed burst every
-    // 512 samples, the per-hop pattern that crackles live; it must fail.
-    const double rate = 48000.0;
-    const int block = 32;
+namespace {
+
+// Per-callback thread CPU (the minimum over three runs of each callback, so
+// preemption by the machine does not count) over a render with the product
+// shape and AUTO on, FROZEN pressed and released and a band drag, past the
+// first second. Returns {p50, p99, max} in microseconds.
+std::array<double, 3> callback_cost(MaskRenderMode mode, double rate, int block) {
     const auto material = chord(4.0, rate);
     Run run;
     run.rate = rate;
     run.block = block;
-    run.mode = MaskRenderMode::zero_latency;
+    run.mode = mode;
     run.shaped = true;
     run.auto_gain = 1.0f;
     const std::size_t engage = at(1.5, rate) + 7, release = at(2.6, rate) + 3;
@@ -678,8 +676,6 @@ TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
             next += at(1.0 / 60.0, rate);
         }
     };
-    // The minimum over three runs of each callback's cost: a preemption or a
-    // cache-cold page in one run is the machine, not the processor.
     std::vector<double> best;
     for (int attempt = 0; attempt < 3; ++attempt) {
         BlockCosts costs;
@@ -688,18 +684,120 @@ TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
         for (std::size_t i = 0; i < best.size() && i < costs.us.size(); ++i)
             best[i] = std::min(best[i], costs.us[i]);
     }
-    // Skip the first second: prepare-time work and the estimator's warm-up.
     std::vector<double> v(best.begin() + std::ptrdiff_t(at(1.0, rate) / std::size_t(block)), best.end());
     std::sort(v.begin(), v.end());
-    const double deadline = 1e6 * block / rate;
-    const double p99 = v[std::size_t(0.99 * double(v.size()))], worst = v.back();
-    std::printf("\nTracking at 48 kHz / 32: p50 %.0f us, p99 %.0f us, max %.0f us, deadline %.0f us\n",
-                v[v.size() / 2], p99, worst, deadline);
-    CHECK(p99 <= 0.5 * deadline);
-    CHECK(worst < deadline);
+    return {v[v.size() / 2], v[std::size_t(0.99 * double(v.size()))], v.back()};
 }
 
-// ── 2/3. Reports// ── 2/3. Reports: Freeze engage/release, band drags, loop seams (Tracking) ─
+void require_inside_deadline(MaskRenderMode mode, double rate, int block) {
+    const auto c = callback_cost(mode, rate, block);
+    const double deadline = 1e6 * block / rate;
+    std::printf("\n%s at %.0f Hz / %d: p50 %.0f us, p99 %.0f us, max %.0f us, deadline %.0f us\n",
+                mode_name(mode), rate, block, c[0], c[1], c[2], deadline);
+    CHECK(c[1] <= 0.5 * deadline);
+    CHECK(c[2] < deadline);
+}
+
+} // namespace
+
+TEST_CASE("Tracking keeps every callback inside a 32-sample deadline at 48 kHz",
+          "[render-mode][deadline]") {
+    // Logic at a 32-sample buffer: 0.667 ms per callback at 48 kHz. Gate:
+    // p99 at most half the deadline, max under it, steady and through FROZEN
+    // and a band drag. Negative control: SPECTR_PLANT_CALLBACK_BURST adds a
+    // fixed burst every 512 samples, the per-hop pattern that crackles live.
+    require_inside_deadline(MaskRenderMode::zero_latency, 48000.0, 32);
+}
+
+TEST_CASE("Both modes keep every callback inside a 32-sample deadline at 96 kHz",
+          "[render-mode][deadline]") {
+    // 96 kHz at 32 samples leaves 0.333 ms. The per-hop work that used to
+    // land in one callback -- the freeze source's capture, Auto Gain v2's
+    // frame, the WOLA resynthesis -- is skipped when unused or spread across
+    // the hop, so p99 stays at most half the deadline and no callback misses
+    // it, in Tracking and in Mixing. Negative control as above.
+    require_inside_deadline(MaskRenderMode::zero_latency, 96000.0, 32);
+    require_inside_deadline(MaskRenderMode::linear_phase, 96000.0, 32);
+}
+
+TEST_CASE("A loop Length suspends the spectral capture and a switch to a short Length still freezes",
+          "[freeze][deadline]") {
+    // At a loop Length the hold never reads the spectral capture, so it is
+    // suspended while nothing can need it. Switching to a short (spectral)
+    // Length resumes it with a fresh window: a press right after the switch
+    // arms and engages once that window is full, and the hold sounds.
+    const double rate = 48000.0;
+    const auto material = chord(4.0, rate);
+    Run run;
+    run.rate = rate;
+    run.block = 32;
+    run.mode = MaskRenderMode::zero_latency;
+    const std::size_t switch_at = at(2.0, rate), press = switch_at + 64;
+    Spectr* plugin = nullptr;
+    std::unique_ptr<pulp::format::HeadlessHost> keep;
+    bool suspended_before = false;
+    run.before = [&](Spectr& p, pulp::format::HeadlessHost& h, std::size_t pos, int n,
+                     pulp::state::ParameterEventQueue& ev) {
+        if (pos == 0) h.state().set_value(spectr::kParamFreezeLength, float(spectr::kDefaultLengthPreset));
+        if (pos + std::size_t(n) == switch_at) {
+            suspended_before = p.freeze_source_suspended_for_test();
+            h.state().set_value(spectr::kParamFreezeLength, 2.0f);  // 1/12 bar: spectral
+        }
+        if (press >= pos && press < pos + std::size_t(n))
+            (void)ev.push({spectr::kParamFreeze, std::int32_t(press - pos), 1.0f, 0});
+    };
+    const auto out = render(material, run, &plugin, &keep);
+    CHECK(suspended_before);
+    REQUIRE(plugin->freeze_engaged_for_test());
+    const double held = rms(out.l, out.size() - at(0.5, rate), at(0.5, rate));
+    const double live = rms(out.l, switch_at - at(0.5, rate), at(0.5, rate));
+    INFO("held rms " << held << ", live rms " << live);
+    CHECK(held > 0.3 * live);
+}
+
+TEST_CASE("Null hash: AUTO on through edits and Freeze edges", "[.][null-hash]") {
+    // Auto Gain v2's frame is staged across the samples before its event is
+    // due. Mixing (deterministic run to run), the drawn shape, AUTO on, a
+    // band edit and a Freeze press and release -- every point that must
+    // flush a staged frame -- at 48 and 96 kHz and 16/32/256-sample blocks.
+    // SPECTR_PLANT_AUTOGAIN_UNSTAGED must print the same hashes.
+    for (const double rate : {48000.0, 96000.0}) {
+        for (const int block : {16, 32, 256}) {
+            const auto material = drums(4.0, rate);
+            Run run;
+            run.rate = rate;
+            run.block = block;
+            run.mode = MaskRenderMode::linear_phase;
+            run.shaped = true;
+            run.auto_gain = 1.0f;
+            const std::size_t edit = at(1.3, rate), engage = at(2.1, rate) + 3, release = at(3.0, rate) + 11;
+            bool edited = false;
+            run.before = [&](Spectr& p, pulp::format::HeadlessHost&, std::size_t pos, int n,
+                             pulp::state::ParameterEventQueue& ev) {
+                if (!edited && pos >= edit) {
+                    auto field = p.processing_state_snapshot().field;
+                    field.bands[12].gain_db = -18.0f;
+                    p.replace_field(field);
+                    edited = true;
+                }
+                if (engage >= pos && engage < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(engage - pos), 1.0f, 0});
+                if (release >= pos && release < pos + std::size_t(n))
+                    (void)ev.push({spectr::kParamFreeze, std::int32_t(release - pos), 0.0f, 0});
+            };
+            const auto out = render(material, run);
+            std::uint64_t h = 1469598103934665603ull;
+            for (std::size_t i = 0; i < out.size(); ++i)
+                for (const float v : {out.l[i], out.r[i]}) {
+                    std::uint32_t bits;
+                    std::memcpy(&bits, &v, 4);
+                    h = (h ^ bits) * 1099511628211ull;
+                }
+            std::printf("null-hash auto rate %.0f block %d: %016llx\n", rate, block,
+                        (unsigned long long)h);
+        }
+    }
+}
 
 TEST_CASE("Glitch report: Freeze engage and release in Tracking",
           "[.][glitch-report]") {
@@ -1385,7 +1483,7 @@ TEST_CASE("Null hash: a spectral Freeze hold through the product", "[.][null-has
     // two builds can be compared bit for bit: an optimisation that claims
     // to change no sample must print the same hashes.
     for (const double rate : {48000.0, 96000.0}) {
-        for (const int length_index : {0, 1, 2}) {
+        for (const int length_index : {0, 1, 2, 6, spectr::kDefaultLengthPreset}) {
             const auto material = chord(3.0, rate);
             Run run;
             run.rate = rate;

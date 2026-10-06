@@ -465,6 +465,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
         const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
         const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
+        const renderMode = payload && payload.latency
+          && (payload.latency.mode === 'linear_phase' || payload.latency.mode === 'zero_latency')
+          ? payload.latency.mode : null;
         if (![32, 40, 48, 56, 64].includes(n)
             || !Array.isArray(gainDb) || gainDb.length !== n
             || !Array.isArray(muted) || muted.length !== n
@@ -498,7 +501,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           gains: gainDb.map((db, i) => muted[i]
             ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
           minHz, maxHz, snapshots: { A, B },
-          motionMode, analyzerMode, editMode, visualizationMode,
+          motionMode, analyzerMode, editMode, visualizationMode, renderMode,
           revision: Number(payload.revision) || 0,
           patternsJson: typeof payload.patterns_json === 'string'
             ? payload.patterns_json : null,
@@ -1156,6 +1159,19 @@ function App() {`,
     && typeof window.pulp.postMessage === 'function';
   const [nativeHydrated, setNativeHydrated] = useAppS(!nativeBridgeAvailable);
   const [nativeHydration, setNativeHydration] = useAppS(null);
+  const [renderMode, setRenderMode] = useAppS('zero_latency');
+  const [gpuAudio, setGpuAudio] = useAppS(null);
+  const setRenderModeFromUi = useAppC((next) => {
+    if (!nativeBridgeAvailable) return;
+    Promise.resolve(window.pulp.postMessage('render_mode_set', { mode: next }, 'spectr-render-mode'))
+      .then(response => response && response.payload ? response.payload : response)
+      .then(body => {
+        const mode = body && body.latency && body.latency.mode;
+        if (body && body.ok === true && (mode === 'linear_phase' || mode === 'zero_latency'))
+          setRenderMode(mode);
+      })
+      .catch(() => {});
+  }, [nativeBridgeAvailable]);
   const nativeLiveModesRef = useAppR(null);
   const acceptNativeState = useAppC((state) => {
     nativeLiveModesRef.current = {
@@ -1166,6 +1182,7 @@ function App() {`,
     };
     setNativeHydrated(false);
     setNativeHydration(state);
+    if (state.renderMode) setRenderMode(state.renderMode);
     setSettings(current => ({
       ...current, bandCount: state.n, motionMode: state.motionMode,
     }));
@@ -1214,6 +1231,23 @@ function App() {`,
       visualizationMode: state.visualizationMode,
     };
   }, []);
+
+  useAppE(() => {
+    if (!nativeBridgeAvailable) return;
+    let active = true;
+    const refreshGpuAudio = () => {
+      Promise.resolve(window.pulp.postMessage('build_info_get', {}, 'spectr-gpu-status'))
+        .then(response => response && response.payload ? response.payload : response)
+        .then(body => {
+          if (active && body && body.ok === true && body.gpu_audio)
+            setGpuAudio(body.gpu_audio);
+        })
+        .catch(() => {});
+    };
+    refreshGpuAudio();
+    const timer = setInterval(refreshGpuAudio, 500);
+    return () => { active = false; clearInterval(timer); };
+  }, [nativeBridgeAvailable]);
 
   // The native processor owns restored state. Ask for it only after this
   // listener exists, then keep React's initial defaults read-only until the
@@ -3736,6 +3770,83 @@ window.PatternManager = PatternManager;`,
       "} }, React.createElement('span', { 'aria-live': 'polite' }, copyState)));",
       "} }, React.createElement('span', { 'aria-live': 'polite', style: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', lineHeight: 1.2, textAlign: 'center', pointerEvents: 'none' } }, copyState)));",
       'copy feedback remains centered in every state');
+
+    // Experimental shared-renderer controls. The native projection remains
+    // authoritative: the UI never labels a mode GPU until a live shared
+    // provider snapshot agrees. Clicking the indicator uses the existing
+    // native render-mode command; the UI never changes mode optimistically.
+    replaceSpectrSource(
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        dspMode={dspMode}',
+      '        status={status}\n        selectedPatternName={selectedPatternName}\n        renderMode={renderMode}\n        gpuAudio={gpuAudio}\n        onRenderModeChange={setRenderModeFromUi}\n        dspMode={dspMode}',
+      'GPU status receives app projection');
+    replaceSpectrSource(
+      // Earlier patches rewrite this signature: 'chrome receives selected preset name' inserts
+      // selectedPatternName after status and 'preset dropdown save action
+      // prop' inserts onSavePattern. Match the signature as it stands when
+      // this patch runs, and only through snapshotStatus, so a later prop
+      // added to the tail does not orphan this patch again.
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, snapshotStatus,',
+      'function Chrome({ settings, setSettings, bankRef, info, status, selectedPatternName, dspMode, setDspMode, editMode, setEditMode, analyzerMode, setAnalyzerMode, visualizationMode, setVisualizationMode, renderMode, gpuAudio, onRenderModeChange, snapshotStatus,',
+      'GPU chrome receives native mode and delivery status');
+    replaceSpectrSource(
+      // 'status banner receives the persistent setting' has already added the
+      // disabled prop by the time this runs.
+      '      <StatusBanner message={status} disabled={settings.statusInfo === false} />',
+      '      <StatusBanner message={status} disabled={settings.statusInfo === false} />\n      <GpuAudioStatusPill enabled={settings.showGpuStats !== false} renderMode={renderMode} gpuAudio={gpuAudio} />',
+      'GPU status pill sits above the bottom rail');
+    replaceSpectrSource(
+      '      </div>\n\n      {/* Status banner */}',
+      '      </div>\n\n      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n\n      {/* Status banner */}',
+      'GPU mode indicator follows zoom readout');
+    replaceSpectrSource(
+      'function StatusBanner({ message, disabled }) {',
+      String.raw`function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
+  const mixing = renderMode === 'linear_phase';
+  const available = mixing && gpuAudio && gpuAudio.available === true;
+  const ready = available && gpuAudio.provider_state === 'shared_ready';
+  const label = mixing ? (ready ? 'GPU' : 'GPU unavailable') : 'CPU';
+  const color = ready ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
+  return <button data-spectr-gpu-mode-indicator data-spectr-gpu-mode={mixing ? 'mixing' : 'tracking'}
+    data-spectr-gpu-ready={ready ? 'true' : 'false'} role="status"
+    aria-label={'Compute mode: ' + label}
+    title={mixing ? (ready ? 'Shared GPU audio is active' : 'GPU shared renderer unavailable') : 'Tracking uses the CPU path'}
+    onClick={() => onChange && onChange(mixing ? 'zero_latency' : 'linear_phase')}
+    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10,
+      padding: '3px 8px', borderRadius: 3, border: '1px solid ' + color,
+      background: 'rgba(255,255,255,0.03)', color, fontFamily: 'var(--mono)',
+      fontSize: 10, letterSpacing: 1 }}>
+    <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3,
+      background: color, boxShadow: ready ? '0 0 6px ' + color : 'none' }} />{label}
+  </button>;
+}
+
+function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
+  if (!enabled) return null;
+  const mixing = renderMode === 'linear_phase';
+  const ready = mixing && gpuAudio && gpuAudio.available === true
+    && gpuAudio.provider_state === 'shared_ready';
+  const color = ready ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
+  let text = mixing ? 'GPU unavailable' : 'Convolving on the CPU';
+  if (mixing && gpuAudio && gpuAudio.provider_state
+      && gpuAudio.provider_state !== 'shared_ready')
+    text += ' · ' + gpuAudio.provider_state;
+  if (ready) {
+    const gpu = Number(gpuAudio.gpu_selected || 0);
+    const fallback = Number(gpuAudio.cpu_fallback || 0);
+    text = 'GPU | ' + gpu + ' blocks | ' + fallback + ' CPU fallback';
+  }
+  return <div data-spectr-gpu-audio-status-pill data-spectr-gpu-audio-state={ready ? 'gpu' : 'cpu'}
+    style={{ position: 'absolute', left: '50%', bottom: 62, transform: 'translateX(-50%)',
+      display: 'inline-flex', alignItems: 'center', gap: 6, zIndex: 6, pointerEvents: 'none',
+      padding: '5px 10px', borderRadius: 3, border: '1px solid ' + color,
+      background: 'rgba(8,12,18,0.9)', color, fontFamily: 'var(--mono)',
+      fontSize: 9.5, letterSpacing: 0.8, whiteSpace: 'nowrap' }}>
+    <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3, background: color }} />{text}
+  </div>;
+}
+
+function StatusBanner({ message, disabled }) {`,
+      'GPU mode and status pill components');
 
     // Mirror imperative cursor writes into the React-owned style prop. The
     // browser DOM assignment remains as a fallback, while WidgetBridge sees

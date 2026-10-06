@@ -26,6 +26,7 @@ inline const char* gpu_audio_provider_state(unsigned value) {
 inline bool gpu_audio_status_available(const GpuAudioStatus& s) {
     return s.availability==GpuAudioStatus::Availability::Available && s.delivery.has_value();
 }
+inline constexpr const char* kFreezeUnavailableNote="Freeze unavailable in this mode";
 inline choc::value::Value gpu_audio_status_projection(const GpuAudioStatus& s) {
     auto value=choc::value::createObject("SpectrGpuAudioStatus");
     value.addMember("schema_version",1);
@@ -33,6 +34,10 @@ inline choc::value::Value gpu_audio_status_projection(const GpuAudioStatus& s) {
     value.addMember("available",available);
     value.addMember("reason",std::string(available?"available":
         s.availability==GpuAudioStatus::Availability::Available?"snapshot_unavailable":gpu_audio_availability(s.availability)));
+    // Reported whether or not GPU counters are available: a refused freeze
+    // source is a product fact, never a silent one.
+    value.addMember("freeze_available",s.freeze_available);
+    if(!s.freeze_available)value.addMember("freeze_note",std::string(kFreezeUnavailableNote));
     if(!available)return value;
     const auto& d=*s.delivery;
     value.addMember("sampling","independent_live_counters");
@@ -47,10 +52,11 @@ inline choc::value::Value gpu_audio_status_projection(const GpuAudioStatus& s) {
     return value;
 }
 inline std::string gpu_audio_status_copy_text(const GpuAudioStatus& s) {
+    const std::string freeze=s.freeze_available?"":std::string("\n")+kFreezeUnavailableNote;
     if(!gpu_audio_status_available(s))return std::string("GPU audio: unavailable (")+
-        (s.availability==GpuAudioStatus::Availability::Available?"snapshot_unavailable":gpu_audio_availability(s.availability))+")";
+        (s.availability==GpuAudioStatus::Availability::Available?"snapshot_unavailable":gpu_audio_availability(s.availability))+")"+freeze;
     const auto& d=*s.delivery;
-    return std::string("GPU audio: ")+gpu_audio_provider_state(d.provider_state)+
+    return std::string("GPU audio: ")+gpu_audio_provider_state(d.provider_state)+freeze+
         "\nGPU selected: "+std::to_string(d.gpu_selected)+
         "\nCPU fallback: "+std::to_string(d.cpu_fallback)+
         "\nCancelled: "+std::to_string(d.cancelled)+

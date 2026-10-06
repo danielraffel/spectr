@@ -2,6 +2,7 @@
 #include <spectr/experimental/shared_spectral_renderer.hpp>
 #endif
 #include "spectr/spectr.hpp"
+#include "spectr/test_seams.hpp"
 
 #include <pulp/runtime/trace.hpp>
 #include <pulp/format/param_processing.hpp>
@@ -14,6 +15,7 @@
 #include <choc/memory/choc_Base64.h>
 #include <cstring>
 #include <pulp/runtime/log.hpp>
+#include <cassert>
 
 #include <algorithm>
 #include <atomic>
@@ -37,7 +39,7 @@ namespace {
 /// were slewed. Read once per process; unset in every shipping run.
 bool modulation_plants_route_step() noexcept {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_MODULATION_PLANT");
         return value != nullptr && std::string_view(value) == "route-step";
     }();
     return planted;
@@ -48,7 +50,7 @@ bool modulation_plants_route_step() noexcept {
 // ramp exists to prevent. The Output-target smoothness gate must fail with it.
 bool modulation_plants_level_target_step() noexcept {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_MODULATION_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_MODULATION_PLANT");
         return value != nullptr && std::string_view(value) == "level-target-step";
     }();
     return planted;
@@ -62,7 +64,7 @@ bool modulation_plants_level_target_step() noexcept {
 // control thread (prepare primes it).
 long callback_burst_plant() noexcept {
     static const long iterations = [] {
-        const char* v = std::getenv("SPECTR_PLANT_CALLBACK_BURST");
+        const char* v = SPECTR_TEST_ENV("SPECTR_PLANT_CALLBACK_BURST");
         return v ? std::atol(v) : 0L;
     }();
     return iterations;
@@ -70,6 +72,8 @@ long callback_burst_plant() noexcept {
 
 void prime_negative_control_seams() noexcept {
     (void)callback_burst_plant();
+    (void)FreezeSource::prime_plants();
+    AutoGainMaterial::prime_plants();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
     (void)level_plant("");
@@ -575,17 +579,20 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
 }
 
 GpuAudioStatus Spectr::gpu_audio_status() const {
+    const bool freeze=freeze_source_wired();
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::lock_guard<std::mutex> lock(renderer_observation_mutex_);
-    if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{}};
+    if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{},freeze};
     const auto* shared=dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
-    if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{}};
+    if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{},freeze};
     const auto s=shared->snapshot();
     return {GpuAudioStatus::Availability::Available,
         GpuAudioStatus::Delivery{unsigned(s.state),s.epoch,s.gpu_delivered,
-            s.cpu_fallback,s.cancelled,s.lost_records}};
+            s.cpu_fallback,s.cancelled,s.lost_records},freeze};
 #else
-    return {};
+    GpuAudioStatus status;
+    status.freeze_available=freeze;
+    return status;
 #endif
 }
 
@@ -627,16 +634,19 @@ constexpr double kRenderSwitchFadeSeconds = 0.03;
 // SPECTR_PLANT_HARD_RENDER_SWITCH restores the cut a switch used to be. Read
 // on the control thread only (set_render_mode).
 bool render_switch_plants_hard_cut_() noexcept {
-    static const bool planted = std::getenv("SPECTR_PLANT_HARD_RENDER_SWITCH") != nullptr;
+    static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_HARD_RENDER_SWITCH") != nullptr;
     return planted;
 }
 } // namespace
 
-std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
+std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool gpu) {
     renderer_builds_.fetch_add(1, std::memory_order_relaxed);
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::unique_ptr<MaskRenderer> renderer;
-    if(mode==MaskRenderMode::linear_phase)
+    // GPU processing is a Mixing-only choice: Tracking is always the CPU
+    // minimum-phase renderer, and Mixing with GPU processing off is the CPU
+    // linear-phase renderer at its own (lower) latency.
+    if(mode==MaskRenderMode::linear_phase && gpu)
         renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>(
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
             shared_product_force_cpu_
@@ -644,6 +654,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
         );
     else renderer=make_mask_renderer(mode);
 #else
+    (void)gpu;
     auto renderer = make_mask_renderer(mode);
 #endif
     if (!renderer) return nullptr;
@@ -706,9 +717,25 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode) {
     // Last: the pump above runs on this (control) thread while the audio
     // thread may be running the outgoing renderer through the same source, so
     // the source is attached only once nothing here will process again.
-    // The tap runs the freeze source and then shows Auto Gain v2 what the
-    // mask is about to shape (auto_gain_material.hpp).
-    if (freeze_source_.prepared()) (void)renderer->set_wet_source(&auto_gain_tap_);
+    //
+    // A renderer that refuses the source would play live input while Freeze
+    // reads as engaged, so a refusal is reported, never dropped: an error in
+    // the log, an assertion in a debug build, and freeze_source_wired() false.
+    // The source is attached through Auto Gain v2's tap, which runs it and
+    // then shows the estimator what the mask is about to shape
+    // (auto_gain_material.hpp).
+    bool wired = !freeze_source_.prepared();
+    if (freeze_source_.prepared()) {
+        wired = renderer->set_wet_source(&auto_gain_tap_);
+        if (!wired) {
+            pulp::runtime::log_error(
+                "[Spectr] the {} renderer refused the freeze source; Freeze "
+                "is unavailable in this mode",
+                mode == MaskRenderMode::linear_phase ? "linear-phase" : "zero-latency");
+            assert(wired && "renderer refused the freeze wet source");
+        }
+    }
+    freeze_source_wired_.store(wired, std::memory_order_release);
     return renderer;
 }
 
@@ -733,12 +760,33 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         render_mode_ = mode;
         return true;
     }
+    return switch_renderer_(mode, gpu_processing_);
+}
 
+bool Spectr::set_gpu_processing(bool enabled) {
+    std::lock_guard<std::mutex> switch_lock(switch_mutex_);
+    if (enabled == gpu_processing_) return true;
+    // The choice only selects Mixing's renderer. Unprepared, or in Tracking,
+    // it is recorded for the next Mixing renderer and nothing moves now: no
+    // renderer is built, no switch is settled or started, and the audio is
+    // untouched (test_gpu_audio_status.cpp, tracking_gpu_choice_is_inert).
+    if (!processor_prepared_ || render_mode_ != MaskRenderMode::linear_phase) {
+        gpu_processing_ = enabled;
+        return true;
+    }
+    // In Mixing it changes the renderer and the latency the host is told:
+    // the same rebuild, crossfade and latency-changed path as a
+    // Tracking/Mixing switch.
+    settle_render_switch_();
+    return switch_renderer_(render_mode_, enabled);
+}
+
+bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
     // Build the replacement to completion BEFORE retiring the live one. A
     // switch that cannot be prepared must leave the running mode untouched
     // rather than drop the instance into silence.
     PULP_TRACE_SCOPE_NAMED("state", "spectr_build_renderer (control)");
-    auto replacement = build_renderer_(mode);
+    auto replacement = build_renderer_(mode, gpu);
     if (!replacement) return false;
 
     MaskRenderer* incoming = replacement.get();
@@ -755,6 +803,7 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
             renderer_=std::move(replacement);
         }
         render_mode_=mode;
+        gpu_processing_=gpu;
         last_published_layout_valid_=false;
         publish_processing_state_();
     }
@@ -765,12 +814,13 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         renderer_=std::move(replacement);
     }
     render_mode_=mode;
+    gpu_processing_=gpu;
 #endif
 
     // Hand both renderers to the audio thread. It keeps rendering the old one
     // (still `active_renderer_`), warms the new one on the same input until
     // its delay line and impulse history are full, then crossfades into it
-    // and publishes it as active (spectr/upstream/processing_switch_crossfade.hpp). A cut here
+    // and publishes it as active (pulp/signal/processing_switch_crossfade.hpp). A cut here
     // was audible twice: the new renderer's own latency of silence -- 213 ms
     // into Mixing -- and a step where the old one stopped mid-waveform.
     //
@@ -778,11 +828,11 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
     // a mask edited during the fade is the one it fades into.
     const int history = mode == MaskRenderMode::zero_latency
         ? incoming->design_grid_size() : 0;
-    switch_plan_ = pulp_candidate::signal::plan_processing_switch(
+    switch_plan_ = pulp::signal::plan_processing_switch(
         incoming->latency_samples(), history, sample_rate_, kRenderSwitchFadeSeconds);
     // Negative control: the cut this replaced -- the new renderer heard from
     // its first, history-less sample.
-    if (render_switch_plants_hard_cut_()) switch_plan_ = pulp_candidate::signal::ProcessingSwitchPlan{0, 1};
+    if (render_switch_plants_hard_cut_()) switch_plan_ = pulp::signal::ProcessingSwitchPlan{0, 1};
     switch_incoming_ = incoming;
     switch_outgoing_ = std::move(outgoing);
     switch_wet_wired_ = freeze_source_.prepared();
@@ -908,7 +958,7 @@ MaskRenderer* Spectr::claim_render_switch_(MaskRenderer* outgoing) noexcept {
         // session's mode before it starts the stream): the new renderer
         // starts the stream itself, as it would after a prepare.
         switch_xfade_.begin(stream_rendered_
-            ? switch_plan_ : pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
+            ? switch_plan_ : pulp::signal::ProcessingSwitchPlan{0, 1});
         // Both renderers now listen to one run of the freeze source per
         // block (render_through_), not one each.
         if (switch_wet_wired_ && outgoing != nullptr) {
@@ -1063,7 +1113,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     drain_retired_renderers_();
 
     if (channels_ <= static_cast<int>(kMaximumChannels)) {
-        auto replacement=build_renderer_(render_mode_);
+        auto replacement=build_renderer_(render_mode_, gpu_processing_);
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
         renderer_=std::move(replacement);
     }
@@ -1479,11 +1529,21 @@ int Spectr::latency_samples() const {
     // and asks it for latency there; renderer_config_() reads the mix from
     // state(), which is not yet bound, and crashed the plug-in at
     // registration.
+    return render_mode_latency_samples(render_mode_);
+}
+
+int Spectr::render_mode_latency_samples(MaskRenderMode mode) const noexcept {
+    return render_mode_latency_samples(mode, gpu_processing_);
+}
+
+int Spectr::render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept {
     const auto config=latency_geometry_();
-    auto latency=mask_render_latency_samples(render_mode_,config);
+    auto latency=mask_render_latency_samples(mode,config);
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
-    if(render_mode_==MaskRenderMode::linear_phase)
+    if(mode==MaskRenderMode::linear_phase && gpu)
         latency+=int(experimental::SharedSpectralMaskRenderer::additional_latency(config));
+#else
+    (void)gpu;
 #endif
     return latency;
 }
@@ -1687,6 +1747,8 @@ void Spectr::process(
     const bool offline_block = processor_prepared_
         && (ctx.is_offline() || host_offline_render_.load(std::memory_order_relaxed));
     if (offline_block) await_offline_work_(renderer);
+    if (renderer) renderer->set_offline_block(offline_block);
+    if (switch_in) switch_in->set_offline_block(offline_block);
     // Work this block asks of a worker -- a staged mask's design, a drifted
     // parameter's sync (which publishes a mask of its own) -- is handed over
     // when the block ENDS, never in the middle of it: a call the scheduler
@@ -1745,7 +1807,7 @@ void Spectr::process(
         // the old one.
         if (switch_in != nullptr) {
             switch_in->reset();
-            switch_xfade_.begin(pulp_candidate::signal::ProcessingSwitchPlan{0, 1});
+            switch_xfade_.begin(pulp::signal::ProcessingSwitchPlan{0, 1});
         }
         // A transport jump forgets the input analysed so far and nothing
         // else: a playing hold keeps playing across it.
@@ -1785,6 +1847,21 @@ void Spectr::process(
         freeze_source_.set_hold_seconds(
             freeze_hold_remaining_ > 0 && freeze_hold_seconds_ > 0.0
                 ? freeze_hold_seconds_ : seconds);
+        {
+            // The spectral capture can be skipped at a loop Length only
+            // while no LFO can move the Length under a press.
+            bool length_driven = false;
+            if (param_store_) {
+                constexpr auto kLengthTarget = static_cast<std::size_t>(ModulationTarget::Length);
+                const pulp::state::ParamID on[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+                for (std::size_t lfo = 0; lfo < 2; ++lfo)
+                    length_driven = length_driven
+                        || (param_store_->get_value(on[lfo]) >= 0.5f
+                            && param_store_->get_value(
+                                   lfo_route_enabled_param_id(lfo, kLengthTarget)) >= 0.5f);
+            }
+            freeze_source_.set_spectral_capture_required(length_driven);
+        }
         audio_freeze_length_seconds_ = seconds;
         // Longer than the rings reach: ask the worker for bigger ones. A
         // lock-free spawn, at most once per size; the source adopts them at
@@ -3180,6 +3257,10 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // every project already saved. The blob says what it is.
     root.addMember("render_mode",
                    std::string(render_mode_token(render_mode_)));
+    // Mixing's GPU processing choice. Session state, not a host parameter.
+    // Absent in older projects, which load with it off (the CPU renderer they
+    // were mixed with).
+    root.addMember("gpu_processing", gpu_processing_);
 
 
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
@@ -3199,7 +3280,7 @@ namespace {
 /// flag so the shipping binary is the one the control is proven against.
 bool migration_plant_adopts_other_mode_() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_RENDER_MODE_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_RENDER_MODE_PLANT");
         return value != nullptr
             && std::string_view(value) == "migration-adopts-other-mode";
     }();
@@ -3360,6 +3441,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         // Outside the lock, for the same reason as the main path below.
         (void)set_render_mode(kDefaultRenderMode);
+        (void)set_gpu_processing(false);
         // A bare parameter blob predates the level controls by construction:
         // it opens at the level it was mixed at.
         if (param_store_) param_store_->set_value(kParamAutoGain, 0.0f);
@@ -3518,6 +3600,13 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // absent case unambiguous for every version below: at v3 and under,
         // silence can only mean "written before more than one mode existed".
         return false;
+    }
+
+    bool new_gpu_processing = false;
+    if (root.hasObjectMember("gpu_processing")) {
+        const auto& flag = root["gpu_processing"];
+        if (!flag.isBool()) return false;
+        new_gpu_processing = flag.getBool();
     }
 
     bool new_morph_applies_viewport = true;
@@ -3796,10 +3885,16 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // renderer keeps the one it has rather than failing the whole project --
     // the bands are right either way, and a silent mode substitution is
     // reported through render_mode_unknown_on_load().
+    // The GPU choice first, so a project that restores into Mixing builds the
+    // renderer it was saved with once rather than twice.
+    if (render_mode_ != MaskRenderMode::linear_phase
+        || new_render_mode == MaskRenderMode::linear_phase)
+        (void)set_gpu_processing(new_gpu_processing);
     if (!set_render_mode(new_render_mode)) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         render_mode_unknown_on_load_ = true;
     }
+    if (gpu_processing_ != new_gpu_processing) (void)set_gpu_processing(new_gpu_processing);
     // A session saved before Intensity and Auto Gain existed was mixed at the
     // level it plays at; Auto Gain must not change that on reload, whatever
     // the new-instance default is. Its Intensity lane is absent and keeps the

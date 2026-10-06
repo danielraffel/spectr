@@ -119,14 +119,16 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 `SPECTR_MODULATION_PLANT=level-target-step` (the Output gain lands once per
 block) and must fail on its gate.
 
-**The knobs.** MIX, INTENSITY and OUTPUT move while an LFO drives them. Each
-shows two things: the **base** -- the white needle, the blue value arc and the
-readout, the value the user set (or host automation is playing) -- and the
-**value playing**, drawn over it in violet: an arc from the base to the played
-value and a violet needle at the played value, moving at the display rate.
-The base is the only thing a drag, a wheel notch or an arrow key edits and the
-only thing the host records; the violet marker is display only. While an LFO
-drives a knob its track ring and rim are tinted violet as well. Grabbing a
+**The knobs.** MIX, INTENSITY and OUTPUT move while an LFO drives them, and
+each still shows ONE indicator: its one needle and value arc sit at the
+**value playing**, in violet, moving at the display rate (white needle and blue
+arc when nothing drives it). The **base** -- the value the user set, or host
+automation is playing -- is a short white tick across the ring. The readout
+prints the value playing, and the base while the knob is being dragged; the
+drag moves the tick. The base is the only thing a drag, a wheel notch or an
+arrow key edits and the only thing the host records; the value playing is
+display only. While an LFO drives a knob its track ring and rim are tinted a
+quiet violet as well. Grabbing a
 driven knob -- a drag, a wheel notch or an arrow key -- asks the override
 question (below) on the release of the press; **Keep modulating** lets the
 knob turn from then on without asking until the set of LFOs driving it
@@ -139,18 +141,26 @@ range; the editor applies each to the base the control is showing, so a knob
 host automation is moving shows the automated base and the LFO's swing
 around it in the same frame (`tools/patch_materialized_modulation_controls_follow.py`).
 
-**The MORPH slider** works the same way: the white thumb is the base (what a
-drag moves and the Morph lane records); while an LFO drives Morph and both
-snapshots exist, a violet bar on the track marks the morph position playing,
-with a violet segment back to the thumb.
+**The MORPH slider** works the same way: while an LFO drives Morph and both
+snapshots exist, its one thumb and fill sit at the morph position playing, in
+violet, and the base (what a drag moves and the Morph lane records) is a short
+white tick on the track; with no LFO the white thumb and blue fill are the
+base (`tools/patch_materialized_modulated_single_indicator.py`).
+
+A control showing two indicators at once -- the base's own needle or thumb
+beside the value playing -- reads as two selections. `Spectr-native-shot`'s
+modulated-controls run reads back what each control drew on every frame (the
+native paths, not the editor's bookkeeping) and fails unless each knob shows
+one needle and at most one value arc and Morph one thumb;
+`SPECTR_MODCTL_PLANT=two-indicators` draws the base as a second needle and
+thumb, and that run must fail.
 
 ### Modulated controls, measured
 
 `SPECTR_MODULATION_CONTROLS=1 Spectr-native-shot` drives LFO 1 at 1 beat (2 Hz
 at 120 BPM) on the controls, captures six frames across a cycle (with Freeze
 off and on), and holds the editor's display tick to a budget with Pulp's
-`FrameCostProbe` (`tools/shim/pulp_frame_cost_probe.hpp` until the pinned SDK
-ships `pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
+`FrameCostProbe` (`pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
 requested, the layout passes run, React commits, and wall time against an
 unmodulated baseline. The knobs scenario must run no layout pass, make no
 commit, keep its damage inside the controls' boxes (on an SDK whose SVG paths

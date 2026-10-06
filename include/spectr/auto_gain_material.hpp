@@ -42,6 +42,7 @@
 
 #include <pulp/runtime/trace.hpp>
 #include "spectr/band_state.hpp"
+#include "spectr/test_seams.hpp"
 #include "spectr/freeze_source.hpp"
 #include "spectr/level_controls.hpp"
 #include "spectr/mask_renderer.hpp"
@@ -148,25 +149,25 @@ public:
         config.fft_size = design_grid;
         // Advisory-sweep seams (tools/autogain_sweep.cpp), read here on the
         // control thread, never on the audio thread.
-        if (const char* tau = std::getenv("SPECTR_AUTOGAIN_TAU_S"))
+        if (const char* tau = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_TAU_S"))
             if (const double v = std::atof(tau); v > 0.0) config.time_constant_seconds = v;
-        if (const char* k = std::getenv("SPECTR_AUTOGAIN_KNEE_DB"))
+        if (const char* k = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_KNEE_DB"))
             config.material_slew_knee_db = std::atof(k);
-        if (const char* d = std::getenv("SPECTR_AUTOGAIN_LEVEL_DROP_DB"))
+        if (const char* d = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_LEVEL_DROP_DB"))
             config.level_drop_db = std::atof(d);
-        if (const char* g = std::getenv("SPECTR_AUTOGAIN_WEIGHT_EXP"))
+        if (const char* g = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_WEIGHT_EXP"))
             config.level_weight_exponent = std::atof(g);
-        if (const char* l = std::getenv("SPECTR_AUTOGAIN_LOCAL_S"))
+        if (const char* l = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_LOCAL_S"))
             config.local_level_seconds = std::atof(l);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_THRESHOLD_DB"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_THRESHOLD_DB"))
             config.change_drop_threshold_db = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_LEVEL_DB"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_LEVEL_DB"))
             config.change_drop_level_db = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_DROP_MIN_LOUD_S"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_DROP_MIN_LOUD_S"))
             config.change_drop_min_loud_seconds = std::atof(t);
-        if (const char* t = std::getenv("SPECTR_AUTOGAIN_MAX_DECAY_DB_S"))
+        if (const char* t = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_MAX_DECAY_DB_S"))
             config.change_max_decay_db_per_second = std::atof(t);
-        if (const char* slew = std::getenv("SPECTR_AUTOGAIN_SLEW_DB_S"))
+        if (const char* slew = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_SLEW_DB_S"))
             if (const double v = std::atof(slew); v > 0.0) config.material_slew_db_per_second = v;
         // Negative-control seams (level_plant, SPECTR_LEVEL_PLANT).
         if (level_plant("autogain-v2-unweighted")) config.weight_by_material = false;
@@ -191,7 +192,7 @@ public:
         // v2c: the detector ran only while AUTO was on.
         off_detect_plant_ = level_plant("autogain-v2-detect-only-when-on");
         restored_agree_fade_ = level_plant("autogain-v2-restore-fixed-fade") ? 1.0 : 3.0;
-        if (const char* f = std::getenv("SPECTR_AUTOGAIN_RESTORED_FADE"))
+        if (const char* f = SPECTR_TEST_ENV("SPECTR_AUTOGAIN_RESTORED_FADE"))
             if (const double v = std::atof(f); v >= 1.0) restored_agree_fade_ = v;
         detector_.threshold_db = config.change_threshold_db;
         detector_.huge_db = config.change_huge_db;
@@ -249,7 +250,7 @@ public:
     /// restarted. prepare() only -- a transport jump keeps the material
     /// (restart_grid()).
     void reset() noexcept {
-        spectrum_.reset();
+        spectrum_.reset();  // drops a pending frame: nothing it describes survives
         target_.reset();
         detector_.reset();
         clear_events_();
@@ -263,6 +264,7 @@ public:
     /// determinism), the material and the target are kept, so playback from
     /// a locate starts at the right level.
     void restart_grid() noexcept {
+        flush_();
         spectrum_.restart_grid();
         detector_.reset();
         // Pending events describe audio before the jump.
@@ -274,10 +276,12 @@ public:
     /// the wet leg becomes the live input again, whose spectrum the dry leg
     /// kept warm through the hold.
     void freeze_engaged() noexcept {
+        flush_();
         if (stale_plant_) return;
         spectrum_.legs_uncorrelated();
     }
     void freeze_released() noexcept {
+        flush_();
         if (stale_plant_) return;
         spectrum_.wet_becomes_dry();
         detector_.hold_off();
@@ -328,6 +332,7 @@ public:
         if (!slot_state_.compare_exchange_strong(expected, kSlotReading,
                                                  std::memory_order_acq_rel))
             return;
+        flush_();
         // A restored session may play different material: the saved estimate
         // is where playback starts, and the material takes over as from a
         // cold start (prior import). The snapshot is written here, on the
@@ -353,6 +358,8 @@ public:
     bool begin_slice(const pulp::signal::SpectralBandLayout& shape, float mix,
                      bool enabled, bool shape_changed,
                      const MaskRenderer* renderer) noexcept {
+        // Anything this slice changes feeds a pending frame's update.
+        if (!target_.primed() || shape_changed || enabled != enabled_) flush_();
         enabled_ = enabled;
         mix_ = std::clamp(static_cast<double>(mix), 0.0, 1.0);
         slice_start_ = stream_pos_;
@@ -380,15 +387,29 @@ public:
     /// tap, in stream order.
     void push(const float* const* wet, const float* const* live, int channels,
               int num_samples) noexcept {
-        const std::int64_t before = stream_pos_;
-        spectrum_.push(wet, live, channels, num_samples, [&](int consumed) {
-            on_frame_(before + consumed);
-        });
+        spectrum_.push_at(wet, live, channels, num_samples, stream_pos_,
+                          [this](std::int64_t frame_end) { on_frame_(frame_end); });
         stream_pos_ += std::max(0, num_samples);
     }
 
+    /// Read the negative-control seams once, off the audio thread.
+    static void prime_plants() noexcept { (void)deferral_plant_(); }
+
     /// The renderer's latency, in samples (the processor sets it each slice).
-    void set_latency(int samples) noexcept { latency_ = std::max(0, samples); }
+    ///
+    /// A frame's event is due one latency after the frame, so its work can be
+    /// staged across that many samples -- at a small host buffer, across
+    /// several callbacks instead of in the one that completed the frame. The
+    /// work is scheduled by stream position and finishes before the event is
+    /// due, and everything that feeds the frame's update flushes it first
+    /// (flush_()), so the output is unchanged by the staging.
+    void set_latency(int samples) noexcept {
+        samples = std::max(0, samples);
+        if (samples != latency_) flush_();
+        latency_ = samples;
+        spectrum_.set_frame_deferral(
+            deferral_plant_() ? 0 : std::min(latency_, spectrum_.hop()));
+    }
     /// Where the current slice starts in the stream.
     [[nodiscard]] std::int64_t slice_start() const noexcept { return slice_start_; }
     /// The next event due at or before @p at (absolute), or nullptr. Taking
@@ -497,6 +518,15 @@ private:
         }
         event_list_[(head_ + events_) % kMaxEvents] = e;
         ++events_;
+    }
+
+    void flush_() noexcept {
+        spectrum_.flush_deferred([this](std::int64_t frame_end) { on_frame_(frame_end); });
+    }
+    // SPECTR_PLANT_AUTOGAIN_UNSTAGED restores the whole frame in one callback.
+    static bool deferral_plant_() noexcept {
+        static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_AUTOGAIN_UNSTAGED") != nullptr;
+        return planted;
     }
 
     void on_frame_(std::int64_t frame_end) noexcept {

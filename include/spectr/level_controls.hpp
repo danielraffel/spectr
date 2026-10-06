@@ -31,6 +31,7 @@
 // the store (or the block's parameter cursor).
 
 #include "spectr/band_state.hpp"
+#include "spectr/test_seams.hpp"
 
 #include <pulp/signal/multi_channel_meter.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
@@ -276,7 +277,7 @@ private:
 /// and prepare() make that first read (spectr.cpp,
 /// prime_negative_control_seams), so the audio thread only ever loads it.
 inline bool level_plant(const char* name) noexcept {
-    static const char* const planted = std::getenv("SPECTR_LEVEL_PLANT");
+    static const char* const planted = SPECTR_TEST_ENV("SPECTR_LEVEL_PLANT");
     return planted != nullptr && std::string_view(planted) == name;
 }
 
