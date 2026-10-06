@@ -16,5 +16,8 @@ struct GpuAudioStatus {
     };
     Availability availability = Availability::NotBuilt;
     std::optional<Delivery> delivery;
+    // False when the renderer in use refused Freeze's held source, so Freeze
+    // cannot reach the audio in this mode. Reported whatever the GPU state.
+    bool freeze_available = true;
 };
 }

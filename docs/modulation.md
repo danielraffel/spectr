@@ -26,17 +26,25 @@ same lanes, so either follows the other live.
 | Morph | the A/B morph position, around the Morph slider | +/-0.5 of the morph range |
 | Freeze | LIVE / FROZEN, gated by the LFO | frozen the whole cycle (Depth = frozen duty) |
 | Length | the next freeze's loop length, around the user's LENGTH | +/-8 steps of the LENGTH list |
+| Bands | the band count the mask is built with, around the user's BANDS | +/-4 steps (the whole 32...64 list) |
+| Preset | morphs toward the neighbouring presets' band gains (menu order) | +/-4 presets |
 | Output | the Output trim, after Auto Gain | +/-6 dB (clamped with the trim to +/-24 dB) |
 | Snapshot A / B | blends toward that captured snapshot and back (unipolar) | all the way there |
 
 Parameter IDs: the first eight targets at 4020... (on/off) and 4030...
-(Depth), the three level targets in their own block at 4060... / 4070...
-(LFO 2 +20); see [parameter-surface.md](parameter-surface.md).
+(Depth), the three level targets in their own block at 4060... / 4070...,
+Bands and Preset in a third at 4100... / 4110... (LFO 2 +20 throughout);
+Freeze's Hold for Length is 4140. See [parameter-surface.md](parameter-surface.md).
 
 Effective modulation of a target is **wave x that target's Depth**. There is no
 LFO-level depth. A target that is switched off contributes nothing whatever its
-Depth; its Depth row stays in place, dimmed and inert, so switching never moves
-the rows. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
+Depth, and shows no Depth row: each target is one compact row (name, switch),
+and its Depth row appears, indented under it, only while it is on (progressive
+disclosure, in the band menu and in Settings alike). Several enabled targets
+show their Depth rows together; a switched-off target keeps its stored Depth
+for when it is switched on again. Switching a target never moves the row under
+the pointer: the Depth row opens below it and the list's scroll offset is
+kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
 with); a fresh instance drives Bank from both LFOs, everything else off.
 
 ## How stacked targets combine
@@ -59,13 +67,15 @@ Morph and the snapshots reshape; Bank offsets the shape, so Bank + Morph is a
 morphing shape that also breathes. Authored mutes always survive: a muted band
 is excluded from modulation and no target toggles a mute.
 
-Freeze and Length do not touch the field (below), and neither do the level
-targets.
+Freeze, Length and Bands do not touch the field (below), and neither do the
+level targets. Preset reshapes the field after all of the above (its own
+section).
 
 ## Intensity, Mix and Output
 
 These move a level control around the user's setting and never write it: the
-knob keeps showing its own value, its host lane keeps its automation.
+knob shows its own value and, over it, the value playing; its host lane keeps
+its automation.
 
 - **Intensity** and **Mix** are unipolar pulls, in proportion to the knob:
   `effective = knob x (1 - c)`, `c = (wave + 1) / 2 x Depth` (summed over
@@ -99,7 +109,7 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 | Case | Result |
 | --- | --- |
 | Output, Depth 100 % / 50 %, square at its top, Auto Gain on (+12.000 dB make-up) | +6.000 / +3.000 dB, Auto Gain unchanged |
-| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -10.084 dB with and without the route |
+| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -11.989 dB with and without the route (v2: the tone sits inside the boost) |
 | Mix on a -24 dB shape, Depth 100 % / 50 % | 0.000 dB (dry) / -5.49 dB |
 | Output LFO running (sine, 1 beat, Depth 100 %): largest 1 ms envelope step | 0.075 dB (gate 0.2; per-block plant 0.80) |
 | Output switched on at a crest | 0.100 dB / ms |
@@ -109,16 +119,54 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 `SPECTR_MODULATION_PLANT=level-target-step` (the Output gain lands once per
 block) and must fail on its gate.
 
-**The knobs.** MIX, INTENSITY and OUTPUT show the base value, never the
-modulated one: the value under the pointer is the value a drag starts from,
-and a needle that moved on its own would make every grab look like a jump.
-While an LFO drives one, its track ring and rim are tinted violet (existing
-nodes recoloured; no animation, so it costs nothing per frame; the rim because
-at 100 % the value arc covers the whole track). Grabbing a driven
-knob -- a drag, a wheel notch or an arrow key -- asks the override question
-(below) on the release of the press; **Keep modulating** lets the knob turn
-from then on without asking until the set of LFOs driving it changes, and the
-user's new value is the new centre.
+**The knobs.** MIX, INTENSITY and OUTPUT move while an LFO drives them, and
+each still shows ONE indicator: its one needle and value arc sit at the
+**value playing**, in violet, moving at the display rate (white needle and blue
+arc when nothing drives it). The **base** -- the value the user set, or host
+automation is playing -- is a short white tick across the ring. The readout
+prints the value playing, and the base while the knob is being dragged; the
+drag moves the tick. The base is the only thing a drag, a wheel notch or an
+arrow key edits and the only thing the host records; the value playing is
+display only. While an LFO drives a knob its track ring and rim are tinted a
+quiet violet as well. Grabbing a
+driven knob -- a drag, a wheel notch or an arrow key -- asks the override
+question (below) on the release of the press; **Keep modulating** lets the
+knob turn from then on without asking until the set of LFOs driving it
+changes, and the user's new value is the new centre.
+
+The processor sends the driven targets' coordinates (`modulation_controls`:
+the Intensity and Mix pulls, the Output offset in dB, the Morph offset) once
+per display frame in which a value moved by more than 1/2048 of a knob's
+range; the editor applies each to the base the control is showing, so a knob
+host automation is moving shows the automated base and the LFO's swing
+around it in the same frame (`tools/patch_materialized_modulation_controls_follow.py`).
+
+**The MORPH slider** works the same way: while an LFO drives Morph and both
+snapshots exist, its one thumb and fill sit at the morph position playing, in
+violet, and the base (what a drag moves and the Morph lane records) is a short
+white tick on the track; with no LFO the white thumb and blue fill are the
+base (`tools/patch_materialized_modulated_single_indicator.py`).
+
+A control showing two indicators at once -- the base's own needle or thumb
+beside the value playing -- reads as two selections. `Spectr-native-shot`'s
+modulated-controls run reads back what each control drew on every frame (the
+native paths, not the editor's bookkeeping) and fails unless each knob shows
+one needle and at most one value arc and Morph one thumb;
+`SPECTR_MODCTL_PLANT=two-indicators` draws the base as a second needle and
+thumb, and that run must fail.
+
+### Modulated controls, measured
+
+`SPECTR_MODULATION_CONTROLS=1 Spectr-native-shot` drives LFO 1 at 1 beat (2 Hz
+at 120 BPM) on the controls, captures six frames across a cycle (with Freeze
+off and on), and holds the editor's display tick to a budget with Pulp's
+`FrameCostProbe` (`pulp/view/frame_cost_probe.hpp`): per frame the repaint damage
+requested, the layout passes run, React commits, and wall time against an
+unmodulated baseline. The knobs scenario must run no layout pass, make no
+commit, keep its damage inside the controls' boxes (on an SDK whose SVG paths
+and canvases request bounded repaints) and add at most 1.5 ms to the p95 tick.
+`SPECTR_MODCTL_PLANT=full-invalidate` re-lays the document on every
+modulation frame and must fail the gate.
 
 ### Changes against 1.0.6
 
@@ -166,6 +214,60 @@ Pressing the button (or Q, or the chord) while an LFO drives Freeze flips what
 the button shows, and that holds until the gate next changes; then the LFO
 carries on. Host automation of the Freeze lane behaves the same way.
 
+### Hold for Length
+
+**Hold for Length = keep Freeze enabled for the length of the modulated
+Length.** Lane 4140, **off by default** (in a new instance and in a session
+saved before the lane existed); under the Freeze target in the band menu, in
+Settings > MODULATION and in the LIVE / FROZEN context menu.
+
+On, each **rising edge** of the Freeze target's gate is one trigger, played to
+the end like a sampler's one-shot: Freeze engages on fresh audio and holds for
+exactly the Length in effect at that trigger -- the user's LENGTH with the
+Length target's step at that moment -- then releases, whatever the LFO does
+meanwhile. The next trigger takes the Length in effect then, so successive
+freezes can be 2 bars, then 1/4 bar, then 1/8 bar, each held to its own end.
+A rising edge during a hold is ignored; one that lands on the slice a hold ends
+(a Length that is a whole number of LFO cycles, such as the default 1 bar at
+the default 4 beats) is a new trigger: the old hold releases and a new one
+latches fresh audio (`FreezeSource::retrigger`). The release lands on the
+audio slice at or after the Length (at most one block late; the gate is
+evaluated per block). Off, Freeze is a gate: frozen while the gate is high
+(Depth is the duty), released when it falls.
+
+The Length target keeps running during a hold but never resizes it: the hold's
+timer and the loop the freeze source latches both take the trigger's Length
+(the source's hold length is pinned to it until the hold ends). While a hold
+plays, the LENGTH label shows that hold's length; between holds it tracks the
+Length target again. The loop rings are grown ahead of time for the longest
+Length the routes can reach, so a long hold never loops a shorter ring.
+
+**One LFO on both Freeze and Length.** Its gate rises at the same phase every
+cycle, so read at the trigger every hold would take one length. Instead, each
+freeze reads the Length a step further along the LFO: the n-th hold reads that
+LFO's Length route `n / 8` of a cycle past its trigger (n counts holds since
+Hold for Length or its Freeze drive came on, the transport started or stopped,
+the stream was reset or a session was loaded; it wraps at 8). The lengths
+follow the wave's shape and Depth in an eight-hold cycle, deterministically, so
+an offline bounce plays the same lengths as real-time playback. A Length route
+on the other LFO is read at the trigger: its phase already differs from freeze
+to freeze. To vary the lengths independently of the trigger, modulate Length
+with the other LFO.
+
+Measured (`test/test_modulation_freeze.cpp`, 256-sample blocks at 48 kHz,
+120 BPM): with the defaults (1 bar, 4 beats) every hold is 2 s and re-latches
+fresh audio although Freeze never visibly drops ("Hold for Length releases
+every hold even when the next trigger lands on its end"); LFO 1 Sine at
+4 beats on Freeze (18 %) and Length (69 %) gives holds of 8 bars, 15/16, 2/3,
+5/6 and 2 bars, each released at its own end and each matching an independent
+`sin` oracle of the walked phase; LFO 2 Saw at 7 beats on Length gives
+lengths from 1/2 to 2 bars, each loop exactly its hold; off, the same
+single-LFO render freezes for the gate's own 18 % window. The editor's switch
+follows a host playing this lane at the next live projection.
+
+Not built: Depth as a trigger probability in Hold mode, and a "Chain" mode
+that starts the next hold at the end of the previous one.
+
 ## Length
 
 The user's LENGTH is the centre. At each freeze **engage** -- from the Freeze
@@ -174,19 +276,128 @@ target, the button, a key or automation -- the Length coordinate at that moment
 `round(coordinate x 8)` steps through the LENGTH list (16 fractions of a bar,
 then 1, 2, 4 and 8 bars), clamped to its ends (`modulated_length_index`). A
 custom LENGTH is centred on the list entry nearest it. A loop that is already
-playing is never resized. The LENGTH control keeps showing the user's value.
+playing is never resized.
+
+While an LFO drives Length, the closed LENGTH control shows, in the violet of
+a modulated knob (text and rim), the length the freeze uses: while frozen, the
+length the playing loop took at its engage; while live, the length the next
+engage takes, moving as the LFO moves. Its menu keeps showing -- and editing --
+the user's own LENGTH. The label is the processor's answer
+(`freeze_shown_length_index`, carried by `freeze_display`, which is published
+only when it changes), so whenever Freeze engages it takes exactly the length
+the label showed (`test_native_state_parity.cpp`, "LENGTH, BANDS and the
+preset label show what their LFO plays").
+
+## Bands
+
+The user's BANDS is the centre. `round(coordinate x 4)` steps through the
+band-count list (32, 40, 48, 56, 64), clamped (`modulated_band_count`); at
+Depth 100 % a full swing covers the whole list from 48. The plot draws the
+count playing: band i keeps its gain (the mask re-lays the same gains over the
+new count) and slots past the user's count draw flat, as they play. A press
+addresses the slot under the pointer -- band i is the band drawn i-th -- and a
+press on a slot past the user's count edits nothing. The closed BANDS control
+shows the count playing, in violet. A count step repaints the plot and paints
+the BANDS label's text directly; it renders nothing in React (a step used to
+re-render the whole toolbar, ~30 ms a step).
+
+A band-count change is structural: it re-lays the drawn slots over the
+spectrum. A switch straight across -- what a host's Band Count lane does --
+sprays broadband energy at each switch, so the target **crossfades through
+flat**: the shape fades to flat over 80 ms at the old count
+(`kBandsFadeSeconds`), the count switches while nothing is shaped (silently),
+and the shape fades back in at the new count, every step a gain restage the
+renderer carries like an Intensity move. No allocation: the layout holds all
+64 slots, and slots past the user's count are neutral. A count change while a
+fade is under way retargets it.
+
+Measured (`test_modulation_freeze.cpp`, "the Bands destination steps the band
+count click-free inside the cost gate": a sine at 1 s sweeping 32...64 over a
++/-12 dB comb, a steady 2 kHz tone, 256-sample blocks at 48 kHz):
+
+| | largest 1 ms step | broadband splatter (worst 5 ms, vs the tone) |
+| --- | --- | --- |
+| Bands target | 0.55-0.70 dB | -49...-52 dB |
+| host Band Count lane switching straight (plant) | 10-11 dB | -15...-16 dB |
+| route at Depth 0 (control) | 0.00 dB | -148...-152 dB |
+
+Cost per 256-sample callback, each block's cheapest of three renders: median
+155-171 us, max 338-368 us (budget 5 333 us). `kBandsTargetDisabled` is the
+escape hatch (plays the user's count, lanes kept); it is off.
+
+## Preset
+
+The Preset target morphs the composed field (after Morph, the snapshots, Bank
+and the macros) toward the presets next to the current one in the preset
+menu's order (factory, then user): the coordinate x 4 is a continuous position
+in presets, and between two presets each band's gain interpolates, the
+morph's own rule. Position 0 is **the field as it stands, the user's edits
+included**: the target never discards an edit, it moves away from the current
+sound toward its neighbours and back. Mutes never move
+(`preserve_authored_mutes`); a band a preset floors goes to -24 dB. At the
+ends of the list it stops at the last neighbour that exists.
+
+The neighbourhood is the editor's: when a preset is applied, the band count
+changes or the user library changes, it resolves the presets four either side
+at the current band count -- exactly what applying each would write -- and
+sends their names and gains (`preset_modulation_set`); the processor publishes
+them to the audio owner with the rest of the modulation state and saves them
+with the session, so the target keeps playing when the project reopens. Until
+a preset has been chosen once the target has nothing to move toward and is
+silent. The preset label shows, in violet, the preset the target is nearest.
+
+Measured (`test_modulation_freeze.cpp`, "the Preset destination morphs toward
+neighbouring presets and back"): neighbours at +12 and -12 dB around a flat
+current preset, Depth 25 % (one preset each way), a square LFO: the halves
+measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
+
+## Header controls: context menus
+
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
+the preset button opens a small menu in the band menu's style:
+
+- the control's name and **Reset to** its default (Live, 100 %, 0.0 dB,
+  1 bar, 32 bands, A; the preset has none);
+- **MODULATION** -- the head of the band menu's Modulation submenu, the same
+  component: the **LFO 1** and **LFO 2** switches (the LFOs themselves), the
+  **EDIT LFO 1 / EDIT LFO 2** tabs (opening on the LFO that drives this
+  control, else LFO 1) and that LFO's **Shape** and **Rate**;
+- **<TARGET> TARGET** -- only this control's own target, never the full
+  list: per LFO a row such as **LFO 1 → Freeze** whose switch is the route
+  (On, Off, or "LFO off" when the route is on but its LFO is not). While a
+  route is on its settings sit nested under it behind Settings' guide line:
+  **Depth**, and under Freeze **Hold for Length** (one setting, shown under
+  either Freeze route);
+- **All targets…** -- the band menu's full Modulation submenu, opened in
+  place of this menu on the LFO that drives the control, scrolled to this
+  control's row, that row marked (accent rule, tint and bright label) with
+  the keyboard cursor on it. Its top row (‹ LIVE / FROZEN) returns to this
+  menu; Escape, Left or an outside press close it.
+
+"Ask before overriding modulation" is not in these menus; it is in Settings
+> MODULATION and in the override dialog ("Don't ask again"). The keyboard
+works as in the band menu: Up/Down/Home/End move, Left/Right step a slider
+row, Return presses. One overlay: an outside press, Escape or a press on its
+control closes it. Snapshot A / B keep their own right-click (it clears a
+filled slot).
 
 ## Touching a modulated control
 
-Modulation keeps running. A Freeze press holds until the gate's next change; a
-LENGTH pick becomes the new centre. With **Ask before overriding modulation**
+Modulation keeps running. A Freeze press holds until the gate's next change (with
+Hold for Length, the end of the hold or the next trigger); a
+LENGTH, BANDS or preset pick becomes the new centre. With **Ask before overriding modulation**
 on (Settings > MODULATION, default on) Spectr asks first, in the preset
 dialogs' style: "Freeze is being modulated by LFO 1. Turn off its Freeze
-target?" -- **Keep modulating** applies the action and leaves the LFO running;
-**Turn off** writes that LFO's target lane off (a recorded host gesture) and
-then applies it. Return = Turn off, Escape = Keep modulating, and **Don't ask
+target?" -- **Keep modulating** keeps the LFO in charge: a LENGTH, BANDS,
+preset or knob change still applies (it becomes the centre the LFO moves
+around), but a Freeze press is dropped, because it would override the very gate
+the user chose to keep -- LIVE / FROZEN goes on following the LFO
+(`tools/patch_materialized_freeze_keep_modulating.py`). **Turn off** writes
+that LFO's target lane off (a recorded host gesture) and then applies the
+action, the Freeze press included. Return = Turn off, Escape = Keep modulating, and **Don't ask
 again** turns the Setting off. The dialog is generic
-(`window.spectrOverrideModulated(control, target, lfos, action)`); the Mix,
+(`window.spectrOverrideModulated(control, target, lfos, action, options)`;
+`options.keepApplies === false` drops the action on Keep); the Mix,
 Intensity and Output knobs ask it in their own names.
 
 ## Smoothness
@@ -266,6 +477,18 @@ machine allowed to run one).
 - **`4003` / `4013` (LFO / LFO 2 Depth) are command lanes** the same way: a
   change sets the Depth of every target that LFO currently drives. Never
   written back, so a host shows the last command, not the per-target Depths.
+- **A command only applies when it moves alone.** If the host writes any of an
+  LFO's routing lanes (a target's on/off or Depth) in the same pass as `4003`,
+  `4004` or `4013` -- a session restore, a CLAP `params.flush()`, a host
+  setting every parameter at once -- the routing lanes are the explicit
+  statement and the command is not applied to that LFO. Old automation only
+  ever moves the legacy lanes, so it still replays as a command. This makes the
+  result independent of how the host's writes and the parameter-sync pass
+  interleave (clap-validator's `state-reproducibility-flush`). The lanes stay
+  automatable rather than read-only so pre-1.0.7 automation keeps working.
+- `modulation_target_mask` is saved from the routing lanes themselves (not
+  from a reconciled copy), so identical parameter values always save an
+  identical blob.
 - `modulation_target_mask` keeps being saved (LFO 1's level targets) so an
   older Spectr opening a new session plays the nearest thing it can.
 
@@ -286,10 +509,35 @@ only.
 
 ## The menu, measured
 
-### With eleven targets: the scrolling list
+### Progressive Depth rows, a capped panel, and a wheel that stays put
 
-Eleven targets are 22 rows (638 design px) under a 238 px head, past the
-780 px the menu may use. Pulp does not scroll an overflow container, so the
+Each target is one row and its Depth row is disclosed only while it is on, so
+the default list (Bank on) is 13 rows plus one Depth row. The submenu is
+capped at 560 design px (it used to take the editor's whole height whenever it
+could, 736 px), so wherever the band menu opens -- near the top of the window
+included -- the panel sits beside it and the target list scrolls inside it.
+Captured by `SPECTR_POLISH_SHOTS=1 Spectr-native-shot --backend=skia`, in
+[`evidence/2026-10-03-polish/`](evidence/2026-10-03-polish/) (with the
+before shots of the submenu and of the tooltip).
+
+While any menu, submenu, dropdown or popover is open the wheel belongs to it:
+over the menu it scrolls only the menu and stops at its ends without chaining
+(the head, either end of the list, a sideways trackpad delta), and anywhere
+else it is swallowed and the menu stays open -- the macOS menu behaviour.
+Before, a wheel over the Modulation submenu's head or past the end of its list
+zoomed the viewport behind it. The rule belongs to Pulp's overlay routing
+(`route_passive_pointer` / `deliver_mouse_wheel`, Generous-Corp/pulp#9307,
+Pulp SDK 0.901.0 and later): a wheel outside an open menu is dropped, and one
+inside it never bubbles past the menu's root.
+`test_native_state_parity.cpp`: "while a band menu is open no wheel reaches the
+plot behind it".
+
+### With thirteen targets: the scrolling list
+
+Thirteen targets are up to 26 rows -- a switch each, and a Depth row under
+each one that is on; about 754 design px at the 29 px a row measured with
+eleven -- plus Hold for Length under the Freeze target while it is on, under
+a 238 px head, well past the 780 px the menu may use. Pulp does not scroll an overflow container, so the
 submenu is the help guide's scroller: a fixed head -- Back, the LFO switches,
 EDIT LFO, Shape, Rate and the **LFO n TARGETS** heading, which therefore stays
 put -- over a viewport that clips the target rows at a numeric height (502 px
@@ -301,7 +549,7 @@ the offset; a keyboard move (arrows, Home, End) scrolls its row fully into
 view; each opening starts at the top. Bank, Band shift, Band spread and
 Intensity with their Depth rows show without scrolling at 990 x 645.
 
-`test_native_state_parity.cpp`: "the Modulation submenu scrolls its eleven
+`test_native_state_parity.cpp`: "the Modulation submenu scrolls its thirteen
 targets under a sticky heading" (order, fit, wheel, offset kept on toggle,
 keyboard reveal), and the all-controls first-press sweep covers the head and
 every target row at every wheel position. That sweep found menu slider tracks

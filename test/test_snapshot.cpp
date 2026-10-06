@@ -306,6 +306,27 @@ TEST_CASE("plugin state round-trips per-LFO routing, amounts included") {
     CHECK(b.proc.modulation_settings().routes[1][1].amount == Approx(0.25f));
 }
 
+TEST_CASE("Ask before overriding modulation round-trips with the session; absent means on") {
+    RoutedPlugin a;
+    CHECK(a.proc.ask_before_override());  // a new instance asks
+    a.proc.set_ask_before_override(false);
+    const auto blob = a.proc.serialize_plugin_state();
+    std::string json(blob.begin(), blob.end());
+    REQUIRE(json.find("\"ask_before_override\":") != std::string::npos);
+
+    RoutedPlugin b;
+    REQUIRE(b.proc.deserialize_plugin_state(blob));
+    CHECK_FALSE(b.proc.ask_before_override());
+
+    // A session written before the Setting was saved opens asking.
+    REQUIRE(erase_member(json, "ask_before_override"));
+    RoutedPlugin c;
+    c.proc.set_ask_before_override(false);
+    const std::vector<uint8_t> legacy(json.begin(), json.end());
+    REQUIRE(c.proc.deserialize_plugin_state(legacy));
+    CHECK(c.proc.ask_before_override());
+}
+
 TEST_CASE("a pre-routing session maps its single target onto both LFOs") {
     // A 1.0.6 session: no `lfo_routing` marker, one selection for both LFOs.
     RoutedPlugin a;

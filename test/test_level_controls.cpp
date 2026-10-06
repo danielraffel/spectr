@@ -509,8 +509,13 @@ TEST_CASE("Auto Gain on programme-like material: median within 1 LU",
 
 TEST_CASE("Auto Gain does not pump: a static shape is a constant gain",
           "[level][autogain][audio][rt]") {
+    // v1's property, pinned: its gain is a pure function of the shape, so a
+    // static shape is a constant to the last bit. v2 follows the material by
+    // design; its no-pumping gate is "Auto Gain v2 does not pump on steady
+    // material" (test_auto_gain_v2.cpp).
     const auto in = pink(static_cast<std::size_t>(kRate * 10.0), 41u);
     Rig rig;
+    rig.plugin->set_auto_gain_model(spectr::AutoGainModel::reference_v1);
     rig.set(spectr::kParamAutoGain, 1.0f);
     rig.shape(loudness_shapes()[2].f);
     std::vector<float> applied;
@@ -573,7 +578,10 @@ TEST_CASE("Auto Gain off renders bit-identically to no Auto Gain",
 
 TEST_CASE("A session saved before Auto Gain opens with it off; new ones keep it",
           "[level][autogain][state]") {
+    // A new instance starts with AUTO on (v2 met the default-on bar).
+    static_assert(spectr::kAutoGainDefaultForNewInstances);
     Rig fresh;
+    CHECK(fresh.host.state().get_value(spectr::kParamAutoGain) == 1.0f);
     CHECK((fresh.host.state().get_value(spectr::kParamAutoGain) >= 0.5f)
           == spectr::kAutoGainDefaultForNewInstances);
 

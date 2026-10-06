@@ -83,6 +83,24 @@ def plugin_errors(bundle: Path) -> list[str]:
     return errors
 
 
+# Spectr checks for updates on its own but never installs one by itself: the
+# user always chooses Install (docs/updates.md, the Settings note).
+INSTALL_POLICY = {
+    "SUEnableAutomaticChecks": True,
+    "SUAllowsAutomaticUpdates": False,
+    "SUAutomaticallyUpdate": False,
+}
+
+
+def install_policy_errors(plist: dict, name: str) -> list[str]:
+    errors = []
+    for key, expected in INSTALL_POLICY.items():
+        value = plist.get(key)
+        if value is not expected:
+            errors.append(f"{name}: {key} is {value!r}, expected {expected!r}")
+    return errors
+
+
 def app_errors(app: Path, public_key: str, feed: str | None) -> list[str]:
     errors = []
     info = app / "Contents" / "Info.plist"
@@ -93,6 +111,7 @@ def app_errors(app: Path, public_key: str, feed: str | None) -> list[str]:
         errors.append(f"{app.name}: no SUFeedURL")
     elif feed and plist["SUFeedURL"] != feed:
         errors.append(f"{app.name}: SUFeedURL is {plist['SUFeedURL']!r}, expected {feed!r}")
+    errors += install_policy_errors(plist, app.name)
     if plist.get("SUPublicEDKey") != public_key:
         errors.append(f"{app.name}: SUPublicEDKey is {plist.get('SUPublicEDKey')!r}, "
                       f"expected {public_key!r}")
@@ -279,6 +298,20 @@ def self_test() -> int:
     case("derived public key matches RFC 8032 vector 1",
          ed25519_verify.public_key_from_seed(bytes.fromhex(
              "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")) == rfc_pk)
+
+    good = dict(INSTALL_POLICY)
+    case("install policy: checks on, never installs by itself",
+         install_policy_errors(good, "Spectr.app") == [])
+    for key, bad in (("SUAllowsAutomaticUpdates", None), ("SUAllowsAutomaticUpdates", True),
+                     ("SUAutomaticallyUpdate", True), ("SUEnableAutomaticChecks", False),
+                     ("SUAutomaticallyUpdate", 0)):
+        plist = dict(good)
+        if bad is None:
+            del plist[key]
+        else:
+            plist[key] = bad
+        case(f"install policy rejects {key}={bad!r}",
+             len(install_policy_errors(plist, "Spectr.app")) == 1)
 
     pkg = b"pretend this is Spectr-1.0.7.pkg"
     sig = base64.b64encode(ed25519_verify.sign(seed, pkg)).decode()

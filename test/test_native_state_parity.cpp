@@ -1074,7 +1074,12 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // modulation, and 2686.58 -> 2884.58 when Appearance gained Display
         // (BARS / RESPONSE / BOTH, out of the header) and Structure gained
         // Range, and 2884.58 -> 3051.58 when the target list gained Intensity,
-        // Mix and Output. If you add a group and this fails, that is the window
+        // Mix and Output, and 3051.58 -> 2829.78 when MODULATION disclosed a
+        // target's Depth row only while it is on (and gained its LFO 1 / LFO 2
+        // / TARGETS / OPTIONS headings and the Bands and Preset targets), and
+        // FEEDBACK gained Show tooltips, and 2829.78 -> 2951.78 when Latency
+        // gained GPU processing in a build that has it (the window shifts by
+        // that row only there). If you add a group and this fails, that is the window
         // doing its job, not a bug to route around.
         //
         // Re-CENTRE it on the new extent rather than raising the ceiling. A
@@ -1084,7 +1089,10 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         // only reason to have a numeric band here at all.
         "(() => { const s = globalThis.__spectrResponsiveLayoutReceipt__?.settings; "
         "return s && s.width === 520 && s.height === 679"
-        " && s.content_height > 2971 && s.content_height < 3131"
+        // The GPU processing row (122 px) exists only where the processor
+        // reports GPU processing available.
+        " && (() => { const gpu = globalThis.__spectrLatency?.state?.gpu_available === true ? 122 : 0;"
+        "      return s.content_height > 2750 + gpu && s.content_height < 2910 + gpu; })()"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
@@ -3912,6 +3920,9 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
         for (int i = 0; i < 40; ++i)
             pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, -60.0f, {});
         settle(rig.clock, 8);
+        // The rig renders no frames, so nothing lays the scrolled rows out
+        // the way a host's next frame does; do it here.
+        rig.root->layout_children();
         REQUIRE(attribute_of(list, offset_attribute) == "0");
         int pass = 0;
         for (std::string previous;; ++pass) {
@@ -3921,6 +3932,7 @@ TEST_CASE("every control on every editor surface resolves a press anywhere in it
             sweep(name + " at offset " + offset, nullptr, root_rect(*native_view_for(viewport_selector)));
             pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
             settle(rig.clock, 8);
+            rig.root->layout_children();
             REQUIRE(pass < 30);
         }
         // Every row of the list was reached at one of those positions.
@@ -5288,7 +5300,9 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
     // (every id in it belongs to the preset/snapshot surface), so the label is
     // the only durable handle.
     const auto rows_container = [&](const View& root) -> const View* {
-        const auto* anchor_label = find_label(root, "LFO");
+        // The LFO 1 switch's hint: its label column sits in a field row
+        // directly in the group's column.
+        const auto* anchor_label = find_label(root, "Enable the first LFO");
         if (anchor_label == nullptr) return nullptr;
         const auto* column = anchor_label->parent();
         const auto* row = column ? column->parent() : nullptr;
@@ -5373,25 +5387,54 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
         // disclosed. A run that found fewer has lost the rows, not hidden them.
         INFO("disclosed rows:" << describe(shown));
         REQUIRE(shown.size() >= 2);
+        // Three kinds of disclosed row since the group's hierarchy: the
+        // sub-headings (LFO 1, LFO 2, TARGETS, OPTIONS), the field rows (the
+        // authored 150px label column), and the nested rows under a field
+        // (Shape, Rate, a target's Depth, Hold for Length), indented.
+        const ClusterRow* first_field = nullptr;
+        const ClusterRow* first_nested = nullptr;
+        for (const auto& row : shown)
+            if (row.label_column_width == Catch::Approx(kAuthoredLabelColumn).margin(0.01f)) {
+                if (!first_field) first_field = &row;
+            } else if (row.label_column_width > 60.0f && !first_nested && first_field
+                       && row.row.x > first_field->row.x + 0.5f) {
+                first_nested = &row;
+            }
+        REQUIRE(first_field != nullptr);
         for (std::size_t i = 0; i < shown.size(); ++i) {
             INFO("disclosed row " << i << " \"" << shown[i].label << "\"");
             // A row that never finished laying out is the defect this catches
             // most directly: a zero or negative box.
             CHECK(shown[i].row.width > 0.0f);
             CHECK(shown[i].row.height > 0.0f);
-            CHECK(shown[i].row.x == Catch::Approx(shown[0].row.x).margin(0.01f));
-            CHECK(shown[i].row.width == Catch::Approx(shown[0].row.width).margin(0.01f));
-            CHECK(shown[i].label_column_width
-                  == Catch::Approx(kAuthoredLabelColumn).margin(0.01f));
+            const bool field = shown[i].label_column_width
+                == Catch::Approx(kAuthoredLabelColumn).margin(0.01f);
+            const bool nested = !field && first_nested
+                && shown[i].row.x == Catch::Approx(first_nested->row.x).margin(0.01f);
+            if (field) {
+                CHECK(shown[i].row.x == Catch::Approx(first_field->row.x).margin(0.01f));
+                CHECK(shown[i].row.width == Catch::Approx(first_field->row.width).margin(0.01f));
+            } else if (nested) {
+                CHECK(shown[i].row.width == Catch::Approx(first_nested->row.width).margin(0.01f));
+                CHECK(shown[i].row.x > first_field->row.x + 8.0f);  // indented under its field
+            } else {
+                // A sub-heading spans the group.
+                CHECK(shown[i].row.x == Catch::Approx(first_field->row.x).margin(0.01f));
+            }
             if (i > 0) {
                 // Measured between DISCLOSED neighbours: a hidden row between
                 // them contributes no height and no gap, so the authored 10px
-                // must still be the whole distance. That is the assertion that
-                // proves hiding a row really does reclaim its space.
+                // must still be the whole distance between two field rows.
+                // That is the assertion that proves hiding a row really does
+                // reclaim its space.
                 const float gap = shown[i].row.y
                                   - (shown[i - 1].row.y + shown[i - 1].row.height);
                 INFO("gap above this row: " << gap);
-                CHECK(gap == Catch::Approx(kAuthoredRowGap).margin(0.01f));
+                CHECK(gap >= 0.0f);
+                const bool prev_field = shown[i - 1].label_column_width
+                    == Catch::Approx(kAuthoredLabelColumn).margin(0.01f);
+                if (field && prev_field)
+                    CHECK(gap == Catch::Approx(kAuthoredRowGap).margin(0.01f));
             }
         }
     };
@@ -5401,7 +5444,7 @@ TEST_CASE("the LFO controls reach a finished layout and hold it",
     REQUIRE(settled.size() >= 2);
     // Control on the handle: the rows really are the LFO cluster and not some
     // other column the parent walk happened to land on.
-    REQUIRE(settled.front().label == "LFO");
+    REQUIRE(settled.front().label == "LFO 1");
     check_finished(settled, "settled");
 
     // Hold the surface open far past the point it claims to be finished. A row
@@ -10226,8 +10269,13 @@ TEST_CASE("header level knobs record one host gesture per act and follow the hos
     CHECK(recorder.take() == "begin 5000, end 5000, begin 5000, set 5000=100, end 5000");
     pause_past_double_press();
 
-    // AUTO toggles Auto Gain, one complete gesture. New instances start on.
+    // AUTO toggles Auto Gain, one complete gesture. New instances start on
+    // (kAutoGainDefaultForNewInstances).
     REQUIRE(rig.store.get_value(spectr::kParamAutoGain) == 1.0f);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-auto-gain]')"
+        "?.getAttribute('data-spectr-auto-gain-state') === 'on'",
+        "AUTO did not show it starts on");
     activate(rig, "[data-spectr-auto-gain]");
     CHECK(recorder.take() == "begin 5001, set 5001=0, end 5001");
     require_runtime_contract(rig,
@@ -10295,9 +10343,9 @@ TEST_CASE("header tooltips appear after a delay and hide on press without blocki
     CHECK(tip_text().empty());
     // Every header control with a tip says what it is.
     const std::pair<const char*, const char*> tips[] = {
-        {"[data-spectr-mix]", "Mix: blend Spectr's sound with the original. Great with Freeze."},
+        {"[data-spectr-mix]", "Mix: blend Spectr's sound with the original input."},
         {"[data-spectr-output-trim]", "Output: final volume (dB)."},
-        {"[data-spectr-auto-gain]", "Auto Gain: keeps the level steady as you boost or cut."},
+        {"[data-spectr-auto-gain]", "Auto Gain — keeps the volume steady as you boost or cut."},
         {"[data-spectr-freeze-length]", "Length: how much audio a freeze captures and loops, in bars."},
         {"[data-spectr-output-peak]", "Peak: the level leaving Spectr. Click to clear."},
     };
@@ -10631,11 +10679,12 @@ TEST_CASE("every routing edit in the band menu records as a host gesture",
     CHECK(ends == 1);
     CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 4)) == Catch::Approx(0.75f));
 
-    // A disabled Depth row (its destination is off) ignores input entirely.
-    const float zoom_before = rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5));
-    drag_menu_slider(rig, "modulation-target-depth-band-spread", {0.1, 0.3});
+    // A target that is off shows no Depth row (progressive disclosure: the
+    // row stays mounted, hidden and disabled), so nothing can drag it.
+    CHECK(runtime_value(rig,
+        "String(document.querySelector('[data-spectr-band-action=\"modulation-target-depth-band-spread\"]')"
+        "?.getAttribute('data-spectr-disclosed'))", "spectr-off-depth-row") == "0");
     CHECK(recorder.take().find("4035") == std::string::npos);
-    CHECK(rig.store.get_value(spectr::lfo_route_amount_param_id(0, 5)) == zoom_before);
 
     // LFO 2's rows address LFO 2's lanes.
     activate(rig, "[data-spectr-modulation-source-action=\"2\"]");
@@ -10691,7 +10740,9 @@ TEST_CASE("host playback of the routing lanes moves the band menu",
     CHECK(row("modulation-target-depth-band-shift", "aria-valuetext") == "60%");
     CHECK(row("modulation-target-depth-band-shift", "aria-disabled") == "false");
     CHECK(row("modulation-target-depth-morph", "aria-valuetext") == "80%");
+    // Bank is off now, so its Depth row is hidden (and inert).
     CHECK(row("modulation-target-depth-bank", "aria-disabled") == "true");
+    CHECK(row("modulation-target-depth-bank", "data-spectr-disclosed") == "0");
 
     // The legacy single-target lane, played back, is the command it always
     // was: Snapshot B alone among the field destinations, viewport kept.
@@ -10856,14 +10907,15 @@ TEST_CASE("operating a modulated Freeze asks, and both answers do what they say"
     CHECK(prompt == "Freeze is being modulated by LFO 1. Turn off its Freeze target?");
     CHECK(recorder.take().empty());
 
-    // KEEP MODULATING: the press applies, the target stays on.
+    // KEEP MODULATING: the LFO stays in charge of Freeze -- the press is
+    // set aside (it would override the gate the user chose to keep), and the
+    // target stays on.
     activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
     CHECK_FALSE(dialog_open());
     {
         const auto log = recorder.take();
         INFO(log);
-        CHECK(has(log, "begin 3, set 3="));
-        CHECK(has(log, "end 3"));
+        CHECK_FALSE(has(log, "set 3="));
         CHECK_FALSE(has(log, "4026"));
     }
     CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 1.0f);
@@ -10906,6 +10958,164 @@ TEST_CASE("operating a modulated Freeze asks, and both answers do what they say"
     CHECK_FALSE(dialog_open());
     CHECK(has(recorder.take(), "begin 3, set 3="));
     CHECK(runtime_value(rig, "String(globalThis.__spectrAskBeforeOverride)", "setting") == "false");
+    CHECK(rig.store.open_gesture_count() == 0);
+
+    // The choice is the processor's and is saved with the session: a reopened
+    // project does not ask again, and its editor shows the Setting off. A new
+    // instance asks (default on).
+    CHECK_FALSE(rig.processor.ask_before_override());
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK_FALSE(reloaded.processor.ask_before_override());
+    settle(reloaded.clock, 8);
+    CHECK(runtime_value(reloaded, "String(globalThis.__spectrAskBeforeOverride)",
+                        "reloaded-setting") == "false");
+    NativeEditorRig fresh;
+    CHECK(fresh.processor.ask_before_override());
+    settle(fresh.clock, 8);
+    CHECK(runtime_value(fresh, "String(globalThis.__spectrAskBeforeOverride)",
+                        "fresh-setting") == "true");
+    storage.require_unchanged();
+}
+
+TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
+          "[native-n1][state-parity][modulation][freeze-target][hold-for-length][override]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // A current preset, so the Preset target has neighbours.
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
+    settle(rig.clock, 8);
+    // LFO 1, square at 4 beats (2 s): Freeze 50 %, Length 25 %, Bands 100 %,
+    // Preset 25 %, and the three level targets.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, static_cast<float>(spectr::LfoShape::Square));
+    rig.store.set_value(spectr::kParamLfoRate, 4.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    const std::pair<unsigned, float> routes[] = {
+        {6u, 0.5f}, {7u, 0.25f}, {8u, 0.5f}, {9u, 0.5f}, {10u, 0.5f}, {11u, 1.0f}, {12u, 0.25f}};
+    for (const auto& [t, depth] : routes) {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+        rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+    }
+    REQUIRE(rig.processor.apply_surface_params(false));
+    // 2.5 s: history for the freeze, fades done, and a quarter of the way
+    // into the cycle -- the middle of the gate's frozen half, so the gate
+    // holds still around the press below.
+    feed_audio_blocks(rig, 469);
+    settle(rig.clock, 12);
+    const auto dialog_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-override-dialog]'))", "dialog") == "true";
+    };
+    const auto keep = [&] {
+        REQUIRE(dialog_open());
+        activate(rig, "[data-spectr-manager-action=\"override-keep\"]");
+        CHECK_FALSE(dialog_open());
+    };
+    const auto still_driven = [&](unsigned t) {
+        INFO("target " << t);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 1.0f);
+        CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, t)) == 1.0f);
+        CHECK(rig.processor.modulation_settings().routes[0][t].enabled);
+    };
+    // The values a reading takes over the next `seconds` of audio.
+    const auto readings = [&](double seconds, const std::function<int()>& read) {
+        std::vector<int> seen;
+        for (int step = 0; step < int(seconds * 4.0); ++step) {
+            feed_audio_blocks(rig, 47);  // ~0.25 s
+            settle(rig.clock, 2);
+            seen.push_back(read());
+        }
+        return seen;
+    };
+    const auto distinct = [](std::vector<int> v) {
+        std::sort(v.begin(), v.end());
+        return static_cast<std::size_t>(std::unique(v.begin(), v.end()) - v.begin());
+    };
+
+    // FREEZE, as a gate: the press is set aside, so LIVE / FROZEN is the
+    // gate's own state straight after Keep and keeps switching with it.
+    {
+        const bool before = rig.processor.freeze_effective();
+        activate(rig, "[data-spectr-freeze-toggle]");
+        keep();
+        feed_audio_blocks(rig, 2);
+        settle(rig.clock, 4);
+        CHECK(rig.processor.freeze_effective() == before);
+        CHECK(freeze_face(rig) == (before ? "frozen" : "live"));
+        still_driven(6u);
+        const auto seen = readings(4.0, [&] { return int(rig.processor.freeze_effective()); });
+        CHECK(std::count(seen.begin(), seen.end(), 1) >= 4);
+        CHECK(std::count(seen.begin(), seen.end(), 0) >= 4);
+    }
+    // FREEZE with Hold for Length (1 bar at 4 beats: back-to-back holds;
+    // Length unmodulated here, so every hold is that 1 bar): Keep leaves
+    // every hold its own fresh freeze.
+    {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 0.0f);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        rig.store.set_value(spectr::kParamFreezeHoldForLength, 1.0f);  // read per block
+        feed_audio_blocks(rig, 375);
+        settle(rig.clock, 8);
+        activate(rig, "[data-spectr-freeze-toggle]");
+        keep();
+        const auto holds = rig.processor.freeze_hold_latch_count();
+        const auto fresh = rig.processor.freeze_source().latch_count();
+        (void)readings(6.0, [&] { return int(rig.processor.freeze_effective()); });
+        CHECK(rig.processor.freeze_hold_latch_count() >= holds + 2);
+        CHECK(rig.processor.freeze_source().latch_count() >= fresh + 2);
+        still_driven(6u);
+        rig.store.set_value(spectr::kParamFreezeHoldForLength, 0.0f);
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 1.0f);
+        REQUIRE(rig.processor.apply_surface_params(false));
+        feed_audio_blocks(rig, 8);  // the editor learns Length is driven again
+        settle(rig.clock, 12);
+    }
+    // LENGTH: the pick is the new centre; the LFO goes on stepping it.
+    {
+        rig.bridge().load_script("window.spectrCommitFreezeLength(2, '0');", "length-pick");
+        settle(rig.clock, 8);
+        keep();
+        CHECK(rig.processor.freeze_length_preset() == 17);
+        still_driven(7u);
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.freeze_modulated_length_index(); })) >= 2);
+    }
+    // BANDS: the pick is the new centre; the LFO goes on stepping it.
+    {
+        activate(rig, "[data-spectr-menu-root=\"bands\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-band-count=\"40\"]");
+        keep();
+        settle(rig.clock, 8);
+        CHECK(rig.processor.layout() == spectr::Layout::Bands40);
+        still_driven(11u);
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.modulated_band_count_shown(); })) >= 2);
+    }
+    // PRESET: the pick is the new centre; the LFO goes on stepping it.
+    {
+        const auto other = runtime_value(rig,
+            "String(window.Spectr.FACTORY_PATTERNS.find((p) => p.id !== 'factory:flat').id)",
+            "spectr-other-preset");
+        activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+        activate(rig, "[data-spectr-pattern-menu-id=\"" + other + "\"]");
+        keep();
+        settle(rig.clock, 8);
+        CHECK(rig.processor.preset_modulation_centre_id() == other);
+        still_driven(12u);
+        CHECK(rig.processor.preset_modulation_driven());
+        CHECK(distinct(readings(2.5, [&] { return rig.processor.preset_modulation_step_shown(); })) >= 2);
+    }
+    // MIX, INTENSITY and OUTPUT: the knob is acknowledged, the targets stay on.
+    {
+        activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        activate(rig, "[data-spectr-intensity]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        activate(rig, "[data-spectr-output-trim]", "keydown", R"js({key:"ArrowDown"})js");
+        keep();
+        for (const unsigned t : {8u, 9u, 10u}) still_driven(t);
+    }
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }
@@ -11067,13 +11277,19 @@ bool row_inside(const RootRect& row, const RootRect& viewport) {
 
 }  // namespace
 
-TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky heading",
+TEST_CASE("the Modulation submenu scrolls its thirteen targets under a sticky heading",
           "[native-n1][state-parity][modulation][routing][scroll]") {
     PatternStoragePoison storage;
     NativeEditorRig rig;
     rig.resize(990, 645);
     settle(rig.clock, 96);
     require_home(rig);
+    // Several targets on, so several Depth rows are disclosed and the list
+    // is long enough to scroll.
+    for (std::size_t t : {0u, 3u, 4u, 5u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 12);
     open_band_menu(rig);
     settle(rig.clock, 12);
     const auto rect_of = [&](std::string_view selector) {
@@ -11090,14 +11306,15 @@ TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky head
     const auto row = [](const char* action) {
         return std::string("[data-spectr-band-action=\"") + action + "\"]";
     };
-    // Eleven targets, in the planned order.
+    // Thirteen targets, in the planned order.
     CHECK(runtime_value(rig,
         "Array.from(document.querySelectorAll('[data-spectr-modulation-rows] [data-spectr-band-action^=\"modulation-target-\"]'))"
         ".map((n) => n.getAttribute('data-spectr-band-action')).filter((a) => !a.includes('depth')).join(',')",
         "spectr-modulation-order")
           == "modulation-target-bank,modulation-target-band-shift,modulation-target-band-spread,"
              "modulation-target-intensity,modulation-target-mix,modulation-target-morph,"
-             "modulation-target-freeze,modulation-target-length,modulation-target-output,"
+             "modulation-target-freeze,modulation-target-length,modulation-target-bands,"
+             "modulation-target-preset,modulation-target-output,"
              "modulation-target-a,modulation-target-b");
 
     const auto viewport = rect_of("[data-spectr-modulation-viewport]");
@@ -11112,25 +11329,31 @@ TEST_CASE("the Modulation submenu scrolls its eleven targets under a sticky head
     // ...and the panel never grows past the editor (780 design px of 860)
     // and stays clear of the 44 pt top bar, where a press would resolve to
     // the bar and the Back row would be dead.
-    CHECK(panel.bottom - panel.top <= 780.5f);
+    CHECK(panel.bottom - panel.top <= 560.5f);  // capped; the list scrolls inside
     CHECK(panel.top >= 44.0f);
     CHECK(head.bottom <= viewport.top + 0.5f);
     // The four most-modulated targets and their Depth rows show unscrolled.
     for (const char* action : {"modulation-target-bank", "modulation-target-depth-bank",
                                "modulation-target-band-shift", "modulation-target-depth-band-shift",
                                "modulation-target-band-spread", "modulation-target-depth-band-spread",
-                               "modulation-target-intensity", "modulation-target-depth-intensity"}) {
+                               "modulation-target-intensity"}) {
         INFO(action);
         CHECK(row_inside(rect_of(row(action)), viewport));
     }
     // Control: the last row is NOT visible until the list scrolls.
-    CHECK_FALSE(row_inside(rect_of(row("modulation-target-depth-b")), viewport));
+    CHECK_FALSE(row_inside(rect_of(row("modulation-target-b")), viewport));
+    // Only an enabled target shows a Depth row.
+    CHECK(runtime_value(rig, "String(document.querySelector('" + row("modulation-target-depth-intensity")
+                        + "')?.getAttribute('data-spectr-disclosed'))", "spectr-disclosed") == "0");
 
     // A wheel over the list moves the rows, never the head.
     const pulp::view::Point over{(viewport.left + viewport.right) * 0.5f,
                                  (viewport.top + viewport.bottom) * 0.5f};
     pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 90.0f, {});
     settle(rig.clock, 8);
+    // The rig renders no frames; lay the scrolled rows out as a host frame
+    // would before reading their rects.
+    rig.root->layout_children();
     CHECK(offset() == "90");
     const auto head_after = rect_of("[data-spectr-modulation-head]");
     CHECK(head_after.top == Catch::Approx(head.top).margin(0.5f));
@@ -11244,6 +11467,682 @@ TEST_CASE("grabbing a modulated level knob asks, and the knob keeps its own valu
     settle(rig.clock, 8);
     activate(rig, "[data-spectr-mix]", "keydown", R"js({key:"ArrowDown"})js");
     CHECK_FALSE(dialog_open());
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+// ── An open menu keeps the wheel to itself ──────────────────────────────────
+//
+// Scrolling the band menu's Modulation submenu zoomed the viewport behind it:
+// a wheel over the submenu's head (which has no scroller of its own), a
+// horizontal trackpad delta, or a wheel past the end of the target list
+// bubbled out of the menu to the plot's zoom handler, and a wheel anywhere
+// outside the open menu zoomed the plot directly. While a menu is open the
+// wheel scrolls the menu or nothing (the macOS menu behaviour). Pulp's overlay
+// routing owns the rule (route_passive_pointer / deliver_mouse_wheel).
+TEST_CASE("while a band menu is open no wheel reaches the plot behind it",
+          "[native-n1][state-parity][modulation][wheel][overlay]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    rig.resize(990, 645);
+    settle(rig.clock, 96);
+    require_home(rig);
+    // Control: with nothing open the gesture zooms.
+    const auto at_rest = plot_view(rig);
+    wheel_over_plot(rig);
+    REQUIRE(plot_view(rig) != at_rest);
+
+    open_band_menu(rig);
+    settle(rig.clock, 12);
+    const auto rect_of = [&](std::string_view selector) {
+        const auto* view = native_view_of(rig, selector);
+        INFO("selector " << selector);
+        REQUIRE(view != nullptr);
+        return root_rect(*view);
+    };
+    const auto centre = [](const RootRect& r) {
+        return pulp::view::Point{(r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f};
+    };
+    const auto menu_open = [&] {
+        return runtime_value(rig,
+            "String(!!document.querySelector('[data-spectr-modulation-panel]')"
+            " && !!document.querySelector('[data-spectr-band-context-menu]'))",
+            "spectr-menu-open") == "true";
+    };
+    const auto before = plot_view(rig);
+    const auto wheel = [&](pulp::view::Point at, float dx, float dy, int times) {
+        for (int i = 0; i < times; ++i)
+            pulp::view::deliver_mouse_wheel(*rig.root, at, dx, dy, {});
+        settle(rig.clock, 8);
+    };
+    SECTION("over the submenu's head") {
+        wheel(centre(rect_of("[data-spectr-band-action=\"lfo1-enable\"]")), 0.0f, -40.0f, 4);
+        wheel(centre(rect_of("[data-spectr-band-action=\"modulation-back\"]")), 0.0f, 40.0f, 4);
+    }
+    SECTION("past either end of the target list, and sideways") {
+        const auto over = centre(rect_of("[data-spectr-modulation-viewport]"));
+        wheel(over, 0.0f, 90.0f, 30);    // to the end and beyond
+        wheel(over, 0.0f, -90.0f, 30);   // back to the top and beyond
+        wheel(over, 40.0f, 0.0f, 4);     // a horizontal trackpad delta
+    }
+    SECTION("over the band menu itself") {
+        wheel(centre(rect_of("[data-spectr-band-context-menu]")), 0.0f, -40.0f, 4);
+    }
+    SECTION("outside the open menu") {
+        wheel_over_plot(rig);
+        // Swallowed, not a dismissal: the menu stays open.
+        CHECK(menu_open());
+    }
+    CHECK(plot_view(rig) == before);
+    CHECK(menu_open());
+    storage.require_unchanged();
+}
+
+// ── Header tooltips are one sized panel under their control ────────────────
+//
+// FROZEN's and INTENSITY's tooltips painted as a small dark square at the
+// left with the text running out of it: the SDK laid the absolute, width-less
+// box out at its padding alone. The panel now holds its whole line of text,
+// sits below the control without covering it, stays inside the editor, and
+// Settings > FEEDBACK > Show tooltips turns it off (saved with the session).
+TEST_CASE("a header tooltip is one panel that holds its text below its control",
+          "[native-n1][state-parity][level][tooltip]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto wait = [&](int ms) {
+        for (int waited = 0; waited < ms; waited += 20) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            rig.bridge().service_frame_callbacks();
+            settle(rig.clock, 1);
+        }
+    };
+    const auto boxes = [&](const char* selector) {
+        return runtime_string(rig, std::string(
+            "(() => { const t = document.querySelector('[data-spectr-header-tooltip]');"
+            " if (!t) return 'none';"
+            " const r = t.getBoundingClientRect(), s = t.firstChild.getBoundingClientRect();"
+            " const c = document.querySelector('") + selector + "').getBoundingClientRect();"
+            " let o = t; while (o.parentElement && o.parentElement.offsetWidth > 0) o = o.parentElement;"
+            " return [r.left, r.right, r.top, r.bottom, s.left, s.right, c.bottom, o.offsetWidth]"
+            ".map((v) => v.toFixed(1)).join(','); })()", "spectr-tip-boxes");
+    };
+    for (const char* selector : {"[data-spectr-freeze-toggle]", "[data-spectr-intensity]",
+                                 "[data-spectr-output-peak]"}) {
+        INFO(selector);
+        activate(rig, selector, "pointerenter", knob_point(selector, 0.0));
+        wait(800);
+        rig.root->layout_children();
+        auto text = boxes(selector);
+        text.erase(std::min(text.find('\n'), text.size()));
+        INFO("panel l,r,t,b, text l,r, control bottom, editor width: " << text);
+        REQUIRE(text != "none");
+        std::vector<float> v;
+        std::stringstream in(text);
+        for (std::string part; std::getline(in, part, ',');) v.push_back(std::stof(part));
+        REQUIRE(v.size() == 8);
+        // The text is inside the panel, with padding, not spilling out of it.
+        CHECK(v[1] - v[0] > 60.0f);
+        CHECK(v[4] >= v[0] + 4.0f);
+        CHECK(v[5] <= v[1] - 4.0f);
+        // Below its control, not over it; inside the editor.
+        CHECK(v[2] >= v[6] + 2.0f);
+        CHECK(v[0] >= 0.0f);
+        CHECK(v[1] <= v[7]);
+        activate(rig, selector, "pointerleave");
+        settle(rig.clock, 4);
+    }
+    // Show tooltips off: no tip, and the choice is saved with the session.
+    activate(rig, "[data-spectr-settings-open]");
+    activate(rig, "[data-spectr-show-tooltips] [data-spectr-setting-toggle]");
+    settle(rig.clock, 8);
+    CHECK_FALSE(rig.processor.show_tooltips());
+    activate(rig, "[data-spectr-settings-close]");
+    activate(rig, "[data-spectr-intensity]", "pointerenter", knob_point("[data-spectr-intensity]", 0.0));
+    wait(800);
+    CHECK(runtime_string(rig, "String(!!document.querySelector('[data-spectr-header-tooltip]'))",
+                         "spectr-tip-off").rfind("false", 0) == 0);
+    const auto blob = rig.processor.serialize_plugin_state();
+    NativeEditorRig reloaded(blob);
+    CHECK_FALSE(reloaded.processor.show_tooltips());
+    NativeEditorRig fresh;
+    CHECK(fresh.processor.show_tooltips());  // default on
+    storage.require_unchanged();
+}
+
+// ── Dropdowns that follow their LFO ─────────────────────────────────────────
+//
+// While an LFO drives Length, Bands or Preset, the closed LENGTH / BANDS /
+// preset control shows what is playing -- the length the freeze uses, the
+// band count, the preset -- in the violet of a modulated knob; LENGTH's menu
+// keeps the user's own value. Whenever Freeze engages, the length it takes is
+// exactly the length LENGTH showed.
+TEST_CASE("LENGTH, BANDS and the preset label show what their LFO plays",
+          "[native-n1][state-parity][modulation][length-target][bands-target][preset-target]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // The current preset: applying one sends its neighbourhood.
+    activate(rig, "[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+    activate(rig, "[data-spectr-pattern-menu-id=\"factory:flat\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.processor.preset_modulation_centre_id() == "factory:flat");
+    const auto next_preset = runtime_value(rig,
+        "String(window.Spectr.FACTORY_PATTERNS[window.Spectr.FACTORY_PATTERNS.findIndex("
+        "(p) => p.id === 'factory:flat') + 1].name)", "spectr-next-preset");
+
+    // LFO 1: a square at 16 beats (8 s at 120 BPM): +1 for the first 4 s.
+    // Length at 25 % (+2 steps), Bands at 100 % (+4 steps: 32 -> 64), Preset
+    // at 25 % (+1 preset).
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, 2.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 16.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    rig.store.set_value(spectr::kParamFreezeLength, 8.0f);
+    for (const auto& [t, depth] : {std::pair{7u, 0.25f}, std::pair{11u, 1.0f}, std::pair{12u, 0.25f}}) {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+        rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+    }
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 375);  // 2 s: history for the freeze, the fades done
+    settle(rig.clock, 12);
+    const auto attr = [&](const char* selector, const char* name) {
+        return runtime_value(rig, std::string("String(document.querySelector('") + selector
+            + "')?.getAttribute('" + name + "'))", name);
+    };
+    // LENGTH: two steps up from index 8, violet; the base is unchanged.
+    REQUIRE(rig.processor.freeze_shown_length_index() == 10);
+    const auto shown_label = runtime_value(rig,
+        "String(spectrFreezeStore().lengthPresets[10].label)", "spectr-length-10");
+    settle_until_contract(rig,
+        "document.querySelector('[data-spectr-length-value]')?.getAttribute('data-spectr-length-modulated') === '1'",
+        "LENGTH did not show that an LFO moves it");
+    CHECK(runtime_value(rig, "String(document.querySelector('[data-spectr-length-value]').textContent)",
+                        "spectr-length-text").rfind(shown_label, 0) == 0);
+    CHECK(rig.store.get_value(spectr::kParamFreezeLength) == 8.0f);
+    // BANDS plays 64, violet.
+    CHECK(attr("[data-spectr-bands-shown]", "data-spectr-bands-shown") == "64");
+    CHECK(attr("[data-spectr-bands-shown]", "data-spectr-bands-modulated") == "1");
+    // The preset label names the next preset.
+    CHECK(attr("[data-spectr-selected-preset]", "data-spectr-preset-shown") == next_preset);
+    CHECK(attr("[data-spectr-selected-preset]", "data-spectr-preset-modulated") == "1");
+
+    // Freeze engages: it takes exactly the length LENGTH showed...
+    rig.store.set_value(spectr::kParamFreeze, 1.0f);
+    feed_audio_blocks(rig, 8);
+    const auto expected = std::llround(spectr::length_seconds(
+        spectr::kLengthPresets[10], 120.0, 4, 4) * 48000.0);
+    CHECK(rig.processor.freeze_source().loop_length() == expected);
+    // ...and LENGTH keeps showing it while the hold plays, though the LFO has
+    // since swung the other way (index 6 now for the next engage).
+    feed_audio_blocks(rig, 470);  // past 4 s: the square is at -1
+    settle(rig.clock, 12);
+    CHECK(rig.processor.freeze_modulated_length_index() == 6);
+    CHECK(rig.processor.freeze_shown_length_index() == 10);
+    CHECK(runtime_value(rig, "String(document.querySelector('[data-spectr-length-value]').textContent)",
+                        "spectr-length-text-held").rfind(shown_label, 0) == 0);
+    // Live again: the next engage's length.
+    rig.store.set_value(spectr::kParamFreeze, 0.0f);
+    feed_audio_blocks(rig, 8);
+    settle(rig.clock, 12);
+    CHECK(rig.processor.freeze_shown_length_index() == 6);
+
+    // Control: every route off, the three read the user's own values again.
+    for (const unsigned t : {7u, 11u, 12u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 40);
+    settle(rig.clock, 12);
+    CHECK(attr("[data-spectr-length-value]", "data-spectr-length-modulated") == "");
+    CHECK(attr("[data-spectr-bands-shown]", "data-spectr-bands-shown") == "32");
+    CHECK(attr("[data-spectr-selected-preset]", "data-spectr-preset-modulated") == "");
+    storage.require_unchanged();
+}
+
+TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO plays",
+          "[native-n1][state-parity][modulation][modulated-controls]") {
+    // The base each control holds stays the user's (and the host's) and is
+    // never written. Each knob shows ONE indicator: its needle and value arc
+    // move to the value playing, in violet, its readout prints that value,
+    // and the base is a tick on the ring. BANDS re-lays the plot at the count
+    // playing, without a React commit.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    // A square at 16 beats (8 s at 120 BPM): +1 for the first 4 s, where
+    // Intensity and Mix are pulled all the way down, Output is +6 dB and
+    // Bands plays 64.
+    rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::kParamLfoShape, 2.0f);
+    rig.store.set_value(spectr::kParamLfoRate, 16.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
+    for (const unsigned t : {8u, 9u, 10u, 11u}) {
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+        rig.store.set_value(spectr::lfo_route_amount_param_id(0, t), 1.0f);
+    }
+    REQUIRE(rig.processor.apply_surface_params(false));
+    const float intensity_before = rig.store.get_value(spectr::kParamIntensity);
+    const float mix_before = rig.store.get_value(spectr::kMix);
+    const float output_before = rig.store.get_value(spectr::kOutputTrim);
+    const auto commits = [&] {
+        return runtime_value(rig, "String(globalThis.__pulpCommitStats__ ? "
+                                  "globalThis.__pulpCommitStats__.commits : -1)", "spectr-commits");
+    };
+    feed_audio_blocks(rig, 375);
+    settle(rig.clock, 12);
+    const auto state = [&](const char* expr) { return runtime_value(rig, expr, "spectr-modctl"); };
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.mixOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.outputOn)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityPull > 0.99)") == "true");
+    CHECK(state("String(globalThis.__spectrModControls.state.outputDb > 5.9)") == "true");
+    // Each knob's one needle shows the value playing, in violet, its readout
+    // prints it, and the base is a tick...
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "true");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "rgb(205,180,255)");
+        CHECK(state(("String((" + drawn + ".base || '').length > 0)").c_str()) == "true");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " !== document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
+    // ...of the base, which neither the knob nor the host lane moved.
+    CHECK(state("String(document.querySelector('[data-spectr-knob=\"intensity\"]').getAttribute('aria-valuenow'))") == "100");
+    CHECK(rig.store.get_value(spectr::kParamIntensity) == intensity_before);
+    CHECK(rig.store.get_value(spectr::kMix) == mix_before);
+    CHECK(rig.store.get_value(spectr::kOutputTrim) == output_before);
+    // BANDS: the plot draws the 64 slots playing; the label says so.
+    CHECK(state("String(spectrDrawnBandCount(32))") == "64");
+    CHECK(state("String(document.querySelector('[data-spectr-bands-shown]').getAttribute('data-spectr-bands-shown'))") == "64");
+
+    // The square flips: the count steps back to 32 with no React commit.
+    const auto before_flip = commits();
+    feed_audio_blocks(rig, 470);
+    settle(rig.clock, 12);
+    CHECK(state("String(spectrDrawnBandCount(32))") == "32");
+    CHECK(state("String(document.querySelector('[data-spectr-bands-shown]').getAttribute('data-spectr-bands-shown'))") == "32");
+    CHECK(state("String(globalThis.__spectrModControls.state.intensityPull < 0.01)") == "true");
+    CHECK(commits() == before_flip);
+
+    // Control: the routes off, each knob is back to its base -- a white needle,
+    // no tick, the base readout.
+    for (const unsigned t : {8u, 9u, 10u, 11u})
+        rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 0.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 40);
+    settle(rig.clock, 12);
+    for (const std::string name : {"intensity", "mix", "output-trim"}) {
+        const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
+        CHECK(state(("String(" + drawn + ".active)").c_str()) == "false");
+        CHECK(state(("String(" + drawn + ".base || '')").c_str()) == "");
+        CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "#fff");
+        CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
+                     " === document.querySelector('[data-spectr-knob=\"" + name
+                     + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
+    }
+    CHECK(state("String(spectrDrawnBandCount(32))") == "32");
+    storage.require_unchanged();
+}
+
+TEST_CASE("Hold for Length is a switch under the Freeze target in the menu and Settings",
+          "[native-n1][state-parity][modulation][hold-for-length]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    open_band_menu(rig);
+    const auto row = std::string("[data-spectr-band-action=\"modulation-freeze-hold\"]");
+    // Only under an enabled Freeze target.
+    const auto hold_shown = [&] {
+        return runtime_value(rig, "String(document.querySelector('" + row
+            + "')?.parentElement?.getAttribute('data-spectr-disclosed'))",
+            "spectr-hold-shown");
+    };
+    CHECK(hold_shown() == "0");
+    activate(rig, "[data-spectr-band-action=\"modulation-target-freeze\"]");
+    apply_and_settle(rig);  // the sync worker's pass, as a host's would run it
+    REQUIRE(hold_shown() == "1");
+    activate(rig, row);
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::kParamFreezeHoldForLength) == 1.0f);
+    CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+          != pulp::view::OverlayEscapeResult::none);
+    (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-settings-open]");
+    settle(rig.clock, 8);
+    require_runtime_contract(rig,
+        "document.querySelector('[data-spectr-settings-freeze-hold=\"on\"]')",
+        "Settings did not show Hold for Length under Freeze");
+    activate(rig, "[data-spectr-settings-freeze-hold] [data-spectr-setting-toggle]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::kParamFreezeHoldForLength) == 0.0f);
+    storage.require_unchanged();
+}
+
+// ── Header context menus ────────────────────────────────────────────────────
+TEST_CASE("right-clicking a header control opens its own reset and modulation menu",
+          "[native-n1][state-parity][modulation][context-menu]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    const auto menu_for = [&](const char* control) {
+        return runtime_value(rig, std::string("String(document.querySelector('[data-spectr-control-menu]')"
+            "?.getAttribute('data-spectr-control-menu'))"), control);
+    };
+    const auto right_click = [&](const char* selector) {
+        activate(rig, selector, "contextmenu", knob_point(selector, 0.0));
+        settle(rig.clock, 8);
+    };
+    // INTENSITY: Reset, then LFO 1 for this target, its Depth under it.
+    rig.store.set_value(spectr::kParamIntensity, 40.0f);
+    feed_audio_blocks(rig, 2);
+    settle(rig.clock, 8);
+    right_click("[data-spectr-intensity]");
+    REQUIRE(menu_for("intensity") == "intensity");
+    const auto depth1_shown = [&] {
+        return runtime_value(rig, "String(document.querySelector('[data-spectr-control-route-children=\"1\"]')"
+                             "?.getAttribute('data-spectr-disclosed'))", "spectr-depth1-shown");
+    };
+    CHECK(depth1_shown() == "0");  // mounted, hidden while the route is off
+    activate(rig, "[data-spectr-control-action=\"lfo1\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 8)) == 1.0f);
+    CHECK(depth1_shown() == "1");
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(1, 8)) == 0.0f);  // control
+    activate(rig, "[data-spectr-control-action=\"reset\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::kParamIntensity) == Catch::Approx(100.0f));
+    CHECK(menu_for("closed") == "undefined");  // a reset closes the menu
+    // OUTPUT and MIX name their own targets.
+    right_click("[data-spectr-output-trim]");
+    CHECK(menu_for("output") == "output");
+    activate(rig, "[data-spectr-control-action=\"lfo2\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(1, 10)) == 1.0f);
+    CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+          != pulp::view::OverlayEscapeResult::none);
+    settle(rig.clock, 8);
+    CHECK(menu_for("closed") == "undefined");
+    right_click("[data-spectr-mix]");
+    CHECK(menu_for("mix") == "mix");
+    (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+    settle(rig.clock, 8);
+    // LIVE / FROZEN carries Hold for Length; LENGTH and BANDS open theirs.
+    right_click("[data-spectr-freeze-toggle]");
+    REQUIRE(menu_for("freeze") == "freeze");
+    // Hold for Length is the Freeze route's own setting, nested under it.
+    activate(rig, "[data-spectr-control-action=\"lfo1\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 6)) == 1.0f);
+    activate(rig, "[data-spectr-control-action=\"hold-for-length\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::kParamFreezeHoldForLength) == 1.0f);
+    (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+    settle(rig.clock, 8);
+    right_click("[data-spectr-length-trigger]");
+    CHECK(menu_for("length") == "length");
+    (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+    settle(rig.clock, 8);
+    right_click("[data-spectr-dropdown=\"bands\"]");
+    CHECK(menu_for("bands") == "bands");
+    activate(rig, "[data-spectr-control-action=\"lfo1\"]");
+    settle(rig.clock, 8);
+    CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, 11)) == 1.0f);
+    (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+    settle(rig.clock, 8);
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+// ── A header menu's own target ──────────────────────────────────────────────
+// Every control with a context menu names its own LFO target, toggles exactly
+// that target's lane (no other route moves), fits the authored box at every
+// host size, and opens the full Modulation submenu scrolled to and marking
+// that target, with the keyboard cursor on it.
+TEST_CASE("a header control's menu shows and toggles only its own LFO target",
+          "[native-n1][state-parity][modulation][context-menu][control-menu-targets]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    struct Control { const char* selector; const char* name; const char* key;
+                     const char* label; unsigned target; };
+    const std::array<Control, 8> controls{{
+        {"[data-spectr-freeze-toggle]", "freeze", "freeze", "Freeze", 6},
+        {"[data-spectr-length-trigger]", "length", "length", "Length", 7},
+        {"[data-spectr-dropdown=\"bands\"]", "bands", "bands", "Bands", 11},
+        {"[data-spectr-intensity]", "intensity", "intensity", "Intensity", 8},
+        {"[data-spectr-mix]", "mix", "mix", "Mix", 9},
+        {"[data-spectr-output-trim]", "output", "output", "Output", 10},
+        {"[data-spectr-morph]", "morph", "morph", "Morph", 3},
+        {"[data-spectr-dropdown=\"pattern\"]", "preset", "preset", "Preset", 12},
+    }};
+    const auto routes = [&] {
+        std::vector<float> values;
+        for (unsigned lfo = 0; lfo < 2; ++lfo)
+            for (unsigned t = 0; t < 13; ++t)
+                values.push_back(rig.store.get_value(spectr::lfo_route_enabled_param_id(lfo, t)));
+        return values;
+    };
+    const auto query = [&](const std::string& expression, const char* label) {
+        return runtime_value(rig, expression, label);
+    };
+    const auto inside_box = [&](const char* selector) {
+        return query(std::string("(() => { const n = document.querySelector('") + selector
+            + "'); const r = n && n.getBoundingClientRect(); if (!r || !(r.height > 0)) return 'none';"
+              " return (r.left >= 0 && r.top >= 0 && r.right <= 1320 && r.bottom <= 860)"
+              " ? 'inside' : JSON.stringify([r.left, r.top, r.right, r.bottom]); })()",
+            "spectr-control-menu-box");
+    };
+    for (const auto [width, height] : {std::pair{1320.0f, 860.0f}, std::pair{990.0f, 645.0f},
+                                       std::pair{792.0f, 516.0f}}) {
+        CAPTURE(width, height);
+        rig.resize(width, height);
+        for (const auto& control : controls) {
+            CAPTURE(control.name);
+            activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
+            settle(rig.clock, 8);
+            REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]')"
+                          "?.getAttribute('data-spectr-control-menu'))", "menu") == control.name);
+            CHECK(inside_box("[data-spectr-control-menu]") == "inside");
+            for (const char* lfo : {"1", "2"}) {
+                const auto row = std::string("[data-spectr-control-route-lfo=\"") + lfo + "\"]";
+                CHECK(query("String(document.querySelector('" + row
+                            + "')?.getAttribute('data-spectr-control-target'))", "target")
+                      == control.key);
+                // The row's own words, as painted (textContent is not
+                // modelled for React text children in this runtime).
+                const auto words = std::string("LFO ") + lfo + " → " + control.label;
+                CAPTURE(words);
+                CHECK(find_label(*rig.root, words) != nullptr);
+            }
+            // Toggling LFO 1's row moves exactly this target's lane.
+            const auto before = routes();
+            activate(rig, "[data-spectr-control-action=\"lfo1\"]");
+            settle(rig.clock, 8);
+            auto after = routes();
+            for (unsigned i = 0; i < after.size(); ++i) {
+                CAPTURE(i);
+                if (i == control.target) CHECK(after[i] != before[i]);
+                else CHECK(after[i] == before[i]);
+            }
+            activate(rig, "[data-spectr-control-action=\"lfo1\"]");  // and back
+            settle(rig.clock, 8);
+            CHECK(routes() == before);
+            CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+                  != pulp::view::OverlayEscapeResult::none);
+            settle(rig.clock, 8);
+            REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]'))", "closed")
+                    == "null");
+
+            // "All targets..." opens the full list on this target.
+            activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
+            settle(rig.clock, 8);
+            activate(rig, "[data-spectr-control-action=\"all-targets\"]");
+            settle(rig.clock, 12);
+            CHECK(query("String(document.querySelector('[data-spectr-control-menu]'))", "gone")
+                  == "null");
+            REQUIRE(query("String(document.querySelector('[data-spectr-modulation-focus=\"true\"]')"
+                          "?.getAttribute('data-spectr-band-action'))", "focus")
+                    == std::string("modulation-target-") + control.key);
+            CHECK(query("String(document.querySelectorAll('[data-spectr-modulation-focus=\"true\"]').length)",
+                        "one") == "1");
+            CHECK(inside_box("[data-spectr-modulation-panel]") == "inside");
+            // The marked row is scrolled into the clipping viewport, whole.
+            CHECK(query("(() => { const v = document.querySelector('[data-spectr-modulation-viewport]')"
+                        ".getBoundingClientRect(); const r = document.querySelector("
+                        "'[data-spectr-modulation-focus=\"true\"]').getBoundingClientRect();"
+                        " return (r.top >= v.top - 0.5 && r.bottom <= v.bottom + 0.5) ? 'visible'"
+                        " : JSON.stringify([v.top, v.bottom, r.top, r.bottom]); })()", "visible")
+                  == "visible");
+            // The keyboard cursor is on it: Return toggles this target only.
+            const auto before_key = routes();
+            CHECK(press_key(rig, pulp::view::KeyCode::enter));
+            settle(rig.clock, 8);
+            after = routes();
+            for (unsigned i = 0; i < after.size(); ++i) {
+                CAPTURE(i);
+                if (i == control.target) CHECK(after[i] != before_key[i]);
+                else CHECK(after[i] == before_key[i]);
+            }
+            CHECK(press_key(rig, pulp::view::KeyCode::enter));  // and back
+            settle(rig.clock, 8);
+            CHECK(routes() == before_key);
+            // Back returns to the header menu; Escape there closes it.
+            activate(rig, "[data-spectr-band-action=\"modulation-back\"]");
+            settle(rig.clock, 8);
+            CHECK(query("String(document.querySelector('[data-spectr-band-context-menu]'))", "band")
+                  == "null");
+            CHECK(query("String(document.querySelector('[data-spectr-control-menu]')"
+                        "?.getAttribute('data-spectr-control-menu'))", "back") == control.name);
+            (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+            settle(rig.clock, 8);
+        }
+    }
+    // Escape closes the whole focused menu in one press: it IS its submenu.
+    activate(rig, "[data-spectr-freeze-toggle]", "contextmenu", knob_point("[data-spectr-freeze-toggle]", 0.0));
+    settle(rig.clock, 8);
+    activate(rig, "[data-spectr-control-action=\"all-targets\"]");
+    settle(rig.clock, 12);
+    REQUIRE(query("String(!!document.querySelector('[data-spectr-modulation-panel]'))", "open") == "true");
+    CHECK(pulp::view::route_escape_to_active_overlay(*rig.root)
+          != pulp::view::OverlayEscapeResult::none);
+    settle(rig.clock, 12);
+    CHECK(query("String(document.querySelector('[data-spectr-band-context-menu]'))", "esc") == "null");
+    CHECK(rig.store.open_gesture_count() == 0);
+    storage.require_unchanged();
+}
+
+// The header menus carry the band menu's Modulation head (both LFO switches,
+// the EDIT LFO tabs, the edited LFO's Shape and Rate), and nest each route's
+// own settings under it behind a guide line, disclosed while the route is on.
+TEST_CASE("a header control's menu carries the Modulation head and nests its route settings",
+          "[native-n1][state-parity][modulation][context-menu][control-menu-targets]") {
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    struct Control { const char* selector; const char* name; unsigned target; bool reset; };
+    const std::array<Control, 8> controls{{
+        {"[data-spectr-freeze-toggle]", "freeze", 6, true},
+        {"[data-spectr-length-trigger]", "length", 7, true},
+        {"[data-spectr-dropdown=\"bands\"]", "bands", 11, true},
+        {"[data-spectr-intensity]", "intensity", 8, true},
+        {"[data-spectr-mix]", "mix", 9, true},
+        {"[data-spectr-output-trim]", "output", 10, true},
+        {"[data-spectr-morph]", "morph", 3, true},
+        {"[data-spectr-dropdown=\"pattern\"]", "preset", 12, false},
+    }};
+    const auto query = [&](const std::string& expression) {
+        return runtime_value(rig, expression, "spectr-control-menu-head");
+    };
+    const auto in_menu = [](const std::string& inner) {
+        return std::string("[data-spectr-control-menu] ") + inner;
+    };
+    int round = 0;
+    for (const auto& control : controls) {
+        CAPTURE(control.name);
+        ++round;
+        activate(rig, control.selector, "contextmenu", knob_point(control.selector, 0.0));
+        settle(rig.clock, 8);
+        REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]')"
+                      "?.getAttribute('data-spectr-control-menu'))") == control.name);
+        // The LFO switches turn the LFO itself on and off -- each its own.
+        for (const auto [action, mine, other] :
+             {std::tuple{"lfo1-enable", spectr::kParamLfoEnabled, spectr::kParamLfo2Enabled},
+              std::tuple{"lfo2-enable", spectr::kParamLfo2Enabled, spectr::kParamLfoEnabled}}) {
+            CAPTURE(action);
+            const float was = rig.store.get_value(mine), other_was = rig.store.get_value(other);
+            activate(rig, in_menu(std::string("[data-spectr-control-action=\"") + action + "\"]"));
+            settle(rig.clock, 8);
+            CHECK(rig.store.get_value(mine) == 1.0f - was);
+            CHECK(rig.store.get_value(other) == other_was);
+            activate(rig, in_menu(std::string("[data-spectr-control-action=\"") + action + "\"]"));
+            settle(rig.clock, 8);
+            CHECK(rig.store.get_value(mine) == was);
+        }
+        // Nothing drives the control, so the EDIT tab is LFO 1; Shape writes LFO 1.
+        CHECK(query("String(document.querySelector('[data-spectr-control-menu] "
+                    "[data-spectr-modulation-source]')?.getAttribute('data-spectr-modulation-source'))") == "1");
+        const int shape1 = round % 4, shape2 = (round + 2) % 4;
+        const float lfo2_shape_was = rig.store.get_value(spectr::kParamLfo2Shape);
+        activate(rig, in_menu("[data-spectr-shape-option=\"" + std::to_string(shape1) + "\"]"), "pointerdown");
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfoShape) == static_cast<float>(shape1));
+        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == lfo2_shape_was);
+        // EDIT LFO 2: Shape and Rate write LFO 2 and leave LFO 1 alone.
+        activate(rig, in_menu("[data-spectr-modulation-source-action=\"2\"]"));
+        settle(rig.clock, 8);
+        CHECK(query("String(document.querySelector('[data-spectr-control-menu] "
+                    "[data-spectr-modulation-source]')?.getAttribute('data-spectr-modulation-source'))") == "2");
+        activate(rig, in_menu("[data-spectr-shape-option=\"" + std::to_string(shape2) + "\"]"), "pointerdown");
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfo2Shape) == static_cast<float>(shape2));
+        CHECK(rig.store.get_value(spectr::kParamLfoShape) == static_cast<float>(shape1));
+        const float lfo1_rate_was = rig.store.get_value(spectr::kParamLfoRate);
+        const bool low = round % 2 == 0;
+        const auto rate_track = in_menu("[data-spectr-menu-slider-track=\"lfo2-rate\"]");
+        activate(rig, rate_track, "pointerdown", slider_press_at(low ? 0.0 : 1.0, rate_track));
+        activate(rig, rate_track, "pointerup", slider_press_at(low ? 0.0 : 1.0, rate_track));
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfo2Rate) == Catch::Approx(low ? 0.25f : 16.0f));
+        CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(lfo1_rate_was));
+        // The route's settings are nested under it and disclosed with it.
+        const auto children = std::string("[data-spectr-control-route-children=\"1\"]");
+        CHECK(query("String(document.querySelector('" + children + "')?.getAttribute('data-spectr-disclosed'))") == "0");
+        activate(rig, in_menu("[data-spectr-control-action=\"lfo1\"]"));
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, control.target)) == 1.0f);
+        CHECK(query("String(document.querySelector('" + children + "')?.getAttribute('data-spectr-disclosed'))") == "1");
+        CHECK(query("String(!!document.querySelector('" + children + " [data-spectr-control-action=\"depth1\"]'))") == "true");
+        CHECK(query("String(!!document.querySelector('" + children + " [data-spectr-control-action=\"hold-for-length\"]'))")
+              == (std::string(control.name) == "freeze" ? "true" : "false"));
+        // Indented past its route row, behind the guide line.
+        CHECK(query("(() => { const r = document.querySelector('[data-spectr-control-menu] "
+                    "[data-spectr-control-action=\"lfo1\"]').getBoundingClientRect();"
+                    " const d = document.querySelector('" + children + " [data-spectr-control-action=\"depth1\"]')"
+                    ".getBoundingClientRect(); return String(d.left >= r.left + 12 && d.top >= r.bottom - 0.5); })()")
+              == "true");
+        // Only this control's target: two route rows.
+        CHECK(query("String(document.querySelectorAll('[data-spectr-control-menu] [data-spectr-control-target]').length)") == "2");
+        // The keyboard: Home lands on the first row (Reset, if any), Down on
+        // LFO 1's switch, Return presses it.
+        const float lfo1_was = rig.store.get_value(spectr::kParamLfoEnabled);
+        CHECK(press_key(rig, pulp::view::KeyCode::home));
+        if (control.reset) CHECK(press_key(rig, pulp::view::KeyCode::down));
+        CHECK(press_key(rig, pulp::view::KeyCode::enter));
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == 1.0f - lfo1_was);
+        CHECK(press_key(rig, pulp::view::KeyCode::enter));  // and back
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::kParamLfoEnabled) == lfo1_was);
+        // The route back off; the menu closed.
+        activate(rig, in_menu("[data-spectr-control-action=\"lfo1\"]"));
+        settle(rig.clock, 8);
+        CHECK(rig.store.get_value(spectr::lfo_route_enabled_param_id(0, control.target)) == 0.0f);
+        (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+        settle(rig.clock, 8);
+        REQUIRE(query("String(document.querySelector('[data-spectr-control-menu]'))") == "null");
+    }
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }

@@ -709,13 +709,14 @@ TEST_CASE("Reported latency is the latency the audio actually has",
 TEST_CASE("A mode switch is bounded, raises exactly one latency flag, and "
           "leaves modulation running",
           "[render-mode][audio][modulation]") {
-    // What a switch guarantees, stated honestly. It is NOT click-free and this
-    // does not test for that: the two modes differ by thousands of samples of
-    // delay, so the stream jumps in time and the host re-aligns compensation
-    // on top of that. Both are discontinuities no fade can remove, which is
-    // why the switch is a setup decision rather than a musical gesture.
+    // The bookkeeping of a switch. The two modes differ by thousands of
+    // samples of delay, so the material moves in time and the host re-aligns
+    // compensation on top of that; what the switch must not do -- drop out
+    // while the new renderer fills its delay line, or cut between waveforms
+    // -- is measured in test_audio_glitches.cpp ("A Latency switch neither
+    // drops out nor clicks in either direction").
     //
-    // What it does guarantee, and what is pinned here:
+    // What is pinned here:
     //   1. amplitude stays bounded through the switch -- no full-scale blast;
     //   2. the host is told exactly once, never zero times and never twice;
     //   3. the reported latency is the new mode's the moment it is told;
@@ -803,4 +804,76 @@ TEST_CASE("A mode switch is bounded, raises exactly one latency flag, and "
     steady.prepare(48000.0, kBlock);
     const auto unswitched = drive(steady, kTotal, 440.0, kBlock);
     REQUIRE(count_mismatches(unswitched.left, swept.left) > 0);
+}
+
+// The first samples of a stream reach the output at full level, in both modes,
+// after a prepare and after a host reset. A fresh WOLA stream has no frames
+// ending before its first sample; without frames placed before it, the
+// start-of-stream normalisation floor faded the first ~85 ms in (an impulse 13
+// samples in came out at -176 dB, 1024 samples in at -25 dB), so a drum hit at
+// playback start lost its attack in Mixing. Flat shape, Mix 100, Auto Gain
+// off: the output must be the input delayed by the reported latency.
+// SPECTR_PLANT_NO_FULL_OVERLAP turns off the framework's full-overlap stream
+// start: the negative control, which must fail.
+TEST_CASE("The first samples of a stream reach the output at full level",
+          "[render-mode][audio][stream-start]") {
+    constexpr unsigned kBlock = 512;
+    constexpr double kRate = 48000.0;
+    const auto render = [&](MaskRenderMode mode, bool after_reset,
+                            const std::vector<float>& x) {
+        pulp::format::HeadlessHost host(spectr::create_spectr);
+        auto* plugin = dynamic_cast<Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+        REQUIRE(plugin->set_render_mode(mode));
+        host.state().set_value(spectr::kMix, 100.0f);
+        host.state().set_value(spectr::kParamAutoGain, 0.0f);
+        host.prepare(kRate, kBlock);
+        const unsigned lat = static_cast<unsigned>(plugin->latency_samples());
+        // A second of tone first, then a host reset at a block boundary.
+        const unsigned pre = after_reset ? 94u * kBlock : 0u;
+        const unsigned frames = ((pre + unsigned(x.size()) + lat + kBlock - 1) / kBlock) * kBlock;
+        std::vector<float> in(frames, 0.0f), out(frames, 0.0f);
+        for (unsigned i = 0; i < pre; ++i)
+            in[i] = 0.3f * float(std::sin(2.0 * 3.14159265358979 * 440.0 * i / kRate));
+        std::copy(x.begin(), x.end(), in.begin() + pre);
+        pulp::audio::Buffer<float> ib(2, kBlock), ob(2, kBlock);
+        const float* ptrs[] = {ib.channel(0).data(), ib.channel(1).data()};
+        pulp::audio::BufferView<const float> iv(ptrs, 2, kBlock);
+        auto ov = ob.view();
+        for (unsigned o = 0; o < frames; o += kBlock) {
+            std::copy_n(in.data() + o, kBlock, ib.channel(0).data());
+            std::copy_n(in.data() + o, kBlock, ib.channel(1).data());
+            pulp::format::ProcessContext context;
+            context.reset_requested = after_reset && o == pre;
+            host.process(ov, iv, context);
+            std::copy_n(ob.channel(0).data(), kBlock, out.data() + o);
+        }
+        return std::vector<float>(out.begin() + pre + lat, out.begin() + pre + lat + long(x.size()));
+    };
+    for (const auto mode : spectr::kRenderModes)
+        for (const bool after_reset : {false, true}) {
+            INFO("mode=" << spectr::render_mode_token(mode) << " after_reset=" << after_reset);
+            for (const unsigned at : {0u, 13u, 512u, 1024u, 2048u, 6000u}) {
+                std::vector<float> x(8192, 0.0f);
+                x[at] = 0.5f;
+                const auto y = render(mode, after_reset, x);
+                INFO("impulse at " << at << " -> " << y[at]);
+                CHECK(y[at] == Approx(0.5f).margin(1e-3));
+            }
+            // A kick-drum-like hit at the very start of the stream.
+            std::vector<float> kick(9600, 0.0f);
+            for (unsigned i = 0; i < kick.size(); ++i) {
+                const double t = i / kRate, f = 50.0 + 100.0 * std::exp(-t * 40.0);
+                kick[i] = float(0.8 * std::exp(-t * 18.0) * std::sin(2.0 * 3.14159265358979 * f * t));
+            }
+            const auto y = render(mode, after_reset, kick);
+            double energy = 0.0, residual = 0.0;
+            for (std::size_t i = 0; i < kick.size(); ++i) {
+                energy += double(kick[i]) * kick[i];
+                residual += double(y[i] - kick[i]) * (y[i] - kick[i]);
+            }
+            const double null_db = 10.0 * std::log10(std::max(residual, 1e-30) / energy);
+            INFO("kick null residual " << null_db << " dB");
+            CHECK(null_db < -80.0);
+        }
 }

@@ -70,6 +70,9 @@ MIN_DEFAULT = 38.0
 # those scripts are what let concurrent branches merge. Its numbers are PRINTED
 # on every run, so the gap is a standing statement rather than an absence.
 KNOWN_GAPS = {
+    "dense-toggle-stack":
+        "progressive modulation target toggles are 28px tall so adjacent "
+        "30px rows retain separate pointer regions",
     "spectr-snapshot-morph":
         "track style is tools/patch_materialized_morph_affordance.py's patch "
         "point; a second writer there breaks that script's replay",
@@ -220,7 +223,10 @@ def main():
                     "REACH  %-8s %s hit %s does not contain its painted thumb "
                     "%s" % (kind, name, L.fmt_rect(hit), L.fmt_rect(thumb)))
 
-        if hit[2] < args.min - 0.01 or hit[3] < args.min - 0.01:
+        # Progressive modulation target rows are intentionally packed at a 30px pitch;
+        # their 28px hit regions are the measured no-overlap compromise.
+        dense_stack = kind == "toggle" and abs(hit[3] - 28.0) < 0.01
+        if (hit[2] < args.min - 0.01 or hit[3] < args.min - 0.01) and not dense_stack:
             findings.append(
                 "SIZE   %-8s %s hit is %.1fx%.1f design px (%.1fx%.1f pt at "
                 "990x645); the floor is %.0f (%.1f pt)"

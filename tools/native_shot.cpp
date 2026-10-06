@@ -32,8 +32,10 @@
 #include <pulp/runtime/trace_session.hpp>
 #include <pulp/state/store.hpp>
 #include <pulp/view/frame_clock.hpp>
+#include <pulp/view/inspector.hpp>
 #include <pulp/view/layout_snapshot.hpp>
 #include <pulp/view/overlay_dismissal.hpp>
+#include <pulp/view/plugin_view_host.hpp>
 #include <pulp/view/pointer_dispatch.hpp>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/screenshot_compare.hpp>
@@ -43,6 +45,8 @@
 #include <pulp/view/widget_bridge.hpp>
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
+#include <pulp/view/frame_cost_probe.hpp>
+#include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
 #include <algorithm>
@@ -52,11 +56,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <tuple>
 #include <typeinfo>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -77,6 +83,14 @@ constexpr float kDesignHeight = 860.0f;
 constexpr float kHeaderGapX = 1038.0f;
 
 int g_failures = 0;
+
+// Whether the SDK's bounded repaints survive a transform and a script
+// dispatch: it then exports View::damage_request_count(). A template so a
+// missing member reads as false rather than as a compile error.
+template <typename V>
+constexpr bool sdk_bounds_script_repaints() {
+    return requires { V::damage_request_count(); };
+}
 
 void settle(pulp::view::FrameClock& clock, int frames) {
     for (int frame = 0; frame < frames; ++frame) clock.tick(1.0f / 60.0f);
@@ -1622,6 +1636,335 @@ int main(int argc, char** argv) {
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
+        // SPECTR_GPU_STATUS_PROBE=1: the GPU audio status surface with LIVE
+        // delivery. Presses the header's compute-mode indicator through the
+        // host hit-test path (the same press a user makes), paces real-time
+        // audio through the processor until the shared renderer reports
+        // GPU-selected quanta, lets the component's own 500 ms refresh read
+        // build_info_get, and captures the frame. The pill's text and state
+        // attribute are read back from the runtime, so the verdict does not
+        // rest on the image alone; the image is written for a human to look at.
+        if (std::getenv("SPECTR_GPU_STATUS_PROBE") != nullptr) {
+            using steady_t = std::chrono::steady_clock;
+            const auto js_value = [&rig](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { const v = (() => { " + expr + " })();"
+                             " throw new Error('PULPVALUE:' + v + ':PULPEND'); })();",
+                             "spectr-gpu-status-value");
+                } catch (const std::exception& error) {
+                    const std::string message = error.what();
+                    const auto at = message.find("PULPVALUE:");
+                    const auto end = message.find(":PULPEND");
+                    if (at != std::string::npos && end != std::string::npos && end > at)
+                        return message.substr(at + 10, end - at - 10);
+                }
+                return "(unread)";
+            };
+            const auto pump_ms = [&rig](int ms) {
+                const auto end = steady_t::now() + std::chrono::milliseconds(ms);
+                while (steady_t::now() < end) {
+                    settle(rig.clock, 1);
+                    rig.eval("if (typeof globalThis.__pulpRuntimeSettle__ "
+                             "=== 'function') globalThis.__pulpRuntimeSettle__(1);",
+                             "spectr-gpu-status-pump");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(8));
+                }
+            };
+            // Real-time paced audio: one 256-sample block per 5.33 ms of wall
+            // clock, so the shared renderer's service thread has the time a
+            // host callback would give it.
+            const auto paced_audio = [&rig](int blocks) {
+                constexpr int block = 256;
+                constexpr double sr = 48000.0;
+                constexpr double pi = 3.14159265358979323846;
+                static std::uint64_t n = 0;
+                std::vector<float> in0(block), in1(block), out0(block), out1(block);
+                const float* inputs[2]{in0.data(), in1.data()};
+                float* outputs[2]{out0.data(), out1.data()};
+                pulp::midi::MidiBuffer midi_in, midi_out;
+                pulp::format::ProcessContext context;
+                context.sample_rate = sr;
+                context.num_samples = block;
+                const auto start = steady_t::now();
+                for (int b = 0; b < blocks; ++b) {
+                    std::this_thread::sleep_until(start + std::chrono::nanoseconds(
+                        static_cast<std::int64_t>(b) * block * 1000000000LL / 48000));
+                    for (int i = 0; i < block; ++i, ++n) {
+                        const auto v = static_cast<float>(
+                            0.3 * std::sin(2.0 * pi * 997.0 * static_cast<double>(n) / sr)
+                            + 0.2 * std::sin(2.0 * pi * 220.0 * static_cast<double>(n) / sr));
+                        in0[i] = v;
+                        in1[i] = v;
+                    }
+                    pulp::audio::BufferView<const float> input(inputs, 2, block);
+                    pulp::audio::BufferView<float> output(outputs, 2, block);
+                    rig.processor.process(output, input, midi_in, midi_out, context);
+                }
+            };
+            const auto status_line = [&rig]() {
+                const auto s = rig.processor.gpu_audio_status();
+                using A = spectr::GpuAudioStatus::Availability;
+                const char* a = s.availability == A::Available ? "available"
+                    : s.availability == A::NotBuilt ? "not_built"
+                    : s.availability == A::NotPrepared ? "not_prepared"
+                    : "non_shared_renderer";
+                char buf[256];
+                if (s.delivery)
+                    std::snprintf(buf, sizeof buf,
+                        "availability=%s provider_state=%u epoch=%llu gpu_selected=%llu "
+                        "cpu_fallback=%llu cancelled=%llu lost=%llu", a,
+                        s.delivery->provider_state,
+                        (unsigned long long)s.delivery->current_epoch,
+                        (unsigned long long)s.delivery->gpu_selected,
+                        (unsigned long long)s.delivery->cpu_fallback,
+                        (unsigned long long)s.delivery->cancelled,
+                        (unsigned long long)s.delivery->lost_terminal_records);
+                else
+                    std::snprintf(buf, sizeof buf, "availability=%s (no delivery)", a);
+                return std::string{buf};
+            };
+            const char* pill_q = "document.querySelector('[data-spectr-gpu-audio-status-pill]')";
+            const char* ind_q = "document.querySelector('[data-spectr-gpu-mode-indicator]')";
+            // The runtime's DOM shim has no textContent, so read the text the
+            // view tree actually paints: the Labels under the element's view.
+            const auto painted_text = [&](const char* query) -> std::string {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return "(absent)";
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            found += std::string{label->text()};
+                        for (std::size_t i = 0; i < v.child_count(); ++i)
+                            walk(*v.child_at(i));
+                    };
+                walk(*view);
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                char rect[96];
+                std::snprintf(rect, sizeof rect, " @[%.0f,%.0f %.0fx%.0f]", x, y,
+                              box.width, box.height);
+                return found + "\"" + rect;
+            };
+            const auto read_surface = [&]() {
+                return "indicator mode=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-mode') : '(absent)';")
+                    + " ready=" + js_value(std::string("const e=") + ind_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-ready') : '(absent)';")
+                    + " label=\"" + painted_text(ind_q)
+                    + " | pill state=" + js_value(std::string("const e=") + pill_q
+                           + "; return e ? e.getAttribute('data-spectr-gpu-audio-state') : '(absent)';")
+                    + " text=\"" + painted_text(pill_q);
+            };
+
+            // The latency chip's own text, wherever it paints: the label that
+            // starts "TRACKING" or "MIXING".
+            const auto latency_chip = [&]() -> std::string {
+                std::string found;
+                std::function<void(const pulp::view::View&)> walk =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v)) {
+                            const std::string t{label->text()};
+                            if (found.empty() && (t.rfind("TRACKING", 0) == 0 || t.rfind("MIXING", 0) == 0))
+                                found = t;
+                        }
+                        for (std::size_t i = 0; i < v.child_count(); ++i) walk(*v.child_at(i));
+                    };
+                walk(*rig.root);
+                return found.empty() ? "(absent)" : found;
+            };
+            const std::string ind_id = js_value(std::string("const e=") + ind_q
+                + "; return e ? (e.__pulpId || e.id || '(no id)') : '(absent)';");
+            auto* ind_view = find_by_id(*rig.root, ind_id);
+            if (ind_view == nullptr) {
+                std::printf("[gpu-status] FAIL: compute-mode indicator view not found (id=%s)\n",
+                            ind_id.c_str());
+                return 1;
+            }
+            // Press the indicator where it paints, through the host hit test.
+            const auto press_indicator = [&]() {
+                float ix = 0.0f, iy = 0.0f;
+                root_origin(*ind_view, ix, iy);
+                const auto ib = ind_view->bounds();
+                rig.root->simulate_click(pulp::view::Point{ix + ib.width * 0.5f, iy + ib.height * 0.5f});
+                pump_ms(300);
+            };
+            bool steps_ok = true;
+
+            pump_ms(1200);
+            std::printf("[gpu-status] tracking: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            capture(rig, dir, prefix + "gpu-status-0-tracking-cpu", backend, scale);
+            // The GPU stats pill is diagnostics: off until Settings > GPU stats
+            // is turned on. Then turned on the way a user does it, so the rest
+            // of this probe reads the pill.
+            const std::string pill_default = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill by default: %s\n", pill_default.c_str());
+            if (pill_default != "(absent)") steps_ok = false;
+            rig.activate("[data-spectr-settings-open]");
+            rig.activate("[data-spectr-gpu-audio-stats-toggle]");
+            rig.activate("[data-spectr-settings-close]");
+            pump_ms(300);
+            const std::string pill_enabled = js_value(std::string("const e=") + pill_q
+                + "; return e ? 'present' : '(absent)';");
+            std::printf("[gpu-status] GPU stats pill after Settings > GPU stats: %s\n",
+                        pill_enabled.c_str());
+            if (pill_enabled != "present") steps_ok = false;
+            // Tracking is CPU-only: a press on the indicator answers with a
+            // notice saying why, and changes nothing in the processor -- no
+            // renderer is built, the mode, the GPU choice and the latency the
+            // host is told all stay where they were.
+            const auto builds_before = rig.processor.renderer_build_count();
+            const int latency_before = rig.processor.latency_samples();
+            const char* notice_q = "document.querySelector('[data-spectr-gpu-tracking-notice]')";
+            const std::string notice_before = painted_text(notice_q);
+            press_indicator();
+            const std::string notice = painted_text(notice_q);
+            const std::string title = js_value(std::string("const e=") + ind_q
+                + "; return e ? e.getAttribute('title') : '(absent)';");
+            std::printf("[gpu-status] tracking after press: gpu_processing=%d mode=%s latency=%d builds +%llu\n"
+                        "[gpu-status] tracking notice before press: \"%s\n"
+                        "[gpu-status] tracking notice after press: \"%s\n"
+                        "[gpu-status] tracking chip title: %s\n",
+                        int(rig.processor.gpu_processing()),
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        rig.processor.latency_samples(),
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before),
+                        notice_before.c_str(), notice.c_str(), title.c_str());
+            capture(rig, dir, prefix + "gpu-status-0b-tracking-notice", backend, scale);
+            if (rig.processor.gpu_processing()
+                || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.latency_samples() != latency_before
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
+            // The notice was not there before the press and is after it, and
+            // the hover tooltip says the same.
+            if (notice_before != "(absent)"
+                || notice.find("GPU runs in Mixing only") == std::string::npos
+                || title.find("switch to Mixing for GPU") == std::string::npos) steps_ok = false;
+            // The notice is one line in a box that holds it: its painted
+            // height is a single line, and its text fits inside the box's
+            // padding at the editor's scale (it used to break after the dash
+            // and paint the dash past the padding).
+            {
+                const std::string id = js_value(std::string("const e=") + notice_q
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* box_view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                float nx = 0.0f, ny = 0.0f;
+                if (box_view) root_origin(*box_view, nx, ny);
+                const auto box = box_view ? box_view->bounds() : pulp::view::Rect{};
+                float text_w = 0.0f;
+                std::function<void(const pulp::view::View&)> widest =
+                    [&](const pulp::view::View& v) {
+                        if (const auto* label = dynamic_cast<const pulp::view::Label*>(&v))
+                            text_w = std::max(text_w, label->max_content_width());
+                        for (std::size_t i = 0; i < v.child_count(); ++i) widest(*v.child_at(i));
+                    };
+                if (box_view) widest(*box_view);
+                // 9 px padding and a 1 px border each side; one 9.5 px line at
+                // 1.35 line-height is ~27 px tall, two are ~40.
+                const bool one_line = box.height > 0.0f && box.height <= 30.0f;
+                const bool fits = box.width > 0.0f && text_w > 0.0f
+                    && text_w <= box.width - 20.0f + 1.0f
+                    && nx >= 0.0f && nx + box.width <= kDesignWidth;
+                std::printf("[gpu-status] tracking notice box %.0fx%.0f text %.0f: one line %s, fits %s\n",
+                            box.width, box.height, text_w, one_line ? "yes" : "no", fits ? "yes" : "no");
+                if (!one_line || !fits) steps_ok = false;
+            }
+            // The Settings GPU choice in Tracking is recorded for Mixing and is
+            // otherwise inert: no renderer, no mode change.
+            rig.eval("spectrSetGpuProcessing(true);", "spectr-gpu-status-tracking-settings-on");
+            pump_ms(300);
+            rig.eval("spectrSetGpuProcessing(false);", "spectr-gpu-status-tracking-settings-off");
+            pump_ms(300);
+            std::printf("[gpu-status] tracking after Settings GPU on/off: mode=%s builds +%llu\n",
+                        rig.processor.render_mode() == spectr::MaskRenderMode::linear_phase ? "mixing" : "tracking",
+                        (unsigned long long)(rig.processor.renderer_build_count() - builds_before));
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
+                || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
+
+            // Mixing through the latency rail's own write path; GPU off.
+            rig.eval("spectrToggleLatencyMode();", "spectr-gpu-status-mixing");
+            pump_ms(600);
+            std::printf("[gpu-status] mixing cpu: %s | chip \"%s\" | gpu_processing=%d latency=%d\n",
+                        read_surface().c_str(), latency_chip().c_str(),
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples());
+            if (rig.processor.render_mode() != spectr::MaskRenderMode::linear_phase
+                || rig.processor.gpu_processing()) steps_ok = false;
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-1-mixing-cpu", backend, scale);
+
+            // The GPU toggle, pressed where it paints.
+            press_indicator();
+            std::printf("[gpu-status] after GPU press: gpu_processing=%d latency=%d | chip \"%s\"\n",
+                        int(rig.processor.gpu_processing()), rig.processor.latency_samples(),
+                        latency_chip().c_str());
+            if (!rig.processor.gpu_processing()) steps_ok = false;
+
+            // Pace audio until the shared renderer reports GPU-selected output.
+            bool delivered = false;
+            const auto deadline = steady_t::now() + std::chrono::seconds(20);
+            while (steady_t::now() < deadline) {
+                paced_audio(96);
+                pump_ms(40);
+                const auto s = rig.processor.gpu_audio_status();
+                if (s.availability == spectr::GpuAudioStatus::Availability::Available
+                    && s.delivery && s.delivery->provider_state == 1
+                    && s.delivery->gpu_selected > 0) {
+                    delivered = true;
+                    break;
+                }
+            }
+            std::printf("[gpu-status] after paced audio: %s\n", status_line().c_str());
+            // Keep audio flowing while the component's 500 ms refresh reads
+            // build_info_get at least twice.
+            for (int i = 0; i < 6; ++i) {
+                paced_audio(48);
+                pump_ms(250);
+            }
+            const auto surface = read_surface();
+            std::printf("[gpu-status] live: %s\n", status_line().c_str());
+            const auto chip_text = latency_chip();
+            std::printf("[gpu-status] live: %s | chip \"%s\"\n", surface.c_str(), chip_text.c_str());
+            rig.root->layout_children();
+            capture(rig, dir, prefix + "gpu-status-2-mixing-gpu-live", backend, scale);
+            // Both surfaces must paint inside the design box: an absolute node
+            // resolved against the wrong containing block lands off-screen and
+            // still reads "live" from its attributes alone.
+            const auto on_screen = [&](const char* query) {
+                const std::string id = js_value(std::string("const e=") + query
+                    + "; return e ? (e.__pulpId || e.id || '') : '';");
+                auto* view = id.empty() ? nullptr : find_by_id(*rig.root, id);
+                if (view == nullptr) return false;
+                float x = 0.0f, y = 0.0f;
+                root_origin(*view, x, y);
+                const auto box = view->bounds();
+                return box.width > 0.0f && box.height > 0.0f && x >= 0.0f && y >= 0.0f
+                    && x + box.width <= kDesignWidth && y + box.height <= kDesignHeight;
+            };
+            const bool placed = on_screen(ind_q) && on_screen(pill_q);
+            std::printf("[gpu-status] indicator and pill inside the design box: %s\n",
+                        placed ? "yes" : "no");
+            // The chip names the latency the host is told, in whole ms.
+            char expected_ms[32];
+            std::snprintf(expected_ms, sizeof expected_ms, "%d ms",
+                          int(std::lround(rig.processor.render_mode_latency_ms(
+                              spectr::MaskRenderMode::linear_phase))));
+            const bool chip_ok = chip_text.find(expected_ms) != std::string::npos;
+            std::printf("[gpu-status] chip shows the reported %s: %s\n", expected_ms, chip_ok ? "yes" : "no");
+            const bool surface_live = placed && steps_ok && chip_ok
+                && surface.find("pill state=gpu") != std::string::npos
+                && surface.find("text=\"GPU | ") != std::string::npos
+                && surface.find("ready=true") != std::string::npos;
+            std::printf("[gpu-status] VERDICT delivered=%s surface_live=%s\n",
+                        delivered ? "yes" : "no", surface_live ? "yes" : "no");
+            return (delivered && surface_live && g_failures == 0) ? 0 : 1;
+        }
+
         // COR-4: sweep host sizes through the SHIPPING resize path
         // (on_view_resized -> __spectrResizeNativeEditor), censusing every
         // interactive control at each. Separate mode, so it cannot perturb the
@@ -1674,6 +2017,478 @@ int main(int argc, char** argv) {
                 capture(rig, dir, prefix + "PLANT", backend, scale);
             }
             return g_failures == 0 ? 0 : 1;
+        }
+
+        // ── Modulated controls: frames, damage and frame cost ───────────
+        //
+        // SPECTR_MODULATION_CONTROLS=1: LFO 1 at 1 beat (2 Hz at 120 BPM)
+        // drives INTENSITY, MIX, OUTPUT, MORPH and BANDS at Depth 100 %, with
+        // snapshots A and B captured so Morph has somewhere to go, then the
+        // same with Freeze on. Writes `modctl-*.png` frames across one LFO
+        // cycle and prints, per frame, what each control drew.
+        //
+        // Then the frame-cost gate, per scenario, over 400 display frames of
+        // one 800-sample audio block each (60 Hz at 48 kHz):
+        //   * wall time of the display tick (publication + JS + canvas + rAF),
+        //   * layout passes and React commits the tick caused,
+        //   * the repaint damage it requested (a recording plug-in host on the
+        //     root: a bounded rect, or the whole surface).
+        // The gate (exit 1 on breach): with the analyzer quiet, the
+        // modulation frames request bounded damage inside the controls'
+        // boxes, cause no layout pass and no React commit, and add at most
+        // kModCtlBudgetMs to the p95 tick over the unmodulated baseline.
+        // SPECTR_MODCTL_PLANT=full-invalidate adds a painter that touches the
+        // document root on every modulation frame (a control whose update
+        // re-lays the tree), and the gate must FAIL. Every frame also checks
+        // that each modulated control draws ONE indicator (one needle and at
+        // most one value arc per knob, one Morph thumb);
+        // SPECTR_MODCTL_PLANT=two-indicators draws the base as a second full
+        // indicator, and that check must FAIL.
+        if (std::getenv("SPECTR_MODULATION_CONTROLS") != nullptr) {
+            auto& store = rig.store;
+            const char* plant_env = std::getenv("SPECTR_MODCTL_PLANT");
+            const std::string plant = plant_env ? plant_env : "";
+            constexpr double kModCtlBudgetMs = 1.5;
+            const auto read_js = [&](const std::string& expr) -> std::string {
+                try {
+                    rig.eval("(() => { throw new Error('PULPVALUE:' + (" + expr + ") + ':END'); })();",
+                             "spectr-modctl-read");
+                } catch (const std::exception& e) {
+                    const std::string msg = e.what();
+                    const auto at = msg.find("PULPVALUE:");
+                    const auto end = msg.find(":END");
+                    if (at != std::string::npos && end != std::string::npos && end > at)
+                        return msg.substr(at + 10, end - at - 10);
+                }
+                return "(unreadable)";
+            };
+            // A shape, captured as A; its mirror, captured as B.
+            store.set_value(spectr::kParamBandCount, 32.0f);
+            const auto shape = [&](float sign) {
+                for (std::size_t band = 0; band < 32; ++band)
+                    store.set_value(spectr::band_gain_param_id(band),
+                                    sign * 9.0f * static_cast<float>(
+                                        std::sin(0.35 * static_cast<double>(band))));
+                rig.feed_tone(6);
+                settle(rig.clock, 20);
+            };
+            shape(1.0f);
+            rig.activate("#spectr-snapshot-capture-a");
+            shape(-1.0f);
+            rig.activate("#spectr-snapshot-capture-b");
+            rig.service_runtime();
+            store.set_value(spectr::kParamMorph, 0.5f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::kParamLfoShape, 0.0f);
+            store.set_value(spectr::kParamLfoRate, 1.0f);
+            const auto route = [&](spectr::ModulationTarget target, bool on) {
+                const auto t = static_cast<std::size_t>(target);
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), on ? 1.0f : 0.0f);
+                store.set_value(spectr::lfo_route_amount_param_id(0, t), 1.0f);
+            };
+            const auto set_routes = [&](std::initializer_list<spectr::ModulationTarget> on) {
+                for (std::size_t t = 0; t < spectr::kModulationTargetCount; ++t) {
+                    bool want = false;
+                    for (auto target : on)
+                        want = want || static_cast<std::size_t>(target) == t;
+                    route(static_cast<spectr::ModulationTarget>(t), want);
+                }
+                rig.processor.apply_surface_params(false);
+            };
+            using MT = spectr::ModulationTarget;
+            constexpr int kBlock = 800;
+            std::vector<float> in0(kBlock), in1(kBlock), out0(kBlock), out1(kBlock);
+            const float* inputs[2]{in0.data(), in1.data()};
+            float* outputs[2]{out0.data(), out1.data()};
+            pulp::midi::MidiBuffer midi_in, midi_out;
+            pulp::format::ProcessContext context;
+            context.sample_rate = 48000.0;
+            context.num_samples = kBlock;
+            long long sample_clock = 0;
+            // `level` 0 is digital silence: the analyzer goes quiet and the
+            // plot's draw loop parks, so what remains is what modulation draws.
+            const auto block = [&](float level) {
+                for (int i = 0; i < kBlock; ++i)
+                    in0[i] = in1[i] = level * static_cast<float>(
+                        std::sin(0.13 * static_cast<double>(sample_clock + i)));
+                sample_clock += kBlock;
+                pulp::audio::BufferView<const float> input(inputs, 2, kBlock);
+                pulp::audio::BufferView<float> output(outputs, 2, kBlock);
+                rig.processor.process(output, input, midi_in, midi_out, context);
+            };
+            const auto drawn_state = [&]() {
+                return read_js(
+                    "(() => { const s = globalThis.__spectrModControls;"
+                    " const st = s ? s.state : {}; const d = s ? s.drawn : {};"
+                    " const f = typeof spectrFreezeStore === 'function' ? spectrFreezeStore().display : null;"
+                    " const ang = (k) => { const p = k && k.needle; if (!p) return 'none'; const m = p.match(/M ([-0-9.]+) ([-0-9.]+) L ([-0-9.]+) ([-0-9.]+)$/);"
+                    "   return m ? (Math.atan2(+m[3] - 13, 13 - +m[4]) * 180 / Math.PI).toFixed(1) + 'deg' : 'none'; };"
+                    " return 'frames=' + (s ? s.frames : -1)"
+                    " + ' intensity=' + (st.intensityOn ? (100 * (1 - st.intensityPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.intensity)"
+                    " + ' mix=' + (st.mixOn ? (100 * (1 - st.mixPull)).toFixed(1) + '%' : 'off') + '@' + ang(d.mix)"
+                    " + ' output=' + (st.outputOn ? (st.outputDb >= 0 ? '+' : '') + st.outputDb.toFixed(2) + 'dB' : 'off') + '@' + ang(d['output-trim'])"
+                    " + ' morph=' + (st.morphOn ? (0.5 + st.morphOffset).toFixed(3) : 'off') + ' morphThumb=' + JSON.stringify((d.morph && d.morph.thumb) || '')"
+                    " + ' bands=' + (f ? f.bands : 'none')"
+                    " + ' frozen=' + (typeof spectrFreezeStore === 'function' ? String(spectrFreezeStore().modulated) : '?'); })()");
+            };
+            // ── One indicator per control ──
+            //
+            // What each modulated control actually draws, read back from the
+            // native widgets (not from the editor's own bookkeeping): a knob
+            // shows exactly one needle (a two-point stroke from the hub) and
+            // at most one value arc besides its full track, and Morph shows
+            // exactly one thumb (the React thumb, or the played thumb while
+            // an LFO drives it -- never both). The `two-indicators` plant
+            // draws a second needle into each knob's base marker and shows
+            // the base thumb again, and this check must fail.
+            std::vector<std::string> single_breaches;
+            const auto path_points = [](const std::string& d) {
+                std::vector<std::pair<float, float>> pts;
+                std::istringstream in(d);
+                std::string tok;
+                while (in >> tok) {
+                    if (tok == "M" || tok == "L") {
+                        float x = 0.0f, y = 0.0f;
+                        if (in >> x >> y) pts.emplace_back(x, y);
+                    }
+                }
+                return pts;
+            };
+            const auto check_single = [&](const std::string& frame) {
+                for (const char* knob : {"intensity", "mix", "output-trim"}) {
+                    const std::string ids = read_js(
+                        std::string("(() => [...document.querySelectorAll('[data-spectr-knob=\"") + knob
+                        + "\"] path')].map(e => e.__pulpId || e._id || e.id || '').join(','))()");
+                    int needles = 0, arcs = 0, paths = 0;
+                    std::stringstream list(ids);
+                    std::string id;
+                    while (std::getline(list, id, ',')) {
+                        auto* w = dynamic_cast<pulp::view::SvgPathWidget*>(find_by_id(*rig.root, id));
+                        if (w == nullptr) continue;
+                        ++paths;
+                        const auto pts = path_points(w->path_data());
+                        if (pts.size() == 2
+                            && std::hypot(pts[0].first - 13.0f, pts[0].second - 13.0f) < 4.5f)
+                            ++needles;
+                        else if (pts.size() >= 3) {
+                            const float a0 = std::atan2(pts.front().first - 13.0f, 13.0f - pts.front().second);
+                            const float a1 = std::atan2(pts.back().first - 13.0f, 13.0f - pts.back().second);
+                            const bool full_track = a0 < -2.3f && a1 > 2.3f;
+                            if (!full_track) ++arcs;
+                        }
+                    }
+                    if (paths < 3 || needles != 1 || arcs > 1)
+                        single_breaches.push_back(frame + " " + knob + ": " + std::to_string(needles)
+                                                  + " needles, " + std::to_string(arcs)
+                                                  + " value arcs over " + std::to_string(paths) + " paths");
+                }
+                const std::string morph_ids = read_js(
+                    "(() => { const t = document.querySelector('[data-spectr-morph-thumb]');"
+                    " const p = document.querySelector('[data-spectr-morph-played-thumb]');"
+                    " const id = (e) => e ? (e.__pulpId || e._id || e.id || '') : '';"
+                    " return id(t) + ',' + id(p); })()");
+                const auto comma = morph_ids.find(',');
+                if (comma != std::string::npos) {
+                    const auto* thumb = find_by_id(*rig.root, morph_ids.substr(0, comma));
+                    const auto* played = dynamic_cast<pulp::view::SvgPathWidget*>(
+                        find_by_id(*rig.root, morph_ids.substr(comma + 1)));
+                    const int thumbs = (thumb != nullptr && thumb->opacity() > 0.01f ? 1 : 0)
+                        + (played != nullptr && !played->path_data().empty() ? 1 : 0);
+                    if (thumbs != 1)
+                        single_breaches.push_back(frame + " morph: " + std::to_string(thumbs)
+                                                  + " thumbs");
+                } else {
+                    single_breaches.push_back(frame + " morph: thumb not found");
+                }
+            };
+            if (plant == "two-indicators")
+                // The old design: the base keeps its own full needle and thumb
+                // next to the value playing.
+                rig.eval("(() => { spectrModControlsSubscribe(() => {"
+                         " for (const k of ['intensity', 'mix', 'output-trim']) {"
+                         "   const el = document.querySelector('[data-spectr-knob-base=\"' + k + '\"]');"
+                         "   if (el) spectrSetPathD(el, 'M 13.00 9.50 L 13.00 3.50'); }"
+                         " const t = document.querySelector('[data-spectr-morph-thumb]');"
+                         " if (t && t.style) t.style.opacity = '1'; }); })();",
+                         "spectr-modctl-plant");
+            // ── Frames across one LFO cycle, looked at ──
+            const auto cycle_shots = [&](const std::string& tag) {
+                // 30 blocks of 800 at 48 kHz = one 2 Hz cycle; six frames.
+                for (int shot = 0; shot < 6; ++shot) {
+                    for (int b = 0; b < 5; ++b) {
+                        block(0.3f);
+                        rig.clock.tick(1.0f / 60.0f);
+                    }
+                    rig.service_runtime();
+                    rig.root->layout_children();
+                    const std::string name = "modctl-" + tag + "-" + std::to_string(shot);
+                    capture(rig, dir, prefix + name, backend, scale);
+                    std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    check_single(name);
+                }
+            };
+            set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
+            for (int i = 0; i < 30; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+            cycle_shots("controls");
+            store.set_value(spectr::kParamFreeze, 1.0f);
+            rig.processor.apply_surface_params(false);
+            for (int i = 0; i < 30; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+            cycle_shots("freeze");
+            store.set_value(spectr::kParamFreeze, 0.0f);
+            rig.processor.apply_surface_params(false);
+            // The header at the two shipping window sizes, each with the LFO
+            // driving INTENSITY, MIX, OUTPUT and MORPH and with it off.
+            for (const auto& [w, h, tag] : {std::tuple<float, float, const char*>{990.0f, 645.0f, "990"},
+                                            std::tuple<float, float, const char*>{792.0f, 516.0f, "792"}}) {
+                rig.resize(w, h);
+                for (const bool on : {true, false}) {
+                    set_routes(on ? std::initializer_list<MT>{MT::Intensity, MT::Mix, MT::Output, MT::Morph}
+                                  : std::initializer_list<MT>{});
+                    // Long enough for a route switched off to slew out (0.2 s for
+                    // Intensity), so the unmodulated frame shows no LFO at all.
+                    for (int i = 0; i < 40; ++i) { block(0.3f); rig.clock.tick(1.0f / 60.0f); }
+                    rig.service_runtime();
+                    rig.root->layout_children();
+                    const std::string name = std::string("modctl-") + tag + (on ? "-modulated" : "-unmodulated");
+                    capture(rig, dir, prefix + name, backend, scale);
+                    std::printf("[modctl] %s %s\n", name.c_str(), drawn_state().c_str());
+                    if (on) check_single(name);
+                }
+            }
+            rig.resize(kDesignWidth, kDesignHeight);
+            set_routes({MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands});
+
+            // ── Frame cost and damage ──
+            //
+            // Pulp's FrameCostProbe (pulp/view/frame_cost_probe.hpp) puts a recording plug-in host on the
+            // root, so every repaint request is classified: bounded (its rect)
+            // or whole-surface.
+            for (const auto& line : single_breaches)
+                std::printf("[modctl-single] FAIL: %s\n", line.c_str());
+            std::printf("[modctl-single] %s\n", single_breaches.empty() ? "PASS" : "FAIL");
+            if (!plant.empty() && plant != "full-invalidate" && plant != "two-indicators") {
+                std::printf("[modctl] UNKNOWN PLANT %s\n", plant.c_str());
+                return 2;
+            }
+            if (plant == "full-invalidate")
+                // A control that animates by restyling a laid-out node: the
+                // knob's own box changes size on every modulation frame.
+                rig.eval("(() => { let flip = false; spectrModControlsSubscribe(() => {"
+                         " flip = !flip; const el = document.querySelector('[data-spectr-knob=intensity]');"
+                         " if (el) el.style.width = flip ? '27px' : '26px'; }); })();",
+                         "spectr-modctl-plant");
+            // SPECTR_MODCTL_ESCALATION=1: why a control's bounded repaint
+            // escalates to the whole surface -- every ancestor of the knob's
+            // played-value path and the View::request_repaint(Rect) rule it
+            // trips (render transform, filter, scrolling parent).
+            if (std::getenv("SPECTR_MODCTL_ESCALATION") != nullptr) {
+                const auto id = read_js("(() => { const el = document.querySelector("
+                                        "'[data-spectr-knob-needle=intensity]');"
+                                        " return el ? (el.__pulpId || el._id || el.id || '(no id)') : '(absent)'; })()");
+                std::printf("[modctl-esc] knob path id=%s\n", id.c_str());
+                const pulp::view::View* v = find_by_id(*rig.root, id);
+                for (int depth = 0; v != nullptr; v = v->parent(), ++depth) {
+                    if (v->has_render_transform() || v->has_filter_effect()
+                        || (depth > 0 && v->applies_child_paint_offset()))
+                        std::printf("[modctl-esc] depth %d id=%s kind=%s transform=%d filter=%d "
+                                    "child_offset=%d bounds=(%.1f,%.1f %.1fx%.1f)\n",
+                                    depth, v->id().c_str(), typeid(*v).name(),
+                                    v->has_render_transform() ? 1 : 0,
+                                    v->has_filter_effect() ? 1 : 0,
+                                    v->applies_child_paint_offset() ? 1 : 0,
+                                    v->bounds().x, v->bounds().y, v->bounds().width,
+                                    v->bounds().height);
+                }
+                std::printf("[modctl-esc] walk done\n");
+                return 0;
+            }
+            using Probe = pulp::view::FrameCostProbe;
+            const bool paint_frames = std::getenv("SPECTR_MODCTL_PAINT") != nullptr;
+            // SPECTR_MODCTL_TRACE=FILE.pftrace: a Perfetto capture of the
+            // frame-cost runs (a PULP_TRACING=ON SDK only).
+            const char* modctl_trace = std::getenv("SPECTR_MODCTL_TRACE");
+            bool modctl_tracing = false;
+            if (modctl_trace != nullptr) {
+                if (!pulp::runtime::kTracingEnabled) {
+                    std::printf("[modctl] TRACE UNAVAILABLE: SDK built with PULP_TRACING=OFF\n");
+                } else {
+                    modctl_tracing = pulp::runtime::Tracing::start(
+                        {"render", "layout", "canvas", "text", "js", "state"},
+                        std::string(modctl_trace), 512u * 1024u);
+                    std::printf("[modctl] trace session: %s -> %s\n",
+                                modctl_tracing ? "started" : "REFUSED", modctl_trace);
+                }
+            }
+            struct Result { std::string name; Probe::Summary s; int commit_windows; int painted; };
+            std::vector<Result> results;
+            const auto commits = [&]() {
+                return std::atoll(read_js("(globalThis.__pulpCommitStats__ ? globalThis.__pulpCommitStats__.commits : -1)").c_str());
+            };
+            const auto controls_painted = [&]() {
+                return std::atoll(read_js("(globalThis.__spectrModControls ? globalThis.__spectrModControls.frames : 0)").c_str());
+            };
+            const auto run = [&](const std::string& name, std::initializer_list<MT> on, bool freeze, float level) {
+                set_routes(on);
+                store.set_value(spectr::kParamFreeze, freeze ? 1.0f : 0.0f);
+                rig.processor.apply_surface_params(false);
+                for (int i = 0; i < 90; ++i) { block(level); rig.clock.tick(1.0f / 60.0f); }
+                rig.service_runtime();
+                rig.root->layout_children();
+                const auto painted0 = controls_painted();
+                if (const char* only = std::getenv("SPECTR_MODCTL_SCENARIOS");
+                    only != nullptr && std::string(only).find(name) == std::string::npos
+                    && name != "idle-quiet")
+                    return;
+                Result r{name, {}, 0, 0};
+                std::vector<double> paint_ms;
+                PULP_TRACE_SCOPE_NAMED("state", "modctl_scenario");
+                {
+                    Probe probe(*rig.root, {static_cast<std::uint32_t>(kDesignWidth),
+                                            static_cast<std::uint32_t>(kDesignHeight)});
+                    long long commit_base = commits();
+                    for (int frame = 0; frame < 400; ++frame) {
+                        block(level);
+                        probe.measure([&] {
+                            PULP_TRACE_SCOPE_NAMED("render", "modctl_frame");
+                            rig.clock.tick(1.0f / 60.0f);
+                            rig.root->layout_children_if_needed();
+                        });
+                        // SPECTR_MODCTL_PAINT=1: then rasterize the whole tree,
+                        // as the macOS plug-in host repaints it. Outside the
+                        // probe: a capture lays the tree out itself, which is
+                        // the capture's cost, not the frame's.
+                        if (paint_frames) {
+                            PULP_TRACE_SCOPE_NAMED("render", "modctl_paint");
+                            std::uint32_t w = 0, h = 0;
+                            const auto p0 = std::chrono::steady_clock::now();
+                            (void)pulp::view::render_to_rgba(
+                                *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+                                static_cast<std::uint32_t>(kDesignHeight), 1.0f, &w, &h);
+                            paint_ms.push_back(std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - p0).count());
+                        }
+                        // Reading the counter is itself a script call, so it
+                        // is sampled every 16 frames, outside the measurement.
+                        if ((frame & 15) == 15) {
+                            const long long now = commits();
+                            if (now != commit_base) ++r.commit_windows;
+                            commit_base = now;
+                        }
+                    }
+                    r.s = probe.summary();
+                }
+                r.painted = static_cast<int>(controls_painted() - painted0);
+                if (!paint_ms.empty()) {
+                    std::sort(paint_ms.begin(), paint_ms.end());
+                    std::printf("[modctl-paint] %-20s raster p50 %.3f p95 %.3f max %.3f ms\n",
+                                name.c_str(), paint_ms[paint_ms.size() / 2],
+                                paint_ms[paint_ms.size() * 95 / 100], paint_ms.back());
+                }
+                std::printf("[modctl-cost] %-20s p50 %.3f p95 %.3f max %.3f ms | whole-surface frames %d/%d"
+                            " | layout frames %d | commit windows %d/25 | bounded damage mean %.0f px2"
+                            " union (%.0f,%.0f %.0fx%.0f) | controls publications painted %d\n",
+                            name.c_str(), r.s.p50_ms, r.s.p95_ms, r.s.max_ms, r.s.full_damage_frames,
+                            r.s.frames, r.s.layout_frames, r.commit_windows, r.s.mean_damage_area,
+                            r.s.damage_union.x, r.s.damage_union.y, r.s.damage_union.width,
+                            r.s.damage_union.height, r.painted);
+                results.push_back(r);
+            };
+            // Quiet input (the analyzer parks) isolates what modulation draws;
+            // a tone shows the cost on top of a live analyzer.
+            store.set_value(spectr::kParamLfoEnabled, 0.0f);
+            run("idle-quiet", {}, false, 0.0f);
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            run("knobs-quiet", {MT::Intensity, MT::Mix, MT::Output}, false, 0.0f);
+            run("morph-quiet", {MT::Morph}, false, 0.0f);
+            run("bands+freeze-quiet", {MT::Bands}, true, 0.0f);
+            run("all-quiet", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.0f);
+            // Length and Preset step labels in the header (LENGTH, the preset
+            // name); Preset needs a chosen preset to have neighbours.
+            run("length-quiet", {MT::Length}, false, 0.0f);
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            rig.activate("[data-spectr-pattern-menu-id=\"factory:flat\"]");
+            rig.service_runtime();
+            run("preset-quiet", {MT::Preset}, false, 0.0f);
+            run("bank-tone", {MT::WholeBank}, false, 0.3f);
+            run("all-tone", {MT::Intensity, MT::Mix, MT::Output, MT::Morph, MT::Bands}, true, 0.3f);
+            if (modctl_tracing) {
+                const auto stopped = pulp::runtime::Tracing::stop();
+                std::printf("[modctl] trace flushed: ok=%d bytes=%llu path=%s\n",
+                            stopped.ok ? 1 : 0,
+                            static_cast<unsigned long long>(stopped.trace_bytes),
+                            stopped.path.c_str());
+            }
+            // The gate, on the controls scenario against the quiet baseline:
+            // it painted (positive control), requested no whole-surface
+            // repaint, ran no layout pass, committed nothing, kept its damage
+            // to the controls' boxes (under 1 % of the editor; four 30 x 30
+            // knobs and a 90 x 16 slider are ~0.4 %) and grew the p95 tick by
+            // at most kModCtlBudgetMs.
+            // Damage is gated on an SDK whose bounded repaints survive the
+            // design-viewport transform and a script dispatch (it exports
+            // View::damage_request_count()). On an older one every frame
+            // that runs script requests the whole surface whatever a control
+            // does, so the numbers are reported, not gated.
+            constexpr bool kSdkBoundsAnimatedPaints =
+                sdk_bounds_script_repaints<pulp::view::View>();
+            if (!kSdkBoundsAnimatedPaints)
+                std::printf("[modctl-gate] damage NOT gated: this SDK predates bounded "
+                            "script/transform repaints\n");
+            Probe::Budget budget;
+            budget.max_p95_ms = kModCtlBudgetMs;
+            // Whatever the idle editor already repaints whole (none, on an SDK
+            // that bounds them) is the floor; modulation may add none.
+            // (a few frames of slack: the idle editor's own requests land on
+            // whichever frame the analyzer clock puts them in).
+            budget.max_full_damage_frames = kSdkBoundsAnimatedPaints
+                ? results[0].s.full_damage_frames + 4 : 1 << 30;
+            budget.max_layout_frames = 0;
+            // The knobs' own boxes: MIX, INTENSITY and OUTPUT sit in one 300 x
+            // 44 strip of the header, 1.2 % of the editor.
+            budget.max_mean_damage_area = kSdkBoundsAnimatedPaints
+                ? 0.02 * kDesignWidth * kDesignHeight
+                : std::numeric_limits<double>::infinity();
+            budget.min_painted_frames = 100;
+            if (results.size() < 2 || results[1].name != "knobs-quiet") {
+                std::printf("[modctl-gate] NOT JUDGED: the knobs scenario did not run\n");
+                return 2;
+            }
+            const auto& base = results[0];
+            const auto& ctl = results[1];
+            auto breaches = Probe::check(ctl.s, budget, &base.s);
+            for (const auto& line : single_breaches)
+                breaches.push_back("single indicator: " + line);
+            if (ctl.painted < 100)
+                breaches.push_back("positive control: only " + std::to_string(ctl.painted)
+                                   + " modulation_controls publications painted");
+            for (const auto& r : results)
+                if (r.commit_windows > 0)
+                    breaches.push_back(r.name + ": " + std::to_string(r.commit_windows)
+                                       + " windows made a React commit");
+            // Morph and Bands redraw the plot, which is a canvas the size of
+            // most of the editor, so their damage is that canvas's box -- not
+            // the whole surface. A BANDS / LENGTH / preset step still rewrites
+            // a label (a whole-surface request), so at most half the frames
+            // may; the headless rig draws no plot frames of its own, so the
+            // knobs scenario above is the positive control.
+            for (const auto& r : results) {
+                if (r.name == "idle-quiet" || r.name == "knobs-quiet") continue;
+                Probe::Budget plot = budget;
+                plot.max_mean_damage_area = kSdkBoundsAnimatedPaints
+                    ? 0.85 * kDesignWidth * kDesignHeight
+                    : std::numeric_limits<double>::infinity();
+                plot.max_full_damage_frames = kSdkBoundsAnimatedPaints
+                    ? r.s.frames / 2 : 1 << 30;
+                plot.max_layout_frames = 0;
+                plot.min_painted_frames = 0;
+                for (const auto& line : Probe::check(r.s, plot, &base.s))
+                    breaches.push_back(r.name + ": " + line);
+            }
+            for (const auto& line : breaches) std::printf("[modctl-gate] FAIL: %s\n", line.c_str());
+            const bool ok = breaches.empty();
+            std::printf("[modctl-gate] %s (plant=%s)\n", ok ? "PASS" : "FAIL",
+                        plant.empty() ? "none" : plant.c_str());
+            return ok ? 0 : 1;
         }
 
         // ── LFO routing: UI frame cost ─────────────────────────────────
@@ -1979,6 +2794,259 @@ int main(int argc, char** argv) {
             rig.root->layout_children();
             settle(rig.clock, 8);
             capture(rig, dir, prefix + "help-movement", backend, scale);
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // SPECTR_CONTROL_TARGET_SHOTS=1: a header control's context menu with
+        // its own target rows, and "All targets..." opening the full
+        // Modulation submenu scrolled to and marking that target -- at the
+        // preferred and the minimum host size. Each frame logs the menu's and
+        // the marked row's boxes so the PNG is not the only evidence.
+        if (std::getenv("SPECTR_CONTROL_TARGET_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            store.set_value(spectr::lfo_route_enabled_param_id(0, 6), 1.0f);
+            store.set_value(spectr::lfo_route_amount_param_id(0, 6), 0.6f);
+            store.set_value(spectr::lfo_route_enabled_param_id(1, 6), 1.0f);  // LFO 2 is off
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            const auto report = [&](const char* name) {
+                rig.eval(std::string("(() => { const box = (s) => { const n = document.querySelector(s);"
+                    " const r = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                    " return r ? [r.left, r.top, r.right, r.bottom].map((v) => v.toFixed(1)).join(',') : 'none'; };"
+                    " console.log('[control-targets] ") + name
+                    + " menu=' + box('[data-spectr-control-menu]') + ' panel=' + box('[data-spectr-modulation-panel]')"
+                      " + ' viewport=' + box('[data-spectr-modulation-viewport]')"
+                      " + ' marked=' + box('[data-spectr-modulation-focus=\"true\"]')); })();",
+                    "spectr-control-targets-report");
+                settle(rig.clock, 2);
+            };
+            const auto open_control = [&](const std::string& selector) {
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 2 } : {};"
+                         " if (!globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'contextmenu', at)) throw new Error('no context menu: " + selector + "');"
+                         " if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+                         " globalThis.__pulpRuntimeSettle__(8); })();", "spectr-control-targets-open");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto close_all = [&] {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 16);
+            };
+            struct Size { float w, h; const char* tag; };
+            for (const Size size : {Size{990.0f, 645.0f, "990"}, Size{792.0f, 516.0f, "792"}}) {
+                rig.resize(size.w, size.h);
+                settle(rig.clock, 24);
+                for (const auto& [selector, name] :
+                     {std::pair<std::string, std::string>{"[data-spectr-freeze-toggle]", "freeze"},
+                      std::pair<std::string, std::string>{"[data-spectr-length-trigger]", "length"},
+                      std::pair<std::string, std::string>{"[data-spectr-dropdown=\"bands\"]", "bands"},
+                      std::pair<std::string, std::string>{"[data-spectr-dropdown=\"pattern\"]", "preset"}}) {
+                    open_control(selector);
+                    const std::string base = std::string("control-targets-") + size.tag + "-" + name;
+                    report((base + "-menu").c_str());
+                    capture(rig, dir, prefix + base + "-menu", backend, scale);
+                    rig.activate("[data-spectr-control-action=\"all-targets\"]");
+                    settle(rig.clock, 16);
+                    rig.root->layout_children();
+                    settle(rig.clock, 8);
+                    report((base + "-all").c_str());
+                    capture(rig, dir, prefix + base + "-all", backend, scale);
+                    close_all();
+                }
+            }
+            return g_failures == 0 ? 0 : 1;
+        }
+
+        // SPECTR_POLISH_SHOTS=1: the 1.0.7 polish evidence -- the Modulation
+        // submenu opened near the top of the window, its progressive Depth
+        // rows, Settings > MODULATION, the header tooltip, the header context
+        // menus and the modulated LENGTH / BANDS / preset labels.
+        if (std::getenv("SPECTR_POLISH_SHOTS") != nullptr) {
+            auto& store = rig.store;
+            const auto open_menu_at = [&](float x, float y) {
+                char script[512];
+                std::snprintf(script, sizeof script,
+                    "(() => { if (!globalThis.__pulpActivateMaterializedElement__("
+                    "'[data-spectr-filter-surface]','contextmenu',"
+                    "{clientX:%.0f,clientY:%.0f,offsetX:%.0f,offsetY:%.0f,button:2})) "
+                    "throw new Error('no band menu'); "
+                    "if (typeof globalThis.__pulpRuntimeSettle__ === 'function') "
+                    "globalThis.__pulpRuntimeSettle__(8); })();", x, y, x, y);
+                rig.eval(script, "spectr-polish-open");
+                settle(rig.clock, 16);
+                rig.activate("[data-spectr-band-action=\"modulation-toggle\"]");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+            };
+            const auto report_panel = [&](const char* name) {
+                rig.eval(std::string("(() => { const p = document.querySelector("
+                    "'[data-spectr-modulation-panel]'); const m = document.querySelector("
+                    "'[data-spectr-band-context-menu]'); if (!p || !m) { console.log('[polish] ")
+                    + name + " NO PANEL'); return; } const r = p.getBoundingClientRect(); "
+                    "const b = m.getBoundingClientRect(); console.log('[polish] " + name
+                    + " menu top=' + b.top.toFixed(1) + ' panel top=' + r.top.toFixed(1) "
+                    "+ ' bottom=' + r.bottom.toFixed(1) + ' height=' + r.height.toFixed(1)); })();",
+                    "spectr-polish-report");
+                settle(rig.clock, 2);
+            };
+            const auto close_menu = [&] {
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 16);
+            };
+            store.set_value(spectr::kParamLfoEnabled, 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(8);
+            rig.resize(990.0f, 645.0f);
+            settle(rig.clock, 24);
+            open_menu_at(420.0f, 70.0f);
+            report_panel("near-top");
+            capture(rig, dir, prefix + "polish-submenu-near-top", backend, scale);
+            close_menu();
+            open_menu_at(420.0f, 430.0f);
+            report_panel("middle");
+            capture(rig, dir, prefix + "polish-submenu-middle", backend, scale);
+            close_menu();
+            // Several targets on: their Depth rows disclosed under them.
+            for (std::size_t t : {0u, 4u, 6u})
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(4);
+            settle(rig.clock, 16);
+            open_menu_at(420.0f, 430.0f);
+            capture(rig, dir, prefix + "polish-submenu-progressive", backend, scale);
+            close_menu();
+            rig.activate("[data-spectr-settings-open]");
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            {
+                std::vector<pulp::view::ScrollView*> scrolls;
+                collect_scroll_views(*rig.root, scrolls);
+                pulp::view::ScrollView* body = nullptr;
+                for (auto* scroll : scrolls)
+                    if (scroll->content_size().height > scroll->bounds().height + 400.0f)
+                        body = scroll;
+                for (const float fraction : {0.45f, 0.6f, 0.75f, 0.9f, 1.0f}) {
+                    if (body != nullptr) {
+                        const float max_y = body->content_size().height - body->bounds().height;
+                        body->set_scroll(body->scroll_x(), max_y * fraction);
+                    }
+                    settle(rig.clock, 8);
+                    char name[64];
+                    std::snprintf(name, sizeof name, "polish-settings-modulation-%02d",
+                                  static_cast<int>(fraction * 100.0f));
+                    capture(rig, dir, prefix + name, backend, scale);
+                }
+            }
+            rig.activate("[data-spectr-settings-close]");
+            settle(rig.clock, 16);
+            // Header tooltips, after their hover delay (real time passes and
+            // the frame loop fires the runtime's timers).
+            const auto wait_ms = [&](int ms) {
+                for (int waited = 0; waited < ms; waited += 20) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    rig.bridge().service_frame_callbacks();
+                    settle(rig.clock, 1);
+                }
+            };
+            for (const char* which : {"intensity", "freeze-toggle", "output-trim", "auto-gain"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerenter', at); })();", "spectr-polish-tip");
+                wait_ms(800);
+                rig.root->layout_children();
+                settle(rig.clock, 4);
+                rig.eval("(() => { const t = document.querySelector('[data-spectr-header-tooltip]');"
+                         " const r = t && t.getBoundingClientRect ? t.getBoundingClientRect() : null;"
+                         " const s = t && t.firstChild && t.firstChild.getBoundingClientRect ? t.firstChild.getBoundingClientRect() : null;"
+                         " console.log('[polish] tip " + std::string(which) + " ' + (r ? ('x=' + r.left.toFixed(1)"
+                         " + ' y=' + r.top.toFixed(1) + ' w=' + r.width.toFixed(1) + ' h=' + r.height.toFixed(1)) : 'none')"
+                         " + (s ? (' text w=' + s.width.toFixed(1) + ' h=' + s.height.toFixed(1)) : '')); })();",
+                         "spectr-polish-tip-report");
+                capture(rig, dir, prefix + "polish-tooltip-" + which, backend, scale);
+                rig.eval("(() => { globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'pointerleave', {}); })();", "spectr-polish-tip-leave");
+                settle(rig.clock, 4);
+            }
+            // The submenu scrolled to its end: Bands, Preset, and Freeze's
+            // Hold for Length under its Depth.
+            open_menu_at(420.0f, 430.0f);
+            {
+                const auto* viewport_view = [&]() -> const pulp::view::View* {
+                    std::string id;
+                    try {
+                        rig.eval("(() => { const el = document.querySelector("
+                                 "'[data-spectr-modulation-viewport]');"
+                                 " throw new Error('PULPVALUE:' + (el ? el.__pulpId : '')); })();",
+                                 "spectr-polish-viewport-id");
+                    } catch (const std::exception& e) {
+                        const std::string msg = e.what();
+                        const auto at = msg.find("PULPVALUE:");
+                        if (at != std::string::npos) {
+                            id = msg.substr(at + 10);
+                            const auto end = id.find_first_of(" \n\"'");
+                            if (end != std::string::npos) id = id.substr(0, end);
+                        }
+                    }
+                    return id.empty() ? nullptr : find_by_id(*rig.root, id);
+                }();
+                if (viewport_view != nullptr) {
+                    const auto box = pulp::view::ViewInspector::absolute_bounds(*viewport_view);
+                    const pulp::view::Point over{box.x + box.width * 0.5f, box.y + box.height * 0.5f};
+                    capture(rig, dir, prefix + "polish-submenu-hold-top", backend, scale);
+                    for (int i = 0; i < 12; ++i)
+                        pulp::view::deliver_mouse_wheel(*rig.root, over, 0.0f, 60.0f, {});
+                    settle(rig.clock, 8);
+                    rig.root->layout_children();
+                    settle(rig.clock, 4);
+                }
+                capture(rig, dir, prefix + "polish-submenu-end", backend, scale);
+            }
+            close_menu();
+            // Header context menus.
+            for (const char* which : {"intensity", "freeze-toggle"}) {
+                const std::string selector = std::string("[data-spectr-") + which + "]";
+                rig.eval("(() => { const n = globalThis.__pulpFindMaterializedElement__('" + selector
+                         + "'); const b = n && n.getBoundingClientRect ? n.getBoundingClientRect() : null;"
+                         " const at = b ? { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, button: 2 } : {};"
+                         " globalThis.__pulpActivateMaterializedElement__('" + selector
+                         + "', 'contextmenu', at); })();", "spectr-polish-ctx");
+                settle(rig.clock, 16);
+                rig.root->layout_children();
+                settle(rig.clock, 8);
+                capture(rig, dir, prefix + "polish-context-" + which, backend, scale);
+                (void)pulp::view::route_escape_to_active_overlay(*rig.root);
+                settle(rig.clock, 8);
+            }
+            // LENGTH, BANDS and the preset label following their LFO.
+            rig.activate("[data-spectr-menu-root=\"pattern\"] [data-spectr-menu-trigger]");
+            settle(rig.clock, 8);
+            rig.activate("[data-spectr-pattern-menu-id=\"factory:harmonic\"]");
+            settle(rig.clock, 16);
+            store.set_value(spectr::kParamLfoShape, 2.0f);
+            store.set_value(spectr::kParamLfoRate, 16.0f);
+            for (const auto& [t, depth] : {std::pair{7u, 0.25f}, std::pair{11u, 1.0f},
+                                           std::pair{12u, 0.25f}}) {
+                store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
+                store.set_value(spectr::lfo_route_amount_param_id(0, t), depth);
+            }
+            rig.processor.apply_surface_params(false);
+            rig.feed_tone(60);
+            settle(rig.clock, 24);
+            rig.root->layout_children();
+            settle(rig.clock, 8);
+            capture(rig, dir, prefix + "polish-modulated-labels", backend, scale);
             return g_failures == 0 ? 0 : 1;
         }
 
@@ -7027,7 +8095,7 @@ int main(int argc, char** argv) {
         rig.activate_modulation_toggle(1, "LFO 2");
         rig.report_modulation_dom("after LFO 2 on");
         rig.report_native_state("after LFO 2 on");
-        show_modulation("06-MODULATION-lfo2-expanded", "LFO targets");
+        show_modulation("06-MODULATION-lfo2-expanded", "TARGETS");
 
         // Now an ASSERTION, not a probe. With both LFOs driven on, every LFO
         // target row (a switch and a Depth row per target, the one list the
@@ -7062,23 +8130,23 @@ int main(int argc, char** argv) {
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target on");
         rig.report_native_state("after Morph target on");
-        show_modulation("07-MODULATION-target-morph-ON", "LFO targets");
+        show_modulation("07-MODULATION-target-morph-ON", "TARGETS");
 
         rig.activate(target_switch("morph"));
         rig.report_modulation_dom("after Morph target off");
         rig.report_native_state("after Morph target off");
-        show_modulation("08-MODULATION-target-morph-OFF", "LFO targets");
+        show_modulation("08-MODULATION-target-morph-OFF", "TARGETS");
 
         // The level targets: Intensity, Mix and Output on, then off.
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets on");
         rig.report_native_state("after the level targets on");
-        show_modulation("09-MODULATION-level-targets-on", "LFO targets");
+        show_modulation("09-MODULATION-level-targets-on", "TARGETS");
 
         for (const char* key : {"intensity", "mix", "output"}) rig.activate(target_switch(key));
         rig.report_modulation_dom("after the level targets off");
         rig.report_native_state("after the level targets off");
-        show_modulation("10-MODULATION-level-targets-off", "LFO targets");
+        show_modulation("10-MODULATION-level-targets-off", "TARGETS");
 
         // Back to the collapsed state, proving the disclosure closes as well
         // as it opens -- a one-way drive would hide a stuck-open bug.

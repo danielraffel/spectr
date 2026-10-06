@@ -47,6 +47,8 @@
 // Exit: 0 clean, 1 a problem (click, fade overshoot, dropout, slow edge,
 // render-thread tail notification), 2 setup error.
 
+#include <spectr/freeze_length.hpp>
+
 #include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -60,6 +62,7 @@
 #include <random>
 #include <string>
 #include <utility>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -67,7 +70,18 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr AudioUnitParameterID kParamFreeze = 3;
 constexpr AudioUnitParameterID kParamFreezeLength = 4;
-constexpr AudioUnitParameterValue kFreezeLengthCustom = 4.0f;
+// The Freeze Length parameter is an index into spectr::kLengthPresets, and
+// Custom is the index one past the list. Read it from the product header: a
+// hard-coded 4.0 stayed behind when the list grew from 4 presets to 20, and
+// every --length run then selected preset 4 (1/6 bar) instead of Custom.
+// SPECTR_PROBE_PLANT_STALE_CUSTOM=1 restores the stale 4.0: the hold-check's
+// negative control, which must fail.
+AudioUnitParameterValue freeze_length_custom() {
+    static const AudioUnitParameterValue value =
+        std::getenv("SPECTR_PROBE_PLANT_STALE_CUSTOM") != nullptr
+            ? 4.0f : static_cast<AudioUnitParameterValue>(spectr::kLengthPresetCustom);
+    return value;
+}
 
 struct Options {
     double sr = 48000.0;
@@ -85,6 +99,9 @@ struct Options {
     bool quiet = false;
     bool notify_reset = false;
     std::string length; // empty: leave the unit's Freeze Length alone
+    float mix = -1.0f;  // Mix parameter in percent; negative leaves it alone
+    bool paced = false; // render at real-time pace (lets a GPU worker deliver)
+    bool gpu = false;   // GPU processing for Mixing, set through the saved state
 };
 
 struct Stereo {
@@ -456,7 +473,14 @@ struct Host {
         AudioUnitAddPropertyListener(au, kAudioUnitProperty_TailTime, &Host::listener, this);
         AudioUnitAddPropertyListener(au, kAudioUnitProperty_Latency, &Host::listener, this);
         if (AudioUnitInitialize(au) != noErr) { std::fprintf(stderr, "Initialize failed\n"); return false; }
+        if (opt.gpu && !set_gpu_processing()) return false;
         if (opt.mode == "mixing" && !set_mode("linear_phase")) return false;
+        // spectr::kMix is parameter id 1 (spectr.hpp).
+        if (opt.mix >= 0.0f
+            && AudioUnitSetParameter(au, 1, kAudioUnitScope_Global, 0, opt.mix, 0) != noErr) {
+            std::fprintf(stderr, "could not set Mix %g\n", double(opt.mix));
+            return false;
+        }
         if (!opt.length.empty() && !set_length(opt.length)) {
             std::fprintf(stderr, "could not set Freeze Length %s\n", opt.length.c_str());
             return false;
@@ -543,6 +567,22 @@ struct Host {
         return ok;
     }
 
+    // Mixing's GPU processing choice is session state, set the way a project
+    // reload sets it.
+    bool set_gpu_processing() {
+        const bool ok = edit_state([&](std::string& json) {
+            const auto at = json.find("\"gpu_processing\"");
+            if (at == std::string::npos) return false;
+            const auto value = json.find("false", at);
+            const auto end = json.find_first_of(",}", at);
+            if (value == std::string::npos || value > end) return false;
+            json.replace(value, 5, "true");
+            return true;
+        });
+        if (!ok) std::fprintf(stderr, "could not turn GPU processing on\n");
+        return ok;
+    }
+
     // Freeze Length "B", "N/D" or "B+N/D": the custom length in the plugin
     // JSON (as a project reload restores it), then the parameter on Custom.
     bool set_length(const std::string& text) {
@@ -569,7 +609,7 @@ struct Host {
             return true;
         });
         return ok && AudioUnitSetParameter(au, kParamFreezeLength, kAudioUnitScope_Global, 0,
-                                           kFreezeLengthCustom, 0) == noErr;
+                                           freeze_length_custom(), 0) == noErr;
     }
 
     // The custom length and the parameter, as the unit reports them.
@@ -587,7 +627,7 @@ struct Host {
         const auto f0 = json.find('"', fraction_at + 11) + 1;
         const std::string fraction = json.substr(f0, json.find('"', f0) - f0);
         char out[64];
-        std::snprintf(out, sizeof(out), "%s%d+%s", preset == kFreezeLengthCustom ? "" : "preset:",
+        std::snprintf(out, sizeof(out), "%s%d+%s", preset == freeze_length_custom() ? "" : "preset:",
                       bars, fraction.c_str());
         return out;
     }
@@ -637,7 +677,11 @@ RenderResult render(const Options& o, const Stereo& input, const std::vector<Tap
     std::sort(events.begin(), events.end());
     std::size_t next_event = 0;
     std::size_t pos = 0;
+    const auto paced_start = std::chrono::steady_clock::now();
     while (pos < total) {
+        if (o.paced)
+            std::this_thread::sleep_until(paced_start + std::chrono::nanoseconds(
+                static_cast<long long>(double(pos) * 1e9 / o.sr)));
         UInt32 frames = o.varied ? varied(rng) : o.block;
         frames = UInt32(std::min<std::size_t>(frames, total - pos));
         if (host.reset_pending) {
@@ -748,6 +792,22 @@ int hold_check(Options o) {
             for (const double f : chord_a) ea += goertzel_power(r.out.l, from, n, f, o.sr);
             for (const double f : chord_b) eb += goertzel_power(r.out.l, from, n, f, o.sr);
             a_share[column++] = ea / (ea + eb + 1e-30);
+            if (std::getenv("SPECTR_HOLD_TRACE")) {
+                // What the output carries over time, from 0.5 s before the
+                // press to 3 s after it, in 250 ms windows: chord A, chord B.
+                const auto press_out = std::size_t((change + offset) * o.sr) + std::size_t(r.latency);
+                std::printf("    trace Length %s, press +%.2f s (t=0 at the press, latency-aligned):\n", hold, offset);
+                for (double t = -0.5; t < 3.0; t += 0.25) {
+                    const auto at = std::size_t(double(press_out) + t * o.sr);
+                    const auto w = std::size_t(0.25 * o.sr);
+                    if (at + w > r.out.l.size()) break;
+                    double a = 0, b = 0;
+                    for (const double f : chord_a) a += goertzel_power(r.out.l, at, w, f, o.sr);
+                    for (const double f : chord_b) b += goertzel_power(r.out.l, at, w, f, o.sr);
+                    std::printf("      t=%+5.2f s  A %6.1f dB  B %6.1f dB\n", t,
+                                10.0 * std::log10(a + 1e-30), 10.0 * std::log10(b + 1e-30));
+                }
+            }
             const std::string expected = std::string(std::strchr(hold, '/') ? "0+" : "") + hold
                 + (std::strchr(hold, '/') ? "" : "+0");
             std::printf("  press %+.2f s after the change, Length %s bar (unit reads back %s): "
@@ -768,13 +828,174 @@ int hold_check(Options o) {
     return bad ? 1 : 0;
 }
 
+// ── The hold reaches the output ────────────────────────────────────────────
+//
+// The edge probes score clicks against an unpressed control, so a freeze that
+// never reaches the output passes them: nothing changes, nothing clicks. This
+// asks what the held sound IS. Chord A plays for three seconds, then chord B
+// (no partial in common); Freeze is pressed 50 ms after the change, so the
+// hold's analysis -- each frame spans kFftSize samples -- is mostly chord A.
+// One second later, well inside the hold, the output must still be chord A.
+// The same render without the press is the instrument's control: it must
+// carry essentially no chord A there, or the measurement cannot tell a held
+// chord from a live one.
+int hold_presence(Options o) {
+    static constexpr double chord_a[] = {261.63, 329.63, 392.00, 523.25};
+    static constexpr double chord_b[] = {369.99, 466.16, 554.37, 739.99};
+    const double change = 3.0, seconds = 6.0, offset = 0.05;
+    Stereo input; input.resize(std::size_t(seconds * o.sr));
+    for (std::size_t n = 0; n < input.size(); ++n) {
+        const double t = double(n) / o.sr;
+        const auto& chord = t < change ? chord_a : chord_b;
+        double v = 0.0;
+        for (const double f : chord) v += 0.12 * std::sin(2.0 * kPi * f * t);
+        input.l[n] = input.r[n] = float(v);
+    }
+    if (o.length.empty()) o.length = "1/16";
+    const std::vector<Tap> taps{{std::size_t((change + offset) * o.sr), std::size_t((change + offset + 2.5) * o.sr)}};
+    double share[2] = {0, 0}, a_db[2] = {0, 0};
+    for (int pressed = 0; pressed < 2; ++pressed) {
+        const auto r = render(o, input, pressed ? &taps : nullptr);
+        const std::size_t from = std::size_t((change + offset + 0.6) * o.sr) + std::size_t(r.latency);
+        const std::size_t n = std::size_t(1.0 * o.sr);
+        double ea = 0.0, eb = 0.0;
+        for (const double f : chord_a) ea += goertzel_power(r.out.l, from, n, f, o.sr);
+        for (const double f : chord_b) eb += goertzel_power(r.out.l, from, n, f, o.sr);
+        share[pressed] = ea / (ea + eb + 1e-30);
+        a_db[pressed] = 10.0 * std::log10(ea + 1e-30);
+        std::printf("hold presence mode=%s block=%u Length %s %s: latency %d, chord A %5.1f%% "
+                    "of the chord energy (A %6.1f dB, B %6.1f dB)\n",
+                    o.mode.c_str(), o.block, o.length.c_str(), pressed ? "pressed  " : "unpressed",
+                    r.latency, 100.0 * share[pressed], a_db[pressed], 10.0 * std::log10(eb + 1e-30));
+    }
+    const bool control_ok = share[0] < 0.05;
+    const bool held = share[1] > 0.5 && a_db[1] > -60.0;
+    if (!control_ok) std::printf("NO VERDICT: the unpressed control carries chord A; the instrument cannot tell held from live\n");
+    std::printf("%s: the held chord %s the output\n", control_ok && held ? "OK" : "FAIL",
+                held ? "reaches" : "does NOT reach");
+    return control_ok && held ? 0 : 1;
+}
+
+// ── Reported latency against measured delay ────────────────────────────────
+//
+// An impulse per channel through the unit, dry (Mix 0) and wet (Mix 100), and
+// the first sample at a tenth of its height located in the output. The delay
+// measured that way must equal kAudioUnitProperty_Latency exactly: that
+// property is what a host's delay compensation applies. --latency-plant N adds
+// N samples to the reported figure before the comparison (a negative control
+// that must fail). --paced renders at real-time pace, so a GPU-rendered Mixing
+// path is measured as delivered rather than as its CPU fallback.
+int latency_check(Options o, int plant) {
+    const std::size_t total = std::size_t(1.5 * o.sr);
+    constexpr std::size_t marker[2] = {13, 29};
+    constexpr float level[2] = {0.5f, -0.3f};
+    // Dry (Mix 0): an impulse per channel, located by its onset. Wet (Mix
+    // 100): a noise burst, located by the input/output cross-correlation
+    // peak -- the spectral path spreads an isolated impulse over its frame.
+    Stereo impulse; impulse.resize(total);
+    impulse.l[marker[0]] = level[0];
+    impulse.r[marker[1]] = level[1];
+    constexpr std::size_t burst_at = 1000, burst = 4096;
+    Stereo noise; noise.resize(total);
+    std::uint32_t rng = 12345u;
+    for (std::size_t i = 0; i < burst; ++i) {
+        rng = rng * 1664525u + 1013904223u; noise.l[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+        rng = rng * 1664525u + 1013904223u; noise.r[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+    }
+    int bad = 0;
+    for (const float mix : {0.0f, 100.0f}) {
+        o.mix = mix;
+        const bool wet = mix > 0.0f;
+        const auto r = render(o, wet ? noise : impulse, nullptr);
+        const long long reported = r.latency + plant;
+        long long measured[2] = {-1, -1};
+        for (int ch = 0; ch < 2; ++ch) {
+            const auto& x = ch ? r.out.r : r.out.l;
+            if (!wet) {
+                const float threshold = 0.1f * std::abs(level[ch]);
+                for (std::size_t i = 0; i < x.size(); ++i)
+                    if (std::abs(x[i]) >= threshold) { measured[ch] = (long long)i - (long long)marker[ch]; break; }
+                continue;
+            }
+            const auto& in = ch ? noise.r : noise.l;
+            double best = -1.0;
+            const long long lo = std::max(0LL, (long long)r.latency - 2048), hi = (long long)r.latency + 2048;
+            for (long long lag = lo; lag <= hi; ++lag) {
+                double acc = 0.0;
+                for (std::size_t i = burst_at; i < burst_at + burst && i + std::size_t(lag) < x.size(); ++i)
+                    acc += double(in[i]) * double(x[i + std::size_t(lag)]);
+                if (acc > best) { best = acc; measured[ch] = lag; }
+            }
+        }
+        const bool ok = measured[0] == reported && measured[1] == reported;
+        if (!ok) ++bad;
+        std::printf("latency sr=%.0f block=%u mode=%s gpu=%d mix=%.0f paced=%d: reported %lld samples (%.2f ms), "
+                    "measured L %lld R %lld  %s\n",
+                    o.sr, o.block, o.mode.c_str(), int(o.gpu), double(mix), int(o.paced), reported,
+                    1000.0 * double(reported) / o.sr, measured[0], measured[1], ok ? "OK" : "MISMATCH");
+    }
+    std::printf("%s: reported latency %s the measured delay\n", bad ? "FAIL" : "OK",
+                bad ? "does NOT equal" : "equals");
+    return bad ? 1 : 0;
+}
+
+// ── The first samples of a stream ──────────────────────────────────────────
+//
+// A fresh unit at Mix 100 with a flat shape must pass the first samples it is
+// given at full level: an impulse at a few positions near the start, and a
+// kick-drum-like hit at sample 0, each found at the reported latency. A fade
+// at the head of the stream is what a drum hit at playback start loses.
+int stream_start_check(Options o) {
+    o.mix = 100.0f;
+    int bad = 0;
+    for (const std::size_t at : {std::size_t(0), std::size_t(13), std::size_t(512),
+                                 std::size_t(1024), std::size_t(2048), std::size_t(6000)}) {
+        Stereo input; input.resize(std::size_t(1.0 * o.sr));
+        input.l[at] = input.r[at] = 0.5f;
+        const auto r = render(o, input, nullptr);
+        const float got = r.out.l[at + std::size_t(r.latency)];
+        const bool ok = std::abs(got - 0.5f) < 1e-3f;
+        if (!ok) ++bad;
+        std::printf("stream start mode=%s: impulse at %5zu -> %.6f (%+.1f dB)  %s\n", o.mode.c_str(), at,
+                    double(got), 20.0 * std::log10(std::max(double(std::abs(got)) / 0.5, 1e-15)),
+                    ok ? "OK" : "LOST");
+    }
+    Stereo kick; kick.resize(std::size_t(1.0 * o.sr));
+    for (std::size_t i = 0; i < std::size_t(0.2 * o.sr); ++i) {
+        const double t = double(i) / o.sr, f = 50.0 + 100.0 * std::exp(-t * 40.0);
+        kick.l[i] = kick.r[i] = float(0.8 * std::exp(-t * 18.0) * std::sin(2.0 * kPi * f * t));
+    }
+    const auto r = render(o, kick, nullptr);
+    double energy = 0.0, residual = 0.0, peak_in = 0.0, peak_out = 0.0;
+    for (std::size_t i = 0; i < std::size_t(0.2 * o.sr); ++i) {
+        const double y = r.out.l[i + std::size_t(r.latency)];
+        energy += double(kick.l[i]) * kick.l[i];
+        residual += (y - kick.l[i]) * (y - kick.l[i]);
+        if (i < std::size_t(0.03 * o.sr)) {
+            peak_in = std::max(peak_in, double(std::abs(kick.l[i])));
+            peak_out = std::max(peak_out, std::abs(y));
+        }
+    }
+    const double null_db = 10.0 * std::log10(std::max(residual, 1e-30) / energy);
+    const bool kick_ok = null_db < -80.0;
+    if (!kick_ok) ++bad;
+    std::printf("stream start mode=%s: kick at sample 0 -> first 30 ms peak %+.1f dB vs input, "
+                "null residual %.1f dB  %s\n", o.mode.c_str(),
+                20.0 * std::log10(std::max(peak_out, 1e-15) / peak_in), null_db, kick_ok ? "OK" : "LOST");
+    std::printf("%s: the first samples of a stream %s the output at full level\n",
+                bad ? "FAIL" : "OK", bad ? "do NOT reach" : "reach");
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
     Options o;
     int repeat = 1;
     double max_cost_ratio = 0.0;
     bool forbid_notifications = false;
     double deadline = 0.0;
-    bool check_hold = false;
+    bool check_hold = false, check_presence = false, check_latency = false,
+         check_stream_start = false;
+    int latency_plant = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -797,11 +1018,20 @@ int main(int argc, char** argv) {
         else if (a == "--forbid-render-notifications") forbid_notifications = true;
         else if (a == "--deadline") deadline = std::atof(next().c_str());
         else if (a == "--hold-check") check_hold = true;
+        else if (a == "--hold-presence") check_presence = true;
+        else if (a == "--latency-check") check_latency = true;
+        else if (a == "--latency-plant") latency_plant = std::atoi(next().c_str());
+        else if (a == "--paced") o.paced = true;
+        else if (a == "--gpu") o.gpu = true;
+        else if (a == "--stream-start-check") check_stream_start = true;
         else if (a == "--length") o.length = next();
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
 
     if (check_hold) return hold_check(o);
+    if (check_presence) return hold_presence(o);
+    if (check_latency) return latency_check(o, latency_plant);
+    if (check_stream_start) return stream_start_check(o);
 
     // Taps: press, hold 0.7-1.6 s, release, rest 0.8-1.5 s. The first press
     // waits for the capture window to fill.

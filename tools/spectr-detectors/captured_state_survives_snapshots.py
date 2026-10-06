@@ -77,18 +77,19 @@ var A=globalThis.__pulpActivateMaterializedElement__;
 var F=globalThis.__pulpFindMaterializedElement__;
 var READY=String.fromCharCode(91)+"data-spectr-snapshots-ready="+String.fromCharCode(34)+"true"+String.fromCharCode(34)+String.fromCharCode(93);
 A('#spectr-snapshot-capture-a','click',null); A('#spectr-snapshot-capture-b','click',null);
-var opened=false, n=0, logged=false;
+var opened=false, n=0;
+var report=function(){
+  var d=globalThis.__pulpMaterializedMetadataDiagnostics__;
+  var v=typeof d==="function"?d():d;
+  console.log('[captured-state] ready='+(!!F(READY,""))+' state='+v.state_id
+    +' applied='+v.layout_applied+' expected='+v.layout_expected
+    +' miss='+v.layout_node_miss);
+};
 var orig=globalThis.__pulpRefreshMaterializedState__;
 globalThis.__pulpRefreshMaterializedState__=function(){
   var r=orig.apply(this,arguments);
-  if(!opened && F(READY,"")){ opened=true; __OPEN__ }
-  else if(opened && !logged && ++n>6){ logged=true;
-    var d=globalThis.__pulpMaterializedMetadataDiagnostics__;
-    var v=typeof d==="function"?d():d;
-    console.log('[captured-state] ready='+(!!F(READY,""))+' state='+v.state_id
-      +' applied='+v.layout_applied+' expected='+v.layout_expected
-      +' miss='+v.layout_node_miss);
-  }
+  if(!opened && F(READY,"")){ opened=true; __OPEN__ report(); }
+  else if(opened && ++n<=24) report();
   return r;
 };
 """
@@ -114,6 +115,11 @@ def probe_app(app, menu, tmp):
     except (subprocess.TimeoutExpired, OSError):
         return None
     blob = (out.stdout or b"") + (out.stderr or b"")
+    # One reading per state resolution after the snapshots are ready, the
+    # last of which is the settled answer. It used to wait for the seventh
+    # resolution, which assumed the editor kept committing on its own; an
+    # editor that commits only when something changes may resolve just once
+    # or twice after the menu opens, and never reported.
     line = None
     for raw in blob.decode("utf-8", "replace").splitlines():
         if "[captured-state]" in raw:

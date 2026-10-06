@@ -20,6 +20,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -71,9 +72,13 @@ std::vector<std::pair<std::uint32_t, std::string>> expected_host_parameters() {
         std::snprintf(name, sizeof(name), "Macro %zu", macro + 1);
         expected.emplace_back(spectr::macro_param_id(macro), name);
     }
+    // Registered just before the routing lanes.
+    expected.emplace_back(spectr::kParamFreezeHoldForLength, "Freeze Hold for Length");
     static constexpr const char* kRouteNames[] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph", "Band shift", "Band spread",
-        "Freeze", "Length", "Intensity", "Mix", "Output"};
+        "Freeze", "Length", "Intensity", "Mix", "Output", "Bands", "Preset"};
+    static_assert(std::size(kRouteNames) == spectr::kRouteTargetCount,
+                  "one host name per routing target");
     for (std::size_t lfo = 0; lfo < spectr::kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < spectr::kRouteTargetCount; ++t) {
             const std::string base = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];
@@ -162,8 +167,9 @@ std::vector<std::uint8_t> make_three_island_state() {
     // what carries that mode across the real format boundary.
     REQUIRE(processor->set_render_mode(spectr::MaskRenderMode::linear_phase));
     // The island readings are the mask's own, so the authored state carries
-    // Auto Gain off (it is on for new instances), and the restore across the
-    // format boundary proves that choice survives too.
+    // Auto Gain off explicitly -- whatever a new instance defaults to
+    // (kAutoGainDefaultForNewInstances) -- and the restore across the format
+    // boundary proves that choice survives too.
     author.state().set_value(spectr::kParamAutoGain, 0.0f);
     spectr::BandField islands;
     for (auto& band : islands.bands) band.muted = true;
@@ -532,6 +538,108 @@ AuTestComponent register_built_au_in_process(
 #endif  // SPECTR_HAVE_TEST_AU
 
 } // namespace
+
+// The latency a CLAP or VST3 host is told (clap latency extension,
+// IComponent::getLatencySamples, both read through PluginSlot) must be the
+// delay the built artifact's audio has, in Tracking, Mixing on the CPU and,
+// where the build has it, Mixing with GPU processing on -- dry (an impulse,
+// by its onset) and wet (a noise burst, by the cross-correlation peak).
+// SPECTR_LATENCY_PLANT_OFFSET shifts the reported figure: the negative
+// control, which must fail.
+void check_artifact_latency(const std::filesystem::path& bundle,
+                            pulp::host::PluginFormat format) {
+    const char* plant_env = std::getenv("SPECTR_LATENCY_PLANT_OFFSET");
+    const int plant = plant_env ? std::atoi(plant_env) : 0;
+    struct Case { const char* name; spectr::MaskRenderMode mode; bool gpu; };
+    const Case cases[] = {{"tracking", spectr::MaskRenderMode::zero_latency, false},
+                          {"mixing-cpu", spectr::MaskRenderMode::linear_phase, false},
+                          {"mixing-gpu", spectr::MaskRenderMode::linear_phase, true}};
+    for (const double sr : {44100.0, 48000.0})
+        for (const int block : {128, 512})
+            for (const auto& c : cases)
+                for (const float mix : {0.0f, 100.0f}) {
+                    // Author the session the way a project carries it.
+                    pulp::format::HeadlessHost author(spectr::create_spectr);
+                    auto* processor = dynamic_cast<spectr::Spectr*>(author.processor());
+                    REQUIRE(processor != nullptr);
+                    REQUIRE(processor->set_gpu_processing(c.gpu));
+                    REQUIRE(processor->set_render_mode(c.mode));
+                    author.state().set_value(spectr::kMix, mix);
+                    author.state().set_value(spectr::kParamAutoGain, 0.0f);
+                    const auto state = author.save_state();
+
+                    pulp::host::PluginInfo info;
+                    info.name = kExpectedArtifactName;
+                    info.path = bundle.string();
+                    info.format = format;
+                    auto slot = pulp::host::PluginSlot::load(info);
+                    REQUIRE(slot != nullptr);
+                    REQUIRE(slot->prepare(sr, block));
+                    REQUIRE(slot->restore_state(state));
+                    const int reported = slot->latency_samples() + plant;
+                    const bool wet = mix > 0.0f;
+                    const int frames = ((reported + 8192 + block - 1) / block) * block;
+                    std::vector<float> in_l(frames, 0.0f), in_r(frames, 0.0f), out_l(frames), out_r(frames);
+                    constexpr int marker[2] = {13, 29};
+                    constexpr int burst_at = 1000, burst = 4096;
+                    if (!wet) { in_l[marker[0]] = 0.5f; in_r[marker[1]] = -0.3f; }
+                    else {
+                        std::uint32_t rng = 12345u;
+                        for (int i = 0; i < burst; ++i) {
+                            rng = rng * 1664525u + 1013904223u; in_l[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+                            rng = rng * 1664525u + 1013904223u; in_r[burst_at + i] = 0.25f * (float(rng >> 8) / 16777216.0f - 0.5f);
+                        }
+                    }
+                    pulp::midi::MidiBuffer midi_in, midi_out;
+                    pulp::host::ParameterEventQueue events;
+                    for (int at = 0; at < frames; at += block) {
+                        const float* inputs[] = {in_l.data() + at, in_r.data() + at};
+                        float* outputs[] = {out_l.data() + at, out_r.data() + at};
+                        auto input = pulp::audio::BufferView<const float>(inputs, 2, std::size_t(block));
+                        auto output = pulp::audio::BufferView<float>(outputs, 2, std::size_t(block));
+                        slot->process(output, input, midi_in, midi_out, events, block);
+                    }
+                    long long measured[2] = {-1, -1};
+                    for (int ch = 0; ch < 2; ++ch) {
+                        const auto& x = ch ? out_r : out_l;
+                        const auto& in = ch ? in_r : in_l;
+                        if (!wet) {
+                            const float threshold = 0.1f * (ch ? 0.3f : 0.5f);
+                            for (int i = 0; i < frames; ++i)
+                                if (std::abs(x[std::size_t(i)]) >= threshold) { measured[ch] = i - marker[ch]; break; }
+                            continue;
+                        }
+                        double best = -1.0;
+                        const int real = reported - plant;
+                        for (int lag = std::max(0, real - 2048); lag <= real + 2048; ++lag) {
+                            double acc = 0.0;
+                            for (int i = burst_at; i < burst_at + burst && i + lag < frames; ++i)
+                                acc += double(in[std::size_t(i)]) * double(x[std::size_t(i + lag)]);
+                            if (acc > best) { best = acc; measured[ch] = lag; }
+                        }
+                    }
+                    std::printf("artifact-latency: %s %.0f %d %s mix=%.0f reported=%d measured=%lld,%lld\n",
+                                format == pulp::host::PluginFormat::CLAP ? "CLAP" : "VST3",
+                                sr, block, c.name, double(mix), reported, measured[0], measured[1]);
+                    INFO(c.name << " sr=" << sr << " block=" << block << " mix=" << mix);
+                    CHECK(measured[0] == reported);
+                    CHECK(measured[1] == reported);
+                    slot->release();
+                }
+}
+
+#if defined(SPECTR_HAVE_TEST_CLAP)
+TEST_CASE("The built CLAP reports the latency its audio has",
+          "[artifact][latency-artifact]") {
+    check_artifact_latency(SPECTR_TEST_CLAP_PATH, pulp::host::PluginFormat::CLAP);
+}
+#endif
+#if defined(SPECTR_HAVE_TEST_VST3)
+TEST_CASE("The built VST3 reports the latency its audio has",
+          "[artifact][latency-artifact]") {
+    check_artifact_latency(SPECTR_TEST_VST3_PATH, pulp::host::PluginFormat::VST3);
+}
+#endif
 
 #if defined(SPECTR_HAVE_TEST_CLAP)
 TEST_CASE("Pulp host loads and processes the built Spectr CLAP artifact") {

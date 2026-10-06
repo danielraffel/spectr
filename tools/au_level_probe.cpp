@@ -17,6 +17,14 @@
 // The shape is written as host parameters (Band NN Gain), so the whole path
 // is the adapter's. Exit 0 pass, 1 a gate failed, 2 the probe could not run.
 //
+// Pacing: a host renders in real time, and the mask a parameter change stages
+// is designed on a worker that keeps up with that. This probe renders blocks
+// back to back, so after each one it waits until the bundle's
+// spectr_mask_design_backlog_v1() and spectr_param_sync_backlog_v1() read
+// zero -- every staged layout designed and waiting for the next block --
+// instead of measuring how far a loaded
+// machine let the render outrun that worker.
+//
 // Usage: Spectr-au-level-probe --bundle path/to/Spectr.component [--mode tracking|mixing]
 
 #include <AudioToolbox/AudioToolbox.h>
@@ -24,6 +32,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <thread>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -37,6 +48,26 @@ constexpr double kSr = 48000.0;
 constexpr UInt32 kBlock = 512;
 constexpr AudioUnitParameterID kIntensity = 5000, kAutoGain = 5001;
 constexpr AudioUnitParameterID kBandGainBase = 1000;
+
+using BacklogFn = std::uint64_t (*)();
+BacklogFn design_backlog = nullptr;
+BacklogFn param_sync_backlog = nullptr;
+
+// Block until the mask-design worker has caught up with every layout the last
+// render staged. Event-driven on the counter, not a fixed delay: it returns as
+// soon as the worker is done, and a worker that never finishes is a failure to
+// run rather than a silently stale measurement.
+void await_design_worker() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (design_backlog() != 0 || param_sync_backlog() != 0) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            std::fprintf(stderr, "mask-design worker never drained its backlog (%llu)\n",
+                         static_cast<unsigned long long>(design_backlog()));
+            std::exit(2);
+        }
+        std::this_thread::yield();
+    }
+}
 
 OSType four_cc(CFDictionaryRef dict, const char* key) {
     auto name = CFStringCreateWithCString(nullptr, key, kCFStringEncodingUTF8);
@@ -66,6 +97,14 @@ AudioComponent register_bundle(const std::string& path) {
         ? reinterpret_cast<AudioComponentFactoryFunction>(CFBundleGetFunctionPointerForName(bundle, factory_name))
         : nullptr;
     if (!factory) return nullptr;
+    design_backlog = reinterpret_cast<BacklogFn>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_mask_design_backlog_v1")));
+    param_sync_backlog = reinterpret_cast<BacklogFn>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_param_sync_backlog_v1")));
+    if (!design_backlog || !param_sync_backlog) {
+        std::fprintf(stderr, "%s does not export the spectr_*_backlog_v1 counters\n", path.c_str());
+        return nullptr;
+    }
     return AudioComponentRegister(&desc, CFSTR("Pulp: level probe (in-process)"), 1, factory);
 }
 
@@ -135,6 +174,7 @@ struct Unit {
             }
             std::copy_n(static_cast<const float*>(abl->mBuffers[0].mData), frames, out.begin() + long(pos));
             std::free(abl);
+            await_design_worker();
         }
         return out;
     }

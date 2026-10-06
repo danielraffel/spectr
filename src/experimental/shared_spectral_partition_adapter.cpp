@@ -38,6 +38,12 @@ bool SharedSpectralPartitionAdapter::prepare(const Config& c) {
     // at the current position. Same-position setters coalesce to their last value.
     mix_events_.resize(std::size_t(c.additional_latency_samples)+2);
     mix_input_.resize(c.renderer.channels);mix_output_.resize(c.renderer.channels);
+    wet_.assign(std::size_t(c.max_callback_frames)*c.renderer.channels,0.f);
+    wet_write_.resize(c.renderer.channels);wet_read_.resize(c.renderer.channels);
+    for(int ch=0;ch<c.renderer.channels;++ch){
+        wet_write_[ch]=wet_.data()+std::size_t(ch)*c.max_callback_frames;
+        wet_read_[ch]=wet_write_[ch];
+    }
     mix_read_=mix_write_=mix_count_=0;sample_cursor_=0;latest_mix_=c.renderer.initial_mix;
     fill_=0;quantums_=0;prepared_=true;return true;
 }
@@ -88,7 +94,16 @@ bool SharedSpectralPartitionAdapter::process(const float* const* input,
             mix_input_[ch]=input[ch]+offset;mix_output_[ch]=output[ch]+offset;
         }
         mixer_.push_dry(mix_input_.data(),config_.renderer.channels,count);
-        if(!process_wet(mix_input_.data(),mix_output_.data(),count))return false;
+        // The source runs before any output sample of this span is written,
+        // so an in-place caller is still safe; the dry leg above already
+        // holds the live input.
+        const float* const* wet_input=mix_input_.data();
+        if(wet_source_){
+            wet_source_->process_block(mix_input_.data(),wet_write_.data(),
+                                       config_.renderer.channels,int(count));
+            wet_input=wet_read_.data();
+        }
+        if(!process_wet(wet_input,mix_output_.data(),count))return false;
         mixer_.mix_wet(mix_output_.data(),config_.renderer.channels,count);
         sample_cursor_+=count;offset+=count;
     }

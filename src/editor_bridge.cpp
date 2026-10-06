@@ -2,6 +2,8 @@
 
 #include "spectr/spectr.hpp"
 #include "spectr/detail/gpu_audio_status_projection.hpp"
+#include "spectr/render_mode.hpp"
+#include <cstdio>
 #include "spectr/edit_engine.hpp"
 #include "spectr/edit_modes.hpp"
 #include "spectr/pattern.hpp"
@@ -13,6 +15,13 @@
 #include <pulp/runtime/build_info.hpp>
 #include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
+// Pulp's in-app update bridge (pulp_updates_*). Spectr builds against SDKs
+// with and without it; without it the Settings UPDATES group asks, gets
+// "unknown message type", and renders nothing.
+#if __has_include(<pulp/format/app_updates_bridge.hpp>)
+#include <pulp/format/app_updates_bridge.hpp>
+#define SPECTR_HAS_PULP_APP_UPDATES 1
+#endif
 
 #include <choc/containers/choc_Value.h>
 #include <choc/text/choc_JSON.h>
@@ -167,6 +176,17 @@ std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gp
                                   : std::string_view{"clean"});
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
+    {
+        // The delay the HOST is told for the active mode, which is what its
+        // delay compensation applies -- not a per-mode constant.
+        char latency[160];
+        std::snprintf(latency, sizeof(latency), "%s, %d samples (%.1f ms at %.0f Hz)",
+                      std::string(render_mode_label(plugin.render_mode())).c_str(),
+                      plugin.latency_samples(),
+                      plugin.render_mode_latency_ms(plugin.render_mode()),
+                      plugin.sample_rate());
+        append("Latency reported to host", latency);
+    }
     result.append(detail::gpu_audio_status_copy_text(gpu_status));
     return result;
 }
@@ -191,6 +211,17 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     if (!pulp::runtime::kBuildIso8601.empty())
         result.addMember("build_time", std::string{pulp::runtime::kBuildIso8601});
     result.addMember("sdk_dirty", pulp::runtime::kGitDirty);
+    // Lets the editor show its TRACING badge from the mount rather than
+    // committing again when the native side asks for it after load.
+    result.addMember("tracing", pulp::runtime::kTracingEnabled);
+    {
+        auto latency = choc::value::createObject("SpectrReportedLatency");
+        latency.addMember("mode", std::string(render_mode_token(plugin.render_mode())));
+        latency.addMember("reported_samples", static_cast<double>(plugin.latency_samples()));
+        latency.addMember("ms", plugin.render_mode_latency_ms(plugin.render_mode()));
+        latency.addMember("sample_rate", plugin.sample_rate());
+        result.addMember("latency", latency);
+    }
     const auto gpu_status=plugin.gpu_audio_status();
     result.addMember("gpu_audio", detail::gpu_audio_status_projection(gpu_status));
     result.addMember("copy_text", build_info_copy_text_(plugin,gpu_status));
@@ -246,6 +277,10 @@ choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
     keyboard.addMember("host_kind",
                        std::string(editor_is_standalone() ? "standalone" : "plugin"));
     keyboard.addMember("shortcuts_in_daw", plugin.keyboard_shortcuts_in_daw());
+    // "Show tooltips" rides the same editor-preference payload.
+    keyboard.addMember("show_tooltips", plugin.show_tooltips());
+    // So does "Ask before overriding modulation".
+    keyboard.addMember("ask_before_override", plugin.ask_before_override());
     return keyboard;
 }
 
@@ -354,6 +389,8 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
         routes.addArrayElement(route);
     }
     modulation.addMember("routes", routes);
+    // Freeze "Hold for Length" (4140): shown under the Freeze target.
+    modulation.addMember("freeze_hold_for_length", plugin.freeze_hold_for_length());
     return modulation;
 }
 
@@ -507,6 +544,16 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         options.addArrayElement(option);
     }
     latency.addMember("options", options);
+    // Mixing's GPU processing choice, and the Mixing figure for each side of
+    // it, so the panel can show what turning it on or off would cost. The
+    // Mixing option above already carries the figure for the current choice.
+    latency.addMember("gpu_available", Spectr::gpu_processing_available());
+    latency.addMember("gpu_processing", plugin.gpu_processing());
+    latency.addMember("mixing_cpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, false)));
+    latency.addMember("mixing_gpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, true)));
+    latency.addMember("sample_rate", plugin.sample_rate());
     payload.addMember("latency", latency);
 
     payload.addMember("modulation", modulation);
@@ -1138,6 +1185,13 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
+    // Check for Updates in Settings: status, check, automatic-check toggle,
+    // releases page. Only the standalone installs an update service; in a
+    // plug-in these answer `available: false` and the group stays hidden.
+#if defined(SPECTR_HAS_PULP_APP_UPDATES)
+    pulp::format::add_app_update_handlers(bridge);
+#endif
+
     // Range: the plot's vertical scale and how far a full-height edit
     // reaches. Editor state persisted with the session, never a host
     // parameter and never audible. {range_db: 3 | 6 | 12 | 24}.
@@ -1170,6 +1224,68 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             if (!flag.isBool())
                 return EditorBridge::err_response("enabled must be a boolean");
             plugin.set_keyboard_shortcuts_in_daw(flag.getBool());
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // The Preset destination's neighbourhood. The editor resolves each
+    // neighbouring preset at the current band count -- exactly what applying
+    // it would write -- and sends their names and gains here whenever the
+    // current preset, the band count or the library changes.
+    //   { centre: id, below: n, above: n, names: [9], gains: [9][<=64] }
+    bridge.add_handler("preset_modulation_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("centre") || !p["centre"].isString()
+                || !p.hasObjectMember("names") || !p["names"].isArray()
+                || !p.hasObjectMember("gains") || !p["gains"].isArray())
+                return EditorBridge::err_response("centre, names and gains required");
+            if (p["names"].size() != kPresetNeighbourCount
+                || p["gains"].size() != kPresetNeighbourCount)
+                return EditorBridge::err_response("names and gains must hold 9 presets");
+            std::array<std::string, kPresetNeighbourCount> names{};
+            PresetModulationNeighbours neighbours{};
+            for (std::uint32_t i = 0; i < kPresetNeighbourCount; ++i) {
+                const auto& name = p["names"][i];
+                if (!name.isString()) return EditorBridge::err_response("names must be strings");
+                names[i] = std::string(name.getString());
+                const auto& row = p["gains"][i];
+                if (!row.isArray() || row.size() > kMaxBands)
+                    return EditorBridge::err_response("gains rows must hold at most 64 values");
+                for (std::uint32_t b = 0; b < row.size(); ++b) {
+                    const auto& v = row[b];
+                    if (!(v.isFloat32() || v.isFloat64() || v.isInt32() || v.isInt64()))
+                        return EditorBridge::err_response("gains must be numbers");
+                    neighbours.gains[i][b] = static_cast<float>(v.getWithDefault<double>(0.0));
+                }
+            }
+            neighbours.below = p.hasObjectMember("below")
+                ? static_cast<int>(p["below"].getWithDefault<std::int64_t>(0)) : 0;
+            neighbours.above = p.hasObjectMember("above")
+                ? static_cast<int>(p["above"].getWithDefault<std::int64_t>(0)) : 0;
+            plugin.set_preset_modulation(std::string(p["centre"].getString()), names, neighbours);
+            return EditorBridge::ok_response();
+        });
+
+    // "Show tooltips": an editor preference persisted in the plugin state.
+    bridge.add_handler("tooltips_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_show_tooltips(flag.getBool());
+            return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
+        });
+
+    // "Ask before overriding modulation": the same kind of preference.
+    bridge.add_handler("override_ask_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled"))
+                return EditorBridge::err_response("enabled missing");
+            const auto& flag = p["enabled"];
+            if (!flag.isBool())
+                return EditorBridge::err_response("enabled must be a boolean");
+            plugin.set_ask_before_override(flag.getBool());
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
@@ -1265,6 +1381,20 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // The mode is sent as its stable token, never as an index. An index would
     // make the panel's option order part of the wire contract, so reordering
     // the list in the UI would silently change what the control does.
+    // Mixing's GPU processing choice. Like the mode, it rebuilds the renderer
+    // and moves the host's delay compensation, so it answers with the
+    // rehydrated panel state carrying the new figures.
+    bridge.add_handler("gpu_processing_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled") || !p["enabled"].isBool())
+                return EditorBridge::err_response("enabled must be a bool");
+            if (!Spectr::gpu_processing_available())
+                return EditorBridge::err_response("this build has no GPU processing");
+            if (!plugin.set_gpu_processing(p["enabled"].getBool()))
+                return EditorBridge::err_response("could not prepare that renderer");
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
+        });
     bridge.add_handler("render_mode_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("mode"))
