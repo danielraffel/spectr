@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -36,7 +37,8 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                 ["node", str(INVENTORY), "--artifact", str(ARTIFACT), "--manifest", str(manifest),
                  "--emission", str(emission), "--out-report", str(report_path), "--plant-unknown", "PlantedInventoryType",
                  "--plant-prop", "SpectrSettingsField", "--plant-prop-type", "SpectrSettingsField",
-                 "--plant-pulp-initial", "App", "--plant-pulp-payload", "App"],
+                 "--plant-pulp-initial", "App", "--plant-pulp-payload", "App",
+                 "--plant-render-math", "App"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -77,6 +79,14 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertEqual(report["window_pulp_initial_negative_control"]["diagnostic"]["code"], "TS2339")
             self.assertEqual(report["window_pulp_payload_negative_control"]["status"], "passed")
             self.assertEqual(report["window_pulp_payload_negative_control"]["diagnostic"]["code"], "TS2339")
+            self.assertEqual(report["window_render_math_contract"]["artifact"]["sha256"], report["artifact"]["sha256"])
+            self.assertEqual(report["window_render_math_contract"]["surfaces"]["SpectrAnalyzer"], ["debugSnapshot", "native", "normalizeDb", "project", "sample", "scale"])
+            self.assertEqual(report["window_render_math_contract"]["surfaces"]["SpectrFreq"], ["FMAX", "FMIN", "fmt", "freqToPos", "logMax", "logMin", "posToFreq"])
+            self.assertEqual(report["window_render_math_contract"]["negative_control"]["status"], "passed")
+            self.assertEqual(report["window_render_math_contract"]["negative_control"]["diagnostics"]["analyzer_unknown"]["code"], "TS2339")
+            self.assertEqual(report["window_render_math_contract"]["negative_control"]["diagnostics"]["analyzer_argument"]["code"], "TS2345")
+            self.assertEqual(report["window_render_math_contract"]["negative_control"]["diagnostics"]["freq_unknown"]["code"], "TS2339")
+            self.assertEqual(report["window_render_math_contract"]["negative_control"]["diagnostics"]["freq_argument"]["code"], "TS2345")
             self.assertEqual(report["scope"]["runtime_artifact_changed"], False)
 
     def test_unproven_manifest_external_binding_fails_closed(self):
@@ -105,6 +115,38 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("external binding InjectedWp1Binding is not proven", result.stderr)
+            self.assertFalse(report_path.exists())
+
+    def test_missing_embedded_render_math_field_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            artifact = root / "artifact.json"
+            data = json.loads(ARTIFACT.read_text())
+            self.assertIn("fmt(f)", data["html"])
+            data["html"] = data["html"].replace("fmt(f)", "fmtRemoved(f)", 1)
+            artifact.write_text(json.dumps(data, separators=(",", ":")) + "\n")
+            shutil.copy2(ROOT / "native-ui" / "materialized" / "spectr-native-services.js", root / "spectr-native-services.js")
+            shutil.copy2(ROOT / "native-ui" / "materialized" / "runtime.js", root / "runtime.js")
+            manifest = root / "manifest.json"
+            made = subprocess.run(
+                ["node", str(MANIFEST_CLI), "--artifact", str(artifact), "--root", "App", "--out", str(manifest)],
+                cwd=ROOT, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(made.returncode, 0, made.stderr)
+            emission = root / "emitted"
+            emitted = subprocess.run(
+                ["node", str(EMITTER), "--artifact", str(artifact), "--manifest", str(manifest), "--out", str(emission)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
+            )
+            self.assertEqual(emitted.returncode, 0, emitted.stderr)
+            report_path = root / "app-type-debt.json"
+            result = subprocess.run(
+                ["node", str(INVENTORY), "--artifact", str(artifact), "--manifest", str(manifest),
+                 "--emission", str(emission), "--out-report", str(report_path)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Window.SpectrFreq surface is missing fields: fmt", result.stderr)
             self.assertFalse(report_path.exists())
 
 

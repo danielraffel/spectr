@@ -41,6 +41,10 @@ const JS_RUNTIME_BINDINGS = new Set([
   'Number', 'Object', 'Promise', 'RegExp', 'Set', 'String', 'Symbol', 'WeakMap', 'BigInt',
   'undefined', 'arguments', 'parseInt', 'parseFloat', 'isFinite', 'Intl',
 ]);
+const RENDER_MATH_FIELDS = Object.freeze({
+  SpectrAnalyzer: ['native', 'sample', 'scale', 'normalizeDb', 'project', 'debugSnapshot'],
+  SpectrFreq: ['FMIN', 'FMAX', 'logMin', 'logMax', 'posToFreq', 'freqToPos', 'fmt'],
+});
 
 function fail(message) { throw new Error(`WP-1 App type debt inventory failed: ${message}`); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
@@ -62,6 +66,61 @@ function pulpContractFields(html) {
   const match = typeof html === 'string' && html.match(/const pulp = \{([\s\S]*?)\n\s*\};/);
   if (!match) fail('artifact does not contain a recognizable window.pulp object');
   return ['on', 'postMessage', 'initial'].filter((field) => new RegExp(`\\b${field}\\s*(?:\\(|,)`).test(match[1]));
+}
+function walkAst(node, visit) {
+  if (!node || typeof node !== 'object') return;
+  visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end') continue;
+    if (Array.isArray(value)) value.forEach((child) => walkAst(child, visit));
+    else walkAst(value, visit);
+  }
+}
+function astPropertyName(property) {
+  if (!property || property.computed) return null;
+  const key = property.key;
+  if (key?.type === 'Identifier') return key.name;
+  if (key?.type === 'StringLiteral') return key.value;
+  return null;
+}
+function objectExpressionFields(object) {
+  if (!object || object.type !== 'ObjectExpression') return null;
+  return [...new Set(object.properties.map(astPropertyName).filter((name) => typeof name === 'string'))].sort();
+}
+function windowObjectFields(artifact, propertyName) {
+  if (typeof parse !== 'function') fail('WP-1 parser toolchain has no parse() API');
+  const fields = new Set();
+  const objectBindings = new Map();
+  for (const [index, source] of scriptSources(artifact).entries()) {
+    let ast;
+    try { ast = parse(source, { sourceType: 'script', plugins: ['jsx', 'typescript'], errorRecovery: false }); }
+    catch (error) { fail(`artifact script ${index} parser rejected source: ${error.message}`); }
+    walkAst(ast, (node) => {
+      if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier') {
+        const names = objectExpressionFields(node.init);
+        if (names) objectBindings.set(node.id.name, names);
+      }
+    });
+    walkAst(ast, (node) => {
+      if (node.type !== 'AssignmentExpression' || node.left?.type !== 'MemberExpression'
+          || node.left.object?.type !== 'Identifier' || node.left.object.name !== 'window'
+          || node.left.property?.type !== 'Identifier' || node.left.property.name !== propertyName) return;
+      const direct = objectExpressionFields(node.right);
+      if (direct) direct.forEach((name) => fields.add(name));
+      else if (node.right?.type === 'Identifier') (objectBindings.get(node.right.name) || []).forEach((name) => fields.add(name));
+    });
+  }
+  return [...fields].sort();
+}
+function renderMathSurfaceFields(artifact) {
+  const surfaces = {};
+  for (const [name, expected] of Object.entries(RENDER_MATH_FIELDS)) {
+    const fields = windowObjectFields(artifact, name);
+    const missing = expected.filter((field) => !fields.includes(field));
+    if (missing.length) fail(`artifact Window.${name} surface is missing fields: ${missing.join(', ')}`);
+    surfaces[name] = fields;
+  }
+  return surfaces;
 }
 function namesFromPattern(node, out = new Set()) {
   if (!node) return out;
@@ -133,7 +192,7 @@ function runEmitterVerify(artifactPath, manifestPath, emissionDir) {
   if (result.status !== 0) fail(`emission verification rejected the App closure: ${(result.stderr || result.stdout || 'no diagnostic').trim()}`);
 }
 
-function ambientDeclarations(manifest, { includeInitial = false } = {}) {
+function ambientDeclarations(manifest, { includeInitial = false, includeRenderMath = false } = {}) {
   const names = new Set(['React', 'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus']);
   for (const component of manifest.components) {
     for (const name of component.external_bindings || []) {
@@ -143,6 +202,26 @@ function ambientDeclarations(manifest, { includeInitial = false } = {}) {
   }
   const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
   const initialMethod = includeInitial ? '  initial(type: string): SpectrPulpInitialPayload | null;\n' : '';
+  const renderMath = includeRenderMath ? `
+interface SpectrAnalyzerScale { readonly floor: number; readonly ceiling: number; }
+interface SpectrAnalyzerContract {
+  readonly native: boolean;
+  sample(logFrequency: number, time: number, traceName?: string): number;
+  scale(): SpectrAnalyzerScale;
+  normalizeDb(db: number): number;
+  project(amount: number, zeroY: number, halfH: number): number;
+  debugSnapshot(): unknown;
+}
+interface SpectrFreqContract {
+  readonly FMIN: number;
+  readonly FMAX: number;
+  readonly logMin: number;
+  readonly logMax: number;
+  posToFreq(pos: number, lmin: number, lmax: number): number;
+  freqToPos(frequency: number, lmin: number, lmax: number): number;
+  fmt(frequency: number): string;
+}
+` : '';
   declarations.push(`
 interface SpectrPulpPayload {
   ok?: boolean;
@@ -267,11 +346,12 @@ interface SpectrPulpBridge {
 ${initialMethod}}
 interface Window {
   pulp?: SpectrPulpBridge;
+${includeRenderMath ? '  SpectrAnalyzer: SpectrAnalyzerContract;\n  SpectrFreq: SpectrFreqContract;\n' : ''}
 }
 declare namespace JSX {
   interface IntrinsicElements { [elemName: string]: any; }
   interface IntrinsicAttributes { key?: unknown; }
-}`);
+}${renderMath}`);
   return `${declarations.join('\n')}\n`;
 }
 
@@ -349,7 +429,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantPulpInitial, plantPulpPayload }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantPulpInitial, plantPulpPayload, plantRenderMath }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const bridgeSourcePath = path.join(path.dirname(artifactPath), 'spectr-native-services.js');
   const bridgeSourceBytes = readBytes(bridgeSourcePath, 'maintained native bridge source');
@@ -360,6 +440,7 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const { value: manifest } = readJson(manifestPath, 'dependency manifest');
   if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.components)) fail('dependency manifest schema/components are invalid');
   const inlinePulpFields = pulpContractFields(artifact.html);
+  const renderMathFields = renderMathSurfaceFields(artifact);
   const sourcePulpFields = pulpContractFields(bridgeSourceBytes.toString('utf8'));
   const synchronizedPulpFields = pulpContractFields(synchronizedRuntimeBytes.toString('utf8'));
   if (!sourcePulpFields.includes('initial')) fail('maintained native bridge source does not expose initial(type)');
@@ -372,10 +453,10 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
   const controlStage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-control-'));
   try {
     const modules = stageModules(manifest, emission, emissionDir, stage);
-    fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial') }));
+    fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial'), includeRenderMath: true }));
     const baseline = runTypeScript(stage);
     stageModules(manifest, emission, emissionDir, controlStage, { applyPropContracts: false });
-    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial') }));
+    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest, { includeInitial: inlinePulpFields.includes('initial'), includeRenderMath: true }));
     const controlBaseline = runTypeScript(controlStage);
     let negativeControl = { status: 'not-run' };
     if (plantUnknown) {
@@ -434,6 +515,33 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (!diagnostic) fail(`unknown Window.pulp response payload field did not produce TS2339: ${JSON.stringify(planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix)))}`);
       pulpPayloadNegativeControl = { status: 'passed', name: plantPulpPayload, diagnostic, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let renderMathNegativeControl = { status: 'not-run' };
+    if (plantRenderMath) {
+      const target = path.join(stage, 'components', `${plantRenderMath}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted render-math component ${plantRenderMath} is not staged`);
+      const controlStartLine = fs.readFileSync(target, 'utf8').split(/\r?\n/).length + 1;
+      fs.appendFileSync(target, `
+const __wp1_planted_analyzer_unknown__ = window.SpectrAnalyzer.__wp1_unknown_analyzer_surface;
+const __wp1_planted_analyzer_argument__ = window.SpectrAnalyzer.sample("bad", 0);
+const __wp1_planted_freq_unknown__ = window.SpectrFreq.__wp1_unknown_freq_surface;
+const __wp1_planted_freq_argument__ = window.SpectrFreq.fmt("bad");
+`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantRenderMath}.tsx`;
+      const diagnostics = planted.diagnostics.filter((entry) => entry.file.endsWith(targetSuffix) && entry.line >= controlStartLine);
+      const analyzerUnknown = diagnostics.find((entry) => entry.code === 'TS2339' && /__wp1_unknown_analyzer_surface/.test(entry.message));
+      const argumentDiagnostics = diagnostics.filter((entry) => entry.code === 'TS2345');
+      const analyzerArgument = argumentDiagnostics[0];
+      const freqUnknown = diagnostics.find((entry) => entry.code === 'TS2339' && /__wp1_unknown_freq_surface/.test(entry.message));
+      const freqArgument = argumentDiagnostics[1];
+      if (!analyzerUnknown || argumentDiagnostics.length !== 2 || !freqUnknown || !freqArgument)
+        fail(`render-math contract controls did not produce all expected diagnostics: ${JSON.stringify(diagnostics)}`);
+      renderMathNegativeControl = {
+        status: 'passed', name: plantRenderMath,
+        diagnostics: { analyzer_unknown: analyzerUnknown, analyzer_argument: analyzerArgument, freq_unknown: freqUnknown, freq_argument: freqArgument },
+        planted_diagnostic_count: planted.diagnostics.length,
+      };
+    }
     const bindingClass = classifyBindings(manifest, artifact);
     const report = {
       schema: SCHEMA, version: 1,
@@ -486,6 +594,11 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       },
       window_pulp_initial_negative_control: pulpInitialNegativeControl,
       window_pulp_payload_negative_control: pulpPayloadNegativeControl,
+      window_render_math_contract: {
+        artifact: { path: path.basename(artifactPath), sha256: sha256(artifactBytes) },
+        surfaces: renderMathFields,
+        negative_control: renderMathNegativeControl,
+      },
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
     fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
@@ -500,13 +613,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-pulp-initial' || arg === '--plant-pulp-payload') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-pulp-initial' || arg === '--plant-pulp-payload' || arg === '--plant-render-math') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-pulp-initial COMPONENT] [--plant-pulp-payload COMPONENT]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-pulp-initial COMPONENT] [--plant-pulp-payload COMPONENT] [--plant-render-math COMPONENT]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -516,7 +629,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantPulpInitial: args.plant_pulp_initial, plantPulpPayload: args.plant_pulp_payload }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantPulpInitial: args.plant_pulp_initial, plantPulpPayload: args.plant_pulp_payload, plantRenderMath: args.plant_render_math }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

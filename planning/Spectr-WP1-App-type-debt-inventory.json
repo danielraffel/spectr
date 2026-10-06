@@ -448,6 +448,22 @@
     "diagnostics": [
       {
         "file": "components/App.tsx",
+        "line": 18,
+        "column": 34,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/App.tsx",
+        "line": 19,
+        "column": 28,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/App.tsx",
         "line": 26,
         "column": 16,
         "code": "TS2339",
@@ -880,14 +896,6 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 278,
-        "column": 19,
-        "code": "TS2339",
-        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
         "line": 285,
         "column": 23,
         "code": "TS2339",
@@ -928,102 +936,6 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 546,
-        "column": 31,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 698,
-        "column": 26,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 698,
-        "column": 51,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 699,
-        "column": 16,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 843,
-        "column": 23,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 886,
-        "column": 26,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 901,
-        "column": 26,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 913,
-        "column": 26,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 965,
-        "column": 29,
-        "code": "TS2339",
-        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 979,
-        "column": 34,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 983,
-        "column": 29,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 984,
-        "column": 24,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
         "line": 1259,
         "column": 17,
         "code": "TS2339",
@@ -1052,38 +964,6 @@
         "column": 27,
         "code": "TS2339",
         "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1266,
-        "column": 24,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1731,
-        "column": 24,
-        "code": "TS2339",
-        "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1766,
-        "column": 28,
-        "code": "TS2339",
-        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1766,
-        "column": 87,
-        "code": "TS2339",
-        "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
       },
       {
@@ -1373,6 +1253,22 @@
         "code": "TS2322",
         "message": "Type '{ k: string; }' is not assignable to type 'IntrinsicAttributes & { k: any; children: any; }'.",
         "category": "prop-or-type"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 5,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/MorphSlider.tsx",
+        "line": 6,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
       },
       {
         "file": "components/PatternDeleteDialog.tsx",
@@ -1800,6 +1696,22 @@
       },
       {
         "file": "components/SpectrBuildInfo.tsx",
+        "line": 29,
+        "column": 44,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
+        "line": 30,
+        "column": 21,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrBuildInfo.tsx",
         "line": 88,
         "column": 27,
         "code": "TS2322",
@@ -1952,6 +1864,22 @@
       },
       {
         "file": "components/SpectrOutputMeter.tsx",
+        "line": 64,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
+        "line": 65,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrOutputMeter.tsx",
         "line": 114,
         "column": 39,
         "code": "TS2339",
@@ -1981,6 +1909,22 @@
         "code": "TS2322",
         "message": "Type '{ value: string; onChange: (v: any) => void; opts: string[][]; }' is not assignable to type 'IntrinsicAttributes & { value: any; onChange: any; opts: any; wrap: any; }'.",
         "category": "prop-or-type"
+      },
+      {
+        "file": "components/SpectrTracingBadge.tsx",
+        "line": 7,
+        "column": 42,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
+      },
+      {
+        "file": "components/SpectrTracingBadge.tsx",
+        "line": 8,
+        "column": 16,
+        "code": "TS2339",
+        "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
+        "category": "other-semantic"
       },
       {
         "file": "components/StatusBanner.tsx",
@@ -2096,12 +2040,12 @@
       }
     ],
     "counts": {
-      "browser-window": 104,
-      "prop-or-type": 86,
-      "other-semantic": 16
+      "other-semantic": 26,
+      "browser-window": 87,
+      "prop-or-type": 86
     },
     "counts_by_code": {
-      "TS2339": 114,
+      "TS2339": 107,
       "TS2322": 79,
       "TS2349": 1,
       "TS2362": 2,
@@ -2113,13 +2057,13 @@
     "unknown_binding_names": []
   },
   "prop_contract_effect": {
-    "before_diagnostics": 230,
-    "after_diagnostics": 206,
+    "before_diagnostics": 223,
+    "after_diagnostics": 199,
     "delta": -24,
     "control_counts": {
-      "browser-window": 104,
-      "prop-or-type": 110,
-      "other-semantic": 16
+      "other-semantic": 26,
+      "browser-window": 87,
+      "prop-or-type": 110
     }
   },
   "negative_control": {
@@ -2134,7 +2078,7 @@
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 207
+    "planted_diagnostic_count": 200
   },
   "prop_contracts": [
     {
@@ -2154,7 +2098,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 208
+    "planted_diagnostic_count": 201
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2181,18 +2125,17 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 210
+    "planted_diagnostic_count": 203
   },
   "window_pulp_contract": {
     "fields": [
       "on",
-      "postMessage",
-      "initial"
+      "postMessage"
     ],
     "optional": true,
     "post_message_returns": "Promise<SpectrPulpResponse>",
-    "initial_present": true,
-    "initial_returns": "SpectrPulpInitialPayload | null",
+    "initial_present": false,
+    "initial_returns": null,
     "source_receipt": {
       "path": "native-ui/materialized/spectr-native-services.js",
       "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8",
@@ -2206,6 +2149,12 @@
         ],
         "initial_present": true
       },
+      "fields": [
+        "on",
+        "postMessage",
+        "initial"
+      ],
+      "initial_present": true,
       "embedded_artifact": {
         "path": "native-ui/materialized/materialized-document.runtime.json",
         "sha256": "ddf68506810ce2bc013ce719cb2f42d9fe686ee52858d6d94f692f2e81db6453",
@@ -2222,13 +2171,13 @@
     "name": "App",
     "diagnostic": {
       "file": "components/App.tsx",
-      "line": 625,
-      "column": 69,
+      "line": 18,
+      "column": 34,
       "code": "TS2339",
-      "message": "Property '__wp1_unknown_initial_field' does not exist on type 'SpectrPulpInitialPayload'.",
+      "message": "Property 'initial' does not exist on type 'SpectrPulpBridge'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 211
+    "planted_diagnostic_count": 204
   },
   "window_pulp_payload_negative_control": {
     "status": "passed",
@@ -2241,7 +2190,71 @@
       "message": "Property '__wp1_unknown_payload_field' does not exist on type 'SpectrPulpPayload'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 212
+    "planted_diagnostic_count": 205
+  },
+  "window_render_math_contract": {
+    "artifact": {
+      "path": "materialized-document.runtime.json",
+      "sha256": "ddf68506810ce2bc013ce719cb2f42d9fe686ee52858d6d94f692f2e81db6453"
+    },
+    "surfaces": {
+      "SpectrAnalyzer": [
+        "debugSnapshot",
+        "native",
+        "normalizeDb",
+        "project",
+        "sample",
+        "scale"
+      ],
+      "SpectrFreq": [
+        "FMAX",
+        "FMIN",
+        "fmt",
+        "freqToPos",
+        "logMax",
+        "logMin",
+        "posToFreq"
+      ]
+    },
+    "negative_control": {
+      "status": "passed",
+      "name": "App",
+      "diagnostics": {
+        "analyzer_unknown": {
+          "file": "components/App.tsx",
+          "line": 629,
+          "column": 64,
+          "code": "TS2339",
+          "message": "Property '__wp1_unknown_analyzer_surface' does not exist on type 'SpectrAnalyzerContract'.",
+          "category": "other-semantic"
+        },
+        "analyzer_argument": {
+          "file": "components/App.tsx",
+          "line": 630,
+          "column": 72,
+          "code": "TS2345",
+          "message": "Argument of type 'string' is not assignable to parameter of type 'number'.",
+          "category": "prop-or-type"
+        },
+        "freq_unknown": {
+          "file": "components/App.tsx",
+          "line": 631,
+          "column": 56,
+          "code": "TS2339",
+          "message": "Property '__wp1_unknown_freq_surface' does not exist on type 'SpectrFreqContract'.",
+          "category": "other-semantic"
+        },
+        "freq_argument": {
+          "file": "components/App.tsx",
+          "line": 632,
+          "column": 61,
+          "code": "TS2345",
+          "message": "Argument of type 'string' is not assignable to parameter of type 'number'.",
+          "category": "prop-or-type"
+        }
+      },
+      "planted_diagnostic_count": 209
+    }
   },
   "scope": {
     "runtime_artifact_changed": false,
