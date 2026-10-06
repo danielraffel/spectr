@@ -160,7 +160,7 @@ TOGGLE_NEW = '''        borderRadius: 11,
         // 20px tall is 15pt at the shipping 990x645 window. Grown to 38 design
         // px (28.5pt) by hit area alone -- paint and layout are untouched, and
         // the tightest toggle-to-toggle gap is 26px, so 9 a side leaves 8.
-        hitSlop: "9 0"
+        hitSlop: dense ? "4 0" : "9 0"
       }'''
 
 SLIDER_OLD = '''      style: { position: "relative", flex: 1, height: 16, cursor: "pointer" }'''
@@ -197,7 +197,7 @@ EDITS = [
 # decidable question. Every patch point here survives inside its replacement,
 # so presence of the OLD text cannot decide it.
 REQUIRED_AFTER = (
-    'hitSlop: "9 0"',
+    'hitSlop: dense ? "4 0" : "9 0"',
     'hitSlop: "11 9"',
     'hitSlop: "6 3"',
     '// The knob is a child that carries its own click handler',

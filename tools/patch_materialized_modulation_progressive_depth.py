@@ -162,7 +162,7 @@ SETTINGS_NEW = r'''  // Grouped and progressively disclosed (__spectrProgressive
     const on = value["routeOn" + lfo + "_" + t] === true;
     const stored = value["routeAmt" + lfo + "_" + t];
     const depth = Number.isFinite(stored) ? stored : 0.5;
-    rows.push(React.createElement(SpectrSettingsField, { key: key, label }, React.createElement("div", { "data-spectr-settings-target": key, "data-spectr-settings-target-state": on ? "on" : "off" }, React.createElement(SpectrSettingsToggle, { value: on, onChange: (next) => publish("routeOn" + lfo + "_" + t, lane(t), next) }))));
+    rows.push(React.createElement(SpectrSettingsField, { key: key, label }, React.createElement("div", { "data-spectr-settings-target": key, "data-spectr-settings-target-state": on ? "on" : "off" }, React.createElement(SpectrSettingsToggle, { value: on, dense: true, onChange: (next) => publish("routeOn" + lfo + "_" + t, lane(t), next) }))));
     rows.push(nested(key + "-depth", { "data-spectr-settings-depth-row": key }, "Depth", React.createElement(SpectrSettingsSlider, { target: key, disabled: !on, gestureId: on ? lane(t) + 10 : undefined, value: depth, min: 0, max: 1, step: 0.01, fmt: (v) => Math.round(v * 100) + "%", onChange: (next) => { if (on) publish("routeAmt" + lfo + "_" + t, lane(t) + 10, Math.round(next * 100) / 100); } }), !on));
     if (typeof globalThis.spectrSettingsExtraRows === "function")
       rows.push(...globalThis.spectrSettingsExtraRows({ target: t, key, lfo, value, nested, publish, on }));
