@@ -1133,7 +1133,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // set (AUval does this before Initialize).  Treat the first adoption as a
     // snapshot of those values; the legacy LFO target/depth lanes must not be
     // interpreted as compatibility commands until the processor is live.
-    processor_prepared_ = false;
+    processor_prepared_ = renderer_ != nullptr;
     suppress_legacy_lane_commands_ = true;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
