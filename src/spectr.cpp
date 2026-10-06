@@ -2784,7 +2784,6 @@ void Spectr::process(
                             param_store_->clear_display_modulation(kMix);
                         }
                     }
-                    }
                     // The Output destination, in dB, at the end of this
                     // slice. Ramped from the previous slice's value across
                     // the samples below, so a running LFO is a smooth gain
