@@ -33,6 +33,22 @@ foreach(_spectr_size_kind PREFERRED MIN MAX)
     endif()
 endforeach()
 
+# The editor's own background is the materialized document's `:root { --bg }`.
+# A plug-in host shows nothing but this colour until the document has mounted
+# (view-first opening), so it is read from the document here rather than
+# restated in C++, where a design change could leave the open frame stale.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.json"
+     _spectr_document_json)
+string(REGEX MATCH ":root[^{]*\\{[^}]*--bg:[ ]*#([0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F])"
+       _spectr_document_bg "${_spectr_document_json}")
+if(NOT CMAKE_MATCH_1)
+    message(FATAL_ERROR
+        "materialized-document.json has no `:root { --bg: #rrggbb }`; Spectr's "
+        "editor background is read from it")
+endif()
+set(SPECTR_EDITOR_BACKGROUND_RGB "0x${CMAKE_MATCH_1}")
+unset(_spectr_document_json)
+
 # Build-time spectral profile seam. Balanced (8192/2048) is the product
 # default. Live (1024/256) and Maximum (16384/4096) are alternate build
 # profiles, not modes that can be switched dynamically at runtime. Separate
@@ -285,6 +301,21 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+# Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
+# variables that load a script into the editor (SPECTR_EVAL), synthesise
+# input, dump state, tune Auto Gain, or plant a defect so a negative control
+# can prove its measurement sees it. They are compiled out unless this is ON:
+# a release build reads no SPECTR_* variable and carries none of their names.
+# Test executables that compile Spectr's sources themselves (Spectr-test and
+# the shared-spectral fixtures) always have them. Configure ON for the test
+# build the full ctest runs in; package.sh refuses a build with it ON.
+option(SPECTR_ENABLE_TEST_SEAMS
+       "Compile the SPECTR_* test seams into the plug-in, standalone and probe targets (never for a release)" OFF)
+if(SPECTR_ENABLE_PERF_FIXTURES AND NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(FATAL_ERROR "SPECTR_ENABLE_PERF_FIXTURES reads its fixtures through the test "
+        "seams; configure with -DSPECTR_ENABLE_TEST_SEAMS=ON as well")
+endif()
+
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
@@ -331,6 +362,7 @@ function(spectr_configure_native_target target)
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
         $<$<BOOL:${SPECTR_ENABLE_PERF_FIXTURES}>:SPECTR_ENABLE_PERF_FIXTURES=1>
+        $<$<BOOL:${SPECTR_ENABLE_TEST_SEAMS}>:SPECTR_ENABLE_TEST_SEAMS=1>
         SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
         SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
         SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
@@ -339,6 +371,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
@@ -577,15 +610,18 @@ add_executable(Spectr-test
     test/test_tracking_transition.cpp
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
+    test/test_audio_glitches.cpp
     test/test_freeze.cpp
     test/test_freeze_length.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
+    test/test_auto_gain_v2.cpp
+    test/test_auto_gain_v2_transients.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
-    Pulp::format Pulp::view
+    Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
     ${SPECTR_TEST_ASSET_TARGET}
 )
@@ -594,6 +630,8 @@ target_include_directories(Spectr-test PRIVATE
 )
 target_compile_definitions(Spectr-test PRIVATE
     $<$<NOT:$<BOOL:${SPECTR_SDK_HAS_WEBVIEW}>>:SPECTR_NATIVE_EDITOR=1>
+    # A test binary, never shipped: its negative controls need the plants.
+    SPECTR_ENABLE_TEST_SEAMS=1
     SPECTR_NATIVE_ASSETS=1
     SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
     SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
@@ -603,6 +641,7 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
     SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
     SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+    SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
     PULP_PLUGIN_DESIGN_W=${SPECTR_HOST_PREFERRED_WIDTH}
     PULP_PLUGIN_DESIGN_H=${SPECTR_HOST_PREFERRED_HEIGHT}
     PULP_PLUGIN_DESIGN_MIN_W=${SPECTR_HOST_MIN_WIDTH}
@@ -617,6 +656,73 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+# The stream-start case with the framework's full-overlap stream start turned
+# off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
+# measurement must reject it, or it could not see the fade it exists to catch.
+add_test(NAME Spectr-stream-start-negative-control
+    COMMAND Spectr-test "The first samples of a stream reach the output at full level")
+set_tests_properties(Spectr-stream-start-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_NO_FULL_OVERLAP=1 WILL_FAIL TRUE TIMEOUT 120)
+# A Latency switch with the warm-up and crossfade removed -- the cut it used to
+# be. The dropout and click measurement must reject it.
+add_test(NAME Spectr-render-switch-negative-control
+    COMMAND Spectr-test "A Latency switch neither drops out nor clicks in either direction")
+set_tests_properties(Spectr-render-switch-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_HARD_RENDER_SWITCH=1 WILL_FAIL TRUE TIMEOUT 300)
+# The 32-sample deadline gate with a planted per-hop burst: it must fail.
+add_test(NAME Spectr-deadline-negative-control
+    COMMAND Spectr-test "Tracking keeps every callback inside a 32-sample deadline at 48 kHz")
+set_tests_properties(Spectr-deadline-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=150000 WILL_FAIL TRUE TIMEOUT 300)
+add_test(NAME Spectr-deadline-96k-negative-control
+    COMMAND Spectr-test "Both modes keep every callback inside a 32-sample deadline at 96 kHz")
+set_tests_properties(Spectr-deadline-96k-negative-control PROPERTIES
+    ENVIRONMENT SPECTR_PLANT_CALLBACK_BURST=120000 WILL_FAIL TRUE TIMEOUT 300)
+
+# Trace categories: a PULP_TRACE_* category the SDK never declared compiles in
+# the shipping build (the macros are no-ops there) and breaks the first traced
+# build. Checked against the SDK's own declared list, with a planted control.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+get_filename_component(_spectr_pulp_trace_header
+    "${Pulp_DIR}/../../../include/pulp/runtime/trace.hpp" ABSOLUTE)
+if(Python3_Interpreter_FOUND AND EXISTS "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}")
+    add_test(NAME Spectr-trace-categories-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_trace_categories.py
+            --trace-header "${_spectr_pulp_trace_header}" --self-test)
+    set_tests_properties(Spectr-trace-categories Spectr-trace-categories-control
+        PROPERTIES TIMEOUT 60)
+endif()
+
+# The product-independent loudness-compensation unit behind Auto Gain v2
+# (include/spectr/upstream/loudness_compensation.hpp). Its tests link Pulp and
+# Catch2 only -- no Spectr target -- so the header and this file move upstream
+# together. Its own executable because it counts allocations with a global
+# operator new.
+add_executable(Spectr-loudness-compensation-test test/test_loudness_compensation.cpp)
+target_link_libraries(Spectr-loudness-compensation-test PRIVATE
+    Pulp::signal Catch2::Catch2WithMain)
+target_include_directories(Spectr-loudness-compensation-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+catch_discover_tests(Spectr-loudness-compensation-test)
+
+# Auto Gain v1 vs v2 corpus sweep: ADVISORY, not a test. Driven by
+# tools/autogain_corpus_report.py, which builds the license-clean corpus
+# (quality-lab corpus.py provenance), runs this, and writes the report.
+# Built exactly as Spectr-test is (same sources, assets and build contract),
+# so the Spectr it renders is the one the gates measure.
+add_executable(Spectr-autogain-sweep EXCLUDE_FROM_ALL
+    tools/autogain_sweep.cpp ${SPECTR_TEST_SOURCES})
+target_link_libraries(Spectr-autogain-sweep PRIVATE
+    Pulp::format Pulp::view Pulp::audio-analysis ${SPECTR_TEST_ASSET_TARGET})
+target_include_directories(Spectr-autogain-sweep PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/test)
+get_target_property(_spectr_sweep_defs Spectr-test COMPILE_DEFINITIONS)
+target_compile_definitions(Spectr-autogain-sweep PRIVATE ${_spectr_sweep_defs})
 
 if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     add_executable(Spectr-shared-product-acceptance EXCLUDE_FROM_ALL
@@ -626,7 +732,13 @@ if(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     spectr_configure_native_target(Spectr-shared-product-acceptance)
     target_compile_definitions(Spectr-shared-product-acceptance PRIVATE SPECTR_NATIVE_ASSETS=1)
     add_test(NAME Spectr-shared-product-acceptance COMMAND Spectr-shared-product-acceptance)
-    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    set_tests_properties(Spectr-shared-product-acceptance PROPERTIES TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
+    # The latency matrix with the reported figure planted one sample wrong:
+    # the measurement must reject it.
+    add_test(NAME Spectr-shared-latency-matrix-negative-control
+        COMMAND Spectr-shared-product-acceptance "[latency-matrix]")
+    set_tests_properties(Spectr-shared-latency-matrix-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300 RESOURCE_LOCK pulp_gpu)
 endif()
 
 
@@ -662,6 +774,7 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
         src/experimental/shared_spectral_renderer.cpp src/mask_renderer.cpp)
     target_include_directories(SpectrSharedSpectralBridge PUBLIC include)
     target_compile_definitions(SpectrSharedSpectralBridge PRIVATE SPECTR_ENABLE_EFFECTIVE_FRAME_OBSERVER=1)
+    target_compile_definitions(SpectrSharedSpectralBridge PUBLIC SPECTR_ENABLE_TEST_SEAMS=1)
     target_link_libraries(SpectrSharedSpectralBridge PUBLIC Pulp::gpu-audio Pulp::format)
     add_executable(Spectr-shared-spectral-fixture EXCLUDE_FROM_ALL
         test/test_shared_spectral_fixture.cpp)
@@ -690,6 +803,21 @@ if(SPECTR_SHARED_SPECTRAL_FIXTURE)
     target_link_libraries(Spectr-shared-spectral-layers PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-layers COMMAND Spectr-shared-spectral-layers)
     set_tests_properties(Spectr-shared-spectral-layers PROPERTIES TIMEOUT 180 RESOURCE_LOCK pulp_gpu)
+    # Freeze's held wet source through the shared renderer, against the CPU
+    # linear-phase renderer. The plant installs no source on the shared
+    # renderer and must fail.
+    # Report-only: where and why the shared renderer falls back to its CPU
+    # path in a paced session (steady, transport reset, CPU load, late host).
+    add_executable(Spectr-shared-spectral-fallback-trace EXCLUDE_FROM_ALL test/test_shared_spectral_fallbacks.cpp)
+    target_link_libraries(Spectr-shared-spectral-fallback-trace PRIVATE SpectrSharedSpectralBridge)
+    add_executable(Spectr-shared-spectral-freeze EXCLUDE_FROM_ALL test/test_shared_spectral_freeze.cpp)
+    target_link_libraries(Spectr-shared-spectral-freeze PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
+    add_test(NAME Spectr-shared-spectral-freeze COMMAND Spectr-shared-spectral-freeze)
+    add_test(NAME Spectr-shared-spectral-freeze-negative-control COMMAND Spectr-shared-spectral-freeze)
+    set_tests_properties(Spectr-shared-spectral-freeze-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_FREEZE_PLANT_DROP_SOURCE=1 WILL_FAIL TRUE)
+    set_tests_properties(Spectr-shared-spectral-freeze Spectr-shared-spectral-freeze-negative-control
+        PROPERTIES TIMEOUT 240 RESOURCE_LOCK pulp_gpu)
     add_executable(Spectr-shared-spectral-mix EXCLUDE_FROM_ALL test/test_shared_spectral_mix.cpp)
     target_link_libraries(Spectr-shared-spectral-mix PRIVATE SpectrSharedSpectralBridge Pulp::audio-analysis)
     add_test(NAME Spectr-shared-spectral-mix COMMAND Spectr-shared-spectral-mix)
@@ -973,6 +1101,80 @@ add_test(NAME Spectr-level-autogain-follow-output-negative-control
 set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
+# Auto Gain v2 (test/test_auto_gain_v2.cpp). Ignoring the material's
+# spectrum must fail the accuracy gate; dropping the smoothing and the slew
+# limit (each frame replaces the estimate) must fail the pumping gate.
+add_test(NAME Spectr-level-autogain-v2-unweighted-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-unweighted
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 holds narrow material where v1 misses")
+set_tests_properties(Spectr-level-autogain-v2-unweighted-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( p95 <= 1\\.5 \\)")
+add_test(NAME Spectr-level-autogain-v2-no-smoothing-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-no-smoothing
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 does not pump on steady material")
+set_tests_properties(Spectr-level-autogain-v2-no-smoothing-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst_spread <= 0\\.5 \\)")
+# Auto Gain v2 transients (test/test_auto_gain_v2_transients.cpp): the first
+# v2 forgot the material at every locate, and followed a change of material or
+# a Freeze release only at 6 dB/s behind a 3 s average. Each re-creation must
+# fail the gate it motivated.
+add_test(NAME Spectr-level-autogain-v2-reset-on-seek-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-reset-on-seek
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 keeps its level across a locate")
+set_tests_properties(Spectr-level-autogain-v2-reset-on-seek-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst\\.momentary <= kMomentaryGate \\)")
+add_test(NAME Spectr-level-autogain-v2-stale-on-change-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-stale-on-change
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a change of material to quieter and louder")
+set_tests_properties(Spectr-level-autogain-v2-stale-on-change-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst\\.t1db <= kChangeT1dbGate \\)")
+add_test(NAME Spectr-level-autogain-v2-stale-freeze-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-stale-on-change
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a Freeze engage and release")
+set_tests_properties(Spectr-level-autogain-v2-stale-freeze-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( release\\.t1db <= kChangeT1dbGate \\)")
+# Auto Gain v2, third round: each fix's defect re-created must fail its gate.
+add_test(NAME Spectr-level-autogain-v2-reprepare-reset-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-reprepare-reset
+        $<TARGET_FILE:Spectr-test> "A host re-prepare keeps Auto Gain's level")
+set_tests_properties(Spectr-level-autogain-v2-reprepare-reset-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_t1db <= 0\\.05 \\)")
+add_test(NAME Spectr-level-autogain-v2-restore-as-warm-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-restore-as-warm
+        $<TARGET_FILE:Spectr-test> "A restored estimate on different material converges no slower than a cold start")
+set_tests_properties(Spectr-level-autogain-v2-restore-as-warm-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_extra <= 0\\.0 \\)")
+add_test(NAME Spectr-level-autogain-v2-legacy-toggle-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-legacy-composed-only
+        $<TARGET_FILE:Spectr-test> "A session that saved AUTO on before v2 keeps v1 until AUTO is toggled")
+set_tests_properties(Spectr-level-autogain-v2-legacy-toggle-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( f->auto_gain_model\\(\\) == AutoGainModel::material_v2 \\)")
+add_test(NAME Spectr-level-autogain-v2-short-persistence-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-short-persistence
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 does not pump on sparse or alternating or decaying material")
+set_tests_properties(Spectr-level-autogain-v2-short-persistence-negative-control PROPERTIES
+    TIMEOUT 600 PASS_REGULAR_EXPRESSION "CHECK\\( worst_excess <= 0\\.25 \\)")
+# Auto Gain v2, fourth round.
+add_test(NAME Spectr-level-autogain-v2-no-drop-path-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-no-drop-path
+        $<TARGET_FILE:Spectr-test> "Auto Gain v2 follows a quieter section after a loud one")
+set_tests_properties(Spectr-level-autogain-v2-no-drop-path-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst_t1db <= 2\\.0 \\)")
+add_test(NAME Spectr-level-autogain-v2-detect-only-when-on-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-detect-only-when-on
+        $<TARGET_FILE:Spectr-test> "Switching AUTO on after the material changed while it was off")
+set_tests_properties(Spectr-level-autogain-v2-detect-only-when-on-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kChangeT1dbGate \\)")
+add_test(NAME Spectr-level-autogain-v2-restore-fixed-fade-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-v2-restore-fixed-fade
+        $<TARGET_FILE:Spectr-test> "Reopening a project on the same material holds its level")
+set_tests_properties(Spectr-level-autogain-v2-restore-fixed-fade-negative-control PROPERTIES
+    TIMEOUT 300 PASS_REGULAR_EXPRESSION "CHECK\\( worst <= 2\\.0 \\)")
 # The Output LFO destination lands once per block (no ramp): its smoothness
 # gate must catch the per-block zipper.
 add_test(NAME Spectr-level-target-step-negative-control
@@ -982,6 +1184,7 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
+find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
@@ -1084,6 +1287,19 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
+# The CPU/GPU chip through the host hit test: in Tracking a press shows the
+# "Mixing only" notice and changes nothing in the processor (no renderer
+# built, mode, GPU choice and latency unchanged, Settings' GPU choice inert);
+# in Mixing it switches to GPU and the shared renderer delivers.
+if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    add_test(NAME Spectr-native-gpu-status
+        COMMAND $<TARGET_FILE:Spectr-native-shot> --backend=skia
+            --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-gpu-status)
+    set_tests_properties(Spectr-native-gpu-status PROPERTIES
+        ENVIRONMENT "SPECTR_GPU_STATUS_PROBE=1;PULP_AUDIO_DEVICE=null"
+        TIMEOUT 240 SKIP_RETURN_CODE 77
+        RESOURCE_LOCK "spectr_native_materialized_editor;pulp_gpu")
+endif()
 
 # The menus whose key hints follow the keyboard policy (EDIT MODE, ANALYZER,
 # SHORTCUTS), captured as a plug-in -- where the plain-key shortcuts go to the
@@ -2174,6 +2390,43 @@ if(SPECTR_NODE_EXECUTABLE)
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_context_modulation_behavior.mjs)
     set_tests_properties(Spectr-context-modulation-behavior PROPERTIES TIMEOUT 60)
+    # Settings' UPDATES group (Check for Updates) renders in the standalone
+    # app and nowhere else: it asks the native update service through the
+    # editor bridge, and a plug-in, an SDK without the bridge, or a build
+    # without Sparkle answers "not available". Two planted controls must fail.
+    add_test(NAME Spectr-materialized-check-for-updates
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    foreach(_spectr_updates_plant always-show dead-button)
+        add_test(NAME Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_check_for_updates.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_spectr_updates_plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-check-for-updates-${_spectr_updates_plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
+    set_tests_properties(Spectr-materialized-check-for-updates PROPERTIES TIMEOUT 60)
+
+    # A header control's context menu names its own LFO target, toggles only
+    # that target's lane, and opens the full Modulation submenu marked on it.
+    # Executed out of the shipped document; each plant must be rejected by an
+    # assertion (--expect-fail inverts the verdict inside the script).
+    add_test(NAME Spectr-materialized-control-menu-targets
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-control-menu-targets PROPERTIES TIMEOUT 60)
+    foreach(plant wrong-target no-accent every-accent loose-hold lfo2-shape head-copy)
+        add_test(NAME Spectr-materialized-control-menu-targets-${plant}-control
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_control_menu_targets.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${plant} --expect-fail)
+        set_tests_properties(Spectr-materialized-control-menu-targets-${plant}-control
+            PROPERTIES TIMEOUT 60)
+    endforeach()
 
     # The band menu's own Escape and outside-press dismissal, its
     # one-submenu-at-a-time rule, and the absence of the EDIT MODE rows --
@@ -3874,6 +4127,7 @@ foreach(fmt VST3 AU CLAP Standalone)
             SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
             SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
             SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+            SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
             SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
             SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         )
@@ -3895,6 +4149,13 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     # Intensity and Auto Gain as a DAW sees them: parameter info, scheduled
     # automation playback (smoothness vs the LFO yardstick), a set-parameter
     # jump, and Auto Gain's level, all through the built AU in-process.
+    # The probe renders blocks back to back, faster than the mask-design
+    # worker is scheduled on a loaded machine, so it waits after each block
+    # for that worker's backlog to drain -- the pacing a real-time host gives
+    # it. The counter is read-only and lock-free (mask_renderer.hpp).
+    target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
+        "LINKER:-exported_symbol,_spectr_mask_design_backlog_v1"
+        "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1")
     add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
     target_link_libraries(Spectr-au-level-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
@@ -3904,6 +4165,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
     set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
+    target_include_directories(Spectr-au-freeze-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(Spectr-au-freeze-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
@@ -3932,8 +4194,79 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
             --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
+    # The click probes above score each edge against an unpressed control,
+    # so a freeze that never reaches the output passes them: there is no
+    # edge to click. The hold-presence check asks what the held sound IS --
+    # chord A held after the input moved to chord B, against the same render
+    # unpressed -- in each Latency mode, so a renderer that drops the freeze
+    # source fails it.
+    add_test(NAME Spectr-au-freeze-hold-tracking
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-presence --mode tracking --block 128)
+    add_test(NAME Spectr-au-freeze-hold-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-presence --mode mixing --block 256)
+    # Length end to end: a short Length holds only what sounds now, a 1-bar
+    # Length loops the 2 s before the press. Its negative control restores
+    # the probe's stale Custom index (4.0, from when there were 4 presets),
+    # which silently selected 1/6 bar for every Length and must fail.
+    add_test(NAME Spectr-au-freeze-hold-check
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode tracking --block 128)
+    add_test(NAME Spectr-au-freeze-hold-check-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode mixing --block 256)
+    add_test(NAME Spectr-au-freeze-hold-check-negative-control
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --hold-check --mode tracking --block 128)
+    set_tests_properties(Spectr-au-freeze-hold-check-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_PROBE_PLANT_STALE_CUSTOM=1 WILL_FAIL TRUE)
+    # The delay the built AU's audio has must equal kAudioUnitProperty_Latency,
+    # which is what a host's delay compensation applies: Tracking, Mixing on
+    # the CPU and Mixing on the GPU (paced, so the GPU worker delivers), at
+    # 44.1 and 48 kHz and two block sizes. The negative control plants the
+    # report one sample wrong and must fail.
+    add_test(NAME Spectr-au-latency-tracking-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode tracking --sr 44100 --block 128)
+    add_test(NAME Spectr-au-latency-mixing-cpu-48k-512
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512)
+    add_test(NAME Spectr-au-latency-mixing-cpu-44k-128
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 44100 --block 128)
+    set(_spectr_au_latency_tests Spectr-au-latency-tracking-44k-128
+        Spectr-au-latency-mixing-cpu-48k-512 Spectr-au-latency-mixing-cpu-44k-128)
+    if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        add_test(NAME Spectr-au-latency-mixing-gpu-48k-512
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 48000 --block 512)
+        add_test(NAME Spectr-au-latency-mixing-gpu-44k-128
+            COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+                --latency-check --mode mixing --gpu --paced --sr 44100 --block 128)
+        list(APPEND _spectr_au_latency_tests Spectr-au-latency-mixing-gpu-48k-512
+            Spectr-au-latency-mixing-gpu-44k-128)
+    endif()
+    add_test(NAME Spectr-au-latency-negative-control
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --latency-check --mode mixing --sr 48000 --block 512 --latency-plant 1)
+    set_tests_properties(Spectr-au-latency-negative-control PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(${_spectr_au_latency_tests} Spectr-au-latency-negative-control
+        PROPERTIES TIMEOUT 300 LABELS "au-host;latency" RESOURCE_LOCK pulp_gpu)
+    # The first samples of a fresh stream through the built AU, both modes.
+    add_test(NAME Spectr-au-stream-start-mixing
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode mixing --block 512)
+    add_test(NAME Spectr-au-stream-start-tracking
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --stream-start-check --mode tracking --block 128)
+    set_tests_properties(Spectr-au-stream-start-mixing Spectr-au-stream-start-tracking
+        PROPERTIES TIMEOUT 120 LABELS "au-host")
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
         Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
+        Spectr-au-freeze-hold-tracking Spectr-au-freeze-hold-mixing
+        Spectr-au-freeze-hold-check Spectr-au-freeze-hold-check-mixing
+        Spectr-au-freeze-hold-check-negative-control
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
 
     # LFO routing automation through the same in-process AU host: an Amount
@@ -3949,6 +4282,37 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
             --block 128 --max-cost-ratio 6)
     set_tests_properties(Spectr-au-routes-host
         PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+    # An offline bounce (kAudioUnitProperty_OfflineRender set, rendered back
+    # to back) must equal a paced render of the same Intensity ramp and LFO
+    # routes sample for sample; the second test is its negative control and
+    # passes only when the unflagged bounce DIFFERS.
+    add_test(NAME Spectr-au-offline-bounce-equivalence
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence)
+    add_test(NAME Spectr-au-offline-bounce-negative-control
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence --no-offline-flag)
+    set_tests_properties(Spectr-au-offline-bounce-equivalence
+        Spectr-au-offline-bounce-negative-control
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+    set_tests_properties(Spectr-au-offline-bounce-negative-control
+        PROPERTIES PASS_REGULAR_EXPRESSION "\nDIFFER\n")
+    # The same equivalence with Auto Gain v2 on and the material changing
+    # mid-render: its estimator's frame grid and per-sample targets must make
+    # the bounce match the paced render sample for sample.
+    add_test(NAME Spectr-au-offline-bounce-equivalence-auto-gain
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --offline-equivalence --auto-gain)
+    set_tests_properties(Spectr-au-offline-bounce-equivalence-auto-gain
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host;autogain")
+    # The offline flag's lifetime through the real AU entry: a host write
+    # reaches a bounce one re-initialization later, survives a Reset, and is
+    # gone the session after (a stuck flag makes realtime blocks wait).
+    add_test(NAME Spectr-au-offline-flag-lifecycle
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --offline-flag-lifecycle)
+    set_tests_properties(Spectr-au-offline-flag-lifecycle
+        PROPERTIES TIMEOUT 60 LABELS "modulation;au-host")
 
 endif()
 
@@ -3960,21 +4324,77 @@ endif()
 # in-process, never activated or focused, in a borderless window off every
 # screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
 # without one. Warm opens only for the time gate: the first open of a freshly
-# built binary also pays one-time dyld and Metal shader-cache costs.
+# built binary also pays one-time dyld and Metal shader-cache costs. Since Pulp
+# 0.907 the editor opens content-first: the call includes the document mount
+# and the first frame (warm ~150 ms on an idle M5 Max, 225-320 ms under a
+# build load of 50-80), so the budget is the mount's, with headroom for load.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
     target_link_libraries(Spectr-editor-open-probe PRIVATE
         "-framework AppKit" "-framework AudioToolbox" "-framework AudioUnit"
-        "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal"
+        "-framework QuartzCore")
     add_dependencies(Spectr-editor-open-probe ${SPECTR_NATIVE_AU_TARGET})
     add_test(NAME Spectr-au-editor-open
         COMMAND Spectr-editor-open-probe
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
             --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
-            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 600)
     set_tests_properties(Spectr-au-editor-open PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
         RESOURCE_LOCK spectr_native_materialized_editor)
+    # The editor opens on Spectr's own background: every presented frame, from
+    # view creation until the UI is stable, is either that background (plus
+    # chrome already in its final place) or the settled UI, and the backing
+    # layer the DAW shows before the first frame is that colour too. Read back
+    # from each presented drawable on the GPU (never a screenshot), cold and
+    # warm, at the preferred and the minimum host size. The SDK default navy
+    # this replaces fails it on every open.
+    foreach(_spectr_first_frame_size PREFERRED MIN)
+        set(_spectr_first_frame_args)
+        if(_spectr_first_frame_size STREQUAL "MIN")
+            set(_spectr_first_frame_args --view-size
+                "${SPECTR_HOST_MIN_WIDTH}x${SPECTR_HOST_MIN_HEIGHT}")
+        endif()
+        string(TOLOWER "${_spectr_first_frame_size}" _spectr_first_frame_name)
+        string(SUBSTRING "${SPECTR_EDITOR_BACKGROUND_RGB}" 2 6 _spectr_first_frame_rgb)
+        add_test(NAME Spectr-au-editor-first-frame-${_spectr_first_frame_name}
+            COMMAND Spectr-editor-open-probe
+                --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+                --opens 3 --settle-ms 600 ${_spectr_first_frame_args}
+                --capture-frames "${CMAKE_BINARY_DIR}/first-frames/${_spectr_first_frame_name}"
+                --settled-bg ${_spectr_first_frame_rgb}
+                --expect-first-rgb ${_spectr_first_frame_rgb}
+                --expect-first-ui
+                --max-offbrand-frames 0)
+        set_tests_properties(Spectr-au-editor-first-frame-${_spectr_first_frame_name} PROPERTIES
+            TIMEOUT 180 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+            RESOURCE_LOCK spectr_native_materialized_editor
+            FIXTURES_REQUIRED spectr_first_frame_dirs)
+    endforeach()
+    # The content-first contract has a control: the SDK's view-first order
+    # (the empty background before the document) must fail --expect-first-ui.
+    add_test(NAME Spectr-au-editor-first-frame-view-first-control
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 1 --settle-ms 600 --pixels --expect-first-ui)
+    set_tests_properties(Spectr-au-editor-first-frame-view-first-control PROPERTIES
+        ENVIRONMENT PULP_EDITOR_OPEN=view-first WILL_FAIL TRUE
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
+    # Out-of-process variant (AUHostingService + remote view controller). Not a
+    # ctest: it needs the component installed where AUHostingService finds it.
+    add_executable(Spectr-editor-open-oop-probe tools/editor_open_oop_probe.mm)
+    set_source_files_properties(tools/editor_open_oop_probe.mm PROPERTIES
+        COMPILE_OPTIONS "-fno-objc-arc")
+    target_link_libraries(Spectr-editor-open-oop-probe PRIVATE
+        "-framework AppKit" "-framework AudioToolbox" "-framework CoreAudioKit"
+        "-framework CoreGraphics" "-framework ImageIO" "-framework QuartzCore")
+    add_test(NAME Spectr-au-editor-first-frame-dirs
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${CMAKE_BINARY_DIR}/first-frames/preferred" "${CMAKE_BINARY_DIR}/first-frames/min")
+    set_tests_properties(Spectr-au-editor-first-frame-dirs PROPERTIES
+        FIXTURES_SETUP spectr_first_frame_dirs)
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
@@ -3988,6 +4408,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
     # editor to link against.
     add_executable(Spectr-artifact-test
         test/test_built_clap.cpp
+        test/test_clap_flush_parity.cpp
         ${SPECTR_TEST_SOURCES})
     target_link_libraries(Spectr-artifact-test PRIVATE
         Pulp::host Pulp::format Pulp::view
@@ -4004,6 +4425,7 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_EXPECTED_LATENCY=${SPECTR_PROCESSING_LATENCY}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
@@ -4074,6 +4496,42 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test SpectrWebViewReference_VST3)
     endif()
     catch_discover_tests(Spectr-artifact-test)
+    # The built CLAP/VST3 latency check with the report planted one sample
+    # wrong: the measurement must reject it.
+    add_test(NAME Spectr-artifact-latency-negative-control
+        COMMAND Spectr-artifact-test "[latency-artifact]")
+    set_tests_properties(Spectr-artifact-latency-negative-control PROPERTIES
+        ENVIRONMENT SPECTR_LATENCY_PLANT_OFFSET=1 WILL_FAIL TRUE TIMEOUT 300)
+endif()
+
+# Third-party validators over the exact built bundles: clap-validator
+# (--in-process, the mode Spectr 1.0.7 RC1 failed state-reproducibility-flush
+# in) and pluginval at strictness 5 without GUI tests. Registered whether or
+# not the tools are installed, so the acceptance pattern list always finds the
+# rows; a machine without the tool reports SKIP (exit 77), never PASS.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-plugin-validator-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py --self-test)
+    set_tests_properties(Spectr-plugin-validator-controls PROPERTIES TIMEOUT 60)
+    if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        add_test(NAME Spectr-clap-validator
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py clap
+                "${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap"
+                --log "${CMAKE_BINARY_DIR}/validators/clap-validator.txt")
+        set_tests_properties(Spectr-clap-validator PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 600 ENVIRONMENT "PULP_AUDIO_DEVICE=null")
+    endif()
+    if(TARGET ${SPECTR_NATIVE_VST3_TARGET})
+        add_test(NAME Spectr-pluginval-vst3
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/run_plugin_validator.py vst3
+                "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3"
+                --log "${CMAKE_BINARY_DIR}/validators/pluginval-vst3.txt")
+        set_tests_properties(Spectr-pluginval-vst3 PROPERTIES
+            SKIP_RETURN_CODE 77 TIMEOUT 900 ENVIRONMENT "PULP_AUDIO_DEVICE=null")
+    endif()
 endif()
 
 if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view)
@@ -4140,6 +4598,20 @@ add_test(NAME Spectr-render-path-clock-freeze
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
         ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/freeze_source.hpp)
 set_tests_properties(Spectr-render-path-clock-freeze PROPERTIES TIMEOUT 60)
+
+# Auto Gain v2 runs inside the wet-source stage of both renderers and in the
+# product's gain loop: its loudness-compensation unit and Spectr's adapter are
+# held to the same rule.
+add_test(NAME Spectr-render-path-clock-loudness-compensation
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/upstream/loudness_compensation.hpp)
+add_test(NAME Spectr-render-path-clock-auto-gain
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/check_render_path_clock.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/auto_gain_material.hpp)
+set_tests_properties(Spectr-render-path-clock-loudness-compensation
+    Spectr-render-path-clock-auto-gain PROPERTIES TIMEOUT 60)
 
 # The merge driver for the materialized editor document. That artifact is one
 # minified line, so git's default merge conflicts on ANY two changes to it --
@@ -4237,8 +4709,12 @@ if(APPLE AND Python3_Interpreter_FOUND)
     add_test(NAME Spectr-sparkle-release-tooling
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/test_sparkle_release.py)
+    # A release-numbered shipping app must read the release feed.
+    add_test(NAME Spectr-sparkle-feed-policy
+        COMMAND ${CMAKE_COMMAND} -P
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/sparkle_feed_policy_test.cmake)
     set_tests_properties(Spectr-sparkle-controls Spectr-sparkle-release-tooling
-        PROPERTIES TIMEOUT 60)
+        Spectr-sparkle-feed-policy PROPERTIES TIMEOUT 60)
     if(SPECTR_SPARKLE_EMBEDDED AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
        AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         add_test(NAME Spectr-sparkle-bundles
@@ -4253,3 +4729,102 @@ if(APPLE AND Python3_Interpreter_FOUND)
     endif()
 endif()
 
+
+# ── LSMinimumSystemVersion ────────────────────────────────────────────────
+# Every shipped bundle declares the macOS floor its binaries are built for
+# (LC_BUILD_VERSION minos = CMAKE_OSX_DEPLOYMENT_TARGET), so Finder, the
+# installer and a host scanning plug-ins refuse an older macOS up front
+# instead of failing to load. Pulp's Info.plist templates do not emit the key
+# yet, so it is added to each target's template at the end of configure --
+# after Spectr.app's Sparkle keys, which are added the same way -- so a
+# reconfigure regenerating the bundle Info.plist never drops it. Checked on
+# the built bundles by Spectr-bundle-min-os. Delete this block on the Pulp SDK
+# bump whose plugin/app templates carry LSMinimumSystemVersion themselves.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrMinimumSystemVersion.cmake)
+if(APPLE)
+    spectr_declare_minimum_system_version(
+        ${SPECTR_NATIVE_STANDALONE_TARGET} ${SPECTR_NATIVE_AU_TARGET}
+        ${SPECTR_NATIVE_VST3_TARGET} ${SPECTR_NATIVE_CLAP_TARGET})
+    if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET}
+       AND TARGET ${SPECTR_NATIVE_AU_TARGET} AND TARGET ${SPECTR_NATIVE_VST3_TARGET}
+       AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+        add_test(NAME Spectr-bundle-min-os
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_min_os.py
+                --expected "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+                --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+                --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+                --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+        add_test(NAME Spectr-bundle-min-os-controls
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_min_os.py --self-test)
+        set_tests_properties(Spectr-bundle-min-os Spectr-bundle-min-os-controls
+            PROPERTIES TIMEOUT 60)
+    endif()
+    # The shim configures in a scratch project with the deployment target set
+    # and with it unset, so an empty-variable guard cannot break configure.
+    add_test(NAME Spectr-bundle-min-os-configure
+        COMMAND ${CMAKE_COMMAND}
+            -DSPECTR_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DSCRATCH=${CMAKE_BINARY_DIR}/min-os-configure-test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/min_os_configure_test.cmake)
+    set_tests_properties(Spectr-bundle-min-os-configure PROPERTIES TIMEOUT 120)
+endif()
+
+# The SPECTR_* test seams in the built product binaries: with
+# SPECTR_ENABLE_TEST_SEAMS OFF (a release) none of their names may appear;
+# with it ON (the test build) every product must carry them -- the positive
+# control that proves the byte search can see a seam at all.
+if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET}
+   AND TARGET ${SPECTR_NATIVE_AU_TARGET} AND TARGET ${SPECTR_NATIVE_VST3_TARGET}
+   AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    if(SPECTR_ENABLE_TEST_SEAMS)
+        set(_spectr_seams_expect present)
+    else()
+        set(_spectr_seams_expect absent)
+    endif()
+    add_test(NAME Spectr-test-seams-${_spectr_seams_expect}
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_no_test_seams.py
+            --expect ${_spectr_seams_expect}
+            ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+            ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+            ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    set_tests_properties(Spectr-test-seams-${_spectr_seams_expect} PROPERTIES TIMEOUT 60)
+endif()
+if(NOT SPECTR_ENABLE_TEST_SEAMS)
+    message(STATUS "Spectr: test seams compiled out of the products (release "
+        "configuration). The full ctest needs -DSPECTR_ENABLE_TEST_SEAMS=ON.")
+    # These drive the built Spectr.app through the seams (SPECTR_EVAL,
+    # SPECTR_CLICK, SPECTR_DRAG, SPECTR_MENU_SCENARIO, SPECTR_LAYOUT_DUMP...).
+    # A release build ignores every one of them, so the instruments find no
+    # output and fail closed; they run in the test build instead. Disabled,
+    # not deleted, so a release ctest lists them as "Not Run (Disabled)".
+    set(_spectr_needs_seams
+        Spectr-standalone-band-menu-rows Spectr-standalone-band-menu-64
+        Spectr-standalone-band-menu-keyboard Spectr-standalone-freeze-length
+        Spectr-standalone-settings-wheel Spectr-standalone-modulation-looks
+        Spectr-standalone-modulation-hold-while-editing
+        Spectr-standalone-band-menu-keyboard-negative-control
+        Spectr-standalone-band-menu-rows-negative-control
+        Spectr-status-overlay
+        Spectr-menu-dropdown-affordances
+        Spectr-menu-dropdown-affordances-negative-control
+        Spectr-menu-dropdown-affordances-negative-control-escape
+        Spectr-latency-rail-effect Spectr-latency-rail-effect-disabled-write-control
+        Spectr-group-drag-preserves-mute
+        Spectr-group-drag-preserves-mute-negative-control-unmute
+        Spectr-group-drag-preserves-mute-negative-control-freeze
+        Spectr-menu-arrow-step Spectr-menu-arrow-step-negative-control
+        Spectr-menu-arrow-step-negative-control-eager-cursor
+        Spectr-materialized-captured-state-survives-snapshots-live
+        Spectr-shortcut-panel-single-line
+        Spectr-settings-render-mode-no-reflow-live)
+    foreach(_spectr_seam_test IN LISTS _spectr_needs_seams)
+        if(TEST ${_spectr_seam_test})
+            set_tests_properties(${_spectr_seam_test} PROPERTIES DISABLED TRUE)
+        endif()
+    endforeach()
+endif()

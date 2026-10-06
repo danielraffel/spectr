@@ -1,4 +1,5 @@
 #include <spectr/mask_renderer.hpp>
+#include "spectr/test_seams.hpp"
 
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/convolver.hpp>
@@ -11,12 +12,15 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -33,6 +37,11 @@ namespace {
 /// a different latency on a different machine, which is the recall hazard the
 /// contract exists to prevent. 64 samples is 1.33 ms at 48 kHz.
 constexpr int kRenderBlock = kZeroLatencyRenderBlock;
+
+/// Layouts the audio thread has handed a design worker that no worker has
+/// designed and staged yet, summed over every zero-latency renderer in the
+/// process. See `spectr_mask_design_backlog_v1()`.
+std::atomic<std::uint64_t> g_mask_design_backlog{0};
 
 /// Magnitudes below this are floored before the logarithm that the cepstral
 /// reconstruction takes. A muted band therefore realises at -120 dB rather
@@ -357,7 +366,7 @@ static_assert(std::is_same_v<pulp::signal::ConvolverIrSwapper,
 /// variant of it. Read once per process and unset in every shipping run.
 bool swap_plants_history_reset() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_SWAP_PLANT");
         return value != nullptr && std::string_view(value) == "history-reset";
     }();
     return planted;
@@ -372,7 +381,7 @@ bool swap_plants_history_reset() {
 /// unset in every shipping run.
 bool swap_plants_fixed_fade() {
     static const bool planted = [] {
-        const char* value = std::getenv("SPECTR_SWAP_PLANT");
+        const char* value = SPECTR_TEST_ENV("SPECTR_SWAP_PLANT");
         return value != nullptr && std::string_view(value) == "fixed-fade";
     }();
     return planted;
@@ -417,6 +426,11 @@ public:
         c.initial_mix        = config.initial_mix;
         c.mix_ramp_samples   = config.mix_ramp_samples;
         c.mix_curve          = pulp::signal::MixCurve::Linear;
+        // The framework starts every stream (prepare or reset) with analysis
+        // frames placed before its first sample, so that sample is covered by
+        // the full set of overlapping windows and reaches the output at full
+        // level, at the same latency. The negative control turns that off.
+        c.frame.full_overlap_stream_start = !full_overlap_disabled_by_plant_();
         if (!processor_.prepare(c)) return false;
         config_ = config;
         return true;
@@ -451,10 +465,12 @@ public:
         // The framework's wet-source stage runs before this processor's
         // analysis and leaves its latency-aligned dry path on the input.
         processor_.set_wet_source_stage(source);
+        wet_source_ = source;
         return true;
     }
     [[nodiscard]] bool process(const float* const* input, float* const* output,
                                int num_samples) noexcept override {
+        PULP_TRACE_SCOPE_NAMED("dsp", "mixing.process");
         return processor_.process(input, output, num_samples);
     }
     void reset() noexcept override { processor_.reset(); }
@@ -463,9 +479,20 @@ public:
     }
 
 private:
+    // Negative-control seam (SPECTR_PLANT_NO_FULL_OVERLAP), read once: a fresh
+    // WOLA stream without frames before its first sample tapers the first
+    // fft_size - hop samples toward zero (an impulse 13 samples in came out at
+    // -176 dB, one 1024 samples in at -25 dB), which the stream-start test
+    // must reject.
+    static bool full_overlap_disabled_by_plant_() noexcept {
+        static const bool disabled = SPECTR_TEST_ENV("SPECTR_PLANT_NO_FULL_OVERLAP") != nullptr;
+        return disabled;
+    }
+
     pulp::signal::SpectralMaskProcessor processor_{};
     MaskRendererConfig                  config_{};
     std::atomic<unsigned long long>     generation_{0};
+    WetSource*                          wet_source_ = nullptr;
 };
 
 // ── Zero latency ───────────────────────────────────────────────────────────
@@ -476,18 +503,26 @@ private:
 /// Design — the cepstral reconstruction and the partition spectra it implies —
 /// runs on a worker. The audio thread only ever fills a render block, adopts a
 /// finished impulse response at a block boundary, and convolves. Nothing on
-/// the audio path reads a clock, allocates, or blocks: the schedule is
-/// expressed entirely in samples, which is what makes a faster-than-real-time
-/// bounce produce the same samples as real-time playback by construction
-/// rather than by a flag the host may not set.
+/// the audio path reads a clock, allocates, or blocks: the convolution and its
+/// crossfades are scheduled in samples.
+///
+/// WHICH block adopts a layout staged from the audio thread is not: it is the
+/// first render block after the worker finishes, and the worker runs on wall
+/// time (its lane also coalesces to the newest layout). A real-time host paces
+/// the callback, so the worker lands within a block. A consumer that renders
+/// blocks back to back can outrun it by a load-dependent number of blocks,
+/// adopting a ramp late and with intermediate layouts coalesced away. An AU v2
+/// host does not tell the plugin it is bouncing offline, so the renderer cannot
+/// wait for its worker there; an offline harness waits on
+/// `spectr_mask_design_backlog_v1()` instead.
 class ZeroLatencyMaskRenderer final : public MaskRenderer {
 public:
-    ~ZeroLatencyMaskRenderer() override { lane_.stop(); }
+    ~ZeroLatencyMaskRenderer() override { stop_lane_(); }
 
     [[nodiscard]] bool prepare(const MaskRendererConfig& config) override {
         if (!valid_config(config)) return false;
 
-        lane_.stop();
+        stop_lane_();
 
         const int bins = config.design_grid_size / 2 + 1;
         // The renderer states its own grid requirement rather than inheriting
@@ -595,14 +630,55 @@ public:
         return config_.design_grid_size;
     }
 
+    [[nodiscard]] double minimum_phase_floor() const noexcept override {
+        return kDesignMagnitudeFloor;
+    }
+
+    /// The table plus this realisation's band-edge shaping: the magnitude
+    /// design_and_stage_ reconstructs, by the same code path.
+    [[nodiscard]] bool realised_magnitude(const Layout& layout, double sample_rate,
+                                          Table& scratch,
+                                          std::span<double> out) const noexcept override {
+        const int grid = config_.design_grid_size;
+        if (grid <= 0 || out.size() < static_cast<std::size_t>(grid / 2 + 1)) return false;
+        if (!pulp::signal::build_spectral_mask(layout, grid, static_cast<float>(sample_rate),
+                                               scratch))
+            return false;
+        shaped_magnitude_(scratch, sample_rate,
+                          out.first(static_cast<std::size_t>(scratch.num_bins)));
+        return true;
+    }
+
     [[nodiscard]] bool publish_layout(const Layout& layout) override {
         if (!prepared_) return false;
         // Control thread: design inline. Allocation and a few FFTs are
         // allowed here, and doing the work now means a state restore or a
         // prepare leaves a correct impulse staged before audio starts.
         PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (UI thread)");
+        const auto ordinal = reserve_request_ordinal();
         std::lock_guard<std::mutex> guard(design_mutex_);
-        return design_and_stage_(layout);
+        return design_and_stage_(layout, ordinal);
+    }
+
+    [[nodiscard]] std::uint64_t reserve_request_ordinal() noexcept override {
+        return request_ordinal_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+
+    [[nodiscard]] bool publish_layout_at(const Layout& layout, std::uint64_t ordinal,
+                                         bool* superseded) override {
+        if (superseded) *superseded = false;
+        if (!prepared_) return false;
+        if (ordinal == 0) return publish_layout(layout);
+        PULP_TRACE_SCOPE_NAMED("state", "redesign filter bank (sync worker)");
+        std::lock_guard<std::mutex> guard(design_mutex_);
+        // Superseded by any NEWER request, staged or not: deciding by whether
+        // that request has finished yet would make the answer -- and what the
+        // caller remembers as published -- depend on the scheduler.
+        if (ordinal < request_ordinal_.load(std::memory_order_acquire)) {
+            if (superseded) *superseded = true;
+            return true;
+        }
+        return design_and_stage_(layout, ordinal);
     }
 
     [[nodiscard]] bool set_layout_rt(const Layout& layout) noexcept override {
@@ -627,9 +703,10 @@ public:
     //
     // Everything between these markers runs on the audio thread. It must
     // contain no wall-clock read, no sleep, no thread handle and no lock: the
-    // schedule here is expressed purely in samples, which is what makes an
-    // offline bounce and real-time playback produce identical samples whether
-    // or not the host tells the plugin which one it is. The markers are not
+    // convolution schedule here is expressed purely in samples. When a staged
+    // layout is adopted rides on the design worker, so an offline render
+    // waits for it through await_staged_designs(), outside this region and
+    // only when the host says it is rendering offline. The markers are not
     // decoration — `tools/ci/check_render_path_clock.py` scans exactly this
     // region, and `test/test_mask_renderer.cpp` proves the scan can fail.
     [[nodiscard]] bool process(const float* const* input, float* const* output,
@@ -640,8 +717,7 @@ public:
         for (int ch = 0; ch < channels_; ++ch)
             if (input[ch] == nullptr || output[ch] == nullptr) return false;
 
-        if (rt_layout_pending_.exchange(false, std::memory_order_acquire))
-            (void)lane_.try_spawn(rt_layout_);
+        if (!defer_handoff_) hand_off_staged_layout_();
 
         mixer_.push_dry(input, channels_, num_samples);
 
@@ -676,7 +752,21 @@ public:
     }
 
 private:
+    /// Hand the layout the audio thread staged (if any) to the design worker.
+    void hand_off_staged_layout_() noexcept {
+        if (rt_layout_pending_.exchange(false, std::memory_order_acquire)) {
+            const auto sequence =
+                requested_sequence_.load(std::memory_order_relaxed) + 1;
+            if (lane_.try_spawn(DesignTask{rt_layout_, sequence,
+                                           reserve_request_ordinal()})) {
+                requested_sequence_.store(sequence, std::memory_order_relaxed);
+                g_mask_design_backlog.fetch_add(1, std::memory_order_acq_rel);
+            }
+        }
+    }
+
     void render_block_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "tracking.render_block");
         // The fade a swap landing now is given is the gap it closes: the
         // samples since the previous swap landed, clamped. Saturate the count
         // so an idle renderer cannot overflow it. See kIrCrossfadeSamples.
@@ -739,6 +829,55 @@ public:
         return active_generation_.load(std::memory_order_acquire);
     }
 
+    void defer_design_handoff(bool defer) noexcept override { defer_handoff_ = defer; }
+    void flush_design_handoff() noexcept override {
+        const bool staged = rt_layout_pending_.load(std::memory_order_acquire);
+        hand_off_staged_layout_();
+        if (claimed_ && !staged)
+            request_ordinal_.fetch_add(1, std::memory_order_acq_rel);
+        claimed_ = false;
+    }
+    void claim_mask_this_block() noexcept override { claimed_ = true; }
+
+    // Offline only, and deliberately outside the render-path region: it
+    // sleeps. See MaskRenderer::await_staged_designs().
+    bool await_staged_designs(
+        std::chrono::steady_clock::time_point deadline) noexcept override {
+        if (!prepared_) return true;
+        // Waits only for work already handed to the worker. A layout staged
+        // but not yet handed off (left by a control-thread pump, say) goes at
+        // the end of this host block like any other, as it would when paced.
+        while (designed_sequence_.load(std::memory_order_acquire)
+               < requested_sequence_.load(std::memory_order_relaxed)) {
+            if (!lane_.running() || std::chrono::steady_clock::now() > deadline)
+                return false;
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+        return true;
+    }
+
+    /// The compiled table's magnitude with this realisation's edge shaping
+    /// applied: what the minimum-phase reconstruction is given. The shaping is
+    /// the zero-latency realisation's own step -- the table, the layout and
+    /// every other mode are untouched by it, so the linear-phase path keeps
+    /// realising the drawn magnitude exactly as authored. Pure and
+    /// allocation-free; shared by the design step and realised_magnitude().
+    static void shaped_magnitude_(const Table& table, double sample_rate,
+                                  std::span<double> magnitudes) noexcept {
+        const auto bins = std::min(magnitudes.size(),
+                                   static_cast<std::size_t>(table.num_bins));
+        for (std::size_t i = 0; i < bins; ++i)
+            magnitudes[i] = static_cast<double>(table.gain_linear[i]);
+        (void)shape_tracking_transitions(
+            magnitudes.first(bins),
+            std::span<const float>(
+                table.band_edges_hz.data(),
+                static_cast<std::size_t>(table.active_bands) + 1u),
+            sample_rate / static_cast<double>(table.fft_size),
+            kTrackingTransitionWidthBins,
+            kDesignMagnitudeFloor);
+    }
+
 private:
     /// Cepstral minimum-phase reconstruction of `design_magnitudes_` into
     /// `design_taps_`. Worker or control thread; never the audio thread.
@@ -759,7 +898,11 @@ private:
 
     /// Compile a layout to a table, design its minimum-phase impulse, and
     /// stage it for the audio thread to adopt at its next block boundary.
-    [[nodiscard]] bool design_and_stage_(const Layout& layout) {
+    [[nodiscard]] bool design_and_stage_(const Layout& layout, std::uint64_t ordinal) {
+        // Caller holds design_mutex_. Older than what is already staged: a
+        // newer request won, so this one is dropped rather than adopted late.
+        if (ordinal < last_staged_ordinal_) return true;
+        last_staged_ordinal_ = ordinal;
         pulp::signal::SpectralMaskTable table;
         {
             PULP_TRACE_SCOPE_NAMED("state", "compile band mask table");
@@ -773,24 +916,9 @@ private:
 
         const auto bins = static_cast<std::size_t>(table.num_bins);
         if (bins != design_magnitudes_.size()) return false;
-        for (std::size_t i = 0; i < bins; ++i)
-            design_magnitudes_[i] = static_cast<double>(table.gain_linear[i]);
-
-        // Shape the drawn edges before reconstructing. This is the zero-latency
-        // realisation's own step: the table, the layout and every other mode
-        // are untouched by it, so the linear-phase path keeps realising the
-        // drawn magnitude exactly as authored.
         {
             PULP_TRACE_SCOPE_NAMED("state", "shape band-edge transitions");
-            (void)shape_tracking_transitions(
-                design_magnitudes_,
-                std::span<const float>(
-                    table.band_edges_hz.data(),
-                    static_cast<std::size_t>(table.active_bands) + 1u),
-                config_.sample_rate
-                    / static_cast<double>(config_.design_grid_size),
-                kTrackingTransitionWidthBins,
-                kDesignMagnitudeFloor);
+            shaped_magnitude_(table, config_.sample_rate, design_magnitudes_);
         }
 
         {
@@ -820,12 +948,44 @@ private:
         return staged_any;
     }
 
-    static void handle_design_(void* context, const Layout& layout) {
+    /// One audio-thread handoff: the layout, and its position in the order
+    /// this renderer's audio thread staged them.
+    struct DesignTask {
+        Layout        layout;
+        std::uint64_t sequence = 0;
+        std::uint64_t ordinal = 0;
+    };
+
+    static void handle_design_(void* context, const DesignTask& task) {
         PULP_TRACE_SCOPE_NAMED("state",
                                "redesign filter bank (worker, audio-driven)");
         auto* self = static_cast<ZeroLatencyMaskRenderer*>(context);
         std::lock_guard<std::mutex> guard(self->design_mutex_);
-        (void)self->design_and_stage_(layout);
+        (void)self->design_and_stage_(task.layout, task.ordinal);
+        // Retired only once the impulse is staged, so a zero backlog means
+        // the next audio block adopts it. The Latest lane coalesces, so this
+        // one design also retires every handoff it superseded; a re-read of
+        // the same task retires nothing.
+        self->retire_designed_through_(task.sequence);
+    }
+
+    void retire_designed_through_(std::uint64_t sequence) noexcept {
+        const auto designed = designed_sequence_.load(std::memory_order_relaxed);
+        if (sequence <= designed) return;
+        // Release: a reader that sees this sequence also sees the staged IR.
+        designed_sequence_.store(sequence, std::memory_order_release);
+        g_mask_design_backlog.fetch_sub(sequence - designed,
+                                        std::memory_order_acq_rel);
+    }
+
+    /// Stop the worker and retire whatever it did not get to: a renderer that
+    /// is re-prepared or destroyed owes no design, so it must not leave the
+    /// process-wide backlog permanently non-zero. Control thread, with the
+    /// audio thread outside this renderer.
+    void stop_lane_() noexcept {
+        lane_.stop();
+        retire_designed_through_(
+            requested_sequence_.load(std::memory_order_relaxed));
     }
 
     MaskRendererConfig config_{};
@@ -870,7 +1030,20 @@ private:
     std::atomic<unsigned long long> pending_generation_{0};
     std::atomic<unsigned long long> active_generation_{0};
 
-    pulp::format::BackgroundTaskLane<Layout, 8> lane_;
+    // Handoff bookkeeping for `spectr_mask_design_backlog_v1()`: the last
+    // sequence the audio thread handed the worker, and the last one a worker
+    // design (or a stop) retired.
+    std::atomic<std::uint64_t> requested_sequence_{0};
+    std::atomic<std::uint64_t> designed_sequence_{0};
+    // Audio-thread only. See MaskRenderer::defer_design_handoff().
+    bool defer_handoff_ = false;
+    bool claimed_ = false;
+    // Request ordering (MaskRenderer::reserve_request_ordinal). The last
+    // staged ordinal is guarded by design_mutex_.
+    std::atomic<std::uint64_t> request_ordinal_{0};
+    std::uint64_t last_staged_ordinal_ = 0;
+
+    pulp::format::BackgroundTaskLane<DesignTask, 8> lane_;
 };
 
 } // namespace
@@ -1173,3 +1346,7 @@ std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode) {
 }
 
 } // namespace spectr
+
+extern "C" std::uint64_t spectr_mask_design_backlog_v1() noexcept {
+    return spectr::g_mask_design_backlog.load(std::memory_order_acquire);
+}

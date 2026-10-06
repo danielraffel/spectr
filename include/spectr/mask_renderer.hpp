@@ -22,6 +22,8 @@
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -94,8 +96,61 @@ public:
     /// renderer makes it follow instead.
     [[nodiscard]] virtual int design_grid_size() const noexcept = 0;
 
+    /// The linear magnitude this realisation would apply for @p layout, per
+    /// bin of the design grid (design_grid_size() / 2 + 1 values into @p out),
+    /// computed exactly as its own design step computes it -- the compiled
+    /// table, plus whatever edge shaping the realisation adds. Auto Gain v2
+    /// weighs THIS against the material's spectrum, so its make-up follows
+    /// the response the listener actually hears rather than the drawn steps.
+    ///
+    /// Pure with respect to the renderer's state: no allocation, no lock, no
+    /// clock; @p scratch is the caller's (a table is too large for an audio
+    /// thread's stack). Returns false, writing nothing, if the layout does not
+    /// compile or @p out is too short. The default is the table itself, which
+    /// is what a realisation that applies the table per STFT bin realises.
+    /// > 0 when this realisation reconstructs a MINIMUM-PHASE impulse from the
+    /// realised magnitude, with this magnitude floor; 0 when its wet leg is
+    /// zero-phase against the latency-aligned dry leg. Auto Gain v2 needs the
+    /// phase only below 100 % Mix, where wet and dry interfere.
+    [[nodiscard]] virtual double minimum_phase_floor() const noexcept { return 0.0; }
+
+    [[nodiscard]] virtual bool realised_magnitude(const Layout& layout, double sample_rate,
+                                                  Table& scratch,
+                                                  std::span<double> out) const noexcept {
+        const int grid = design_grid_size();
+        if (grid <= 0 || out.size() < static_cast<std::size_t>(grid / 2 + 1)) return false;
+        if (!pulp::signal::build_spectral_mask(layout, grid, static_cast<float>(sample_rate),
+                                               scratch))
+            return false;
+        for (int bin = 0; bin < scratch.num_bins; ++bin)
+            out[static_cast<std::size_t>(bin)] =
+                static_cast<double>(scratch.gain_linear[static_cast<std::size_t>(bin)]);
+        return true;
+    }
+
     /// Publish one layout from the control thread. May allocate.
     [[nodiscard]] virtual bool publish_layout(const Layout& layout) = 0;
+
+    /// Requests are ordered by when they were ASKED for, not by which design
+    /// finishes first. A staged-layout handoff and every publish take a
+    /// request ordinal; a design whose ordinal is older than the last one
+    /// staged is dropped as superseded. Without this a parameter sync and an
+    /// audio-thread layout asked for in the same block race to be adopted,
+    /// and the winner depends on the scheduler.
+    ///
+    /// Reserve an ordinal now for a publish that happens later (the param
+    /// sync reserves at spawn, on the audio thread). Lock-free. Zero means
+    /// this realisation does not order requests.
+    [[nodiscard]] virtual std::uint64_t reserve_request_ordinal() noexcept { return 0; }
+
+    /// `publish_layout` at a reserved ordinal. Sets `*superseded` when a newer
+    /// request had already been staged, in which case nothing was staged.
+    [[nodiscard]] virtual bool publish_layout_at(const Layout& layout,
+                                                 std::uint64_t /*ordinal*/,
+                                                 bool* superseded) {
+        if (superseded) *superseded = false;
+        return publish_layout(layout);
+    }
 
     /// Stage the latest layout from the single audio owner. Allocation-free
     /// and lock-free; the work the layout implies is done elsewhere and
@@ -129,6 +184,55 @@ public:
 
     /// Clear streaming state, preserving the currently adopted magnitude.
     virtual void reset() noexcept = 0;
+
+    /// OFFLINE RENDERS ONLY. Block the calling audio thread until every layout
+    /// already handed to the design worker is realised and waiting for the
+    /// next `process()` to adopt.
+    ///
+    /// A realisation that designs on a worker adopts a staged layout at the
+    /// first render block after that worker finishes. A real-time host paces
+    /// its callbacks, so the worker finishes between them; an offline render
+    /// does not wait, so on a loaded machine the adoption lands a
+    /// load-dependent number of blocks late and the worker's Latest lane
+    /// coalesces intermediate layouts away. Calling this at each host block
+    /// of an offline render reproduces the paced schedule exactly. Never call
+    /// it on a real-time block: it may sleep. Returns false when the wait gave
+    /// up (worker stopped, or `deadline` passed). The caller owns the budget:
+    /// the processor gives every host block one, so a worker that is starved
+    /// -- or a host whose offline flag outlived its bounce -- costs a bounded
+    /// wait rather than a stalled callback. Realisations that adopt
+    /// synchronously have nothing to wait for.
+    virtual bool await_staged_designs(
+        std::chrono::steady_clock::time_point /*deadline*/) noexcept {
+        return true;
+    }
+
+    /// Audio thread, once per host block before process(). True when the host
+    /// renders this block offline: a realisation whose output is computed on a
+    /// worker may then wait, bounded, for that output instead of substituting
+    /// its stand-in. False for every realtime block, which never waits.
+    virtual void set_offline_block(bool /*offline*/) noexcept {}
+
+    /// Audio thread. While true, `process()` keeps a staged layout until
+    /// `flush_design_handoff()` instead of
+    /// handing it to the design worker at once. The processor defers for the
+    /// whole of a host block and flushes at its end, so a design can never
+    /// finish -- on a call the scheduler preempted -- between two render
+    /// blocks of the host block that staged it. Every layout is then adopted
+    /// at a host-block boundary, the same one in a paced real-time render and
+    /// in an offline bounce, rather than wherever the worker happened to land.
+    virtual void defer_design_handoff(bool /*defer*/) noexcept {}
+
+    /// Audio thread, lock-free: hand a deferred staged layout to the worker.
+    virtual void flush_design_handoff() noexcept {}
+
+    /// Audio thread, lock-free: the audio path drove the mask this block
+    /// (it staged a layout, or left its last one live on purpose). The next
+    /// `flush_design_handoff()` then counts as a request even with nothing
+    /// staged, so a control-thread publish asked for earlier in the block --
+    /// a parameter sync's base mask -- is superseded instead of replacing the
+    /// layout the audio path believes is live.
+    virtual void claim_mask_this_block() noexcept {}
 
     /// Monotonic counter of the magnitude the renderer is currently
     /// realising. Advances when a newly published or staged layout has been
@@ -282,3 +386,22 @@ inline constexpr int kZeroLatencyRenderBlock = 64;
 [[nodiscard]] std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode);
 
 } // namespace spectr
+
+/// Layouts staged from an audio thread that no design worker has finished
+/// with yet, summed over every zero-latency renderer in the process.
+///
+/// The zero-latency realisation designs on a worker and adopts at its next
+/// render block, so how many blocks a staged layout trails the audio that
+/// asked for it depends on how soon that worker is scheduled. A real-time host
+/// paces the audio callback, so the worker keeps up; a consumer that renders
+/// blocks back to back (an offline harness) outruns it, and on a loaded machine
+/// it can outrun it by a different number of blocks each run -- the worker's
+/// Latest lane then coalesces the intermediate layouts away, so a ramp arrives
+/// late and in coarser steps. A harness waits for this to read zero after each
+/// block to render as a paced host would hear it.
+///
+/// Zero means every staged layout's impulse is staged for adoption at the next
+/// render block. Read-only and lock-free; exported from the AU bundle so an
+/// in-process host can reach it. It is a process-wide total, so it is only
+/// exact while one renderer is being driven.
+extern "C" std::uint64_t spectr_mask_design_backlog_v1() noexcept;

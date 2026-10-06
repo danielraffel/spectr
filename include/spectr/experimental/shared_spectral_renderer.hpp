@@ -27,7 +27,12 @@ public:
     bool publish_layout(const Layout&) override;
     bool set_layout_rt(const Layout&) noexcept override;
     void set_mix(float) noexcept override;
+    // Freeze's held source feeds the wet path of both the CPU reference and
+    // the GPU journal, so fallback, fencing and device loss keep the source.
+    bool set_wet_source(WetSource* source) noexcept override { adapter_->set_wet_source(source);return true; }
     bool process(const float* const*,float* const*,int) noexcept override;
+    // Offline blocks wait (bounded) for GPU output rather than falling back.
+    void set_offline_block(bool offline) noexcept override { adapter_->set_offline(offline); }
     void reset() noexcept override;
     unsigned long long active_generation() const noexcept override;
     Snapshot snapshot() const noexcept;

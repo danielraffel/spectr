@@ -112,6 +112,8 @@
 /// lock-free and reads no clock. All members except `prepare()` belong to the
 /// audio thread.
 
+#include <pulp/runtime/trace.hpp>
+#include "spectr/test_seams.hpp"
 #include <pulp/signal/fft.hpp>
 #include <pulp/signal/freeze_hold.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
@@ -123,6 +125,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace spectr {
@@ -466,6 +469,7 @@ public:
         phase_ = Phase::live;
         weight_step_ = 0;
         pending_engage_ = false;
+        retrigger_ = false;
         loop_mode_ = false;
         fade_rho_ = 0.0f;
         if (storage_) std::fill(storage_->record.begin(), storage_->record.end(), 0.0f);
@@ -492,6 +496,15 @@ public:
 
     /// Freeze request. Takes effect at the next hop boundary.
     void set_frozen(bool frozen) noexcept { requested_ = frozen; }
+    /// A new freeze that starts while the previous one may still be heard:
+    /// at the next hop boundary a hold that is engaging or held releases and
+    /// the source latches again once the release is done -- fresh audio, at
+    /// the hold length requested then. A request that stays on across the
+    /// end of one hold and the start of the next is otherwise
+    /// indistinguishable from one long hold. Ignored unless frozen is
+    /// requested at that boundary; a hold not yet heard (arming, preparing)
+    /// already takes the next latch.
+    void retrigger() noexcept { retrigger_ = true; }
     [[nodiscard]] bool frozen_requested() const noexcept { return requested_; }
 
     /// Hold length for the NEXT latch; a hold already playing keeps its own.
@@ -506,6 +519,9 @@ public:
     /// True when the hold that is (or was last) latched loops the audio
     /// itself rather than holding its spectrum.
     [[nodiscard]] bool looping() const noexcept { return loop_mode_; }
+    /// Latches since prepare: each one a freeze taken from fresh input
+    /// (for tests and diagnostics).
+    [[nodiscard]] std::uint32_t latch_count() const noexcept { return latch_count_; }
     /// The latched loop's length in samples (0 before the first loop).
     [[nodiscard]] std::int64_t loop_length() const noexcept { return loop_length_; }
     /// True while any held content reaches the output.
@@ -706,6 +722,7 @@ private:
     // One hop of input has been recorded and the ready segment of the output
     // ring consumed. Analyse, capture, latch, advance and resynthesise.
     void hop_boundary_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hop");
         // Mean input power of the hop just recorded, and of the analysis
         // window that ends with it.
         const auto hop_ring = hop_energy_.size();
@@ -741,7 +758,17 @@ private:
         if (requested_) {
             if (phase_ == Phase::live) phase_ = Phase::arming;
             else if (phase_ == Phase::releasing) pending_engage_ = true;
+            else if (retrigger_
+                     && (phase_ == Phase::engaging || phase_ == Phase::held)) {
+                // Release this hold, then latch the next one.
+                phase_ = Phase::releasing;
+                hold_.set_frozen(false); // restarts the capture window
+                release_rho_ = last_rho_;
+                pending_engage_ = true;
+            }
+            retrigger_ = false;
         } else {
+            retrigger_ = false;
             pending_engage_ = false;
             if (phase_ == Phase::arming || phase_ == Phase::preparing) {
                 // Nothing of the hold has been heard.
@@ -773,8 +800,23 @@ private:
         if (spectral) add_hold_frame_(0);
         if (rendering && loop_mode_) copy_loop_tail_();
 
-        if (phase_ == Phase::live || phase_ == Phase::arming
-            || phase_ == Phase::releasing) {
+        // A loop-length hold freezes the audio itself and never reads the
+        // spectral capture, so while nothing can need it -- a loop Length,
+        // not modulated, nothing held or releasing -- the hop skips the
+        // analysis FFT and the capture (the per-hop burst at a small host
+        // buffer). Resuming starts a fresh capture window, so a spectral
+        // freeze pressed within one Length of the switch arms until the
+        // window fills; see set_spectral_capture_required().
+        const bool skip_capture = phase_ == Phase::live && !spectral_required_
+            && applied_hold_seconds_ >= kLoopMinSeconds && !capture_plant_();
+        if (skip_capture) {
+            capture_suspended_ = true;
+        } else if (capture_suspended_) {
+            hold_.clear_history();
+            capture_suspended_ = false;
+        }
+        if (!skip_capture && (phase_ == Phase::live || phase_ == Phase::arming
+            || phase_ == Phase::releasing)) {
             analyse_();
             const bool loop = applied_hold_seconds_ >= kLoopMinSeconds;
             if (phase_ == Phase::arming)
@@ -784,7 +826,10 @@ private:
             // anything into it: the hold continues its partials in phase.
             if (phase_ == Phase::arming && !loop)
                 std::copy(spectra_.begin(), spectra_.end(), latched_.begin());
-            hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            {
+                PULP_TRACE_SCOPE_NAMED("dsp", "freeze.hold_group");
+                hold_.process_group(frame_ptrs_.data(), channels_, bins_);
+            }
             if (phase_ == Phase::arming) {
                 if (loop) {
                     if (loop_ready_()) begin_loop_prepare_();
@@ -853,6 +898,7 @@ private:
     // as its first pass plays (the recording keeps every sample of it for
     // longer than a pass).
     void begin_loop_prepare_() noexcept {
+        ++latch_count_;
         loop_end_ = recorded_ + kHop;
         const auto wanted = wanted_loop_length_();
         const std::int64_t history = history_ + kHop;
@@ -1035,8 +1081,26 @@ private:
         return true;
     }
 
+public:
+    /// Audio thread: whether the spectral capture must run on every hop even
+    /// at a loop Length -- true while the Length can change without notice
+    /// (an LFO drives it). Default true.
+    void set_spectral_capture_required(bool required) noexcept { spectral_required_ = required; }
+    /// Read the negative-control seams once, off the audio thread.
+    static void prime_plants() noexcept { (void)capture_plant_(); }
+    /// True while the spectral capture is suspended (diagnostic).
+    [[nodiscard]] bool spectral_capture_suspended() const noexcept { return capture_suspended_; }
+
+private:
+    // SPECTR_PLANT_ALWAYS_CAPTURE restores the capture on every hop.
+    static bool capture_plant_() noexcept {
+        static const bool planted = SPECTR_TEST_ENV("SPECTR_PLANT_ALWAYS_CAPTURE") != nullptr;
+        return planted;
+    }
+
     // Windowed FFT of the most recent kFftSize input samples, oldest first.
     void analyse_() noexcept {
+        PULP_TRACE_SCOPE_NAMED("dsp", "freeze.analyse");
         const auto window = static_cast<std::size_t>(kFftSize);
         for (int ch = 0; ch < channels_; ++ch) {
             const float* ring = input_ring_.data() + static_cast<std::size_t>(ch) * window;
@@ -1153,6 +1217,7 @@ private:
     // over one hop: the hold is rendered from its phases once, and each later
     // frame is one complex multiply per bin.
     void begin_prepare_() noexcept {
+        ++latch_count_;
         // The live level the hold is matched to: the capture window's mean,
         // as it stands at the latch.
         const int frames = hold_.capture_frames();
@@ -1591,6 +1656,8 @@ private:
     bool prepared_ = false;
     bool requested_ = false;
     bool pending_engage_ = false;
+    bool retrigger_ = false;
+    std::uint32_t latch_count_ = 0;
 
     // The loop (see THE LOOP and LOOP MEMORY).
     std::unique_ptr<LoopStorage> storage_;        // audio-owned after prepare()
@@ -1614,6 +1681,8 @@ private:
     std::vector<double> search_cross_, search_energy_; // per candidate start
     double end_energy_ = 0.0;
     bool loop_mode_ = false;
+    bool spectral_required_ = true;
+    bool capture_suspended_ = false;
     bool loop_seam_ = false;                      // a pass after the first
     bool loop_tail_ = false;                      // the audio after the end is copied
     float fade_rho_ = 0.0f;                       // the engage fade's two sides' correlation

@@ -12,7 +12,7 @@ mode before a take because switching changes the latency reported to your
 DAW.
 
 The latency display follows the current sample rate. At 48 kHz, Mixing reports
-10,240 samples (about 213 ms) and Tracking reports 64 samples (about 1.3 ms).
+10,240 samples (about 213 ms) and Tracking reports 64 samples (about 1.3 ms). In a build with the experimental GPU renderer, Mixing with GPU processing on reports 15,360 samples (320 ms at 48 kHz); see gpu-audio-status.md.
 At 96 kHz those times halve.
 
 The peak number holds briefly and then falls toward the current output level.

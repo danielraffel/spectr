@@ -584,6 +584,57 @@ TEST_CASE("A staged redesign reaches the audio path and is reported",
     REQUIRE(renderer->active_generation() > first);
 }
 
+namespace {
+
+/// Wait for the design backlog to drain, by the counter alone -- no audio is
+/// pumped, so nothing here can adopt on the worker's behalf.
+bool await_design_backlog(std::chrono::seconds limit = std::chrono::seconds(30)) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (spectr_mask_design_backlog_v1() != 0) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("A drained design backlog means the next block adopts every staged layout",
+          "[mask-renderer][contract]") {
+    // What an offline harness relies on to render as a paced host hears: once
+    // the backlog reads zero, the very next render block realises the layout
+    // the previous block staged -- one generation per staged layout, none
+    // coalesced away and none still in flight.
+    REQUIRE(await_design_backlog());
+    auto renderer = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
+    REQUIRE(renderer->prepare(zero_latency_config()));
+    REQUIRE(renderer->publish_layout(zoom_layout()));
+    settle(*renderer, 1);
+    const std::vector<float> block(512, 0.0f);
+    // Longer than the widest crossfade (18 ms), so the previous swap's fade
+    // has finished and cannot refuse the next one.
+    const std::vector<float> after(1024, 0.0f);
+    for (int step = 0; step < 24; ++step) {
+        const auto before = renderer->active_generation();
+        REQUIRE(renderer->set_layout_rt(zoom_layout(step % 32)));
+        (void)render(*renderer, block, 512);   // hands the layout to the worker
+        REQUIRE(await_design_backlog());
+        (void)render(*renderer, after, 512);
+        REQUIRE(renderer->active_generation() == before + 1);
+    }
+
+    // A renderer torn down with a design still owed retires it: the process
+    // total must not stay non-zero for the life of the process.
+    for (int round = 0; round < 8; ++round) {
+        auto doomed = spectr::make_mask_renderer(MaskRenderMode::zero_latency);
+        REQUIRE(doomed->prepare(zero_latency_config()));
+        REQUIRE(doomed->set_layout_rt(zoom_layout(round)));
+        (void)render(*doomed, block, 512);
+        doomed.reset();
+        REQUIRE(spectr_mask_design_backlog_v1() == 0);
+    }
+}
+
 
 // ── The swap handoff ───────────────────────────────────────────────────────
 //

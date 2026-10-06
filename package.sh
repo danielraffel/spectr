@@ -79,6 +79,20 @@ VER="${VER:-$PROJECT_VER}"
   echo "  change project(Spectr VERSION ...) in CMakeLists.txt instead" >&2
   exit 2
 }
+# A side-by-side development identity (SPECTR_DEV_IDENTITY, see
+# cmake/SpectrIdentity.cmake) builds differently named targets and bundles, and
+# its installer must carry its own package identifiers so it can never replace
+# the shipping Spectr receipts. The shipping identity keeps every name below.
+DEV_IDENT="$(sed -n 's/^SPECTR_DEV_IDENTITY:STRING=//p' "$CACHE" | tail -1)"
+if [[ -n "$DEV_IDENT" ]]; then
+  TARGET_PREFIX="Spectr${DEV_IDENT}Dev"
+  BUNDLE_NAME="Spectr ${DEV_IDENT} Dev"
+  PKG_NAME="Spectr${DEV_IDENT}Dev"
+else
+  TARGET_PREFIX="Spectr"
+  BUNDLE_NAME="Spectr"
+  PKG_NAME="Spectr"
+fi
 SOURCE_ROOT="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$CACHE" | tail -1)"
 SOURCE_ROOT="$(cd "$SOURCE_ROOT" 2>/dev/null && pwd || true)"
 [[ "$SOURCE_ROOT" == "$ROOT" ]] || {
@@ -123,12 +137,23 @@ grep -q '^PULP_SDK_DISTRIBUTION_ELIGIBLE:INTERNAL=TRUE$' "$CACHE" || {
   echo "Spectr tracked source must be clean before the package rebuild" >&2
   exit 2
 }
+# Test seams and diagnostics never ship. SPECTR_ENABLE_TEST_SEAMS compiles the
+# SPECTR_* environment seams (script injection, synthetic input, planted
+# defects) into the products; the other options add acceptance-only code or
+# exports to them. A package is built only from a configuration with all OFF.
+for opt in SPECTR_ENABLE_TEST_SEAMS SPECTR_ENABLE_PERF_FIXTURES \
+           SPECTR_SHARED_PRODUCT_ACCEPTANCE SPECTR_SHARED_NATIVE_HOST_PROBE; do
+  if grep -qE "^$opt:BOOL=(ON|TRUE|1|YES)$" "$CACHE"; then
+    echo "$opt is ON in $CACHE: a package must come from a release configuration" >&2
+    exit 2
+  fi
+done
 
 # Rebuild every payload named below from this exact clean head. The governor
 # leases a bounded share of the shared M5 rather than claiming the machine.
 "$PULP_ROOT/tools/ci/governed-build.sh" \
   cmake --build "$BUILD" \
-  --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
+  --target "${TARGET_PREFIX}_Standalone" "${TARGET_PREFIX}_AU" "${TARGET_PREFIX}_VST3" "${TARGET_PREFIX}_CLAP"
 SPECTR_SHA_AFTER_BUILD="$(git -C "$ROOT" rev-parse --verify HEAD)"
 [[ "$SPECTR_SHA_AFTER_BUILD" == "$SPECTR_SHA_EXPECTED" ]] || {
   echo "Spectr source changed during package rebuild: expected $SPECTR_SHA_EXPECTED, got $SPECTR_SHA_AFTER_BUILD" >&2
@@ -144,19 +169,38 @@ SPECTR_SHA_CACHED_AFTER_BUILD="$(sed -n 's/^SPECTR_SOURCE_GIT_SHA:INTERNAL=//p' 
   exit 2
 }
 
-AU="$BUILD/AU/Spectr.component"
-VST3="$BUILD/VST3/Spectr.vst3"
-CLAP="$BUILD/CLAP/Spectr.clap"
-APP="$BUILD/Spectr.app"
+AU="$BUILD/AU/$BUNDLE_NAME.component"
+VST3="$BUILD/VST3/$BUNDLE_NAME.vst3"
+CLAP="$BUILD/CLAP/$BUNDLE_NAME.clap"
+APP="$BUILD/$BUNDLE_NAME.app"
 for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
 done
+# The rebuilt products must read no SPECTR_* test seam: their names are absent.
+python3 "$ROOT/tools/check_no_test_seams.py" --expect absent "$APP" "$AU" "$VST3" "$CLAP"
+
+# A RELEASE (Spectr.app numbered exactly VER) must read the release feed: an
+# app that ships reading a practice or loopback feed, or with no updater, can
+# never be offered the next release. Checked before anything is signed.
+# A development identity is a different app that must never be offered a
+# release over itself, so it is built without an updater and is exempt.
+RELEASE_FEED="https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml"
+APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+if [[ "$APP_BUILD" == "$VER" && -z "$DEV_IDENT" ]]; then
+  APP_FEED="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$APP_FEED" == "$RELEASE_FEED" ]] || {
+    echo "Spectr.app $APP_BUILD is a release build but its SUFeedURL is '${APP_FEED:-<none>}'," >&2
+    echo "not $RELEASE_FEED. Reconfigure with -DSPECTR_SPARKLE_CHANNEL=release and no" >&2
+    echo "SPECTR_SPARKLE_FEED_URL, or number it as a practice/preview build." >&2
+    exit 2
+  }
+fi
 
 # Pulp's signing recipe relocates control-shipping sidecars from Contents/MacOS
 # into sealed Resources. Preserve that evidence for the packaged artifacts.
 
 args=(
-  --name Spectr
+  --name "$PKG_NAME"
   --version "$VER"
   --sign-identity "$APP_ID"
   --installer-identity "$INST_ID"
@@ -173,10 +217,27 @@ args=(
 # Customize-pane component, and a tester who hits "it won't load" runs it to
 # save a report ZIP on the Desktop. Unset DIAG_APP to build without it; a set
 # DIAG_APP that does not exist is an error, never a silent omission.
+#
+# The helper ships as part of this Spectr release, so it carries the Spectr
+# version: a tester's report and the Installer's receipt then name the release
+# it came with, not the kit's own build number. The source app is never
+# touched -- a staging copy under OUT is stamped, and the recipe below signs
+# that copy (it re-signs every --app, so the edited Info.plist is sealed).
 if [[ -n "${DIAG_APP:-}" ]]; then
   [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
   [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
-  args+=(--app "Diagnostics app" "$DIAG_APP" "$DIAG_ENT")
+  DIAG_STAGE="$OUT/diagnostics-staging"
+  rm -rf "$DIAG_STAGE"
+  mkdir -p "$DIAG_STAGE"
+  DIAG_STAGED="$DIAG_STAGE/$(basename "$DIAG_APP")"
+  ditto "$DIAG_APP" "$DIAG_STAGED"
+  for key in CFBundleShortVersionString CFBundleVersion; do
+    /usr/libexec/PlistBuddy -c "Set :$key $VER" "$DIAG_STAGED/Contents/Info.plist" 2>/dev/null ||
+      /usr/libexec/PlistBuddy -c "Add :$key string $VER" "$DIAG_STAGED/Contents/Info.plist"
+    [[ "$(/usr/libexec/PlistBuddy -c "Print :$key" "$DIAG_STAGED/Contents/Info.plist")" == "$VER" ]] || {
+      echo "could not stamp $key=$VER on the staged diagnostics app" >&2; exit 2; }
+  done
+  args+=(--app "Diagnostics app" "$DIAG_STAGED" "$DIAG_ENT")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
@@ -201,25 +262,33 @@ fi
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
 
-# Spectr.app's own CFBundleVersion may carry a practice build number
-# (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
-APP_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
-PKG="$OUT/Spectr-$VER.pkg"
-version_args=(--expected "$VER" --pkg "$PKG")
+# Spectr.app's own CFBundleVersion (APP_BUILD, read above) may carry a practice
+# build number (SPECTR_APP_BUILD_VERSION, e.g. 1.0.7.1); everything else is VER.
+PKG="$OUT/$PKG_NAME-$VER.pkg"
+version_args=(--expected "$VER" --pkg "$PKG" --product-name "$PKG_NAME")
 [[ "$APP_BUILD" == "$VER" ]] || version_args+=(--app-build-version "$APP_BUILD")
 python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 
+# Each signed bundle declares the macOS floor its binaries are built for.
+MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' "$CACHE" | tail -1)"
+[[ -n "$MIN_OS" ]] || { echo "build cache names no CMAKE_OSX_DEPLOYMENT_TARGET" >&2; exit 2; }
+python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" \
+  --bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP"
+
 # The updater lives in the app and nowhere else, and the signed app's nested
 # Sparkle code carries the Developer ID signature notarization requires.
+# A release also proves, on the signed app, that it reads the release feed.
 if [[ -d "$SPARKLE_FW" ]]; then
+  feed_args=()
+  [[ "$APP_BUILD" == "$VER" ]] && feed_args=(--feed "$RELEASE_FEED")
   python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$APP" \
-    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP"
+    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" ${feed_args[@]+"${feed_args[@]}"}
 fi
 
 # A practice package is named for its build so two of them can sit side by side
 # on the practice release. A preview (X.Y.(Z-1).9nnn) keeps the product name.
 if [[ "$APP_BUILD" == "$VER".* ]]; then
-  mv "$PKG" "$OUT/Spectr-$APP_BUILD.pkg"
-  PKG="$OUT/Spectr-$APP_BUILD.pkg"
+  mv "$PKG" "$OUT/$PKG_NAME-$APP_BUILD.pkg"
+  PKG="$OUT/$PKG_NAME-$APP_BUILD.pkg"
   echo "practice package: $PKG"
 fi

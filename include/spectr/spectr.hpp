@@ -8,11 +8,16 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+// The SDK compiles a scripted editor's scripts and verifies its document on a
+// background worker when a host instantiates the plug-in, from what the
+// plug-in says they are (Processor::editor_prewarm).
+#include <pulp/format/editor_prewarm.hpp>
 #include <pulp/format/background_task_lane.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
 #include <pulp/signal/smoothed_value.hpp>
 #include "spectr/level_controls.hpp"
+#include "spectr/auto_gain_material.hpp"
 #include <pulp/runtime/triple_buffer.hpp>
 #include <pulp/view/ab_compare.hpp>
 #include <pulp/view/visualization_bridge.hpp>
@@ -25,11 +30,13 @@
 #endif
 #include <atomic>
 #include <bitset>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -54,10 +61,16 @@
 #include "spectr/viewport.hpp"
 #include "spectr/editor_resize.hpp"
 #include "spectr/freeze_source.hpp"
+#include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/modulation.hpp"
 
+#ifndef SPECTR_EDITOR_BACKGROUND_RGB
+// Defined by CMake from the materialized document's `:root { --bg }`; this
+// fallback only serves a translation unit built outside Spectr's targets.
+#define SPECTR_EDITOR_BACKGROUND_RGB 0x05070A
+#endif
 #ifndef SPECTR_FFT_SIZE
 #define SPECTR_FFT_SIZE 8192
 #endif
@@ -67,11 +80,52 @@
 
 namespace spectr {
 
+namespace detail {
+/// Parameter-sync tasks handed to a worker and not yet applied, summed over
+/// every Spectr in the process. See `spectr_param_sync_backlog_v1()`.
+extern std::atomic<std::uint64_t> g_param_sync_backlog;
+
+/// Test seams for the parameter-sync worker. Each costs one relaxed load in
+/// a shipping run.
+///
+/// `g_param_sync_test_stall_ms`: the worker sleeps this long before it
+/// applies a task (the in-process twin of SPECTR_TEST_PARAM_SYNC_STALL_MS),
+/// so a test can starve the worker an offline block waits on.
+extern std::atomic<int> g_param_sync_test_stall_ms;
+/// `g_param_sync_spawned_hook`: called on the audio thread right after a
+/// parameter-sync task is handed to the worker, so a test can let the worker
+/// run to completion at exactly that point -- the worst interleaving the
+/// scheduler could produce -- and prove the outcome does not depend on it.
+/// Null in every shipping run.
+extern std::atomic<void (*)()> g_param_sync_spawned_hook;
+} // namespace detail
+
+/// The most one host block flagged offline waits for Spectr's own workers
+/// (parameter sync, then mask design) before it renders with whatever is
+/// adopted. A design takes milliseconds, so a paced-equivalent bounce never
+/// gets near it; the budget exists for a starved worker, and for a host whose
+/// offline flag outlived its bounce, where every realtime block would
+/// otherwise wait. Once spent, the block renders and Spectr logs it once.
+inline constexpr auto kOfflineBlockWaitBudget = std::chrono::milliseconds(250);
+
 struct ProcessingStateSnapshot {
     BandField field{};
     Viewport viewport{};
     Layout layout = Layout::Bands32;
     SnapshotBank snapshots{};
+};
+
+/// The Preset destination's neighbourhood: the band gains of the presets
+/// around the current one, in the preset menu's order (factory, then user),
+/// as the editor resolves them at the current band count. Index
+/// kPresetModulationSteps is the current preset itself (unused: the centre is
+/// the field as it stands, edits included); `below` / `above` neighbours
+/// exist. POD so it rides the audio modulation publication.
+struct PresetModulationNeighbours {
+    std::array<std::array<float, kMaxBands>, kPresetNeighbourCount> gains{};
+    int below = 0;
+    int above = 0;
+    bool valid = false;
 };
 
 struct AudioModulationState {
@@ -117,6 +171,8 @@ struct AudioModulationState {
     /// parameters, and reading them from the cursor is what makes a macro
     /// sample-accurate within a block instead of one publication behind.
     std::array<std::uint64_t, kMacroCount> macro_members{};
+    /// The Preset destination's neighbours (set_preset_modulation).
+    PresetModulationNeighbours preset{};
 };
 static_assert(std::is_trivially_copyable_v<AudioModulationState>,
               "audio modulation publication must remain allocation-free POD");
@@ -138,6 +194,11 @@ struct ModulatedFieldSnapshot {
     BandField     field{};
     std::uint64_t sequence = 0;
     bool          active   = false;
+    /// An LFO drives a header control (Intensity, Mix, Output, Morph or
+    /// Bands). Those targets keep the publication running so the editor can
+    /// draw the control at its modulated value, without `active` -- which
+    /// hands the band overlay the paint refs -- being claimed for them.
+    bool          controls_driven = false;
 
     // ── Display-time reconstruction inputs ──────────────────────────────
     //
@@ -237,6 +298,13 @@ bool editor_is_standalone();
 /// elsewhere); idempotent.
 int install_host_view_first_mouse();
 
+/// The editor's own background, 0xRRGGBB: the materialized document's
+/// `:root { --bg }`, read from the document at configure time
+/// (SPECTR_EDITOR_BACKGROUND_RGB). A plug-in host shows nothing but this colour
+/// until the document has mounted, so the editor opens looking like Spectr
+/// rather than like the SDK default.
+inline constexpr std::uint32_t kEditorBackgroundRgb = SPECTR_EDITOR_BACKGROUND_RGB;
+
 inline constexpr int kSpectralFftSize = SPECTR_FFT_SIZE;
 inline constexpr int kSpectralAnalysisHop = SPECTR_ANALYSIS_HOP;
 // SpectralFrameEngine reads through a fixed causal cursor of one complete FFT
@@ -323,6 +391,11 @@ class Spectr : public pulp::format::Processor
 public:
     // UI/control thread only. Never stops processing or changes engine selection.
     [[nodiscard]] GpuAudioStatus gpu_audio_status() const;
+    // Whether the renderer built most recently accepted the freeze source.
+    // False means Freeze cannot reach the audio in the current mode.
+    [[nodiscard]] bool freeze_source_wired() const noexcept {
+        return freeze_source_wired_.load(std::memory_order_acquire);
+    }
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
     // Stopped/control lane only; never race prepare/release/mode replacement.
     // Quantum output selections before product mix/trim, not GPU completions.
@@ -368,11 +441,35 @@ public:
     /// Delay this mode costs at the live sample rate, in samples and in
     /// milliseconds. Derived from the renderer's own contract so no
     /// user-facing figure is ever a number somebody typed.
-    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept {
-        return mask_render_latency_samples(mode, latency_geometry_());
+    ///
+    /// This is the figure the host is told for that mode (latency_samples()
+    /// reports the same number once prepared): in a build with the shared GPU
+    /// renderer, Mixing adds that renderer's fixed lead to the linear-phase
+    /// latency, whether a block is delivered by the GPU or by its CPU
+    /// fallback -- both keep the same alignment.
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode) const noexcept;
+    [[nodiscard]] int render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept;
+
+    /// GPU processing for Mixing. Saved with the session, not a host
+    /// parameter: switching it rebuilds the renderer and moves the latency the
+    /// host is told, exactly like a Tracking/Mixing switch, so it must not be
+    /// automatable. Off by default: GPU output is the CPU linear-phase output
+    /// (no sonic difference) at a higher latency. Tracking is always CPU.
+    /// Control thread only; same failure contract as set_render_mode.
+    bool set_gpu_processing(bool enabled);
+    [[nodiscard]] bool gpu_processing() const noexcept { return gpu_processing_; }
+    /// Whether this build can render Mixing on the GPU at all.
+    [[nodiscard]] static constexpr bool gpu_processing_available() noexcept {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+        return true;
+#else
+        return false;
+#endif
     }
     [[nodiscard]] double render_mode_latency_ms(MaskRenderMode mode) const noexcept {
-        return spectr::render_mode_latency_ms(mode, latency_geometry_(), sample_rate_);
+        return sample_rate_ > 0.0
+            ? 1000.0 * static_cast<double>(render_mode_latency_samples(mode)) / sample_rate_
+            : 0.0;
     }
 
     /// Switch modes on a live instance.
@@ -382,7 +479,42 @@ public:
     /// so a failed switch is a no-op rather than a gap: on failure the previous
     /// mode is still live and this returns false. On success the host is told
     /// its delay compensation is stale via `flag_latency_changed()`.
+    ///
+    /// The switch is heard as a crossfade, not a cut: the audio thread warms
+    /// the new renderer on the live input while the old one is still heard,
+    /// then crossfades into it (pulp/signal/processing_switch_crossfade.hpp). It completes
+    /// on the audio thread, a few hundred milliseconds of audio later; a
+    /// second switch, a prepare or a release first settles the one in flight.
     bool set_render_mode(MaskRenderMode mode);
+
+    /// Renderers this instance has built (prepare, a mode switch). A control
+    /// that must provably change nothing -- a GPU choice made in Tracking --
+    /// reads this before and after.
+    [[nodiscard]] std::uint64_t renderer_build_count() const noexcept {
+        return renderer_builds_.load(std::memory_order_relaxed);
+    }
+
+    /// True once no switch holds a renderer: the outgoing renderer of the
+    /// last switch has been freed (by the reclaim worker, without waiting for
+    /// another control call).
+    [[nodiscard]] bool render_switch_settled() const noexcept {
+        return render_switch_state_.load(std::memory_order_acquire) == kSwitchIdle;
+    }
+
+    /// Diagnostics for tests: whether the freeze source's spectral capture is
+    /// suspended (a loop Length nothing can move), and whether a hold plays.
+    [[nodiscard]] bool freeze_source_suspended_for_test() const noexcept {
+        return freeze_source_.spectral_capture_suspended();
+    }
+    [[nodiscard]] bool freeze_engaged_for_test() const noexcept {
+        return freeze_source_.hold_audible();
+    }
+
+    /// True while a mode switch is still crossfading on the audio thread.
+    [[nodiscard]] bool render_switch_in_flight() const noexcept {
+        const int s = render_switch_state_.load(std::memory_order_acquire);
+        return s == kSwitchPending || s == kSwitchRunning || s == kSwitchBusy;
+    }
 
     /// True when the last restore could not build the renderer the project
     /// asked for, so the instance is still running the mode it had. A project
@@ -401,6 +533,29 @@ public:
         pulp::midi::MidiBuffer& midi_in,
         pulp::midi::MidiBuffer& midi_out,
         const pulp::format::ProcessContext& ctx) override;
+
+    /// Host offline-render intent from a caller that cannot put it on
+    /// `ProcessContext` (every shipping adapter now does). Any thread.
+    /// Either this or `ProcessContext::is_offline()` makes a block offline.
+    /// `prepare()` clears it: the flag describes one render session, and a
+    /// host that never writes it back must not leave every later realtime
+    /// block waiting on the workers.
+    void set_host_offline_render(bool offline) noexcept {
+        host_offline_render_.store(offline, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool host_offline_render() const noexcept {
+        return host_offline_render_.load(std::memory_order_relaxed);
+    }
+    /// Offline blocks whose wait for the workers ran out of
+    /// `kOfflineBlockWaitBudget` and rendered anyway. Any thread.
+    [[nodiscard]] std::uint64_t offline_wait_budget_exhausted_count() const noexcept {
+        return offline_wait_budget_exhausted_.load(std::memory_order_relaxed);
+    }
+    /// Parameter-sync publishes dropped because a newer request -- the audio
+    /// path's own mask for that block -- had already been made. Any thread.
+    [[nodiscard]] std::uint64_t param_sync_superseded_count() const noexcept {
+        return param_sync_superseded_.load(std::memory_order_relaxed);
+    }
 
     // ── Supplemental plugin state (pulp#625 / PR#628 hooks) ─────────────
     //
@@ -435,6 +590,19 @@ public:
 
     // ── Editor view ────────────────────────────────────────────────────
     std::unique_ptr<pulp::view::View> create_view() override;
+#if defined(SPECTR_NATIVE_EDITOR)
+    /// The materialized editor's runtime, design and help scripts and its
+    /// captured document, byte-identical to what an open evaluates.
+    EditorPrewarm editor_prewarm() const override;
+#endif
+#if !defined(PULP_FORMAT_HAS_EDITOR_BACKGROUND)
+#error "Spectr requires a Pulp SDK with Processor::editor_background()"
+#endif
+    /// Every frame a host paints before the document mounts, and the backing
+    /// layer behind them, is this colour.
+    std::optional<std::uint32_t> editor_background() const override {
+        return kEditorBackgroundRgb;
+    }
     void on_view_opened(pulp::view::View& view) override;
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
@@ -542,6 +710,18 @@ public:
     [[nodiscard]] bool keyboard_shortcuts_in_daw() const noexcept;
     void set_keyboard_shortcuts_in_daw(bool enabled) noexcept;
 
+    /// "Show tooltips" (Settings > FEEDBACK): whether hovering a header
+    /// control shows its tooltip. On by default. Saved with the session, like
+    /// Keyboard shortcuts in DAW, so each project keeps its own choice.
+    [[nodiscard]] bool show_tooltips() const noexcept;
+    void set_show_tooltips(bool enabled) noexcept;
+
+    /// "Ask before overriding modulation" (Settings > MODULATION, and the
+    /// header context menus): whether operating a control an LFO drives asks
+    /// first. On by default. Saved with the session like Show tooltips.
+    [[nodiscard]] bool ask_before_override() const noexcept;
+    void set_ask_before_override(bool enabled) noexcept;
+
     /// The editor's Range: the plot's vertical scale and the reach of a
     /// full-height edit, in dB (3, 6, 12 or 24; level_controls.hpp). Editor
     /// state persisted in the supplemental blob, never a host parameter, and
@@ -554,6 +734,28 @@ public:
     /// thread; a reading, not a control.
     [[nodiscard]] float auto_gain_applied_db() const noexcept {
         return auto_gain_applied_db_.load(std::memory_order_relaxed);
+    }
+
+    /// Which Auto Gain computation AUTO runs (auto_gain_material.hpp). v2 is
+    /// the product; v1 stays selectable here, and only here, so the corpus
+    /// sweep and the tests can measure the two side by side. Not saved, not
+    /// a parameter. Takes effect at the next block.
+    void set_auto_gain_model(AutoGainModel model) noexcept {
+        auto_gain_model_.store(static_cast<int>(model), std::memory_order_relaxed);
+        auto_gain_legacy_v1_.store(0, std::memory_order_relaxed);
+    }
+    /// True while a session saved with AUTO on before v2 still runs v1 (until
+    /// AUTO is switched off and on again).
+    [[nodiscard]] bool auto_gain_legacy_v1() const noexcept {
+        return auto_gain_legacy_v1_.load(std::memory_order_relaxed) != 0;
+    }
+    [[nodiscard]] AutoGainModel auto_gain_model() const noexcept {
+        return static_cast<AutoGainModel>(auto_gain_model_.load(std::memory_order_relaxed));
+    }
+    /// v2's material estimator. Audio-thread state: read it only where
+    /// process() cannot be running (tests, between renders).
+    [[nodiscard]] const AutoGainMaterial& auto_gain_material() const noexcept {
+        return auto_gain_material_;
     }
 
     /// Freeze's musical Length: how much of the incoming sound the next
@@ -802,6 +1004,50 @@ public:
     [[nodiscard]] int freeze_modulated_length_index() const noexcept {
         return freeze_modulated_length_index_.load(std::memory_order_relaxed);
     }
+    /// The LENGTH-list index the playing freeze took at its engage while the
+    /// Length target drove it, or -1.
+    [[nodiscard]] int freeze_engaged_length_index() const noexcept {
+        return freeze_engaged_length_index_.load(std::memory_order_relaxed);
+    }
+    /// The LENGTH index the closed LENGTH dropdown shows while the Length
+    /// target drives it -- the length the current freeze took while frozen,
+    /// else the length the next engage would take -- or -1 when no LFO
+    /// drives Length.
+    [[nodiscard]] int freeze_shown_length_index() const noexcept;
+    /// Freeze "Hold for Length" (kParamFreezeHoldForLength).
+    [[nodiscard]] bool freeze_hold_for_length() const noexcept;
+    /// Hold for Length latches since prepare (each one a fresh freeze held
+    /// for its own Length), and the Length in seconds the last one took
+    /// (diagnostics and tests).
+    [[nodiscard]] std::uint32_t freeze_hold_latch_count() const noexcept {
+        return freeze_hold_latch_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] double freeze_hold_latched_seconds() const noexcept {
+        return freeze_hold_latched_seconds_.load(std::memory_order_relaxed);
+    }
+    /// The band count the Bands destination plays, or 0 when no LFO drives it.
+    [[nodiscard]] int modulated_band_count_shown() const noexcept {
+        return audio_bands_shown_.load(std::memory_order_relaxed);
+    }
+    /// Whether an LFO drives the Preset destination, and the whole step from
+    /// the current preset it is nearest (0 = the current preset).
+    [[nodiscard]] bool preset_modulation_driven() const noexcept {
+        return audio_preset_driven_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] int preset_modulation_step_shown() const noexcept {
+        return audio_preset_step_.load(std::memory_order_relaxed);
+    }
+    /// The Preset destination's neighbourhood, as the editor resolved it:
+    /// the current preset's id, the names and band gains of the presets
+    /// around it in menu order (index kPresetModulationSteps is the current
+    /// one), and how many exist each way. Persisted in the plugin state, so
+    /// the target keeps working when a session reopens.
+    bool set_preset_modulation(std::string centre_id,
+                               const std::array<std::string, kPresetNeighbourCount>& names,
+                               const PresetModulationNeighbours& neighbours);
+    /// The preset name @p step from the current one, or "" when unknown.
+    [[nodiscard]] std::string preset_modulation_name(int step) const;
+    [[nodiscard]] std::string preset_modulation_centre_id() const;
     const ModulatedFieldSnapshot& read_modulated_field() {
         return modulated_field_publication_.read();
     }
@@ -825,12 +1071,15 @@ private:
     // Only pointer publication/removal and the public observer take this lock.
     // Build/join/destruction happen outside it; process() never acquires it.
     // When nested, processing_state_mutex_ precedes this observation mutex.
+    // Nothing has refused the source until a renderer is built.
+    std::atomic<bool> freeze_source_wired_{true};
     mutable std::mutex renderer_observation_mutex_;
     std::unique_ptr<MaskRenderer>          renderer_{};
     // The mode `renderer_` was built for. Authoritative for what this instance
     // sounds like and what latency it reports; written by the control thread
     // only, read by process() to notice a pending rebuild.
     MaskRenderMode                         render_mode_ = kDefaultRenderMode;
+    bool                                   gpu_processing_ = false;
     // Set when a restore could not build the renderer the project asked for.
     // The instance keeps the mode it has and says so rather than pretending
     // the project opened cleanly.
@@ -848,6 +1097,100 @@ private:
     // demonstrably let go of them. Drained on the control thread; never freed
     // from process().
     std::vector<std::unique_ptr<MaskRenderer>> retired_renderers_{};
+
+    // ── Mode-switch crossfade ─────────────────────────────────────────────
+    //
+    // A switch hands the audio thread both renderers: it keeps rendering the
+    // outgoing one (still `active_renderer_`), warms the incoming one on the
+    // same input, crossfades, and only then publishes the incoming one as
+    // active. One atomic word is the whole handshake, so the control thread
+    // can tell "the audio thread is inside this switch" from "it is not" and
+    // never takes over a switch the audio thread is processing.
+    static constexpr int kSwitchIdle    = 0;  ///< no switch
+    static constexpr int kSwitchPending = 1;  ///< published, not yet started
+    static constexpr int kSwitchRunning = 2;  ///< started; audio thread between blocks
+    static constexpr int kSwitchBusy    = 3;  ///< audio thread inside a block of it
+    static constexpr int kSwitchDone    = 4;  ///< incoming is active; outgoing awaits the control thread
+    std::atomic<int>                       render_switch_state_{kSwitchIdle};
+    std::atomic<std::uint64_t>             renderer_builds_{0};
+    // Written by the control thread before it publishes kSwitchPending, read
+    // by the audio thread only after it claims the switch.
+    MaskRenderer*                          switch_incoming_ = nullptr;
+    std::unique_ptr<MaskRenderer>          switch_outgoing_{};
+    pulp::signal::ProcessingSwitchPlan switch_plan_{};
+    bool                                   switch_wet_wired_ = false;
+    // Audio thread only.
+    pulp::signal::ProcessingSwitchCrossfade switch_xfade_{};
+    // Audio thread: whether any block has rendered since the last prepare or
+    // stream reset. A switch before the stream has started has nothing heard
+    // to fade from, so it completes at once.
+    bool                                   stream_rendered_ = false;
+    // Audio thread: samples rendered since prepare, stamped on the per-block
+    // trace span so a sample position in a render maps to its block's slice.
+    std::int64_t                           trace_stream_pos_ = 0;
+    /// Replays one wet block to a renderer during a switch, so the freeze
+    /// source (which advances when it is run) is run ONCE per block however
+    /// many renderers are listening. Unarmed it forwards to the real source.
+    struct ReplayWetSource final : MaskRenderer::WetSource {
+        MaskRenderer::WetSource* forward = nullptr;
+        const float* const*      replay = nullptr;
+        int                      offset = 0;
+        void process_block(const float* const* input, float* const* wet, int channels,
+                           int num_samples) noexcept override {
+            if (replay != nullptr) {
+                for (int ch = 0; ch < channels; ++ch)
+                    for (int i = 0; i < num_samples; ++i)
+                        wet[ch][i] = replay[ch][offset + i];
+                offset += num_samples;
+            } else if (forward != nullptr) {
+                forward->process_block(input, wet, channels, num_samples);
+            } else {
+                for (int ch = 0; ch < channels; ++ch)
+                    for (int i = 0; i < num_samples; ++i) wet[ch][i] = input[ch][i];
+            }
+        }
+    };
+    ReplayWetSource                        switch_replay_out_{};
+    ReplayWetSource                        switch_replay_in_{};
+    // Per-channel scratch, prepared with the processor: a copy of the input
+    // (the outgoing renderer may run in place), the shared wet block, and the
+    // incoming renderer's output.
+    std::vector<float>                     switch_scratch_{};
+    std::array<const float*, kMaximumChannels> switch_in_ptrs_{};
+    std::array<const float*, kMaximumChannels> switch_wet_read_{};
+    std::array<float*, kMaximumChannels>       switch_wet_write_{};
+    std::array<float*, kMaximumChannels>       switch_out_ptrs_{};
+
+    /// Audio thread: claim a published switch for this block. Returns the
+    /// incoming renderer, or null when no switch is running.
+    MaskRenderer* claim_render_switch_(MaskRenderer* outgoing) noexcept;
+    /// Audio thread: end the block's part in the switch, completing it when
+    /// the fade has finished.
+    void release_render_switch_(MaskRenderer* incoming) noexcept;
+    /// Audio thread: render one call through the outgoing renderer and, while
+    /// a switch runs, the incoming one, mixing the two.
+    [[nodiscard]] bool render_through_(MaskRenderer* renderer, MaskRenderer* incoming,
+                                       const float* const* input, float* const* output,
+                                       int num_samples) noexcept;
+    /// Control thread, holding switch_mutex_: settle any switch in flight --
+    /// wait for the audio thread to finish it, or finish it here when no audio
+    /// is running -- and free its outgoing renderer. Returns with no switch in
+    /// flight.
+    void settle_render_switch_() noexcept;
+    /// Reclaim worker: free a finished switch's outgoing renderer as soon as
+    /// the audio thread reports it done, rather than at the next control
+    /// call. A GPU renderer runs a service thread for as long as it exists.
+    struct SwitchReclaimTask { int unused = 0; };
+    static void switch_reclaim_trampoline_(void* ctx, const SwitchReclaimTask&) noexcept;
+    // Serialises the control side of a switch: set_render_mode, settling,
+    // and the reclaim worker. Never taken on the audio thread.
+    std::mutex                             switch_mutex_;
+    pulp::format::BackgroundTaskLane<SwitchReclaimTask, 4> switch_reclaim_lane_;
+    /// Control thread, no audio running (prepare, release): drop any switch.
+    void abandon_render_switch_() noexcept;
+    /// Control thread: free the switch's outgoing renderer once the audio
+    /// thread provably cannot hold it, or park it.
+    void retire_switch_outgoing_() noexcept;
 
     // The last layout the audio thread staged into the renderer, and whether
     // it holds one. Owned by process() alone -- never read or written by any
@@ -885,7 +1228,8 @@ private:
     /// Build and fully prepare a renderer for `mode` against the current
     /// geometry, including its initial layout and mix. Returns null when the
     /// mode cannot be prepared; the caller keeps whatever was already live.
-    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode);
+    std::unique_ptr<MaskRenderer> build_renderer_(MaskRenderMode mode, bool gpu);
+    bool switch_renderer_(MaskRenderMode mode, bool gpu);
     /// Free retired renderers the audio thread can no longer reach. Control
     /// thread only.
     void drain_retired_renderers_() noexcept;
@@ -934,6 +1278,26 @@ private:
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.
     FreezeSource                           freeze_source_{};
+    // Auto Gain v2: the material estimator and the wet-source stage the
+    // renderers call -- it runs freeze_source_, then feeds the estimator what
+    // the mask is about to shape. Audio-thread state after prepare().
+    AutoGainMaterial                       auto_gain_material_{};
+    AutoGainWetTap                         auto_gain_tap_{};
+    std::atomic<int>                       auto_gain_model_{
+        static_cast<int>(kAutoGainShippingModel)};
+    // 0: no; 1: a pre-v2 session runs v1 until AUTO is toggled; 2: the same,
+    // just loaded (the audio thread forgets AUTO's previous state).
+    std::atomic<int>                       auto_gain_legacy_v1_{0};
+    // AUTO as the audio thread last saw it: -1 not yet, 0 off, 1 on.
+    int                                    auto_gain_seen_ = -1;
+    // The last slice's Auto Gain inputs, to tell a shape edit (retarget now)
+    // from material movement (slew-limited, on the estimator's frame grid).
+    pulp::signal::SpectralBandLayout       auto_gain_last_shape_{};
+    float                                  auto_gain_last_mix_ = -1.0f;
+    bool                                   auto_gain_last_enabled_ = false;
+    int                                    auto_gain_last_model_ = 0;
+    const MaskRenderer*                    auto_gain_last_renderer_ = nullptr;
+    bool                                   auto_gain_last_valid_ = false;
     std::atomic<std::uint32_t> freeze_custom_length_{pack_length(kDefaultFreezeLength)};
     std::atomic<double> transport_tempo_bpm_{kFallbackTempoBpm};
     std::atomic<int> transport_time_sig_numerator_{4};
@@ -954,6 +1318,13 @@ private:
                                                    int denominator) noexcept;
     [[nodiscard]] double freeze_hold_seconds_at_(double tempo_bpm, int numerator,
                                                  int denominator) const noexcept;
+    /// The Length a freeze takes with the LFOs at @p phases (LFO 1, LFO 2):
+    /// seconds, its LENGTH-list index in @p index (-1 when no LFO drives
+    /// Length), and the longest length the routes reach in @p reach_seconds.
+    [[nodiscard]] double freeze_length_at_phases_(double tempo_bpm, int numerator,
+                                                  int denominator, const double phases[2],
+                                                  int* index,
+                                                  double* reach_seconds) const noexcept;
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
@@ -1008,6 +1379,21 @@ private:
     LfoShapeFade audio_lfo_shape_fade_{};
     LfoShapeFade audio_lfo_2_shape_fade_{};
     bool         audio_lfo_shape_fade_primed_ = false;
+    // The legacy LFO command lanes (4003/4013 Depth, 4004 Target) as the
+    // audio owner last saw them, with the routing lanes beside them. A
+    // command is latched on the slice its lane moves -- unless that slice
+    // also moved the LFO's routing lanes, which then win -- and released when
+    // the routing lanes next move (which is how the worker's own write of the
+    // command lands). Audio-thread only; primed from the published state.
+    struct AudioLegacyLanes {
+        bool  primed = false;
+        float depth[2] = {0.0f, 0.0f};
+        int   target = 0;
+        std::array<LfoRoutes, 2> routes{};
+        bool  depth_command[2] = {false, false};
+        bool  target_command[2] = {false, false};
+    };
+    AudioLegacyLanes audio_legacy_lanes_{};
     // Each LFO's slewed audible level (enabled ? depth : 0); see
     // slew_lfo_level. Adopted without a ramp on the first block, like the
     // shape, so a session that opens with an LFO running starts on it.
@@ -1026,6 +1412,46 @@ private:
     bool freeze_param_last_ = false;
     bool freeze_user_override_ = false;
     bool freeze_user_value_ = false;
+    // "Hold for Length" (kParamFreezeHoldForLength): samples of the current
+    // latch still to play, the raw LFO gate of the previous block (a latch
+    // needs its rising edge), and the effective Length this callback's
+    // freeze takes, in seconds -- the length a latch holds for.
+    std::int64_t freeze_hold_remaining_ = 0;
+    // Display of the modulated LENGTH, BANDS and preset (freeze_display).
+    std::atomic<int> freeze_engaged_length_index_{-1};
+    bool freeze_engage_last_ = false;
+    std::atomic<int> audio_bands_shown_{0};
+    // The Bands destination's crossfade through flat: the count playing and
+    // how much of the shape is applied (1 = all of it).
+    int audio_bands_playing_ = 0;
+    float audio_bands_fade_ = 1.0f;
+    bool audio_bands_modulated_ = false;
+    std::atomic<bool> audio_preset_driven_{false};
+    std::atomic<int> audio_preset_step_{0};
+    // Guarded by processing_state_mutex_: the Preset destination's
+    // neighbourhood, published through AudioModulationState.
+    PresetModulationNeighbours preset_neighbours_{};
+    std::array<std::string, kPresetNeighbourCount> preset_names_{};
+    std::string preset_centre_id_;
+    bool freeze_hold_gate_last_ = false;
+    double audio_freeze_length_seconds_ = 0.0;
+    // The length the playing Hold for Length hold took at its trigger, in
+    // seconds (0 between holds): the source's hold length while it plays.
+    double freeze_hold_seconds_ = 0.0;
+    // The longest Length the Length target can step to now, in seconds (the
+    // loop rings are grown for it ahead of the trigger that needs it).
+    double audio_freeze_reach_seconds_ = 0.0;
+    // ONE LFO ON BOTH (see the Hold for Length latch): how many eighths of a
+    // cycle along an LFO driving Freeze and Length the next hold reads its
+    // Length, the transport state it last saw, and a request from a state
+    // load to start the walk again.
+    static constexpr double kFreezeHoldWalkStep = 0.125;
+    static constexpr int kFreezeHoldWalkCycle = 8;
+    int freeze_hold_walk_ = 0;
+    bool freeze_hold_playing_last_ = false;
+    std::atomic<bool> freeze_hold_walk_reset_{false};
+    std::atomic<std::uint32_t> freeze_hold_latch_count_{0};
+    std::atomic<double> freeze_hold_latched_seconds_{0.0};
     // An editor press (button, key, chord) while the Freeze target drives the
     // freeze: the value it asks for, or -1. Taken on the audio thread, where
     // it holds the freeze there until the gate's next change -- even when the
@@ -1070,8 +1496,44 @@ private:
     // Audio→worker lane: process() spawns on parameter drift, the worker
     // applies params → canonical state and republishes the mask (table
     // compilation is a control-thread operation).
-    struct ParamSyncTask { std::uint64_t tag = 0; };
+    // `ordinal` is the renderer request ordinal reserved when the audio thread
+    // asked for this sync (MaskRenderer::reserve_request_ordinal), so the
+    // mask it publishes is ordered against the layouts the audio thread
+    // stages by when each was asked for; `renderer` is the renderer it was
+    // reserved from.
+    struct ParamSyncTask {
+        std::uint64_t tag = 0;
+        std::uint64_t ordinal = 0;
+        const MaskRenderer* renderer = nullptr;
+    };
     pulp::format::BackgroundTaskLane<ParamSyncTask, 8> param_sync_lane_;
+    // Offline pacing: the last param-sync task the audio thread handed the
+    // worker, and the last one the worker finished (Latest coalesces, so a
+    // finished task retires every one it superseded).
+    std::atomic<std::uint64_t> param_sync_requested_{0};
+    std::atomic<std::uint64_t> param_sync_done_{0};
+    std::atomic<bool> host_offline_render_{false};
+    std::atomic<std::uint64_t> offline_wait_budget_exhausted_{0};
+    std::atomic<std::uint64_t> param_sync_superseded_{0};
+    std::atomic<bool> offline_wait_budget_logged_{false};
+    // Offline blocks only: wait for the worker results a paced host would
+    // already have adopted by now, for at most kOfflineBlockWaitBudget.
+    // Sleeps; never called on a realtime block.
+    void await_offline_work_(MaskRenderer* renderer) noexcept;
+    void retire_param_sync_through_(std::uint64_t tag) noexcept;
+    void stop_param_sync_lane_() noexcept;
+    // Audio thread, lock-free: hand the param-sync worker one task.
+    void spawn_param_sync_(MaskRenderer* renderer) noexcept;
+    // Offline blocks only: sleep until the param-sync worker is idle or the
+    // deadline passes. False when it gave up with work outstanding.
+    bool await_param_sync_(std::chrono::steady_clock::time_point deadline) noexcept;
+    // Set by the param-sync worker around its apply, so the mask it publishes
+    // carries the request ordinal reserved when it was asked for.
+    struct SyncPublishOrder {
+        std::uint64_t ordinal = 0;
+        const MaskRenderer* renderer = nullptr;
+    };
+    static thread_local SyncPublishOrder t_sync_publish;
     ModulationSettings modulation_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
@@ -1079,6 +1541,9 @@ private:
     // Guarded by processing_state_mutex_. Editor-only: the audio thread
     // never reads it.
     bool keyboard_shortcuts_in_daw_ = false;
+    // Guarded by processing_state_mutex_. Editor-only.
+    bool show_tooltips_ = true;
+    bool ask_before_override_ = true;
     // Which canonical slots each macro drives. Guarded by
     // processing_state_mutex_ and published in AudioModulationState.
     //
@@ -1237,7 +1702,7 @@ private:
     std::uint64_t native_modulation_sequence_ = 0;
     // Last freeze display sent: bit 0 frozen, 1 driven, 2-3 Freeze LFOs,
     // 4-5 Length LFOs; -1 before the first.
-    int native_freeze_display_ = -1;
+    std::int64_t native_freeze_display_ = -1;
     // Scratch for the display-time LFO reconstruction. A member rather than a
     // local so a BandField is not built on the stack every frame.
     BandField     native_modulation_drawn_{};
@@ -1247,6 +1712,10 @@ private:
     double        native_modulation_drawn_phase_ = -1.0;
     double        native_modulation_drawn_phase_2_ = -1.0;
     int           native_modulation_stale_ticks_ = 0;
+    /// The band overlay was last sent active (so its release is owed).
+    bool          native_modulation_field_shown_ = false;
+    /// The last modulation_controls publication, quantised; -1 = none sent.
+    std::int64_t  native_modulation_controls_key_ = -1;
     EditorRevision native_host_automation_revision_ = 0;
 
     std::unique_ptr<pulp::view::View> create_native_editor_();
@@ -1272,6 +1741,10 @@ private:
     /// this frame's time from the audio owner's published inputs and hand it
     /// to the editor. Display only -- it never re-enters canonical state.
     void publish_modulation_frame_();
+    void publish_modulation_controls_(const ModulatedFieldSnapshot& modulated,
+                                      double phase_1, double phase_2,
+                                      const LfoShapeFade& fade_1,
+                                      const LfoShapeFade& fade_2);
     /// Tell the editor when the LFOs drive Freeze or Length, and the
     /// LIVE/FROZEN state the audio owner is playing. Sent on change only.
     void publish_freeze_display_();
@@ -1300,3 +1773,10 @@ inline std::unique_ptr<pulp::format::Processor> create_spectr() {
 }
 
 } // namespace spectr
+
+/// Host-parameter drift the audio thread handed the parameter-sync worker that
+/// it has not applied yet, process-wide. The companion of
+/// `spectr_mask_design_backlog_v1()`: a harness that renders back to back waits
+/// for both to read zero after each block to render as a paced host would.
+/// Read-only and lock-free; exported from the AU bundle.
+extern "C" std::uint64_t spectr_param_sync_backlog_v1() noexcept;

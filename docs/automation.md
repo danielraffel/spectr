@@ -33,8 +33,11 @@ do three things in a DAW:
 | **LFO 1 shape** (Sin / Tri / Square / Saw) | `4001` (enum, labelled) | One bracket per pick | 150 ms crossfade | Shape row follows |
 | **LFO 1 rate** | `4002`, 0.25-16 beats, shown "4 beats" | One bracket per drag | Phase-continuous | Rate row follows |
 | LFO 1 depth (legacy) | `4003`, 0-1 | No editor control | A change sets the Depth of every target LFO 1 drives ([modulation.md](modulation.md)); never written back | Target Depth rows follow |
-| **LFO 1 / 2 target switches** (Bank / Band shift / Band spread / Intensity / Mix / Morph / Freeze / Length / Output / Snapshot A / Snapshot B; band menu > Modulation > LFO n TARGETS, and Settings > MODULATION) | `4020-4027`, `4040-4047`; level targets `4060-4062`, `4080-4082` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp (250 ms for Band shift / spread, 200 ms for Intensity); several at once | Switch follows, in both surfaces |
-| **LFO 1 / 2 target Depth** (row under each switch; inert while the switch is off) | `4030-4037`, `4050-4057`; level targets `4070-4072`, `4090-4092`, 0-1, shown "50%" | One bracket per drag (`param_gesture_begin` / `end`) | Same route ramp | Depth row follows, including after a hand edit |
+| **LFO 1 / 2 target switches** (Bank / Band shift / Band spread / Intensity / Mix / Morph / Freeze / Length / Output / Snapshot A / Snapshot B; Bands and Preset in their own rows below; band menu > Modulation > LFO n TARGETS, and Settings > MODULATION) | `4020-4027`, `4040-4047`; level targets `4060-4062`, `4080-4082` (toggle) | One bracket per press (`param_edit`) | 60 ms route ramp (250 ms for Band shift / spread, 200 ms for Intensity); several at once | Switch follows, in both surfaces |
+| **LFO 1 / 2 target Depth** (row under each switch; inert while the switch is off) | `4030-4037`, `4050-4057`; level targets `4070-4072`, `4090-4092`; Bands / Preset `4110-4111`, `4130-4131`; 0-1, shown "50%" | One bracket per drag (`param_gesture_begin` / `end`) | Same route ramp | Depth row follows, including after a hand edit |
+| **LFO 1 / 2 Bands target** (band menu > Modulation, and Settings > MODULATION) | `4100` (LFO 1), `4120` (LFO 2) (toggle); Depth `4110`, `4130` | One bracket per press (`param_edit`); Depth one per drag | Steps the band count click-free inside the cost gate; switching off fades back to the user's BANDS | Switch and the BANDS dropdown follow (the dropdown shows what the LFO plays) |
+| **LFO 1 / 2 Preset target** | `4101` (LFO 1), `4121` (LFO 2) (toggle); Depth `4111`, `4131` | As for Bands | Morphs toward the neighbouring presets' band gains and back | Switch and the preset label follow |
+| **Hold for Length** (switch under the Freeze target, menu and Settings) | `4140` (toggle) | One bracket per press (`param_edit`) | Each Freeze-target engage latches for exactly the Length | Switch follows |
 | Legacy single target | `4004` (enum) | No editor control | A change selects that one of Bank / A / B / Morph for both LFOs ([modulation.md](modulation.md)); never written back | Target switches follow |
 | **LFO 2 on/off, shape, rate** (and legacy depth `4013`) | `4010-4013` | As for LFO 1 | As for LFO 1 | As for LFO 1 |
 | "Edit LFO 1 / 2" source switch | none (view state) | n/a | n/a | n/a |
@@ -64,6 +67,31 @@ that can change at any sample:
   per destination, on the same 60 ms ramp, so switching a destination on at a
   crest fades it in. Measurements and the fail-before numbers are in
   [modulation.md](modulation.md#smoothness).
+
+## Modulation and automation
+
+The internal LFOs and host automation act on different things, and never on
+each other:
+
+- **Automation writes and plays the base.** A drag, wheel notch or key on a
+  knob, the MORPH slider or a menu sends one gesture bracket, so a host in
+  Write, Latch or Touch records it, and plays it back into the same lane: the
+  control's base follows the lane (the needle, arc, readout and slider thumb
+  when nothing modulates it; a short white tick while an LFO does).
+- **Modulation offsets around the base and writes nothing.** The value an LFO
+  plays is computed on the audio thread from the base the lane delivers, and
+  is what the control's one indicator shows, in violet (see [modulation.md](modulation.md#intensity-mix-and-output)).
+  No processor-side write ever reaches a host lane, so a host recording in
+  Touch or Latch while an LFO runs records nothing it was not given by a
+  person.
+- **Both at once** is the normal case: with a lane playing and an LFO on, the
+  base tick walks the lane and the violet indicator swings around it.
+
+Verified in REAPER (`tools/reaper_modulation_automation.py`, VST3, CLAP and
+AU): a scripted knob gesture in Touch records Intensity points; Read plays
+them back and the editor's knob follows; with LFO 1 on Intensity in Touch the
+knob's base follows the lane, its violet indicator moves, and the envelope's
+point count does not change.
 
 ## Editor protocol (for anyone adding a control)
 

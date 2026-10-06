@@ -19,7 +19,29 @@
 //              costliest call of the control render (--max-cost-ratio).
 //
 // Usage: Spectr-au-routes-probe --bundle path/to/X.component
-//            [--sr 48000] [--block 128] [--max-cost-ratio R]
+//            [--sr 48000] [--block 128] [--max-cost-ratio R] [--gate-cost]
+//        Spectr-au-routes-probe --bundle X.component --offline-equivalence
+//            [--no-offline-flag]
+//
+// Pacing. A host renders in real time and the mask a route stages is designed
+// on a worker that keeps up with that. This probe renders back to back, so
+// after every render call it waits until spectr_mask_design_backlog_v1() and
+// spectr_param_sync_backlog_v1() read zero -- the pacing a real-time host gives that worker -- rather than
+// measuring how far a loaded machine let the render outrun it (4/10 runs
+// failed under load before it did).
+//
+// Cost is tracked, not gated, by default: the render-call cost is wall-clock
+// time on a shared machine, and under load it moved by more than the ratio it
+// was gated at. --gate-cost restores the gate for a quiet machine.
+//
+// --offline-equivalence renders one automated Intensity ramp plus LFO routes
+// to Intensity and the band window twice: PACED (the waits above, the AU told
+// nothing) and UNPACED with kAudioUnitProperty_OfflineRender set, as a
+// faster-than-real-time bounce is. With the offline fix the AU waits for its
+// own workers and the two match sample for sample; --no-offline-flag renders
+// the unpaced pass without the property (the negative control, which differs
+// on a loaded machine). Exit 0 match, 1 mismatch. --auto-gain adds Auto Gain
+// (v2, which follows the material) and a change of material at 3 s.
 //
 // What this can and cannot see. The renderer spreads every mask swap over a
 // crossfade (up to 18 ms), so even an UN-ramped switch reaches the audio at
@@ -39,10 +61,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -66,7 +90,38 @@ struct Options {
     UInt32 block = 128;
     std::string bundle;
     double max_cost_ratio = 0.0;
+    bool gate_cost = false;
+    bool offline_equivalence = false;
+    bool offline_flag = true;
+    bool offline_lifecycle = false;
+    bool auto_gain = false;
 };
+
+// How a render call is paced against the AU's own mask-design worker.
+enum class Pacing {
+    paced,            // wait for the design backlog after every call (a real-time host)
+    offline_flagged,  // no wait; kAudioUnitProperty_OfflineRender = 1 (a bounce)
+    unpaced,          // no wait, no flag: what a bounce was before the AU heard it
+};
+
+using BacklogFn = std::uint64_t (*)();
+BacklogFn design_backlog = nullptr;
+BacklogFn param_sync_backlog = nullptr;
+
+// Block until the mask-design worker has caught up with every layout the last
+// render staged. Event-driven on the counter; a worker that never drains is a
+// failure to run, not a stale measurement.
+void await_design_worker() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (design_backlog() != 0 || param_sync_backlog() != 0) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            std::fprintf(stderr, "mask-design worker never drained its backlog (%llu)\n",
+                         static_cast<unsigned long long>(design_backlog()));
+            std::exit(2);
+        }
+        std::this_thread::yield();
+    }
+}
 
 std::vector<double> fit_whitener(const std::vector<float>& x, std::size_t from, std::size_t to) {
     const std::size_t n = to - from;
@@ -161,6 +216,14 @@ AudioComponent register_bundle(const std::string& path) {
         ? reinterpret_cast<AudioComponentFactoryFunction>(CFBundleGetFunctionPointerForName(bundle, factory_name))
         : nullptr;
     if (!factory) return nullptr;
+    design_backlog = reinterpret_cast<BacklogFn>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_mask_design_backlog_v1")));
+    param_sync_backlog = reinterpret_cast<BacklogFn>(
+        CFBundleGetFunctionPointerForName(bundle, CFSTR("spectr_param_sync_backlog_v1")));
+    if (!design_backlog || !param_sync_backlog) {
+        std::fprintf(stderr, "%s does not export the spectr_*_backlog_v1 counters\n", path.c_str());
+        return nullptr;
+    }
     registered = AudioComponentRegister(&desc, CFSTR("Pulp: routes probe (in-process)"), 1, factory);
     return registered;
 }
@@ -184,7 +247,8 @@ OSStatus input_cb(void* ctx, AudioUnitRenderActionFlags*, const AudioTimeStamp*,
 
 struct Render { std::vector<float> out; std::vector<double> us; std::vector<std::size_t> start; };
 
-Render render(const Options& o, Input& input, std::vector<Event> events) {
+Render render(const Options& o, Input& input, std::vector<Event> events,
+              Pacing pacing = Pacing::paced, const std::vector<Event>& preset = {}) {
     AudioComponent comp = register_bundle(o.bundle);
     if (!comp) { std::fprintf(stderr, "cannot load %s\n", o.bundle.c_str()); std::exit(2); }
     AudioUnit au = nullptr;
@@ -201,7 +265,19 @@ Render render(const Options& o, Input& input, std::vector<Event> events) {
     AudioUnitSetProperty(au, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxf, sizeof(maxf));
     AURenderCallbackStruct cb{&input_cb, &input};
     AudioUnitSetProperty(au, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof(cb));
+    // The session state a host restores before it renders: set, not
+    // scheduled, so it is the prepared state rather than block 0's automation.
+    for (const auto& e : preset)
+        AudioUnitSetParameter(au, e.id, kAudioUnitScope_Global, 0, e.value, 0);
     if (AudioUnitInitialize(au) != noErr) std::exit(2);
+    if (pacing == Pacing::offline_flagged) {
+        UInt32 offline = 1;
+        if (AudioUnitSetProperty(au, kAudioUnitProperty_OfflineRender, kAudioUnitScope_Global, 0,
+                                 &offline, sizeof(offline)) != noErr) {
+            std::fprintf(stderr, "the AU rejected kAudioUnitProperty_OfflineRender\n");
+            std::exit(2);
+        }
+    }
     std::stable_sort(events.begin(), events.end(), [](const Event& a, const Event& b) { return a.at < b.at; });
     Render r;
     const std::size_t total = input.x.size();
@@ -241,10 +317,138 @@ Render render(const Options& o, Input& input, std::vector<Event> events) {
         r.us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
         r.start.push_back(pos);
         pos += frames;
+        if (pacing == Pacing::paced) await_design_worker();
     }
     AudioUnitUninitialize(au);
     AudioComponentInstanceDispose(au);
     return r;
+}
+
+// Paced vs offline-flagged render of the same automation. See the header.
+int offline_equivalence(const Options& o) {
+    const double seconds = 6.0;
+    Input input;
+    input.x.resize(std::size_t(seconds * o.sr));
+    // Broadband material (three tones and a deterministic noise floor), so the
+    // mask's whole shape -- not one bin's gain -- reaches the output.
+    std::uint32_t seed = 0x5eed1234u;
+    for (std::size_t n = 0; n < input.x.size(); ++n) {
+        const double t = double(n) / o.sr;
+        seed = seed * 1664525u + 1013904223u;
+        const double noise = (double(seed >> 8) / double(1u << 24) - 0.5) * 0.05;
+        // --auto-gain: the material's balance changes at 3 s (the 220 Hz tone
+        // stops, the 7 kHz one doubles), so Auto Gain v2's estimate -- and the
+        // gain it applies -- really moves during the render.
+        const double low = (o.auto_gain && t >= 3.0) ? 0.0 : 0.15;
+        const double high = (o.auto_gain && t >= 3.0) ? 0.16 : 0.08;
+        input.x[n] = float(low * std::sin(2 * kPi * 220 * t) + 0.1 * std::sin(2 * kPi * 2000 * t)
+                           + high * std::sin(2 * kPi * 7000 * t) + noise);
+    }
+    const auto at = [&](double s) { return std::size_t(s * o.sr); };
+    constexpr AudioUnitParameterID kIntensity = 5000;
+    std::vector<Event> preset;
+    std::vector<Event>& ev = preset;
+    ev.push_back({0, kCenter, 3.15f});
+    ev.push_back({0, kWidth, 1.2f});
+    for (int b = 0; b < 32; ++b)
+        ev.push_back({0, band_gain(b), (b % 4 < 2) ? 0.0f : -30.0f});
+    ev.push_back({0, kLfoEnabled, 1.0f});
+    ev.push_back({0, kLfoShape, 0.0f});
+    ev.push_back({0, kLfoRate, 1.0f});
+    ev.push_back({0, kLfoDepth, 1.0f});
+    for (int t = 0; t < 6; ++t) { ev.push_back({0, route_on(t), 0.0f}); ev.push_back({0, route_amount(t), 1.0f}); }
+    // An LFO on Intensity and on the band window (Band shift), and a host
+    // Intensity ramp 0 -> 100 % -> 30 %, one event per render call.
+    ev.push_back({0, route_on(8), 1.0f});
+    ev.push_back({0, route_amount(8), 0.6f});
+    ev.push_back({0, route_on(4), 1.0f});
+    ev.push_back({0, route_amount(4), 0.5f});
+    // Auto Gain (5001) on: its v2 estimator advances on a sample-counted frame
+    // grid, so the paced render and the bounce must still match exactly.
+    if (o.auto_gain) ev.push_back({0, 5001, 1.0f});
+    std::vector<Event> automation;
+    for (std::size_t s = 0; s < at(seconds); s += o.block) {
+        const double t = double(s) / o.sr;
+        const double v = t < 3.0 ? t / 3.0 : 1.0 - 0.7 * std::min(1.0, (t - 3.0) / 2.0);
+        automation.push_back({s, kIntensity, float(100.0 * v)});
+    }
+
+    Input a_in = input, b_in = input;
+    const Pacing bounce_pacing = o.offline_flag ? Pacing::offline_flagged : Pacing::unpaced;
+    // Diagnostic: SPECTR_EQUIV_SELF=paced|bounce compares a pacing against a
+    // second render of itself, to tell which side of a mismatch is unstable.
+    const char* self = std::getenv("SPECTR_EQUIV_SELF");
+    const Pacing first_pacing = self && std::string(self) == "bounce" ? bounce_pacing : Pacing::paced;
+    const Pacing second_pacing = self && std::string(self) == "paced" ? Pacing::paced : bounce_pacing;
+    const Render paced = render(o, a_in, automation, first_pacing, preset);
+    const Render bounce = render(o, b_in, automation, second_pacing, preset);
+    double max_diff = 0.0, ref_peak = 0.0;
+    std::size_t first = paced.out.size(), differing = 0;
+    for (std::size_t n = 0; n < paced.out.size(); ++n) {
+        const double d = std::fabs(double(paced.out[n]) - double(bounce.out[n]));
+        ref_peak = std::max(ref_peak, std::fabs(double(paced.out[n])));
+        if (d > 1e-6) { ++differing; first = std::min(first, n); }
+        max_diff = std::max(max_diff, d);
+    }
+    const double diff_db = max_diff > 0.0 ? 20.0 * std::log10(max_diff / std::max(ref_peak, 1e-9)) : -999.0;
+    std::printf("offline equivalence (%s): max |paced - bounce| = %.3g (%.1f dB re peak), "
+                "%zu samples differ by > 1e-6, first at %.3f s\n",
+                o.offline_flag ? "OfflineRender set" : "NO offline flag -- negative control",
+                max_diff, diff_db, differing,
+                first < paced.out.size() ? double(first) / o.sr : -1.0);
+    // Tight: the two renders take the same samples through the same adopted
+    // masks, so anything above float rounding is a schedule difference.
+    const bool match = max_diff <= 1e-5;
+    std::printf("%s\n", match ? "MATCH" : "DIFFER");
+    return match ? 0 : 1;
+}
+
+// The offline flag's lifetime through the real AU entry. A host write must
+// reach a bounce that re-initializes once after it (or that it preceded), and
+// must not outlive the session after that: the flag makes Spectr wait for its
+// workers, so a stuck one would hold every later realtime block.
+int offline_flag_lifecycle(const Options& o) {
+    AudioComponent comp = register_bundle(o.bundle);
+    if (!comp) { std::fprintf(stderr, "cannot load %s\n", o.bundle.c_str()); return 2; }
+    AudioUnit au = nullptr;
+    if (AudioComponentInstanceNew(comp, &au) != noErr || !au) return 2;
+    const auto set = [&](UInt32 v) {
+        return AudioUnitSetProperty(au, kAudioUnitProperty_OfflineRender,
+                                    kAudioUnitScope_Global, 0, &v, sizeof(v));
+    };
+    const auto get = [&]() -> int {
+        UInt32 v = 99, size = sizeof(v);
+        if (AudioUnitGetProperty(au, kAudioUnitProperty_OfflineRender,
+                                 kAudioUnitScope_Global, 0, &v, &size) != noErr)
+            return -1;
+        return int(v);
+    };
+    int failures = 0;
+    const auto expect = [&](const char* what, int want) {
+        const int got = get();
+        std::printf("%-58s OfflineRender=%d (want %d)%s\n", what, got, want,
+                    got == want ? "" : "  <-- WRONG");
+        if (got != want) ++failures;
+    };
+    if (set(1) != noErr) { std::fprintf(stderr, "set before Initialize rejected\n"); return 2; }
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("set before the first Initialize", 1);
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("one re-initialization later, never written back", 0);
+    if (set(1) != noErr) return 2;
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("set, then re-initialized for the bounce", 1);
+    AudioUnitReset(au, kAudioUnitScope_Global, 0);
+    expect("...then Reset at transport start", 1);
+    AudioUnitUninitialize(au);
+    if (AudioUnitInitialize(au) != noErr) return 2;
+    expect("the next session, never written back", 0);
+    AudioUnitUninitialize(au);
+    AudioComponentInstanceDispose(au);
+    std::printf("%s\n", failures == 0 ? "PASS" : "FAIL");
+    return failures == 0 ? 0 : 1;
 }
 
 }  // namespace
@@ -258,9 +462,16 @@ int main(int argc, char** argv) {
         else if (a == "--sr") o.sr = std::atof(next().c_str());
         else if (a == "--block") o.block = UInt32(std::atoi(next().c_str()));
         else if (a == "--max-cost-ratio") o.max_cost_ratio = std::atof(next().c_str());
+        else if (a == "--gate-cost") o.gate_cost = true;
+        else if (a == "--offline-equivalence") o.offline_equivalence = true;
+        else if (a == "--no-offline-flag") o.offline_flag = false;
+        else if (a == "--offline-flag-lifecycle") o.offline_lifecycle = true;
+        else if (a == "--auto-gain") o.auto_gain = true;
         else { std::fprintf(stderr, "unknown argument %s\n", a.c_str()); return 2; }
     }
     if (o.bundle.empty()) { std::fprintf(stderr, "--bundle is required\n"); return 2; }
+    if (o.offline_equivalence) return offline_equivalence(o);
+    if (o.offline_lifecycle) return offline_flag_lifecycle(o);
 
     // Material: one steady tone. Its envelope is exactly the gain the mask
     // gives it, so a 1 ms envelope step is the gain step itself, and the
@@ -380,9 +591,11 @@ int main(int argc, char** argv) {
         // it no faster than the same modulation running freely, + 0.5 dB/ms.
         const bool stepped = step > cstep + 0.5;
         const bool slow = o.max_cost_ratio > 0 && cost > o.max_cost_ratio * ctrl_max;
-        if (click || slow || stepped) ++bad;
+        if (click || (slow && o.gate_cost) || stepped) ++bad;
         std::printf("%-26s %10.1f %10.1f %10.2f %10.2f %10.0f%s%s%s\n", e.name, spike, cspike, step, cstep, cost,
-                    click ? "  CLICK" : "", slow ? "  SLOW" : "", stepped ? "  STEP" : "");
+                    click ? "  CLICK" : "",
+                    slow ? (o.gate_cost ? "  SLOW" : "  slow (tracked)") : "",
+                    stepped ? "  STEP" : "");
     }
     // The Amount ramp: 1 ms envelope steps against the control's over the
     // same span (both carry the same LFO motion once the ramp is up).

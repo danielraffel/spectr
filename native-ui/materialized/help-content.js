@@ -109,7 +109,7 @@ Three knobs in the header set how much you hear and how loud it is. Drag up or r
 - **Intensity** is how strong the effect is. At 100% you hear the shape exactly as drawn; at 50% every boost and cut is half as deep in dB; at 0% Spectr is flat. A muted band fades back in as Intensity comes down. It is the cleanest way to make the filtering subtler.
 - **Mix** blends Spectr's sound with the original input. It is most useful with Freeze: below 100% you hear the frozen sound layered over the live input. To make the filtering itself gentler, reach for Intensity instead: a part-way Mix adds the untouched signal back rather than softening the shape.
 - **Output** is the final volume, in dB, up to 24 either way.
-- **AUTO** keeps the level steady as you boost or cut. It works out how much louder or quieter your shape makes typical audio and makes up the difference, before Output, so Output still has the last word. It follows the shape you draw, Intensity and Mix, never the sound itself, so it does not pump. It does not follow the LFOs: a level LFO stays audible as level. It is tuned for full-range material; on something very narrow, such as a single voice, boosting a range the sound does not reach is not something it can predict. New instances start with AUTO on. A project saved before AUTO existed opens with it off, so it sounds exactly as it did.
+- **AUTO** keeps the level steady as you boost or cut. It listens to the sound going through Spectr, its long-term balance of lows, mids and highs, works out how much louder or quieter your shape makes that sound, and makes up the difference, before Output, so Output still has the last word. Boosting the highs of a bass line barely changes its level, so AUTO barely moves. It listens over several seconds and holds its setting through silence, so it does not pump; when you change the shape it follows within a fraction of a second. When the sound itself changes, a new part, a much quieter passage, releasing Freeze, it catches up in about a second, and it remembers the sound when you stop, locate or reopen the project, so playback starts at the right level. While Freeze holds, it listens to the held sound. It does not follow the LFOs: a level LFO stays audible as level. AUTO is on by default in a new instance; switch it off when you want your shape to change the level. It keeps listening while it is off, so switching it on starts from the sound that is playing. A project keeps the AUTO it saved. A project saved before AUTO existed opens with it off, and one that saved AUTO off keeps it off. A project that saved AUTO on keeps it on. A project that saved AUTO on with an earlier version keeps that version's AUTO, so its level does not change, until you switch AUTO off and on again.
 
 ## Range and Display
 
@@ -117,11 +117,15 @@ Three knobs in the header set how much you hear and how loud it is. Drag up or r
 
 **Display**, under Appearance, chooses whether the plot draws the bands, the response curve, or both. It is the same setting the header used to carry, and your DAW can still automate it as **Visualization**.
 
+**Show tooltips**, under Feedback, turns off the short descriptions that appear when you rest the pointer on a header control. It is on by default and saved with your project.
+
 ## Movement
 
 Two LFOs can move things on their own, in time with your project tempo. An LFO only sets the movement: its **Shape** and its **Rate** in beats. What it moves, and how far, you choose per target.
 
-Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) switch on as many targets as you like. The same list is in Settings, under Modulation; change it in either place and the other follows. Each one has its own **Depth**, so one LFO can push the bands hard and nudge the frequencies gently at the same time. Both LFOs can drive the same target; their movements add.
+Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) switch on as many targets as you like. The same list is in Settings, under Modulation; change it in either place and the other follows. Each target you switch on shows its own **Depth** right under it, so one LFO can push the bands hard and nudge the frequencies gently at the same time. Both LFOs can drive the same target; their movements add.
+
+You can also right-click LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH or BANDS for a small menu of just that control: reset it, switch LFO 1 or LFO 2 on for it and set the Depth, and (for LIVE / FROZEN) Hold for Length.
 
 - **Bank** moves all the band levels up and down together.
 - **Band shift** slides the whole set of bands up and down in frequency, keeping its width. You hear the sweep; the display stays where you set it, so you can keep drawing.
@@ -129,8 +133,10 @@ Right-click a band, open **Modulation**, and under **LFO 1 Targets** (or LFO 2) 
 - **Intensity** pulls the shape toward flat and back, so the whole effect breathes. At 100% Depth it goes all the way to flat at the top of each cycle, wherever the Intensity knob sits.
 - **Mix** pulls toward the original input and back. Over a frozen sound this blends frozen and live in time: try a slow sine for a swell, or a square for a rhythmic gate between the two.
 - **Morph** rocks the A/B morph back and forth around where the slider sits.
-- **Freeze** switches between LIVE and FROZEN. Depth is how much of each cycle is frozen, and every freeze captures fresh sound. Try a square wave on a short rate for rhythmic stutters.
-- **Length** picks each new freeze's loop length around your LENGTH setting. Depth is how many steps either way it can go. A loop that is already playing is never resized.
+- **Freeze** switches between LIVE and FROZEN. Depth is how much of each cycle is frozen, and every freeze captures fresh sound. Try a square wave on a short rate for rhythmic stutters. **Hold for Length** (under Freeze, off by default) keeps Freeze enabled for the length of the modulated Length: each time the LFO swings up, Freeze plays to the end of the LENGTH in effect at that moment, then lets go, whatever the LFO does meanwhile; the next swing up freezes again for whatever the LENGTH is then. Off, Freeze simply follows the LFO. With one LFO on both Freeze and Length, each freeze reads the Length a step further along the LFO, so the lengths follow its shape. To vary the length of each freeze independently, modulate Length with the other LFO.
+- **Length** picks each new freeze's loop length around your LENGTH setting. Depth is how many steps either way it can go. A loop that is already playing is never resized. While it is modulated, LENGTH shows in violet the length the freeze is using (or the next one will use); its menu still shows your own setting.
+- **Bands** steps the band count around your BANDS setting (32 to 64). Depth is how many steps either way. Each change fades through flat for a moment, so it never clicks. BANDS shows the count playing, in violet.
+- **Preset** morphs toward the presets next to the one you chose, in the order of the preset menu. Depth is how many presets either way (up to four). Your own edits are the centre: at the middle of each swing you hear exactly what you drew. The preset label shows the preset it is nearest, in violet. Pick a preset first; it remembers the neighbourhood with the session.
 - **Output** moves the volume up and down around your Output setting, up to 6 dB either way at 100% Depth. AUTO never cancels it.
 - **Snapshot A / B** blend toward that snapshot and back again.
 
@@ -138,7 +144,9 @@ A and B do nothing if that snapshot is empty, and Morph needs both. The list scr
 
 The Intensity, Mix and Output knobs keep showing your setting while an LFO moves them; their ring and rim turn violet to show that one is.
 
-**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches; pick a LENGTH and it becomes the new centre; turn the Intensity, Mix or Output knob and your setting becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** does what you asked and leaves the LFO running, **Turn off** switches that LFO's target off and then does it. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off. For a knob, Keep modulating lets you turn it from then on without asking again.
+While a menu is open, scrolling moves only that menu; scrolling anywhere else does nothing until it closes.
+
+**Touching something an LFO is driving.** The LFO keeps running. Press LIVE / FROZEN while Freeze is modulated and your press holds until the LFO next switches (with Hold for Length, until that freeze ends); pick a LENGTH, a band count or a preset and it becomes the new centre; turn the Intensity, Mix or Output knob and your setting becomes the new centre. With **Ask before overriding modulation** on (Settings, under Modulation, on by default) Spectr asks first: **Keep modulating** leaves the LFO in charge -- a new LENGTH, band count, preset or knob setting becomes the centre it moves around, and a LIVE / FROZEN press is set aside so Freeze keeps following the LFO -- while **Turn off** switches that LFO's target off and then does what you asked. Return turns off, Escape keeps modulating, and **Don't ask again** turns the question off. For a knob, Keep modulating lets you turn it from then on without asking again.
 
 ## Automation
 
@@ -184,7 +192,7 @@ The list your DAW shows is long, because every band is in it. The ones worth kno
 - **Viewport Center** and **Viewport Width** slide and widen the frequency range the bands cover. Automating the centre sweeps your whole shape up and down the spectrum.
 - **LFO Rate** and **LFO 2 Rate**, and each target's on/off and **Depth** (**LFO 1 Bank Depth** and so on), let you modulate the modulators from outside.
 - **Band 01 Gain** through **Band 64 Gain**, and **Band 01 Mute** through **Band 64 Mute**, for one band at a time.
-- **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Length** is the LENGTH control: each fraction of a bar from 1/32 to 15/16, 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
+- **Freeze** is the LIVE / FROZEN button, so your DAW can freeze and release the sound on the beat. **Freeze Hold for Length** is the switch of that name under the Freeze target. **Freeze Length** is the LENGTH control: each fraction of a bar from 1/32 to 15/16, 1, 2, 4 or 8 bars, or Custom, the custom length you last set.
 - **Mix** blends Spectr with the original input. **Intensity** scales the whole shape toward flat. **Output** trims the level on the way out, by up to 24 dB either way. **Auto Gain** is the AUTO switch.
 - **Macro 1** through **Macro 4**, in a Macros group of their own, are four spare lanes each worth up to 24 dB either way. A macro is an offset: it rides on top of whatever its member bands are already drawn at, rather than replacing them. They are listed in every build so your host never has to rescan to find them, and they stay inert until bands are assigned to one, which this version has no way to do yet. Four lanes that currently move nothing, and worth recognising rather than hunting for.
 
@@ -201,6 +209,8 @@ Spectr can realise the shape you draw in two ways, and they trade against each o
 **Tracking** responds in about 1.3 ms, fast enough to play and record through Spectr and still hear yourself in time. The cost is depth: very narrow cuts come out shallower in this mode.
 
 **Mixing** looks at a large slice of audio at once, and cuts far deeper for it. How much deeper depends on how strictly you judge where one band ends and the next begins, and on any reading it is a wide margin: a muted band lands somewhere between about 45 and 90 dB lower than the same band in Tracking. That margin holds steady wherever you are working, whether you are looking at the whole spectrum or zoomed right into a narrow span. Mixing costs about 213 ms of latency at 48 kHz, which your DAW lines up automatically so playback stays in sync.
+
+**GPU processing** (Settings, under Latency, or the CPU/GPU chip at the top right) renders Mixing on the graphics processor instead. It sounds exactly the same and adds latency, which Settings shows before you switch and your DAW again lines up; it is off unless you turn it on. Tracking always runs on the CPU, so there the chip reads CPU and does nothing.
 
 Looking at that much audio at once has a second cost, and it is the reason Tracking is not just a lesser option. Mixing spreads a little of every sharp sound backwards in time, so a faint trace of a drum hit can arrive about a seventh of a second before the hit itself. That is not a fault waiting to be fixed. It is the price of the even, symmetrical way Mixing works, which is the same thing that makes it deep. Tracking spreads nothing backwards at all.
 
