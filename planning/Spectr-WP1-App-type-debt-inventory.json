@@ -77,7 +77,7 @@
       "TweaksPanel",
       "App"
     ],
-    "graph_sha256": "17aa4610c7c25c9368b0b593d2aeb66bfabee85471db164332653ef56bc32942"
+    "graph_sha256": "1d3fff5e5294a76c1a9d62f2789676ea117e6999e6fd1ba0f00db2c23813e7ee"
   },
   "bindings": {
     "groups": {
@@ -840,14 +840,6 @@
       },
       {
         "file": "components/App.tsx",
-        "line": 598,
-        "column": 109,
-        "code": "TS2322",
-        "message": "Type '{ settings: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; nativeHydrated: any; initialNativeState: any; onNativeState: any; onEditModeChange: (v: any) => void; }' is not assignable to type 'IntrinsicAttributes & { settings: any; onStateChange: any; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; onEditModeChange: any; nativeHydrated: any; onNativeState: any; initialNativeState: any; }'.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/App.tsx",
         "line": 600,
         "column": 12,
         "code": "TS2339",
@@ -888,7 +880,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 8,
+        "line": 11,
         "column": 10,
         "code": "TS2339",
         "message": "Property 'SPECTR_MODULATION_LOOKS' does not exist on type 'Window & typeof globalThis'.",
@@ -896,7 +888,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 178,
+        "line": 181,
         "column": 9,
         "code": "TS2349",
         "message": "This expression is not callable.",
@@ -904,7 +896,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 278,
+        "line": 281,
         "column": 19,
         "code": "TS2339",
         "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
@@ -912,7 +904,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 285,
+        "line": 288,
         "column": 23,
         "code": "TS2339",
         "message": "Property 'spectrStatusBannerShow' does not exist on type 'Window & typeof globalThis'.",
@@ -920,7 +912,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 286,
+        "line": 289,
         "column": 19,
         "code": "TS2339",
         "message": "Property 'spectrStatusBannerShow' does not exist on type 'Window & typeof globalThis'.",
@@ -928,7 +920,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 333,
+        "line": 336,
         "column": 25,
         "code": "TS2339",
         "message": "Property 'spectrStatusBannerKeepAlive' does not exist on type 'Window & typeof globalThis'.",
@@ -936,7 +928,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 333,
+        "line": 336,
         "column": 76,
         "code": "TS2339",
         "message": "Property 'spectrStatusBannerKeepAlive' does not exist on type 'Window & typeof globalThis'.",
@@ -944,7 +936,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 536,
+        "line": 539,
         "column": 33,
         "code": "TS2339",
         "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
@@ -952,7 +944,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 546,
+        "line": 549,
         "column": 31,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -960,7 +952,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 619,
+        "line": 622,
         "column": 17,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -968,7 +960,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 619,
+        "line": 622,
         "column": 39,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -976,7 +968,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 620,
+        "line": 623,
         "column": 24,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -984,7 +976,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 698,
+        "line": 701,
         "column": 26,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -992,7 +984,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 698,
+        "line": 701,
         "column": 51,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1000,7 +992,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 699,
+        "line": 702,
         "column": 16,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1008,7 +1000,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 843,
+        "line": 846,
         "column": 23,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1016,7 +1008,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 886,
+        "line": 889,
         "column": 26,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1024,7 +1016,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 901,
+        "line": 904,
         "column": 26,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1032,7 +1024,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 913,
+        "line": 916,
         "column": 26,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1040,7 +1032,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 965,
+        "line": 968,
         "column": 29,
         "code": "TS2339",
         "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
@@ -1048,7 +1040,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 979,
+        "line": 982,
         "column": 34,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1056,7 +1048,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 983,
+        "line": 986,
         "column": 29,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1064,7 +1056,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 984,
+        "line": 987,
         "column": 24,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1072,24 +1064,8 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1259,
+        "line": 1262,
         "column": 17,
-        "code": "TS2339",
-        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1259,
-        "column": 46,
-        "code": "TS2339",
-        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1260,
-        "column": 14,
         "code": "TS2339",
         "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
@@ -1097,6 +1073,22 @@
       {
         "file": "components/FilterBank.tsx",
         "line": 1262,
+        "column": 46,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1263,
+        "column": 14,
+        "code": "TS2339",
+        "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1265,
         "column": 27,
         "code": "TS2339",
         "message": "Property '__spectrBandEnergy' does not exist on type 'Window & typeof globalThis'.",
@@ -1104,7 +1096,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1266,
+        "line": 1269,
         "column": 24,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1112,7 +1104,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1731,
+        "line": 1734,
         "column": 24,
         "code": "TS2339",
         "message": "Property 'SpectrAnalyzer' does not exist on type 'Window & typeof globalThis'.",
@@ -1120,7 +1112,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1766,
+        "line": 1769,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
@@ -1128,7 +1120,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1766,
+        "line": 1769,
         "column": 87,
         "code": "TS2339",
         "message": "Property 'SpectrFreq' does not exist on type 'Window & typeof globalThis'.",
@@ -1136,7 +1128,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1810,
+        "line": 1813,
         "column": 17,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1144,7 +1136,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1810,
+        "line": 1813,
         "column": 39,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1152,7 +1144,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1819,
+        "line": 1822,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1160,7 +1152,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1943,
+        "line": 1946,
         "column": 17,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1168,7 +1160,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1943,
+        "line": 1946,
         "column": 39,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1176,7 +1168,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1944,
+        "line": 1947,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1184,16 +1176,8 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1968,
+        "line": 1971,
         "column": 14,
-        "code": "TS2339",
-        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
-        "category": "browser-window"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 1969,
-        "column": 12,
         "code": "TS2339",
         "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
         "category": "browser-window"
@@ -1208,7 +1192,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1978,
+        "line": 1975,
         "column": 12,
         "code": "TS2339",
         "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
@@ -1216,7 +1200,15 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1988,
+        "line": 1981,
+        "column": 12,
+        "code": "TS2339",
+        "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
+        "category": "browser-window"
+      },
+      {
+        "file": "components/FilterBank.tsx",
+        "line": 1991,
         "column": 55,
         "code": "TS2362",
         "message": "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -1224,7 +1216,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1988,
+        "line": 1991,
         "column": 59,
         "code": "TS2363",
         "message": "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -1232,7 +1224,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1994,
+        "line": 1997,
         "column": 17,
         "code": "TS2339",
         "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
@@ -1240,7 +1232,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1994,
+        "line": 1997,
         "column": 68,
         "code": "TS2339",
         "message": "Property 'spectrStartOracle' does not exist on type 'Window & typeof globalThis'.",
@@ -1248,7 +1240,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1995,
+        "line": 1998,
         "column": 14,
         "code": "TS2339",
         "message": "Property '__spectrTestHooks' does not exist on type 'Window & typeof globalThis'.",
@@ -1256,7 +1248,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 1996,
+        "line": 1999,
         "column": 25,
         "code": "TS2339",
         "message": "Property 'spectrStartOracle' does not exist on type 'Window & typeof globalThis'.",
@@ -1264,7 +1256,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2081,
+        "line": 2084,
         "column": 13,
         "code": "TS2339",
         "message": "Property 'paint' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
@@ -1272,7 +1264,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2089,
+        "line": 2092,
         "column": 13,
         "code": "TS2339",
         "message": "Property 'editedBand' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
@@ -1280,7 +1272,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2090,
+        "line": 2093,
         "column": 13,
         "code": "TS2339",
         "message": "Property 'changed' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
@@ -1288,7 +1280,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2094,
+        "line": 2097,
         "column": 13,
         "code": "TS2339",
         "message": "Property 'paint' does not exist on type '{ mode: string; band: any; lastBand: any; shouldMute: boolean; visited: Set<unknown>; }'.",
@@ -1296,7 +1288,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2352,
+        "line": 2355,
         "column": 70,
         "code": "TS2362",
         "message": "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -1304,7 +1296,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2354,
+        "line": 2357,
         "column": 47,
         "code": "TS2538",
         "message": "Type 'unknown' cannot be used as an index type.",
@@ -1312,7 +1304,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2487,
+        "line": 2490,
         "column": 19,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1320,7 +1312,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2487,
+        "line": 2490,
         "column": 41,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1328,7 +1320,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2498,
+        "line": 2501,
         "column": 16,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1336,7 +1328,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2514,
+        "line": 2517,
         "column": 42,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1344,7 +1336,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2514,
+        "line": 2517,
         "column": 64,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1352,7 +1344,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2524,
+        "line": 2527,
         "column": 28,
         "code": "TS2339",
         "message": "Property 'SpectrNativeState' does not exist on type 'Window & typeof globalThis'.",
@@ -1360,7 +1352,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2533,
+        "line": 2536,
         "column": 30,
         "code": "TS2339",
         "message": "Property 'pulp' does not exist on type 'Window & typeof globalThis'.",
@@ -1368,31 +1360,7 @@
       },
       {
         "file": "components/FilterBank.tsx",
-        "line": 2748,
-        "column": 11,
-        "code": "TS2554",
-        "message": "Expected 4 arguments, but got 3.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2773,
-        "column": 11,
-        "code": "TS2554",
-        "message": "Expected 4 arguments, but got 3.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2789,
-        "column": 11,
-        "code": "TS2554",
-        "message": "Expected 4 arguments, but got 3.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/FilterBank.tsx",
-        "line": 2956,
+        "line": 2959,
         "column": 28,
         "code": "TS17001",
         "message": "JSX elements cannot have multiple attributes with the same name.",
@@ -1703,14 +1671,6 @@
         "category": "browser-window"
       },
       {
-        "file": "components/SpectrFreezeLength.tsx",
-        "line": 256,
-        "column": 9,
-        "code": "TS2554",
-        "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
         "file": "components/SpectrLatencySettings.tsx",
         "line": 67,
         "column": 17,
@@ -1768,31 +1728,7 @@
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 265,
-        "code": "TS2554",
-        "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 924,
-        "code": "TS2554",
-        "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
-        "column": 2018,
-        "code": "TS2554",
-        "message": "Expected 2 arguments, but got 1.",
-        "category": "prop-or-type"
-      },
-      {
-        "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
+        "line": 45,
         "column": 2342,
         "code": "TS2339",
         "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
@@ -1800,7 +1736,7 @@
       },
       {
         "file": "components/SpectrModulationSettings.tsx",
-        "line": 44,
+        "line": 45,
         "column": 2392,
         "code": "TS2339",
         "message": "Property 'spectrSetAskBeforeOverride' does not exist on type 'Window & typeof globalThis'.",
@@ -1953,26 +1889,25 @@
     ],
     "counts": {
       "browser-window": 159,
-      "prop-or-type": 13,
-      "other-semantic": 16
+      "other-semantic": 16,
+      "prop-or-type": 5
     },
     "counts_by_code": {
       "TS2339": 169,
-      "TS2322": 4,
       "TS2349": 1,
       "TS2362": 2,
       "TS2363": 1,
       "TS2538": 1,
-      "TS2554": 7,
       "TS17001": 1,
-      "TS2345": 2
+      "TS2345": 2,
+      "TS2322": 3
     },
     "unknown_binding_names": []
   },
   "prop_contract_effect": {
     "before_diagnostics": 254,
-    "after_diagnostics": 188,
-    "delta": -66,
+    "after_diagnostics": 180,
+    "delta": -74,
     "control_counts": {
       "browser-window": 159,
       "prop-or-type": 79,
@@ -1984,16 +1919,21 @@
     "name": "PlantedInventoryType",
     "diagnostic": {
       "file": "components/FilterBank.tsx",
-      "line": 3030,
+      "line": 3033,
       "column": 32,
       "code": "TS2304",
       "message": "Cannot find name 'PlantedInventoryType'.",
       "category": "unknown-binding",
       "unknown_name": "PlantedInventoryType"
     },
-    "planted_diagnostic_count": 189
+    "planted_diagnostic_count": 181
   },
   "prop_contracts": [
+    {
+      "name": "FilterBank",
+      "type": "all declared props required except onStateChange",
+      "value_type": "onStateChange?: (...args:any[])=>unknown; all other FilterBank props required"
+    },
     {
       "name": "MBtn",
       "type": "all props optional; action:string; primary/danger:boolean; onClick:callable",
@@ -2025,6 +1965,26 @@
       "value_type": "children:ReactChild; onClick:(...args:any[])=>unknown; active?:boolean; popupKind?:string; railAction?:string; dropdown?:string; onContextMenu?:(...args:any[])=>unknown"
     }
   ],
+  "helper_contracts": [
+    {
+      "name": "issueNativeCommand",
+      "component": "FilterBank",
+      "type": "(type:string, payload:Record<string,unknown>, successStatus:string|null, skipState?:boolean) => number",
+      "value_type": "skipState optional with false default; payload/status remain explicit"
+    },
+    {
+      "name": "openMenu",
+      "component": "SpectrFreezeLength",
+      "type": "(reveal:boolean, edge?:\"first\"|\"last\") => void",
+      "value_type": "edge optional; keyboard callers use first/last and click callers use the checked row"
+    },
+    {
+      "name": "subhead",
+      "component": "SpectrModulationSettings",
+      "type": "(label:string, extra?:unknown) => unknown",
+      "value_type": "extra optional; plain section headings omit the accessory node"
+    }
+  ],
   "prop_negative_control": {
     "status": "passed",
     "name": "SpectrSettingsField",
@@ -2036,7 +1996,7 @@
       "message": "Property 'label' is missing in type '{ children: string; }' but required in type 'SpectrSettingsFieldProps'.",
       "category": "other-semantic"
     },
-    "planted_diagnostic_count": 190
+    "planted_diagnostic_count": 182
   },
   "prop_type_negative_control": {
     "status": "passed",
@@ -2063,7 +2023,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 192
+    "planted_diagnostic_count": 184
   },
   "mbtn_prop_type_negative_control": {
     "status": "passed",
@@ -2090,7 +2050,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 194
+    "planted_diagnostic_count": 186
   },
   "settings_chips_prop_type_negative_control": {
     "status": "passed",
@@ -2129,7 +2089,7 @@
       "message": "Type '{ onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsChipsProps'.",
       "category": "prop-or-type"
     },
-    "planted_diagnostic_count": 197
+    "planted_diagnostic_count": 189
   },
   "settings_slider_prop_type_negative_control": {
     "status": "passed",
@@ -2158,7 +2118,7 @@
       "message": "Type '{ min: number; max: number; step: number; onChange: () => void; }' is not assignable to type 'IntrinsicAttributes & SpectrSettingsSliderProps'.",
       "category": "prop-or-type"
     },
-    "planted_diagnostic_count": 199
+    "planted_diagnostic_count": 191
   },
   "chrome_prop_type_negative_control": {
     "status": "passed",
@@ -2202,7 +2162,60 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 203
+    "planted_diagnostic_count": 195
+  },
+  "filter_command_contract_negative_control": {
+    "status": "passed",
+    "component": "FilterBank",
+    "diagnostic": {
+      "file": "components/FilterBank.tsx",
+      "line": 3036,
+      "column": 102,
+      "code": "TS2345",
+      "message": "Argument of type 'string' is not assignable to parameter of type 'Readonly<Record<string, unknown>>'.",
+      "category": "prop-or-type"
+    },
+    "planted_diagnostic_count": 196
+  },
+  "filter_bank_prop_contract_negative_control": {
+    "status": "passed",
+    "component": "FilterBank",
+    "optional_callback_omission": "passed",
+    "diagnostic": {
+      "file": "components/FilterBank.tsx",
+      "line": 3039,
+      "column": 7,
+      "code": "TS2741",
+      "message": "Property 'settings' is missing in type '{ sharedState: null; onStatus: null; dspMode: null; editMode: null; analyzerMode: null; visualizationMode: null; onEditModeChange: () => void; nativeHydrated: boolean; onNativeState: () => void; initialNativeState: null; }' but required in type 'FilterBankProps'.",
+      "category": "other-semantic"
+    },
+    "planted_diagnostic_count": 197
+  },
+  "freeze_menu_contract_negative_control": {
+    "status": "passed",
+    "component": "SpectrFreezeLength",
+    "diagnostic": {
+      "file": "components/SpectrFreezeLength.tsx",
+      "line": 285,
+      "column": 82,
+      "code": "TS2345",
+      "message": "Argument of type '\"middle\"' is not assignable to parameter of type 'SpectrFreezeMenuEdge'.",
+      "category": "prop-or-type"
+    },
+    "planted_diagnostic_count": 198
+  },
+  "modulation_subhead_contract_negative_control": {
+    "status": "passed",
+    "component": "SpectrModulationSettings",
+    "diagnostic": {
+      "file": "components/SpectrModulationSettings.tsx",
+      "line": 51,
+      "column": 90,
+      "code": "TS2345",
+      "message": "Argument of type 'number' is not assignable to parameter of type 'string'.",
+      "category": "prop-or-type"
+    },
+    "planted_diagnostic_count": 199
   },
   "jsx_children_negative_control": {
     "status": "passed",
@@ -2228,7 +2241,7 @@
         "category": "prop-or-type"
       }
     ],
-    "planted_diagnostic_count": 205
+    "planted_diagnostic_count": 201
   },
   "scope": {
     "runtime_artifact_changed": false,
