@@ -43,6 +43,15 @@ a prerelease (verified: it 302s to `releases/download/<tag>/<asset>`, which
 2. **Every non-prerelease release must carry `appcast.xml`.** Otherwise the
    feed 404s: scheduled checks fail quietly and a manual check shows an error
    until the next release.
+3. **A release's assets must be on it before it is published.** "Latest"
+   moves the moment a release is published, so uploading to an
+   already-published release leaves a window in which the feed 404s or offers
+   a package that is not there yet. Create a draft, upload, then publish
+   (`tools/ship/publish_release.py` does exactly that, below).
+4. **Tag the newest commit.** GitHub sorts "latest" by the date of the commit
+   a release's tag points at, not by when the release was published: a
+   release tagged on a commit older than the current latest's never becomes
+   latest, and its feed is never read.
 
 Preview and dev identities (`SPECTR_NATIVE_PREVIEW_IDENTITY`,
 `SPECTR_DEV_IDENTITY`) are different apps with different bundle IDs and get no
@@ -118,12 +127,17 @@ number.
 
    ```sh
    python3 tools/ship/make_appcast.py \
-     --pkg artifacts/Spectr-1.0.7.pkg --version 1.0.7 \
-     --notes release-notes-1.0.7.md --app build/Spectr.app \
+     --pkg artifacts/Spectr-1.0.8.pkg --version 1.0.8 \
+     --notes release-notes-1.0.8.md --app build/Spectr.app \
      --out artifacts/appcast.xml
    ```
 
-   It fetches the live feed, renders What's New from the notes
+   It fetches the live feed and adds the new item above the ones already
+   there. A 404 there is refused, not treated as "no feed yet": it usually
+   means the newest release lacks its `appcast.xml` or is still a draft, and
+   a feed started from nothing would drop every older version. Only the very
+   first feed -- 1.0.7, the first release with Sparkle -- passes `--new-feed`.
+   It renders What's New from the notes
    (`whats-new-1.0.7.html`, embedded inline in the item), signs the package
    with the private key, writes the item (`sparkle:version`,
    `shortVersionString`, `minimumSystemVersion` read from the app binary,
@@ -131,15 +145,34 @@ number.
    `fullReleaseNotesLink` to the GitHub release), and then verifies the result
    with the **public** key (`check_sparkle.py appcast`). It uses
    `pulp ship appcast --sign-key-file` when the installed Pulp CLI has it, and
-   Sparkle's `sign_update` otherwise (`--sign-update
-   build/_deps/sparkle-2.10.0/dist/bin/sign_update`; delete that fallback on the
-   SDK bump).
-4. Publish: upload `Spectr-1.0.7.pkg` **and** `appcast.xml` to the `v1.0.7`
-   release, which must not be a prerelease:
+   Sparkle's `sign_update` otherwise -- by default the one the build tree of
+   `--app` unpacked (`build/_deps/sparkle-2.10.0/dist/bin/sign_update`), so the
+   command above needs no extra flag with either CLI; `--sign-update <path>`
+   overrides it. Delete that fallback on the SDK bump.
+4. Publish, in this order -- draft, upload, publish, verify the live feed:
 
    ```sh
-   gh release upload v1.0.7 artifacts/Spectr-1.0.7.pkg artifacts/appcast.xml
+   python3 tools/ship/publish_release.py --version 1.0.8 \
+     --pkg artifacts/Spectr-1.0.8.pkg --appcast artifacts/appcast.xml \
+     --notes release-notes-1.0.8.md          # --dry-run prints the commands
    ```
+
+   That runs `gh release create v1.0.8 --draft --target <HEAD>` (not a
+   prerelease), `gh release upload v1.0.8 <pkg> appcast.xml`, then
+   `gh release edit v1.0.8 --draft=false --latest`, and finally fetches the
+   LIVE `releases/latest/download/appcast.xml` and the package through the same
+   `latest` URL and runs `check_sparkle.py appcast --expect-version 1.0.8
+   --channel release --require-notes`: the feed's newest item must be the
+   version just published, signed for that very package. It retries for a few
+   minutes (CDN propagation) and fails loudly if "latest" never moves -- a
+   prerelease, a missing asset, or a tag on an older commit.
+
+The supported release path is automated by `.github/workflows/release.yml`:
+push a prepared `release/vX.Y.Z` branch with its checked-in `release-notes.md`,
+and CI builds the exact head against the pinned Pulp SDK, signs and notarizes the
+package, generates the feed, then runs the draft → upload → publish → live-feed
+verification sequence. A manual dispatch is available for an infrastructure
+rerun and still requires an explicit notes file.
 
 The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
 serves release assets with `Content-Disposition: attachment`, which Sparkle's

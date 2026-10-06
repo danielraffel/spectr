@@ -4,7 +4,8 @@
     check_sparkle.py bundles --app Spectr.app --plugin Spectr.component \
         --plugin Spectr.vst3 --plugin Spectr.clap [--signed]
     check_sparkle.py appcast --appcast appcast.xml --pkg Spectr-1.0.7.pkg \
-        [--public-key <b64>] [--require-notes] [--channel release|practice]
+        [--public-key <b64>] [--require-notes] [--channel release|practice] \
+        [--expect-version X.Y.Z]
     check_sparkle.py --self-test
 
 bundles: Spectr.app embeds Sparkle.framework, links it, and declares SUFeedURL
@@ -18,6 +19,9 @@ appcast: the newest item describes exactly this package (length, EdDSA
          package, carries a sparkle:version higher than every other item, and
          (--require-notes) carries What's New HTML linking to the release page.
          --channel release refuses a practice-shaped build number.
+         --appcast and --pkg may be https URLs (the live feed after a
+         publish); --expect-version asserts the newest item IS that version,
+         which is how a publish proves "latest" moved to the release it made.
 """
 from __future__ import annotations
 
@@ -164,6 +168,40 @@ def parse_items(xml_text: str) -> list[dict]:
             "signature": enc.get(f"{{{SPARKLE_NS}}}edSignature") if enc is not None else None,
         })
     return items
+
+
+def fetch_bytes(source: str, attempts: int = 1, delay: float = 10.0) -> bytes:
+    """A local path, or an http(s) URL (redirects followed). Retries a URL:
+    right after a publish GitHub's CDN can still serve the previous answer."""
+    import time
+    import urllib.request
+    if not re.match(r"^https?://", source):
+        return Path(source).read_bytes()
+    last: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            req = urllib.request.Request(source, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.read()
+        except Exception as e:  # noqa: BLE001 -- reported after the last attempt
+            last = e
+            if i + 1 < attempts:
+                time.sleep(delay)
+    raise SystemExit(f"could not fetch {source}: {last}")
+
+
+def expected_version_errors(xml_text: str, version: str) -> list[str]:
+    try:
+        items = parse_items(xml_text)
+    except ET.ParseError as e:
+        return [f"appcast is not well-formed XML: {e}"]
+    if not items:
+        return ["appcast has no items"]
+    top = items[0]
+    if top["version"] != version or top["short"] != version:
+        return [f"the feed's newest item is {top['short']} (build {top['version']}), "
+                f"not {version}: the published feed does not offer this release"]
+    return []
 
 
 def appcast_errors(xml_text: str, pkg_bytes: bytes, public_key: str,
@@ -314,8 +352,11 @@ def main() -> int:
     b.add_argument("--feed", help="expected SUFeedURL (default: any)")
     b.add_argument("--signed", action="store_true")
     a = sub.add_parser("appcast")
-    a.add_argument("--appcast", type=Path, required=True)
-    a.add_argument("--pkg", type=Path, required=True)
+    a.add_argument("--appcast", required=True, help="file or https URL")
+    a.add_argument("--pkg", required=True, help="file or https URL")
+    a.add_argument("--expect-version", help="the newest item must be exactly this version")
+    a.add_argument("--fetch-attempts", type=int, default=1,
+                   help="retries for a URL, 10 s apart (CDN propagation after a publish)")
     a.add_argument("--public-key", default=EXPECTED_PUBLIC_KEY)
     a.add_argument("--require-notes", action="store_true")
     a.add_argument("--channel", choices=("release", "practice"))
@@ -332,9 +373,14 @@ def main() -> int:
             errors += signed_errors(args.app)
         checked = f"{args.app.name} + {len(args.plugin)} plug-in bundle(s)"
     else:
-        errors += appcast_errors(args.appcast.read_text(), args.pkg.read_bytes(),
+        xml_text = fetch_bytes(args.appcast, args.fetch_attempts).decode("utf-8")
+        if args.expect_version:
+            errors += expected_version_errors(xml_text, args.expect_version)
+        errors += appcast_errors(xml_text, fetch_bytes(args.pkg, args.fetch_attempts),
                                  args.public_key, args.require_notes, args.channel)
-        checked = f"{args.appcast.name} against {args.pkg.name}"
+        checked = f"{args.appcast.rsplit('/', 1)[-1]} against {args.pkg.rsplit('/', 1)[-1]}"
+        if args.expect_version:
+            checked += f" (newest item {args.expect_version})"
     for e in errors:
         print("FAIL " + e)
     if errors:
