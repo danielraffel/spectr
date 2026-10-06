@@ -237,10 +237,14 @@ function makeRig() {
     return refs[i];
   };
 
-  const factory = new Function("React", "useStateChrome", `
+  // The slider subscribes to the processor's frames so host playback of
+  // Morph moves it. This rig renders it with no native bridge, where that
+  // subscription has nothing to subscribe to, so the effect is inert here.
+  const useEffect = () => {};
+  const factory = new Function("React", "useStateChrome", "useEffectChrome", `
     ${morphSrc};
     return MorphSlider;
-  `)({ createElement, useRef }, useState);
+  `)({ createElement, useRef }, useState, useEffect);
 
   return {
     render(props) {

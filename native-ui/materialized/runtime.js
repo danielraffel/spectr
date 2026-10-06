@@ -9074,6 +9074,9 @@ function createWidget(type, id, parentId, props) {
 
   // ../pulp-spectr-live-materialized-import-20260812/packages/pulp-react/src/index.ts
   var reconciler = (0, import_react_reconciler.default)(PulpHostConfig);
+  // Transplanted @pulp/react fix batched-host-callbacks (fingerprint rev. 3):
+  // host-driven callbacks commit their state updates once.
+  globalThis.__pulpBatchUpdates__ = (fn, arg) => reconciler.batchedUpdates(fn, arg);
   try {
     reconciler.injectIntoDevTools({
       bundleType: 0,
@@ -10708,9 +10711,20 @@ function restoreMaterializedLayout(node, bridge) {
         g5.setFlex(String(id), "height", height);
         return true;
       };
+      // The footer follows the factory rows rather than the capture's
+      // offsets: a 24pt FACTORY heading and 31pt per row (menuItem's 30pt
+      // minHeight on the 1pt gap). Pinned at the capture's 264 it covered the
+      // last factory row's bottom 8pt once the rows were 30pt. The popup
+      // grows upward from the same bottom edge.
+      const patternFactoryRows = Array.isArray(globalThis.Spectr?.FACTORY_PATTERNS)
+        ? globalThis.Spectr.FACTORY_PATTERNS.length
+        : globalThis.document?.querySelectorAll?.(
+            '[data-spectr-menu-root="pattern"] [data-spectr-pattern-menu-id^="factory:"]')?.length || 8;
+      const patternMenuContent = 24 + 31 * patternFactoryRows;
+      const patternPopupHeight = patternMenuContent + 78;
       const patternReceipt = {
-        popup: setBox(popup, 0, -336, 220, 334),
-        footer: setBox(footer, 5, 264, 210, 63),
+        popup: setBox(popup, 0, -(patternPopupHeight + 2), 220, patternPopupHeight),
+        footer: setBox(footer, 5, patternMenuContent + 5, 210, 63),
         save: setBox(save, 0, 3, 210, 28),
         manage: setBox(manage, 0, 33, 210, 28)
       };
@@ -11379,7 +11393,16 @@ function restoreMaterializedLayout(node, bridge) {
     const message = { type, payload, id };
     const callbacks = listeners.get(type);
     if (!callbacks) return;
-    for (const callback of [...callbacks]) callback(message);
+    // One native message is one batch: every listener's state updates commit
+    // once when the fan-out returns. Outside a batch the LegacyRoot commits
+    // each setState on the spot, and each commit re-applies the captured
+    // document (the post-mount hydrate alone was 13 commits).
+    const deliver = () => {
+      for (const callback of [...callbacks]) callback(message);
+    };
+    const batch = globalThis.__pulpBatchUpdates__;
+    if (typeof batch === 'function') batch(deliver);
+    else deliver();
   };
 
   const dispatch = (type, payload, id) => {

@@ -249,19 +249,72 @@ choc::value::Value make_keyboard_policy_payload_(const Spectr& plugin) {
     return keyboard;
 }
 
-// Freeze. `frozen` is the host parameter, so it rides the LIVE projection
-// too: automation turns the toggle over without a hydration. The hold length
-// is a Settings value and rides hydration only.
+// Freeze. `frozen` and the Length are host parameters, so they ride the
+// LIVE projection too: automation turns the toggle over, or moves the
+// dropdown, without a hydration. The vocabulary -- the common lengths, the
+// fraction set, the bar limit -- is the processor's (freeze_length.hpp) and
+// rides hydration, so the editor never keeps a list of its own.
 choc::value::Value make_freeze_payload_(const Spectr& plugin, bool with_settings) {
     auto freeze = choc::value::createObject("SpectrFreeze");
     freeze.addMember("frozen", plugin.state().get_value(kParamFreeze) >= 0.5f);
+    const auto length = plugin.freeze_length();
+    const auto custom = plugin.freeze_custom_length();
+    auto current = choc::value::createObject("SpectrFreezeLength");
+    current.addMember("preset", static_cast<std::int32_t>(plugin.freeze_length_preset()));
+    current.addMember("bars", static_cast<std::int32_t>(length.bars));
+    current.addMember("fraction", std::string(fraction_of(length).text));
+    current.addMember("label", length_label(length));
+    current.addMember("custom_bars", static_cast<std::int32_t>(custom.bars));
+    current.addMember("custom_fraction", std::string(fraction_of(custom).text));
+    // What it is at the tempo last seen, and whether the loop cap bites:
+    // the editor says so only then.
+    const double seconds = plugin.freeze_length_seconds();
+    const double cap = plugin.freeze_loop_cap_seconds();
+    current.addMember("seconds", seconds);
+    current.addMember("cap_seconds", cap);
+    current.addMember("capped", seconds > cap);
+    current.addMember("tempo_bpm", plugin.transport_tempo_bpm());
+    freeze.addMember("length", current);
     if (with_settings) {
-        freeze.addMember("hold_seconds", plugin.freeze_hold_seconds());
-        freeze.addMember("min_hold_seconds", FreezeSource::kMinHoldSeconds);
-        freeze.addMember("max_hold_seconds", FreezeSource::kMaxHoldSeconds);
-        freeze.addMember("default_hold_seconds", FreezeSource::kDefaultHoldSeconds);
+        auto presets = choc::value::createEmptyArray();
+        for (const auto& preset : kLengthPresets) {
+            auto item = choc::value::createObject("SpectrFreezeLengthPreset");
+            item.addMember("bars", static_cast<std::int32_t>(preset.bars));
+            item.addMember("fraction", std::string(fraction_of(preset).text));
+            item.addMember("label", length_label(preset));
+            presets.addArrayElement(item);
+        }
+        freeze.addMember("length_presets", presets);
+        auto fractions = choc::value::createEmptyArray();
+        for (const auto& fraction : kLengthFractions)
+            fractions.addArrayElement(std::string(fraction.text));
+        freeze.addMember("length_fractions", fractions);
+        freeze.addMember("length_max_bars", static_cast<std::int32_t>(kMaxLengthBars));
     }
     return freeze;
+}
+
+// A length request's shape: {bars: integer, fraction: "n/d"}. Returns an
+// error for a malformed request, or "" with `bars` (pinned to -1 or 129 when
+// out of range, so validate_length names the reason) and the fraction's
+// index (-1 for one outside the set). Validity itself is validate_length's.
+std::string read_length_request_(const choc::value::ValueView& p, int& bars, int& fraction) {
+    if (!p.isObject() || !p.hasObjectMember("bars") || !p.hasObjectMember("fraction"))
+        return "bars and fraction required";
+    const auto& b = p["bars"];
+    const auto& f = p["fraction"];
+    std::int64_t value = 0;
+    if (b.isInt32()) value = b.getInt32();
+    else if (b.isInt64()) value = b.getInt64();
+    else if (b.isFloat64() && std::isfinite(b.getFloat64())
+             && b.getFloat64() == std::floor(b.getFloat64())
+             && std::abs(b.getFloat64()) < 1.0e9)
+        value = static_cast<std::int64_t>(b.getFloat64());
+    else return "bars must be an integer";
+    if (!f.isString()) return "fraction must be a string";
+    bars = value < 0 ? -1 : value > kMaxLengthBars ? kMaxLengthBars + 1 : static_cast<int>(value);
+    fraction = fraction_index_from_text(f.getString());
+    return "";
 }
 
 choc::value::Value make_modulation_payload_(const Spectr& plugin) {
@@ -284,6 +337,23 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
     // enum destination that is actually being modulated.
     modulation.addMember("target_mask", static_cast<std::int32_t>(
         resolve_modulation_target_mask(modulation_state)));
+    // Per-LFO routing: each LFO's enabled destinations as a bit mask (enum
+    // order Bank, A, B, Morph, Band shift, Band spread, Freeze, Length,
+    // Intensity, Mix, Output) and each
+    // destination's amount. These are host lanes, so they ride the live
+    // projection and the editor's toggles and Amount rows follow playback.
+    auto routes = choc::value::createEmptyArray();
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+        auto route = choc::value::createObject("SpectrLfoRoutes");
+        route.addMember("mask", static_cast<std::int32_t>(
+            route_mask(modulation_state.routes[lfo])));
+        auto amounts = choc::value::createEmptyArray();
+        for (const auto& r : modulation_state.routes[lfo])
+            amounts.addArrayElement(static_cast<double>(r.amount));
+        route.addMember("amounts", amounts);
+        routes.addArrayElement(route);
+    }
+    modulation.addMember("routes", routes);
     return modulation;
 }
 
@@ -326,6 +396,10 @@ void add_history_and_macros_(choc::value::Value& payload, const Spectr& plugin,
         macros.addArrayElement(entry);
     }
     payload.addMember("macros", macros);
+    // The Morph lane, so the slider follows host playback. The bands it
+    // derives are projected on their own; this is the thumb.
+    payload.addMember("morph", static_cast<double>(
+        plugin.state().get_value(kParamMorph)));
 
 }
 
@@ -402,6 +476,8 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
     // The plain-key shortcut policy. Hydration-only, like the switch above:
     // it is never automated, so the live per-revision projection omits it.
     payload.addMember("keyboard", make_keyboard_policy_payload_(plugin));
+    // The editor's Range (level_controls.hpp): editor state, hydration only.
+    payload.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
     payload.addMember("freeze", make_freeze_payload_(plugin, /*with_settings=*/true));
     // The Latency control. Not a host parameter and not automatable, so like
     // "Morph moves the view" it rides the hydration payload the panel reads
@@ -896,6 +972,71 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response();
         });
 
+    // Editor edits of the plain parameters (Mix, Output trim, both LFOs):
+    // see Spectr::edit_param_from_editor. `param_edit` is the value; outside
+    // a drag it is a complete host gesture, inside one it joins it.
+    // `param_gesture_begin` / `param_gesture_end` bracket a drag. Unlike
+    // `param_set`, which writes a bare value, every one of these is something
+    // a host recording in Touch, Latch or Write can record.
+    const auto param_id_of = [](const choc::value::ValueView& p)
+        -> std::optional<pulp::state::ParamID> {
+        if (!p.isObject() || !p.hasObjectMember("id")) return std::nullopt;
+        const auto id_v = p["id"];
+        if (id_v.isInt32()) return static_cast<pulp::state::ParamID>(id_v.getInt32());
+        if (id_v.isInt64()) return static_cast<pulp::state::ParamID>(id_v.getInt64());
+        return std::nullopt;
+    };
+
+    bridge.add_handler("param_edit",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!p.hasObjectMember("value"))
+                return EditorBridge::err_response("param value missing");
+            const auto value = finite_number_(p["value"]);
+            if (!value) return EditorBridge::err_response("param value must be finite");
+            if (!plugin.edit_param_from_editor(*id, static_cast<float>(*value)))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_gesture_begin",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!plugin.begin_editor_param_gesture(*id))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_gesture_end",
+        [&plugin, param_id_of](const choc::value::ValueView& p) -> std::string {
+            const auto id = param_id_of(p);
+            if (!id) return EditorBridge::err_response("param id must be an integer");
+            if (!plugin.end_editor_param_gesture(*id))
+                return EditorBridge::err_response("param is not editor-editable");
+            return EditorBridge::ok_response();
+        });
+
+    // A drag on a control the PROCESSOR writes as a derived value -- Morph,
+    // pushed by apply_morph_to_live as the snapshot derivation runs. The pair
+    // opens and closes the processor's gesture epoch, the same bracket a
+    // paint drag and `macro_drag_start`/`macro_drag_end` use: each parameter
+    // the drag writes opens its host gesture once and every one closes on
+    // release, so a host in Touch sees one gesture per drag instead of the
+    // control released between every two moves.
+    bridge.add_handler("param_drag_start",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.begin_param_gesture_epoch();
+            return EditorBridge::ok_response();
+        });
+
+    bridge.add_handler("param_drag_end",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            plugin.end_param_gesture_epoch();
+            return EditorBridge::ok_response();
+        });
+
     bridge.add_handler("modulation_targets_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("targets")
@@ -997,6 +1138,28 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
             return EditorBridge::ok_response(make_keyboard_policy_payload_(plugin));
         });
 
+    // Range: the plot's vertical scale and how far a full-height edit
+    // reaches. Editor state persisted with the session, never a host
+    // parameter and never audible. {range_db: 3 | 6 | 12 | 24}.
+    bridge.add_handler("range_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            auto out = choc::value::createObject("SpectrRange");
+            out.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
+            return EditorBridge::ok_response(out);
+        });
+    bridge.add_handler("range_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("range_db"))
+                return EditorBridge::err_response("range_db missing");
+            const auto value = finite_number_(p["range_db"]);
+            if (!value || *value != std::floor(*value)
+                || !plugin.set_editor_range_db(static_cast<int>(*value)))
+                return EditorBridge::err_response("range_db must be 3, 6, 12 or 24");
+            auto out = choc::value::createObject("SpectrRange");
+            out.addMember("range_db", static_cast<std::int32_t>(plugin.editor_range_db()));
+            return EditorBridge::ok_response(out);
+        });
+
     // "Keyboard shortcuts in DAW". Shaped like morph_viewport_set: an editor
     // preference persisted in the plugin state, never a host parameter.
     bridge.add_handler("keyboard_shortcuts_set",
@@ -1029,25 +1192,59 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 make_freeze_payload_(plugin, /*with_settings=*/false));
         });
 
-    // Freeze's hold length. A Settings value like the two above: persisted
-    // in the plugin state, never a host parameter. Clamped, and the value in
-    // force is returned so the control shows what the processor will use.
-    bridge.add_handler("freeze_hold_set",
+    // Freeze's Length, from the header dropdown or its Custom length
+    // popover: {bars: integer, fraction: "1/8"}. Validated here by the one
+    // model function (validate_length), whatever the editor checked: a
+    // refused length leaves the length in force untouched. A common length
+    // selects its preset; anything else becomes the custom length. One host
+    // gesture, so automation records it.
+    bridge.add_handler("freeze_length_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
-            if (!p.isObject() || !p.hasObjectMember("seconds"))
-                return EditorBridge::err_response("seconds missing");
-            const auto& value = p["seconds"];
-            double seconds = 0.0;
-            if (value.isFloat64()) seconds = value.getFloat64();
-            else if (value.isFloat32()) seconds = value.getFloat32();
-            else if (value.isInt32()) seconds = value.getInt32();
-            else if (value.isInt64()) seconds = static_cast<double>(value.getInt64());
-            else return EditorBridge::err_response("seconds must be a number");
-            if (!std::isfinite(seconds))
-                return EditorBridge::err_response("seconds must be finite");
-            plugin.set_freeze_hold_seconds(seconds);
+            int bars = 0, fraction = -1;
+            if (const auto shape = read_length_request_(p, bars, fraction); !shape.empty())
+                return EditorBridge::err_response(shape);
+            const auto error = validate_length(bars, fraction);
+            if (error != LengthError::none)
+                return EditorBridge::err_response(std::string(length_error_message(error)));
+            const auto length = make_length(bars, fraction);
+            if (!length || !plugin.set_freeze_length_from_editor(*length))
+                return EditorBridge::err_response("freeze length unavailable");
             return EditorBridge::ok_response(
-                make_freeze_payload_(plugin, /*with_settings=*/true));
+                make_freeze_payload_(plugin, /*with_settings=*/false));
+        });
+
+    // The Custom length editor's preview: the same validation, the same
+    // label, nothing committed. The editor formats no length itself.
+    bridge.add_handler("freeze_length_describe",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            int bars = 0, fraction = -1;
+            if (const auto shape = read_length_request_(p, bars, fraction); !shape.empty())
+                return EditorBridge::err_response(shape);
+            auto out = choc::value::createObject("SpectrFreezeLengthPreview");
+            const auto error = validate_length(bars, fraction);
+            out.addMember("valid", error == LengthError::none);
+            out.addMember("message", std::string(length_error_message(error)));
+            if (const auto length = make_length(bars, fraction)) {
+                const double seconds = length_seconds(
+                    *length, plugin.transport_tempo_bpm(),
+                    plugin.transport_time_sig_numerator(),
+                    plugin.transport_time_sig_denominator());
+                out.addMember("label", length_label(*length));
+                out.addMember("seconds", seconds);
+                out.addMember("capped", seconds > plugin.freeze_loop_cap_seconds());
+                out.addMember("cap_seconds", plugin.freeze_loop_cap_seconds());
+                out.addMember("tempo_bpm", plugin.transport_tempo_bpm());
+            }
+            return EditorBridge::ok_response(out);
+        });
+
+    // The Length as it stands now, for an editor about to show it: its
+    // seconds and the loop cap depend on the host tempo, which moves without
+    // a projection.
+    bridge.add_handler("freeze_length_get",
+        [&plugin](const choc::value::ValueView&) -> std::string {
+            return EditorBridge::ok_response(
+                make_freeze_payload_(plugin, /*with_settings=*/false));
         });
 
     bridge.add_handler("morph_viewport_set",

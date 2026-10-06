@@ -115,7 +115,17 @@ RAIL_MEASURED = 'document.querySelector("[data-spectr-bottom-rail]")'
 COPY_MARKERS = (
     "Think of it as a precise way",
     "spaced more like how we hear pitch",
-    "move toward that snapshot and back again",
+    "blend toward that snapshot and back again",
+    # Modulation: one movement per LFO, targets switched on with their own
+    # Depth, the target names, and the override question.
+    "An LFO only sets the movement",
+    "switch on as many targets as you like",
+    "**Band shift** slides the whole set of bands up and down in frequency",
+    "**Band spread** spreads the bands wider or narrower around their centre",
+    "Depth is how much of each cycle is frozen",
+    "A loop that is already playing is never resized",
+    "**Don't ask again** turns the question off",
+    "an old LFO Depth is carried into the Depth of each target",
     "shows them together so you can see the difference",
     "Neither one is an upgrade on the other",
     # The one case where the lower-latency mode is the BETTER answer rather

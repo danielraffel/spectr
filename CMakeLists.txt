@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.5 LANGUAGES CXX)
+project(Spectr VERSION 1.0.7 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -188,6 +188,7 @@ set(SPECTR_SOURCES
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
+    src/level_controls.cpp
     src/ui/editor_view.cpp
 )
 
@@ -203,6 +204,7 @@ set(SPECTR_HEADERS
     include/spectr/editor_bridge.hpp
     include/spectr/preset_format.hpp
     include/spectr/snapshot.hpp
+    include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
 )
 
@@ -222,6 +224,7 @@ set(SPECTR_NATIVE_SOURCES
     src/pattern.cpp
     src/preset_format.cpp
     src/snapshot.cpp
+    src/level_controls.cpp
     src/ui/native_editor.cpp
 )
 if(APPLE)
@@ -470,6 +473,10 @@ if(APPLE)
     endforeach()
 endif()
 
+# ── In-app updates (Sparkle 2) ─────────────────────────────────────────
+# Spectr.app only; see cmake/SpectrSparkle.cmake and docs/updates.md.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrSparkle.cmake)
+spectr_configure_sparkle(${SPECTR_NATIVE_STANDALONE_TARGET} "${_spectr_id_KIND}")
 
 foreach(_forbidden_native_source
         src/ui/editor_view.cpp
@@ -550,6 +557,8 @@ endif()
 
 add_executable(Spectr-test
     test/test_spectr.cpp
+    test/test_modulation_routing.cpp
+    test/test_modulation_freeze.cpp
     test/test_band_state.cpp
     test/test_viewport.cpp
     test/test_analyzer_bridge.cpp
@@ -569,8 +578,10 @@ add_executable(Spectr-test
     test/test_tracking_transition_sweep.cpp
     test/test_render_mode.cpp
     test/test_freeze.cpp
+    test/test_freeze_length.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
+    test/test_level_controls.cpp
     ${SPECTR_TEST_SOURCES}
 )
 target_link_libraries(Spectr-test PRIVATE
@@ -928,9 +939,61 @@ add_test(NAME Spectr-swap-fixed-fade-negative-control
 set_tests_properties(Spectr-swap-fixed-fade-negative-control
     PROPERTIES TIMEOUT 300)
 
+# Routing-lane smoothness. The gate passes on the shipping binary; with
+# SPECTR_MODULATION_PLANT=route-step (destinations and amounts switch in one
+# block, as they did before the route ramp) the same tests must fail, so the
+# gate is proven able to see a step.
+add_test(NAME Spectr-route-smoothness-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_MODULATION_PLANT=route-step
+        $<TARGET_FILE:Spectr-test>
+        "routing lanes automate smoothly*" "viewport routes automate smoothly")
+set_tests_properties(Spectr-route-smoothness-negative-control
+    PROPERTIES WILL_FAIL TRUE TIMEOUT 300)
+
+# Level controls (test/test_level_controls.cpp). Each row re-creates the
+# defect its gate exists to catch and must be caught by THAT gate: the pass
+# expression names the failed assertion, so a crash or an unrelated failure
+# does not read as a working control.
+add_test(NAME Spectr-level-intensity-ignored-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=intensity-ignored
+        $<TARGET_FILE:Spectr-test> "Intensity 50 % turns a +12 dB shape into +6.0 dB")
+set_tests_properties(Spectr-level-intensity-ignored-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( half == Approx\\(6\\.0\\)")
+add_test(NAME Spectr-level-intensity-step-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=intensity-step
+        $<TARGET_FILE:Spectr-test> "An Intensity jump ramps: no block moves more than the LFO yardstick")
+set_tests_properties(Spectr-level-intensity-step-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kGateDbPerBlock \\)")
+add_test(NAME Spectr-level-autogain-follow-output-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_LEVEL_PLANT=autogain-follow-output
+        $<TARGET_FILE:Spectr-test> "Auto Gain does not pump: a static shape is a constant gain")
+set_tests_properties(Spectr-level-autogain-follow-output-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( spread <= 0\\.01 \\)")
+# The Output LFO destination lands once per block (no ramp): its smoothness
+# gate must catch the per-block zipper.
+add_test(NAME Spectr-level-target-step-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=level-target-step
+        $<TARGET_FILE:Spectr-test> "Level targets are smooth: a running LFO and a switch at the crest")
+set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
+    TIMEOUT 300
+    PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-level-help-pins
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
+    add_test(NAME Spectr-level-help-pins-negative-control
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
+    set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
+endif()
+
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
     test/test_native_state_parity.cpp
+    test/test_editor_open.cpp
 )
 target_link_libraries(Spectr-native-n1-test PRIVATE
     ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain
@@ -1345,6 +1408,18 @@ add_test(NAME Spectr-standalone-band-menu-keyboard
         --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-band-menu-keyboard
         --keyboard)
 set_tests_properties(Spectr-standalone-band-menu-keyboard PROPERTIES
+    TIMEOUT 900
+    RESOURCE_LOCK spectr_native_materialized_editor)
+# The Freeze LENGTH control driven through the standalone's own host routes:
+# click, hover, arrows, Return, Escape, the Custom length editor's keys and
+# fields, Apply / Cancel, and the checked custom row, each read back from the
+# control and from the processor.
+add_test(NAME Spectr-standalone-freeze-length
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/length_scenario_check.py
+        --binary ${CMAKE_CURRENT_BINARY_DIR}/Spectr.app/Contents/MacOS/Spectr
+        --out ${CMAKE_CURRENT_BINARY_DIR}/spectr-standalone-freeze-length)
+set_tests_properties(Spectr-standalone-freeze-length PROPERTIES
     TIMEOUT 900
     RESOURCE_LOCK spectr_native_materialized_editor)
 # A two-finger trackpad scroll over Settings carries a sideways component;
@@ -3817,29 +3892,89 @@ endif()
 # engage that did several milliseconds of work in one callback, past a
 # 128-frame buffer's real-time budget, so a live host dropped that buffer.
 if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    # Intensity and Auto Gain as a DAW sees them: parameter info, scheduled
+    # automation playback (smoothness vs the LFO yardstick), a set-parameter
+    # jump, and Auto Gain's level, all through the built AU in-process.
+    add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
+    target_link_libraries(Spectr-au-level-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-level-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-level-host
+        COMMAND Spectr-au-level-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
     target_link_libraries(Spectr-au-freeze-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
     set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
+    # A short Length (1/16 bar: 125 ms at the probe's 120 BPM) holds the
+    # spectrum: the engage's spectral pre-roll is what these two measure.
     add_test(NAME Spectr-au-freeze-host
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --length 1/16 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
     add_test(NAME Spectr-au-freeze-host-mixing
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
+            --length 1/16 --mode mixing --sr 44100 --block 256 --taps 6 --repeat 3
             --max-cost-ratio 6 --forbid-render-notifications --quiet)
-    # A Hold length long enough to loop the audio itself: the engage (a seam
-    # search and a copy of up to 2 s of audio, spread over a hop) must stay
+    # The default Length, 1 bar (2 s), loops the audio itself: the engage (a
+    # seam search and a copy of 2 s of audio, spread over a hop) must stay
     # inside the same budget.
     add_test(NAME Spectr-au-freeze-host-loop
         COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
-            --hold-seconds 2 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
+            --forbid-render-notifications --quiet)
+    # 8 bars (16 s) is longer than the loop memory prepare() sets up: the
+    # bigger rings are built on the storage worker and adopted between
+    # hops, so no render call may pay for them.
+    add_test(NAME Spectr-au-freeze-host-long-loop
+        COMMAND Spectr-au-freeze-probe --bundle "${_spectr_au_bundle}"
+            --length 8 --block 128 --taps 6 --repeat 3 --max-cost-ratio 6
             --forbid-render-notifications --quiet)
     set_tests_properties(Spectr-au-freeze-host Spectr-au-freeze-host-mixing
-        Spectr-au-freeze-host-loop
+        Spectr-au-freeze-host-loop Spectr-au-freeze-host-long-loop
         PROPERTIES TIMEOUT 300 LABELS "freeze;au-host")
+
+    # LFO routing automation through the same in-process AU host: an Amount
+    # ramp written per render call and destination switches flipped
+    # mid-render, sample-accurately scheduled, each edge scored for clicks and
+    # render-call cost against a steady-routing control render.
+    add_executable(Spectr-au-routes-probe tools/au_routes_probe.cpp)
+    target_link_libraries(Spectr-au-routes-probe PRIVATE
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    add_dependencies(Spectr-au-routes-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-routes-host
+        COMMAND Spectr-au-routes-probe --bundle "${_spectr_au_bundle}"
+            --block 128 --max-cost-ratio 6)
+    set_tests_properties(Spectr-au-routes-host
+        PROPERTIES TIMEOUT 300 LABELS "modulation;au-host")
+
+endif()
+
+# Editor-open timeline through the built AU v2 component's Cocoa view, the
+# call Logic makes: kAudioUnitProperty_CocoaUI -> view factory ->
+# -uiViewForAudioUnit:withSize:. A host shows only its own window chrome for
+# as long as that call runs (Logic: a header-only plug-in window), so the gate
+# is the call's duration and the size of the NSView it returns. Hosted
+# in-process, never activated or focused, in a borderless window off every
+# screen; no audio device is opened. Needs a window server and SKIPs (exit 4)
+# without one. Warm opens only for the time gate: the first open of a freshly
+# built binary also pays one-time dyld and Metal shader-cache costs.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+    add_executable(Spectr-editor-open-probe tools/editor_open_probe.mm)
+    target_link_libraries(Spectr-editor-open-probe PRIVATE
+        "-framework AppKit" "-framework AudioToolbox" "-framework AudioUnit"
+        "-framework CoreGraphics" "-framework Metal" "-framework QuartzCore")
+    add_dependencies(Spectr-editor-open-probe ${SPECTR_NATIVE_AU_TARGET})
+    add_test(NAME Spectr-au-editor-open
+        COMMAND Spectr-editor-open-probe
+            --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component"
+            --opens 3 --settle-ms 600 --min-width ${SPECTR_HOST_PREFERRED_WIDTH}
+            --min-height ${SPECTR_HOST_PREFERRED_HEIGHT} --max-warm-factory-ms 250)
+    set_tests_properties(Spectr-au-editor-open PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 4 LABELS "au-host;editor-open"
+        RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
 # Artifact-level host proof: load the built CLAP, VST3 and AU through
@@ -4067,14 +4202,24 @@ set_tests_properties(Spectr-gpu-audio-status PROPERTIES TIMEOUT 120 RESOURCE_LOC
 if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
    AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET}
    AND TARGET ${SPECTR_NATIVE_STANDALONE_TARGET})
+    # Spectr.app is checked only when it carries the product version: a
+    # practice or preview build numbers the app alone differently (package.sh
+    # checks that one against the installer with --app-build-version). Built
+    # as a list rather than with empty generator expressions, which reach the
+    # command line as "" arguments argparse rejects.
+    set(_spectr_release_version_bundles
+        --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+        --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+        --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+    if(SPECTR_APP_BUILD_VERSION STREQUAL "")
+        list(APPEND _spectr_release_version_bundles
+            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app)
+    endif()
     add_test(NAME Spectr-release-version
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py
             --expected ${PROJECT_VERSION}
-            --bundle ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
-            --bundle ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
-            --bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap
-            --bundle ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+            ${_spectr_release_version_bundles}
             --binary-version-bundle ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
     set_tests_properties(Spectr-release-version PROPERTIES TIMEOUT 60)
     add_test(NAME Spectr-release-version-controls
@@ -4082,3 +4227,29 @@ if(APPLE AND Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_release_version.py --self-test)
     set_tests_properties(Spectr-release-version-controls PROPERTIES TIMEOUT 60)
 endif()
+
+# Sparkle lives in Spectr.app and in no plug-in bundle; the update-feed tooling
+# (What's New HTML, appcast signing/ordering checks) has its own controls.
+if(APPLE AND Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-sparkle-controls
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/check_sparkle.py --self-test)
+    add_test(NAME Spectr-sparkle-release-tooling
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/test_sparkle_release.py)
+    set_tests_properties(Spectr-sparkle-controls Spectr-sparkle-release-tooling
+        PROPERTIES TIMEOUT 60)
+    if(SPECTR_SPARKLE_EMBEDDED AND TARGET ${SPECTR_NATIVE_CLAP_TARGET}
+       AND TARGET ${SPECTR_NATIVE_VST3_TARGET} AND TARGET ${SPECTR_NATIVE_AU_TARGET})
+        add_test(NAME Spectr-sparkle-bundles
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/ship/check_sparkle.py bundles
+                --app ${CMAKE_BINARY_DIR}/${SPECTR_NATIVE_PLUGIN_NAME}.app
+                --feed ${SPECTR_SPARKLE_FEED_EFFECTIVE}
+                --plugin ${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component
+                --plugin ${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3
+                --plugin ${CMAKE_BINARY_DIR}/CLAP/${SPECTR_NATIVE_PLUGIN_NAME}.clap)
+        set_tests_properties(Spectr-sparkle-bundles PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+

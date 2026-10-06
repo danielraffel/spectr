@@ -745,7 +745,10 @@ TEST_CASE("materialized editor document carries the adapter's editor fixes") {
         // state, so each overlay dismisses through the same setter. This was
         // once forbidden, back when the menus owned independent booleans and
         // the shared setter closed the wrong one.
+        // A press on a menu's own trigger is closed by Pulp's overlay
+        // dismissal, so the menus record nothing of their own.
         CHECK(count_occurrences(document, "onDismiss: () => setOpenMenu(null)") == 3);
+        CHECK(count_occurrences(document, "spectrDropdown") == 0);
         CHECK(count_occurrences(
                   document,
                   "height: 26,\\n        display: \\\"inline-flex\\\",\\n"

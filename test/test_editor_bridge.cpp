@@ -468,9 +468,12 @@ TEST_CASE("host automation publication is compact and revisioned") {
     // an automatable host parameter, and the editor's settings panel reads
     // them from here; when they only shipped at hydration the panel showed
     // whatever the session opened with while the host drove the audio
-    // somewhere else. They are ten scalars, so the payload stays compact.
+    // somewhere else. Ten scalars plus the per-LFO routing (two masks and
+    // two six-amount arrays), so the payload stays compact.
     REQUIRE(payload["modulation"].isObject());
-    CHECK(payload["modulation"].size() == 10);
+    CHECK(payload["modulation"].size() == 11);
+    REQUIRE(payload["modulation"]["routes"].isArray());
+    CHECK(payload["modulation"]["routes"].size() == 2);
 }
 
 // The editor publishes its WHOLE picture (every band, the viewport and the band
@@ -1028,6 +1031,8 @@ TEST_CASE("CLI proof: JS field dispatch reaches C++ DSP and produces digital sil
 TEST_CASE("CLI proof: zoomed viewport passes its island and mutes outside") {
     const auto render_peak = [](float frequency_hz) {
         Rig r;
+        // The mask's own isolation, without Auto Gain make-up.
+        r.store.set_value(spectr::kParamAutoGain, 0.0f);
         pulp::format::PrepareContext prepare;
         prepare.sample_rate = 48000.0;
         prepare.max_buffer_size = 512;
@@ -1576,8 +1581,8 @@ TEST_CASE("plugin state rejects non-finite gain encodings failure-atomically") {
     }
 }
 
-TEST_CASE("freeze: hydration carries the toggle and the hold length; freeze_hold_set clamps",
-          "[bridge][freeze]") {
+TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_set validates",
+          "[bridge][freeze][freeze-length]") {
     Rig r;
     const auto hydrate = [&] {
         return spectr::make_editor_state_payload(*r.proc);
@@ -1585,12 +1590,23 @@ TEST_CASE("freeze: hydration carries the toggle and the hold length; freeze_hold
     auto payload = hydrate();
     REQUIRE(payload.hasObjectMember("freeze"));
     CHECK_FALSE(payload["freeze"]["frozen"].getBool());
-    CHECK(payload["freeze"]["hold_seconds"].getFloat64()
-          == Approx(spectr::FreezeSource::kDefaultHoldSeconds));
-    CHECK(payload["freeze"]["min_hold_seconds"].getFloat64()
-          == Approx(spectr::FreezeSource::kMinHoldSeconds));
-    CHECK(payload["freeze"]["max_hold_seconds"].getFloat64()
-          == Approx(spectr::FreezeSource::kMaxHoldSeconds));
+    // The old seconds setting is gone from the wire.
+    CHECK_FALSE(payload["freeze"].hasObjectMember("hold_seconds"));
+    const auto length = payload["freeze"]["length"];
+    CHECK(length["preset"].getInt32() == spectr::kDefaultLengthPreset);
+    CHECK(std::string(length["label"].getString()) == "1 bar");
+    // The vocabulary comes from the model, one entry per canonical fraction.
+    const auto fractions = payload["freeze"]["length_fractions"];
+    REQUIRE(fractions.size() == spectr::kLengthFractions.size());
+    for (std::uint32_t i = 0; i < fractions.size(); ++i)
+        CHECK(fractions[i].getString() == spectr::kLengthFractions[i].text);
+    const auto presets = payload["freeze"]["length_presets"];
+    REQUIRE(presets.size() == spectr::kLengthPresets.size());
+    CHECK(std::string(presets[0]["label"].getString()) == "1/32 bar");
+    CHECK(std::string(presets[15]["label"].getString()) == "15/16 bar");
+    CHECK(std::string(presets[16]["label"].getString()) == "1 bar");
+    CHECK(std::string(presets[19]["label"].getString()) == "8 bars");
+    CHECK(payload["freeze"]["length_max_bars"].getInt32() == 128);
 
     // The toggle is the host parameter, written the way the editor writes it.
     REQUIRE(response_ok(r.dispatch(
@@ -1598,20 +1614,54 @@ TEST_CASE("freeze: hydration carries the toggle and the hold length; freeze_hold
     CHECK(r.store.get_value(spectr::kParamFreeze) == 1.0f);
     CHECK(hydrate()["freeze"]["frozen"].getBool());
 
-    const auto set = r.dispatch(
-        R"({"type":"freeze_hold_set","payload":{"seconds":0.4}})");
-    REQUIRE(response_ok(set));
-    CHECK(r.proc->freeze_hold_seconds() == Approx(0.4));
-    // Out of range is clamped rather than refused, and the response says what
-    // is in force.
-    const auto high = r.dispatch(
-        R"({"type":"freeze_hold_set","payload":{"seconds":60}})");
-    REQUIRE(response_ok(high));
-    CHECK(r.proc->freeze_hold_seconds() == Approx(spectr::FreezeSource::kMaxHoldSeconds));
-    CHECK(high.find("\"hold_seconds\"") != std::string::npos);
+    // A common length selects its preset, as one complete host gesture so a
+    // host recording in Touch / Latch / Write keeps it.
+    std::vector<std::pair<char, pulp::state::ParamID>> gestures;
+    r.store.set_gesture_callbacks(
+        [&](pulp::state::ParamID id) { gestures.emplace_back('b', id); },
+        [&](pulp::state::ParamID id) { gestures.emplace_back('e', id); });
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"freeze_length_set","payload":{"bars":2,"fraction":"0"}})")));
+    REQUIRE(gestures.size() == 2);
+    CHECK(gestures[0] == std::pair<char, pulp::state::ParamID>{'b', spectr::kParamFreezeLength});
+    CHECK(gestures[1] == std::pair<char, pulp::state::ParamID>{'e', spectr::kParamFreezeLength});
+    CHECK(r.store.get_value(spectr::kParamFreezeLength) == 17.0f);
+    CHECK(r.proc->freeze_length() == spectr::FreezeLength{2, spectr::LengthFraction::zero});
+    // Anything else is the custom length, selected by "Custom".
+    const auto custom = r.dispatch(
+        R"({"type":"freeze_length_set","payload":{"bars":1,"fraction":"1/8"}})");
+    REQUIRE(response_ok(custom));
+    CHECK(custom.find("1 1/8 bars") != std::string::npos);
+    CHECK(r.store.get_value(spectr::kParamFreezeLength)
+          == static_cast<float>(spectr::kLengthPresetCustom));
+    CHECK(r.proc->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+
+    // Refused, and nothing moves.
+    for (const char* bad : {
+             R"({"type":"freeze_length_set","payload":{"bars":129,"fraction":"0"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":-1,"fraction":"1/8"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":0,"fraction":"0"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":1,"fraction":"1/5"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":1.5,"fraction":"0"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":"","fraction":"0"}})",
+             R"({"type":"freeze_length_set","payload":{"bars":1}})"}) {
+        INFO(bad);
+        CHECK_FALSE(response_ok(r.dispatch(bad)));
+        CHECK(r.proc->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
+    }
     CHECK(response_has_error(r.dispatch(
-        R"({"type":"freeze_hold_set","payload":{"seconds":"long"}})"), "number"));
-    CHECK(response_has_error(r.dispatch(
-        R"({"type":"freeze_hold_set","payload":{}})"), "missing"));
-    CHECK(r.proc->freeze_hold_seconds() == Approx(spectr::FreezeSource::kMaxHoldSeconds));
+        R"({"type":"freeze_length_set","payload":{"bars":129,"fraction":"0"}})"), "128"));
+
+    // The editor's preview: the model's label and verdict, nothing committed.
+    const auto preview = r.dispatch(
+        R"({"type":"freeze_length_describe","payload":{"bars":2,"fraction":"3/16"}})");
+    REQUIRE(response_ok(preview));
+    CHECK(preview.find("2 3/16 bars") != std::string::npos);
+    CHECK(preview.find("\"valid\": true") != std::string::npos);
+    const auto zero = r.dispatch(
+        R"({"type":"freeze_length_describe","payload":{"bars":0,"fraction":"0"}})");
+    REQUIRE(response_ok(zero));
+    CHECK(zero.find("\"valid\": false") != std::string::npos);
+    CHECK(zero.find("longer than 0") != std::string::npos);
+    CHECK(r.proc->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
 }

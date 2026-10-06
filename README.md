@@ -26,7 +26,8 @@ launch. Visible host validation is tracked in the canonical goal document.
 
 Hosts see the full surface: `Mix` and `Output`, all 64 band gains and mutes,
 the A/B snapshot morph, the viewport and band count, the mode toggles, the two
-internal LFOs, and four macros — each macro a single automatable lane that
+internal LFOs (shape and rate, plus an on/off and a Depth for each target each
+LFO can drive), and four macros — each macro a single automatable lane that
 drives a user-chosen group of bands. See
 [`docs/parameter-surface.md`](docs/parameter-surface.md) for the ID scheme and
 the compatibility contract. Macro MEMBERSHIP and the snapshot bank itself stay
@@ -44,6 +45,11 @@ S L B F G edit modes, M mute, T latency, Q freeze — are the DAW's in a plug-in
 unless "Keyboard shortcuts in DAW" is on, and always live in the standalone. A
 Freeze press (toggle or key) reaches the host as one edit gesture, so Touch,
 Latch and Write automation record it.
+
+Modulation: each of the two LFOs drives any set of targets at once -- Bank,
+Band shift, Band spread, Morph, Freeze, Length, Snapshot A and Snapshot B --
+each with its own Depth (band menu > Modulation > LFO n Targets). See
+[`docs/modulation.md`](docs/modulation.md).
 
 See [`planning/`](planning/) for the full design package:
 

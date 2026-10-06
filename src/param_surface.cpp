@@ -117,6 +117,41 @@ float parse_octaves(std::string_view text) {
     return octaves * kViewportMinWidthLog;
 }
 
+// LFO rate in the units the editor shows: "4 beats", "0.25 beats", "1 beat".
+std::string beats_string(float beats) {
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%g %s", static_cast<double>(beats),
+                  beats == 1.0f ? "beat" : "beats");
+    return buf;
+}
+
+float parse_beats(std::string_view text) {
+    std::string s(text);
+    float beats = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &beats) != 1 || !std::isfinite(beats))
+        return 0.0f;
+    return beats;
+}
+
+// LFO depth as the editor shows it: "50%". Typed input accepts "50%", "50",
+// or a fraction ("0.5"): a value above 1, or one with a percent sign, is a
+// percentage.
+std::string percent_string(float fraction) {
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%d%%",
+                  static_cast<int>(std::lround(fraction * 100.0f)));
+    return buf;
+}
+
+float parse_percent(std::string_view text) {
+    std::string s(text);
+    float value = 0.0f;
+    if (std::sscanf(s.c_str(), "%f", &value) != 1 || !std::isfinite(value))
+        return 0.0f;
+    if (s.find('%') != std::string::npos || value > 1.0f) value /= 100.0f;
+    return value;
+}
+
 void add_enum_labels(pulp::state::ParamInfo& info,
                      std::initializer_list<const char*> labels) {
     for (const char* label : labels) info.value_labels.emplace_back(label);
@@ -144,6 +179,24 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.group_id = kGroupGlobal;
         info.kind = pulp::state::ParamKind::Toggle;
         add_enum_labels(info, {"Live", "Frozen"});
+        store.add_parameter(info);
+    }
+    {
+        // How much the next freeze takes in. An enum of the header's common
+        // lengths plus "Custom" (the bars + fraction in the plugin state):
+        // a host can automate it, and like Freeze it moves neither latency
+        // nor topology. Every valid length (129 x 17) as one stepped lane
+        // would be unusable to draw automation on.
+        pulp::state::ParamInfo info;
+        info.id = kParamFreezeLength;
+        info.name = "Freeze Length";
+        info.range = {0.0f, static_cast<float>(kLengthPresetCustom),
+                      static_cast<float>(kDefaultLengthPreset), 1.0f};
+        info.group_id = kGroupGlobal;
+        info.kind = pulp::state::ParamKind::Enum;
+        for (const auto& preset : kLengthPresets)
+            info.value_labels.emplace_back(length_label(preset));
+        info.value_labels.emplace_back("Custom");
         store.add_parameter(info);
     }
 
@@ -274,9 +327,12 @@ void register_surface_params(pulp::state::StateStore& store) {
         pulp::state::ParamInfo info;
         info.id = kParamLfoRate;
         info.name = "LFO Rate";
-        info.unit = "beats";
+        // No separate unit: the display string carries it ("4 beats"), and
+        // VST3 hosts print `units` after that string, which would double it.
         info.range = {0.25f, 16.0f, 4.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return beats_string(v); };
+        info.from_string = [](const std::string& t) { return parse_beats(t); };
         store.add_parameter(info);
     }
     {
@@ -285,6 +341,8 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO Depth";
         info.range = {0.0f, 1.0f, 0.5f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return percent_string(v); };
+        info.from_string = [](const std::string& t) { return parse_percent(t); };
         store.add_parameter(info);
     }
     {
@@ -321,9 +379,12 @@ void register_surface_params(pulp::state::StateStore& store) {
         pulp::state::ParamInfo info;
         info.id = kParamLfo2Rate;
         info.name = "LFO 2 Rate";
-        info.unit = "beats";
+        // No separate unit: the display string carries it ("4 beats"), and
+        // VST3 hosts print `units` after that string, which would double it.
         info.range = {0.25f, 16.0f, 4.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return beats_string(v); };
+        info.from_string = [](const std::string& t) { return parse_beats(t); };
         store.add_parameter(info);
     }
     {
@@ -332,6 +393,8 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Depth";
         info.range = {0.0f, 1.0f, 0.0f};
         info.group_id = kGroupModulation;
+        info.to_string = [](float v) { return percent_string(v); };
+        info.from_string = [](const std::string& t) { return parse_percent(t); };
         store.add_parameter(info);
     }
 
@@ -354,6 +417,42 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.range = {kBandGainMinDb, kBandGainMaxDb, 0.0f};
         info.group_id = kGroupMacros;
         store.add_parameter(info);
+    }
+
+    // LFO routing, appended after every lane that shipped before it so no
+    // existing parameter moves. Each LFO drives any set of destinations at
+    // once; each destination has an on/off lane and its own Depth (there is no
+    // LFO-level depth any more; 4003/4013 are command lanes onto these).
+    // Defaults reproduce a fresh 1.0.x instance: both LFOs on the whole bank at
+    // 50 %, nothing else.
+    static constexpr const char* kRouteNames[kRouteTargetCount] = {
+        "Bank", "Snapshot A", "Snapshot B", "Morph",
+        "Band shift", "Band spread", "Freeze", "Length",
+        "Intensity", "Mix", "Output"};
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            pulp::state::ParamInfo info;
+            info.id = lfo_route_enabled_param_id(lfo, t);
+            info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];
+            info.range = {0.0f, 1.0f, t == 0 ? 1.0f : 0.0f, 1.0f};
+            info.group_id = kGroupModulation;
+            info.kind = pulp::state::ParamKind::Toggle;
+            add_enum_labels(info, {"Off", "On"});
+            store.add_parameter(info);
+        }
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            pulp::state::ParamInfo info;
+            info.id = lfo_route_amount_param_id(lfo, t);
+            info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t]
+                + " Depth";
+            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a new
+            // instance's LFO 1 on Bank sounds as it did.
+            info.range = {0.0f, 1.0f, 0.5f};
+            info.group_id = kGroupModulation;
+            info.to_string = [](float v) { return percent_string(v); };
+            info.from_string = [](const std::string& text) { return parse_percent(text); };
+            store.add_parameter(info);
+        }
     }
 }
 
@@ -423,6 +522,19 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
         store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
     settings.lfo2_depth = std::clamp(
         store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            auto& route = settings.routes[lfo][t];
+            route.enabled =
+                store->get_value(lfo_route_enabled_param_id(lfo, t)) >= 0.5f;
+            route.amount = std::clamp(
+                store->get_value(lfo_route_amount_param_id(lfo, t)), 0.0f, 1.0f);
+        }
+    }
+    // The legacy mask is DERIVED from LFO 1's routing, so a reader of the
+    // single-target API sees what LFO 1 is actually driving.
+    settings.target_mask = static_cast<std::uint8_t>(
+        route_mask(settings.routes[0]) & kModulationTargetMaskAll);
     return settings;
 }
 
@@ -430,9 +542,16 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     auto* store = param_store_;
     if (!store) return false;
 
-    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    std::unique_lock<std::mutex> lock(processing_state_mutex_);
     bool sound_changed = false;
     bool editor_changed = false;
+    // A move of the legacy single-target lane is a command: see below. Its
+    // routing writes go to the store after the lock is released.
+    std::array<std::uint16_t, kRouteLfoCount> legacy_route_masks{};
+    bool legacy_target_command = false;
+    struct LaneWrite { pulp::state::ParamID id; float value; };
+    std::array<LaneWrite, kRouteParamCount> legacy_depth_writes{};
+    std::size_t legacy_depth_write_count = 0;
 
     // Apply morph before individual band lanes. A host can automate morph and
     // a band in the same block; the explicit band value must remain reflected
@@ -442,6 +561,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         const float t = store->get_value(kParamMorph);
         if (t != applied_param_cache_[detail::kSlotMorph].load(std::memory_order_relaxed)) {
             applied_param_cache_[detail::kSlotMorph].store(t, std::memory_order_relaxed);
+            // The Morph slider shows the lane even before both snapshots
+            // exist, so a move is always news to the editor.
+            editor_changed = true;
             const bool has_a = snapshots_.has(SnapshotBank::Slot::A);
             const bool has_b = snapshots_.has(SnapshotBank::Slot::B);
             if (has_a && has_b) {
@@ -542,12 +664,18 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
             editor_changed = true;
         }
     }
+    // Freeze Length likewise: the audio thread reads it each block, and a
+    // host-side change only has to reach the header's dropdown.
+    {
+        const float value = store->get_value(kParamFreezeLength);
+        auto& cached = applied_param_cache_[detail::kSlotFreezeLength];
+        if (value != cached.load(std::memory_order_relaxed)) {
+            cached.store(value, std::memory_order_relaxed);
+            editor_changed = true;
+        }
+    }
 
     ModulationSettings next_modulation = modulation_from_store_();
-    // The explicit destination selection is editor state; it is not derived
-    // from a parameter lane, so carry it across rather than resetting it to
-    // the sentinel on every unrelated LFO edit.
-    next_modulation.target_mask = modulation_.target_mask;
     const std::array<float, 9> modulation_values{
         next_modulation.enabled ? 1.0f : 0.0f,
         static_cast<float>(next_modulation.shape),
@@ -558,24 +686,83 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         static_cast<float>(next_modulation.lfo2_shape),
         next_modulation.lfo2_beats_per_cycle,
         next_modulation.lfo2_depth};
-    // Offset of kParamLfoTarget within modulation_values above.
+    // Offsets of kParamLfoTarget, kParamLfoDepth and kParamLfo2Depth within
+    // modulation_values above.
     constexpr std::size_t kModulationTargetValueIndex = 4;
+    constexpr std::size_t kDepthValueIndex[kRouteLfoCount] = {3, 8};
     bool modulation_changed = false;
     bool target_lane_changed = false;
+    bool depth_lane_changed[kRouteLfoCount] = {false, false};
     for (std::size_t i = 0; i < modulation_values.size(); ++i) {
         auto& cached = applied_param_cache_[detail::kSlotLfoBase + i];
         if (cached.load(std::memory_order_relaxed) != modulation_values[i]) {
             cached.store(modulation_values[i], std::memory_order_relaxed);
             modulation_changed = true;
             if (i == kModulationTargetValueIndex) target_lane_changed = true;
+            for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo)
+                if (i == kDepthValueIndex[lfo]) depth_lane_changed[lfo] = true;
+        }
+    }
+    // The routing lanes: the audio owner reads them straight off the cursor,
+    // so this only stamps the cache (an unstamped slot reads as drift forever)
+    // and tells the editor.
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            const auto& route = next_modulation.routes[lfo][t];
+            const float values[2] = {route.enabled ? 1.0f : 0.0f, route.amount};
+            const std::size_t slots[2] = {detail::route_enabled_slot(lfo, t),
+                                          detail::route_amount_slot(lfo, t)};
+            for (std::size_t k = 0; k < 2; ++k) {
+                auto& cached = applied_param_cache_[slots[k]];
+                if (cached.load(std::memory_order_relaxed) != values[k]) {
+                    cached.store(values[k], std::memory_order_relaxed);
+                    modulation_changed = true;
+                }
+            }
         }
     }
     if (target_lane_changed) {
-        // The host moved kParamLfoTarget. That lane is automatable and must
-        // never be silently discarded, so it takes authority back from an
-        // earlier editor selection: drop to the sentinel and follow the enum
-        // until the editor explicitly selects destinations again.
-        next_modulation.target_mask = kModulationTargetMaskUnset;
+        // The host moved the legacy single-target lane (4004): automation
+        // written before per-LFO routing existed, or a host edit of it. It
+        // must never be silently discarded, so it is honoured as the command
+        // it always was -- "modulate THIS destination" -- for both LFOs (the
+        // lane was shared by both). Among the four destinations it can name it
+        // selects exactly that one; the viewport routes and every amount are
+        // left as they are. The audio owner already plays it from the cursor
+        // (see process()); these writes make the routing lanes and the editor
+        // agree with what is heard.
+        const auto bit = modulation_target_bit(next_modulation.target);
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            const std::uint16_t keep = static_cast<std::uint16_t>(
+                route_mask(next_modulation.routes[lfo])
+                & ~static_cast<std::uint16_t>(kModulationTargetMaskAll));
+            legacy_route_masks[lfo] = static_cast<std::uint16_t>(keep | bit);
+            set_route_mask(next_modulation.routes[lfo], legacy_route_masks[lfo]);
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t)
+                applied_param_cache_[detail::route_enabled_slot(lfo, t)].store(
+                    ((legacy_route_masks[lfo] >> t) & 1u) ? 1.0f : 0.0f,
+                    std::memory_order_relaxed);
+        }
+        next_modulation.target_mask = static_cast<std::uint8_t>(
+            route_mask(next_modulation.routes[0]) & kModulationTargetMaskAll);
+        legacy_target_command = true;
+    }
+    // The LFO-level Depth lanes (4003, 4013) are commands as well: each target
+    // has its own Depth, and a host move of an LFO's Depth lane -- automation
+    // written before per-target depth existed -- sets the Depth of every target
+    // that LFO currently drives. Never written back.
+    for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+        if (!depth_lane_changed[lfo]) continue;
+        const float depth = lfo == 0 ? next_modulation.depth : next_modulation.lfo2_depth;
+        for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+            auto& route = next_modulation.routes[lfo][t];
+            if (!route.enabled) continue;
+            route.amount = depth;
+            applied_param_cache_[detail::route_amount_slot(lfo, t)].store(
+                depth, std::memory_order_relaxed);
+            legacy_depth_writes[legacy_depth_write_count++] =
+                {lfo_route_amount_param_id(lfo, t), depth};
+        }
     }
     if (modulation_changed) {
         modulation_ = next_modulation;
@@ -608,6 +795,19 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
             editor_authority_.record_external_mutation(),
             std::memory_order_release);
     }
+    lock.unlock();
+    // Outside the lock: set_value fires listeners that may read processor
+    // state back. The cache was stamped above with these exact values, so the
+    // writes read as applied rather than as fresh drift. No gesture: this is
+    // the processor following a host-driven lane, not a user edit to record.
+    if (legacy_target_command) {
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo)
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t)
+                store->set_value(lfo_route_enabled_param_id(lfo, t),
+                                 ((legacy_route_masks[lfo] >> t) & 1u) ? 1.0f : 0.0f);
+    }
+    for (std::size_t k = 0; k < legacy_depth_write_count; ++k)
+        store->set_value(legacy_depth_writes[k].id, legacy_depth_writes[k].value);
     return sound_changed || editor_changed;
 }
 
@@ -653,9 +853,39 @@ void Spectr::set_keyboard_shortcuts_in_daw(bool enabled) noexcept {
 }
 
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
-    std::lock_guard<std::mutex> lock(processing_state_mutex_);
-    modulation_.target_mask = static_cast<std::uint8_t>(mask & 0x0f);
-    publish_audio_modulation_state_();
+    // Legacy "Destinations" selection (both LFOs, the four field
+    // destinations). It is now expressed as the per-LFO routing lanes, each
+    // written as its own host gesture so a host records it; the viewport
+    // routes are left as they are.
+    mask = static_cast<std::uint8_t>(mask & kModulationTargetMaskAll);
+    std::array<std::uint16_t, kRouteLfoCount> masks{};
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            masks[lfo] = static_cast<std::uint16_t>(
+                (route_mask(modulation_.routes[lfo])
+                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll))
+                | mask);
+            set_route_mask(modulation_.routes[lfo], masks[lfo]);
+        }
+        modulation_.target_mask = mask;
+    }
+    if (param_store_) {
+        for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo)
+            for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
+                const float value = ((masks[lfo] >> t) & 1u) ? 1.0f : 0.0f;
+                const auto id = lfo_route_enabled_param_id(lfo, t);
+                // Only lanes that change: an unchanged lane is no edit, and a
+                // gesture on it would read as a touch in a host's Latch mode.
+                if (param_store_->get_value(id) == value) continue;
+                push_surface_param_(id, detail::route_enabled_slot(lfo, t),
+                                    value, /*emit_gesture=*/true);
+            }
+    }
+    {
+        std::lock_guard<std::mutex> lock(processing_state_mutex_);
+        publish_audio_modulation_state_();
+    }
     host_automation_revision_.store(
         editor_authority_.record_external_mutation(),
         std::memory_order_release);
@@ -811,10 +1041,66 @@ bool Spectr::set_freeze_from_editor(bool frozen) noexcept {
     if (!store) return false;
     // Its own bracket even inside an open drag epoch: a press is a discrete
     // command, and the epoch closes only the parameters its drag touched.
+    freeze_press_request_.store(frozen ? 1 : 0, std::memory_order_relaxed);
     store->begin_gesture(kParamFreeze);
     store->set_value(kParamFreeze, frozen ? 1.0f : 0.0f);
     store->end_gesture(kParamFreeze);
     return true;
+}
+
+bool Spectr::is_editor_plain_param(pulp::state::ParamID id) noexcept {
+    return id == kMix || id == kOutputTrim
+        || id == kParamIntensity || id == kParamAutoGain
+        || (id >= kParamLfoEnabled && id <= kParamLfoTarget)
+        || (id >= kParamLfo2Enabled && id <= kParamLfo2Depth)
+        || is_lfo_route_param(id);
+}
+
+bool Spectr::edit_param_from_editor(pulp::state::ParamID id,
+                                    float value) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id) || !std::isfinite(value))
+        return false;
+    const bool in_drag =
+        std::find(editor_param_gestures_.begin(), editor_param_gestures_.end(), id)
+        != editor_param_gestures_.end();
+    // The value only, with no applied-cache stamp: these lanes are read by the
+    // audio owner straight off the store, and the sync worker's drift sweep
+    // is what republishes the modulation settings and advances the editor's
+    // live projection -- exactly the path a host write takes.
+    if (!in_drag) store->begin_gesture(id);
+    store->set_value(id, value);
+    if (!in_drag) store->end_gesture(id);
+    return true;
+}
+
+bool Spectr::begin_editor_param_gesture(pulp::state::ParamID id) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id)) return false;
+    if (std::find(editor_param_gestures_.begin(), editor_param_gestures_.end(), id)
+        != editor_param_gestures_.end())
+        return true;
+    store->begin_gesture(id);
+    editor_param_gestures_.push_back(id);
+    return true;
+}
+
+bool Spectr::end_editor_param_gesture(pulp::state::ParamID id) noexcept {
+    auto* store = param_store_;
+    if (!store || !is_editor_plain_param(id)) return false;
+    const auto it = std::find(editor_param_gestures_.begin(),
+                              editor_param_gestures_.end(), id);
+    if (it == editor_param_gestures_.end()) return true;
+    editor_param_gestures_.erase(it);
+    store->end_gesture(id);
+    return true;
+}
+
+void Spectr::end_editor_param_gestures() noexcept {
+    auto* store = param_store_;
+    if (store)
+        for (const auto id : editor_param_gestures_) store->end_gesture(id);
+    editor_param_gestures_.clear();
 }
 
 void Spectr::begin_param_gesture_epoch() noexcept {
