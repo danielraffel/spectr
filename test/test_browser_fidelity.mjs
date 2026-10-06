@@ -9,9 +9,21 @@ import { pathToFileURL } from 'node:url';
 const [sourcePath, chromePath, outputArg] = process.argv.slice(2);
 assert(sourcePath && chromePath,
   'usage: test_browser_fidelity.mjs resources/editor.html CHROME [OUTPUT_DIR]');
-const source = fs.readFileSync(sourcePath, 'utf8');
+const sourceBytes = fs.readFileSync(sourcePath);
+const source = sourceBytes.toString('utf8');
 const output = path.resolve(outputArg || path.join(process.cwd(), 'browser-fidelity-artifacts'));
 fs.mkdirSync(output, { recursive: true });
+
+const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
+const sourceSha256 = sha256(sourceBytes);
+
+class BrowserFidelityError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'BrowserFidelityError';
+    this.code = code;
+  }
+}
 
 const bridge = `<script>
 window.__spectrBrowserPosts = [];
@@ -121,7 +133,10 @@ const launch = async (htmlPath, screenshotPath) => {
     }
     if (!marker) {
       socket.close();
-      throw new Error('editor did not expose data-spectr-bank-ready="true"');
+      throw new BrowserFidelityError(
+        'capture-mount-missing',
+        'editor did not expose data-spectr-bank-ready="true"',
+      );
     }
     const dom = await evaluate(`JSON.stringify({
       title: document.title,
@@ -157,14 +172,32 @@ const run = async () => {
     // control blind.
     const broken = source.replaceAll('ReactDOM.createRoot', 'ReactDOM.brokenRoot');
     assert.notEqual(broken, source, 'broken-editor mutation matched nothing');
+    const mutatedSourceSha256 = sha256(Buffer.from(broken, 'utf8'));
+    assert.notEqual(mutatedSourceSha256, sourceSha256,
+      'broken-editor mutation did not change the source digest');
     const brokenPath = path.join(temp, 'broken-editor.html');
     fs.writeFileSync(brokenPath, bridge + broken);
-    let rejected = false;
+    let negativeOutcome;
     try { await launch(brokenPath, path.join(output, 'broken-editor.png')); }
-    catch (error) { rejected = true; console.log(`negative control rejected: ${error.message}`); }
-    assert(rejected, 'broken-editor negative control was accepted');
-    const receipt = { source: path.resolve(sourcePath), positive: first, repeat: second,
-      deterministicDomMarker: true, negativeControl: 'rejected' };
+    catch (error) {
+      assert(error instanceof BrowserFidelityError,
+        `negative control failed for an unexpected reason: ${error.message}`);
+      negativeOutcome = { status: 'rejected', errorCode: error.code };
+      console.log(`negative control rejected: ${error.code}: ${error.message}`);
+    }
+    assert(negativeOutcome, 'broken-editor negative control was accepted');
+    assert.equal(negativeOutcome.errorCode, 'capture-mount-missing',
+      'broken-editor negative control did not fail at the expected mount gate');
+    const receipt = { source: path.resolve(sourcePath), sourceSha256,
+      positive: first, repeat: second, deterministicDomMarker: true,
+      negativeControl: {
+        mutation: {
+          kind: 'broken-editor-source',
+          sourceSha256,
+          mutatedSourceSha256,
+        },
+        outcome: negativeOutcome,
+      } };
     fs.writeFileSync(path.join(output, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
     console.log(JSON.stringify(receipt, null, 2));
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
