@@ -41,6 +41,7 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                  "--plant-settings-slider-prop-type", "SpectrSettingsSlider",
                  "--plant-chrome-prop-type", "toolbar-buttons",
                  "--plant-filter-command-contract", "FilterBank",
+                 "--plant-filter-bank-prop-contract", "FilterBank",
                  "--plant-freeze-menu-contract", "SpectrFreezeLength",
                  "--plant-modulation-subhead-contract", "SpectrModulationSettings"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
@@ -73,8 +74,11 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                 ("SpectrFreezeLength", "openMenu"),
                 ("SpectrModulationSettings", "subhead"),
             })
+            self.assertIn("FilterBank", [item["name"] for item in report["prop_contracts"]])
             self.assertEqual(report["filter_command_contract_negative_control"]["status"], "passed")
             self.assertEqual(report["filter_command_contract_negative_control"]["diagnostic"]["code"], "TS2345")
+            self.assertEqual(report["filter_bank_prop_contract_negative_control"]["status"], "passed")
+            self.assertIn(report["filter_bank_prop_contract_negative_control"]["diagnostic"]["code"], ("TS2739", "TS2741"))
             self.assertEqual(report["freeze_menu_contract_negative_control"]["status"], "passed")
             self.assertEqual(report["freeze_menu_contract_negative_control"]["diagnostic"]["code"], "TS2345")
             self.assertEqual(report["modulation_subhead_contract_negative_control"]["status"], "passed")
