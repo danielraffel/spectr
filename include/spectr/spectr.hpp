@@ -926,6 +926,10 @@ private:
     // Editor Range, dB. Guarded by processing_state_mutex_.
     int                                    editor_range_db_ = kEditorRangeDefaultDb;
     bool                                   processor_prepared_ = false;
+    // During prepare, adopt host-written parameters as state. Legacy LFO
+    // target/depth lanes are commands during live automation, but AU hosts
+    // commonly write the full parameter set before Initialize().
+    bool                                   suppress_legacy_lane_commands_ = false;
     // Owned here, not by a renderer, so a Latency switch hands the running
     // hold to the new realisation instead of dropping it. Prepared with the
     // processor; its members belong to the audio thread afterwards.

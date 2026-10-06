@@ -804,6 +804,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // snapshot of those values; the legacy LFO target/depth lanes must not be
     // interpreted as compatibility commands until the processor is live.
     processor_prepared_ = false;
+    suppress_legacy_lane_commands_ = true;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         active_design_grid_ = renderer_ ? renderer_->design_grid_size()
@@ -847,6 +848,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "[Spectr] parameter sync worker failed to start; host automation "
             "of the band surface will not reach the DSP");
     }
+    suppress_legacy_lane_commands_ = false;
     processor_prepared_ = renderer_ != nullptr;
     configure_bridge_(ctx.output_channels);
 }
