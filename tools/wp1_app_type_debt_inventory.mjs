@@ -183,6 +183,7 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
     });
     let authored = source.toString('utf8');
     let propContract = null;
+    let helperContract = null;
     if (applyPropContracts && component.name === 'SpectrSettingsField') {
       const marker = 'function SpectrSettingsField({ label, hint, children, hidden }) {';
       if (!authored.includes(marker)) fail('SpectrSettingsField prop contract marker is missing');
@@ -243,9 +244,22 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
       };
       authored = authored.replace(marker, `type SnapBtnProps = { id: string; action: string; slot: string; filled: boolean; onClick: (...args: any[]) => unknown; onClear?: (...args: any[]) => unknown; capture?: boolean; label: string };\nfunction SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }: SnapBtnProps) {`);
     }
+    if (applyPropContracts && component.name === 'FilterBank') {
+      const functionMarker = 'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState, initialNativeState }) {';
+      const helperMarker = 'const issueNativeCommand = (type, payload, successStatus, skipState) => {';
+      if (!authored.includes(functionMarker)) fail('FilterBank function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('FilterBank issueNativeCommand contract marker is missing');
+      helperContract = {
+        name: 'issueNativeCommand', component: component.name,
+        type: '(type:string, payload:Record<string,unknown>, successStatus:string|null, skipState?:boolean) => number',
+        value_type: 'skipState optional with false default; payload/status remain explicit',
+      };
+      authored = authored.replace(functionMarker, `type SpectrNativeCommandPayload = Readonly<Record<string, unknown>>;\ntype SpectrNativeCommand = (type: string, payload: SpectrNativeCommandPayload, successStatus: string | null, skipState?: boolean) => number;\n${functionMarker}`);
+      authored = authored.replace(helperMarker, 'const issueNativeCommand: SpectrNativeCommand = (type, payload, successStatus, skipState = false) => {');
+    }
     const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
-    components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}) });
+    components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}), ...(helperContract ? { helper_contract: helperContract } : {}) });
   }
   return components;
 }
@@ -265,7 +279,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType, plantFilterCommandContract }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -379,6 +393,18 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (!railWrong || !railMissing || !snapWrong || !snapMissing) fail(`planted toolbar button controls did not fail closed: ${JSON.stringify({ railDiagnostics, snapDiagnostics })}`);
       chromePropTypeNegativeControl = { status: 'passed', components: ['RailBtn', 'SnapBtn'], diagnostics: [railWrong, snapWrong], missing_diagnostics: [railMissing, snapMissing], planted_diagnostic_count: planted.diagnostics.length };
     }
+    let filterCommandContractNegativeControl = { status: 'not-run' };
+    if (plantFilterCommandContract) {
+      if (plantFilterCommandContract !== 'FilterBank') fail(`FilterBank command-contract control must target FilterBank, got ${plantFilterCommandContract}`);
+      const target = path.join(stage, 'components', 'FilterBank.tsx');
+      if (!fs.existsSync(target)) fail('FilterBank command-contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_filter_command_contract_bad__: SpectrNativeCommand = (type, payload, successStatus, skipState) => 0;\nconst __wp1_filter_command_contract_call__ = __wp1_filter_command_contract_bad__("capture_snapshot", "bad-payload", null);\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/FilterBank.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /string/.test(item.message) && /SpectrNativeCommandPayload|Record/.test(item.message));
+      if (!diagnostic) fail(`planted FilterBank command-contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      filterCommandContractNegativeControl = { status: 'passed', component: 'FilterBank', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
     let jsxChildrenNegativeControl = { status: 'not-run' };
     if (plantJsxChildren) {
       const target = path.join(stage, 'components', 'Hrow.tsx');
@@ -415,12 +441,14 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       },
       negative_control: negativeControl,
       prop_contracts: modules.filter((module) => module.prop_contract).map((module) => module.prop_contract),
+      helper_contracts: modules.filter((module) => module.helper_contract).map((module) => module.helper_contract),
       prop_negative_control: propNegativeControl,
       prop_type_negative_control: propTypeNegativeControl,
       mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
       settings_chips_prop_type_negative_control: settingsChipsPropTypeNegativeControl,
       settings_slider_prop_type_negative_control: settingsSliderPropTypeNegativeControl,
       chrome_prop_type_negative_control: chromePropTypeNegativeControl,
+      filter_command_contract_negative_control: filterCommandContractNegativeControl,
       jsx_children_negative_control: jsxChildrenNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
@@ -436,13 +464,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type' || arg === '--plant-filter-command-contract') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons] [--plant-filter-command-contract FilterBank]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -452,7 +480,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type, plantFilterCommandContract: args.plant_filter_command_contract }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

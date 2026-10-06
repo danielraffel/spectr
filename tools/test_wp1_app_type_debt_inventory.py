@@ -39,7 +39,8 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
                  "--plant-mbtn-prop-type", "MBtn", "--plant-jsx-children", "yes",
                  "--plant-settings-chips-prop-type", "SpectrSettingsChips",
                  "--plant-settings-slider-prop-type", "SpectrSettingsSlider",
-                 "--plant-chrome-prop-type", "toolbar-buttons"],
+                 "--plant-chrome-prop-type", "toolbar-buttons",
+                 "--plant-filter-command-contract", "FilterBank"],
                 cwd=ROOT, text=True, capture_output=True, check=False, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -64,6 +65,9 @@ class AppTypeDebtInventoryTest(unittest.TestCase):
             self.assertTrue(any("string" in message and "boolean" in message for message in messages))
             self.assertIn("SpectrSettingsField", [item["name"] for item in report["prop_contracts"]])
             self.assertIn("MBtn", [item["name"] for item in report["prop_contracts"]])
+            self.assertEqual([item["name"] for item in report["helper_contracts"]], ["issueNativeCommand"])
+            self.assertEqual(report["filter_command_contract_negative_control"]["status"], "passed")
+            self.assertEqual(report["filter_command_contract_negative_control"]["diagnostic"]["code"], "TS2345")
             self.assertEqual(report["mbtn_prop_type_negative_control"]["status"], "passed")
             self.assertEqual(len(report["mbtn_prop_type_negative_control"]["diagnostics"]), 2)
             self.assertTrue(all(item["code"] == "TS2322" for item in report["mbtn_prop_type_negative_control"]["diagnostics"]))
