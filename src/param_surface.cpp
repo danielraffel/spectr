@@ -1,4 +1,5 @@
 #include "spectr/param_surface.hpp"
+#include "spectr/test_seams.hpp"
 #include "spectr/macro_field.hpp"
 #include "spectr/spectr.hpp"
 
@@ -419,6 +420,18 @@ void register_surface_params(pulp::state::StateStore& store) {
         store.add_parameter(info);
     }
 
+    // Freeze "Hold for Length" (param_surface.hpp): off by default.
+    {
+        pulp::state::ParamInfo info;
+        info.id = kParamFreezeHoldForLength;
+        info.name = "Freeze Hold for Length";
+        info.range = {0.0f, 1.0f, 0.0f, 1.0f};
+        info.group_id = kGroupModulation;
+        info.kind = pulp::state::ParamKind::Toggle;
+        add_enum_labels(info, {"Off", "On"});
+        store.add_parameter(info);
+    }
+
     // LFO routing, appended after every lane that shipped before it so no
     // existing parameter moves. Each LFO drives any set of destinations at
     // once; each destination has an on/off lane and its own Depth (there is no
@@ -428,7 +441,7 @@ void register_surface_params(pulp::state::StateStore& store) {
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
         "Band shift", "Band spread", "Freeze", "Length",
-        "Intensity", "Mix", "Output"};
+        "Intensity", "Mix", "Output", "Bands", "Preset"};
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             pulp::state::ParamInfo info;
@@ -467,21 +480,35 @@ void register_surface_params(pulp::state::StateStore& store) {
 
 namespace spectr {
 
-void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask&) noexcept {
+void Spectr::param_sync_trampoline_(void* ctx, const ParamSyncTask& task) noexcept {
     // Fixture-only. Holds this worker back so a test can prove the audio path
     // reads the store on its own rather than by winning a race with this
     // thread. Read once; unset in every shipping configuration, where the
     // branch is a single relaxed load of a zero.
     static const int stall_ms = [] {
-        const char* raw = std::getenv("SPECTR_TEST_PARAM_SYNC_STALL_MS");
+        const char* raw = SPECTR_TEST_ENV("SPECTR_TEST_PARAM_SYNC_STALL_MS");
         if (raw == nullptr) return 0;
         const int parsed = std::atoi(raw);
         return parsed > 0 ? std::min(parsed, 5000) : 0;
     }();
-    if (stall_ms > 0)
-        std::this_thread::sleep_for(std::chrono::milliseconds(stall_ms));
-    (void)static_cast<Spectr*>(ctx)->apply_surface_params(/*apply_morph=*/true);
+    const int test_stall_ms = std::max(
+        stall_ms, detail::g_param_sync_test_stall_ms.load(std::memory_order_relaxed));
+    if (test_stall_ms > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(test_stall_ms));
+    auto* self = static_cast<Spectr*>(ctx);
+    t_sync_publish = {task.ordinal, task.renderer};
+    (void)self->apply_surface_params(/*apply_morph=*/true);
+    t_sync_publish = {};
+    // Retire this task and every one it coalesced (an offline render waits
+    // on this; see await_offline_work_).
+    self->retire_param_sync_through_(task.tag);
 }
+
+namespace detail {
+std::atomic<std::uint64_t> g_param_sync_backlog{0};
+std::atomic<int> g_param_sync_test_stall_ms{0};
+std::atomic<void (*)()> g_param_sync_spawned_hook{nullptr};
+} // namespace detail
 
 Spectr::SurfaceDrift Spectr::sample_surface_drift_() noexcept {
     SurfaceDrift drift;
@@ -705,7 +732,9 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     }
     // The routing lanes: the audio owner reads them straight off the cursor,
     // so this only stamps the cache (an unstamped slot reads as drift forever)
-    // and tells the editor.
+    // and tells the editor. It also records whether the host wrote any of an
+    // LFO's routing lanes in this pass: see the legacy commands below.
+    bool routing_written[kRouteLfoCount] = {false, false};
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             const auto& route = next_modulation.routes[lfo][t];
@@ -717,6 +746,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
                 if (cached.load(std::memory_order_relaxed) != values[k]) {
                     cached.store(values[k], std::memory_order_relaxed);
                     modulation_changed = true;
+                    routing_written[lfo] = true;
                 }
             }
         }
@@ -733,6 +763,10 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
         // agree with what is heard.
         const auto bit = modulation_target_bit(next_modulation.target);
         for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
+            if (routing_written[lfo]) {
+                legacy_route_masks[lfo] = route_mask(next_modulation.routes[lfo]);
+                continue;
+            }
             const std::uint16_t keep = static_cast<std::uint16_t>(
                 route_mask(next_modulation.routes[lfo])
                 & ~static_cast<std::uint16_t>(kModulationTargetMaskAll));
@@ -752,7 +786,8 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     // written before per-target depth existed -- sets the Depth of every target
     // that LFO currently drives. Never written back.
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-        if (suppress_legacy_lane_commands_ || !depth_lane_changed[lfo]) continue;
+        if (suppress_legacy_lane_commands_ || !depth_lane_changed[lfo]
+            || routing_written[lfo]) continue;
         const float depth = lfo == 0 ? next_modulation.depth : next_modulation.lfo2_depth;
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             auto& route = next_modulation.routes[lfo][t];
@@ -850,6 +885,77 @@ bool Spectr::keyboard_shortcuts_in_daw() const noexcept {
 void Spectr::set_keyboard_shortcuts_in_daw(bool enabled) noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     keyboard_shortcuts_in_daw_ = enabled;
+}
+
+bool Spectr::freeze_hold_for_length() const noexcept {
+    return param_store_ && param_store_->get_value(kParamFreezeHoldForLength) >= 0.5f;
+}
+
+int Spectr::freeze_shown_length_index() const noexcept {
+    if (!param_store_) return -1;
+    constexpr auto kLength = static_cast<std::size_t>(ModulationTarget::Length);
+    bool driven = false;
+    const pulp::state::ParamID enabled[2] = {kParamLfoEnabled, kParamLfo2Enabled};
+    for (std::size_t lfo = 0; lfo < 2; ++lfo)
+        driven = driven || (param_store_->get_value(enabled[lfo]) >= 0.5f
+            && param_store_->get_value(lfo_route_enabled_param_id(lfo, kLength)) >= 0.5f);
+    if (!driven) return -1;
+    if (freeze_effective()) {
+        const int engaged = freeze_engaged_length_index();
+        if (engaged >= 0) return engaged;
+    }
+    return freeze_modulated_length_index();
+}
+
+bool Spectr::set_preset_modulation(
+    std::string centre_id,
+    const std::array<std::string, kPresetNeighbourCount>& names,
+    const PresetModulationNeighbours& neighbours) {
+    PresetModulationNeighbours next = neighbours;
+    next.below = std::clamp(next.below, 0, kPresetModulationSteps);
+    next.above = std::clamp(next.above, 0, kPresetModulationSteps);
+    for (auto& gains : next.gains)
+        for (auto& g : gains)
+            g = std::isfinite(g) ? std::clamp(g, kBandGainMinDb, kBandGainMaxDb) : 0.0f;
+    next.valid = !centre_id.empty();
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    preset_neighbours_ = next;
+    preset_names_ = names;
+    preset_centre_id_ = std::move(centre_id);
+    publish_audio_modulation_state_();
+    return true;
+}
+
+std::string Spectr::preset_modulation_name(int step) const {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    if (!preset_neighbours_.valid) return {};
+    if (step < -preset_neighbours_.below || step > preset_neighbours_.above) return {};
+    return preset_names_[static_cast<std::size_t>(kPresetModulationSteps + step)];
+}
+
+std::string Spectr::preset_modulation_centre_id() const {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return preset_centre_id_;
+}
+
+bool Spectr::show_tooltips() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return show_tooltips_;
+}
+
+void Spectr::set_show_tooltips(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    show_tooltips_ = enabled;
+}
+
+bool Spectr::ask_before_override() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return ask_before_override_;
+}
+
+void Spectr::set_ask_before_override(bool enabled) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    ask_before_override_ = enabled;
 }
 
 bool Spectr::set_modulation_target_mask(std::uint8_t mask) noexcept {
@@ -1053,6 +1159,7 @@ bool Spectr::is_editor_plain_param(pulp::state::ParamID id) noexcept {
         || id == kParamIntensity || id == kParamAutoGain
         || (id >= kParamLfoEnabled && id <= kParamLfoTarget)
         || (id >= kParamLfo2Enabled && id <= kParamLfo2Depth)
+        || id == kParamFreezeHoldForLength
         || is_lfo_route_param(id);
 }
 
@@ -1071,6 +1178,13 @@ bool Spectr::edit_param_from_editor(pulp::state::ParamID id,
     if (!in_drag) store->begin_gesture(id);
     store->set_value(id, value);
     if (!in_drag) store->end_gesture(id);
+    // Hold for Length is not in the surface cache the drift sweep watches,
+    // so its edit advances the live projection here, or a second view of
+    // the switch (Settings beside the band menu) would keep the old value.
+    if (id == kParamFreezeHoldForLength)
+        host_automation_revision_.store(
+            editor_authority_.record_external_mutation(),
+            std::memory_order_release);
     return true;
 }
 
@@ -1120,3 +1234,7 @@ void Spectr::end_param_gesture_epoch() noexcept {
 }
 
 } // namespace spectr
+
+extern "C" std::uint64_t spectr_param_sync_backlog_v1() noexcept {
+    return spectr::detail::g_param_sync_backlog.load(std::memory_order_acquire);
+}

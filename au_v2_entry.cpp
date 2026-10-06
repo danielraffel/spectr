@@ -21,6 +21,11 @@ const bool g_au_v2_owns_resize_grip = [] {
 
 }  // namespace
 
+// The SDK's AU v2 adapter scopes kAudioUnitProperty_OfflineRender to one
+// render session (a host write survives exactly one Initialize), so a bounce
+// the host never cleared cannot make later realtime blocks wait for the design
+// workers. tools/au_routes_probe.cpp pins that contract against this build.
+
 #if defined(SPECTR_WEBVIEW_REFERENCE)
 PULP_AU_PLUGIN(SpectrWebViewReferenceAU, spectr::create_spectr)
 #elif defined(SPECTR_DEV_IDENTITY)

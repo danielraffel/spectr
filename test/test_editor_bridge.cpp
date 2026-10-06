@@ -468,10 +468,12 @@ TEST_CASE("host automation publication is compact and revisioned") {
     // an automatable host parameter, and the editor's settings panel reads
     // them from here; when they only shipped at hydration the panel showed
     // whatever the session opened with while the host drove the audio
-    // somewhere else. Ten scalars plus the per-LFO routing (two masks and
-    // two six-amount arrays), so the payload stays compact.
+    // somewhere else. Ten scalars, the per-LFO routing (two masks and two
+    // amount arrays) and Freeze's Hold for Length, so the payload stays
+    // compact.
     REQUIRE(payload["modulation"].isObject());
-    CHECK(payload["modulation"].size() == 11);
+    CHECK(payload["modulation"].size() == 12);
+    CHECK(payload["modulation"].hasObjectMember("freeze_hold_for_length"));
     REQUIRE(payload["modulation"]["routes"].isArray());
     CHECK(payload["modulation"]["routes"].size() == 2);
 }
@@ -1665,3 +1667,57 @@ TEST_CASE("freeze: hydration carries the toggle and the Length; freeze_length_se
     CHECK(zero.find("longer than 0") != std::string::npos);
     CHECK(r.proc->freeze_length() == spectr::FreezeLength{1, spectr::LengthFraction::f1_8});
 }
+
+// Settings' UPDATES group asks Pulp's update service through these messages.
+// The editor code is shared by every format: with no service installed (every
+// plug-in, and these tests) they must answer "not available" so the group
+// renders nothing; with one installed (the standalone) they drive it.
+#if __has_include(<pulp/format/app_updates.hpp>)
+#include <pulp/format/app_updates.hpp>
+
+namespace {
+struct RecordingUpdateService final : pulp::format::AppUpdateService {
+    int checks = 0;
+    bool automatic = true;
+    pulp::format::AppUpdateStatus status() const override {
+        pulp::format::AppUpdateStatus s;
+        s.available = true;
+        s.can_check_now = true;
+        s.automatic_checks = automatic;
+        s.app_name = "Spectr";
+        s.version = "1.0.7";
+        s.installer = pulp::format::AppUpdateInstaller::package;
+        s.releases_url = "https://github.com/danielraffel/spectr/releases";
+        return s;
+    }
+    bool check_for_updates() override { ++checks; return true; }
+    bool set_automatic_checks(bool on) override { automatic = on; return true; }
+};
+} // namespace
+
+TEST_CASE("Editor bridge: update messages report unavailable without a service (plug-ins)",
+          "[editor_bridge][updates]") {
+    pulp::format::set_app_update_service(nullptr);
+    Rig rig;
+    const auto r = rig.dispatch(R"({"type":"pulp_updates_get","payload":{}})");
+    REQUIRE(response_ok(r));
+    CHECK(choc::json::parse(r)["available"].getBool() == false);
+    const auto c = rig.dispatch(R"({"type":"pulp_updates_check","payload":{}})");
+    CHECK(choc::json::parse(c)["started"].getBool() == false);
+}
+
+TEST_CASE("Editor bridge: update messages drive the standalone's update service",
+          "[editor_bridge][updates]") {
+    auto service = std::make_shared<RecordingUpdateService>();
+    pulp::format::set_app_update_service(service);
+    Rig rig;
+    const auto r = choc::json::parse(rig.dispatch(R"({"type":"pulp_updates_get","payload":{}})"));
+    CHECK(r["available"].getBool());
+    CHECK(std::string(r["note"].getString()).find("administrator password") != std::string::npos);
+    rig.dispatch(R"({"type":"pulp_updates_check","payload":{}})");
+    CHECK(service->checks == 1);
+    rig.dispatch(R"({"type":"pulp_updates_set_automatic","payload":{"on":false}})");
+    CHECK_FALSE(service->automatic);
+    pulp::format::set_app_update_service(nullptr);
+}
+#endif

@@ -1,7 +1,9 @@
 #include <spectr/experimental/shared_spectral_bridge.hpp>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <thread>
 
 namespace spectr::experimental {
 namespace {
@@ -118,6 +120,23 @@ bool SharedSpectralBridge::process(const float* const* input,float* const* outpu
     }else{
         const auto target=q-config_.lead_host_blocks;bool delivered=false;
         auto& slot=outputs_[target%slots];unsigned expected=ready;
+        // Offline hosts run callbacks back-to-back and can reach the delivery
+        // point before the service owner has retired the corresponding GPU
+        // result. Give that result a bounded opportunity to arrive; realtime
+        // callbacks retain the non-blocking fallback contract.
+        if(offline_.load(std::memory_order_acquire) && !config_.force_cpu_only &&
+           !fenced() && target<input_count_){
+            const auto deadline=std::chrono::steady_clock::now()+
+                std::chrono::nanoseconds(offline_wait_budget_ns);
+            for(;;){
+                const auto state=slot.state.load(std::memory_order_acquire);
+                if(state==ready && slot.epoch==epoch_ && slot.sequence==target &&
+                   ready_epoch_.load(std::memory_order_acquire)==epoch_)break;
+                if(fenced())break;
+                if(std::chrono::steady_clock::now()>=deadline)break;
+                std::this_thread::yield();
+            }
+        }
         if(slot.state.compare_exchange_strong(expected,busy,std::memory_order_acquire)){
             if(slot.epoch==epoch_ && slot.sequence==target && !fenced() &&
                ready_epoch_.load(std::memory_order_acquire)==epoch_){

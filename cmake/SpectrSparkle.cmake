@@ -18,9 +18,12 @@
 # ~/.config/pulp/secrets/sparkle/spectr_ed25519 and 1Password; it never enters
 # this repository.
 
+include(${CMAKE_CURRENT_LIST_DIR}/SpectrSparklePolicy.cmake)
+
 set(SPECTR_SPARKLE_PUBLIC_ED_KEY "mosCtB7H9gxWzbWUYyHiHTapl4sWMgkd4t09iIUnO2g=")
 set(SPECTR_SPARKLE_RELEASE_FEED
     "https://github.com/danielraffel/spectr/releases/latest/download/appcast.xml")
+set(SPECTR_RELEASES_PAGE "https://github.com/danielraffel/spectr/releases")
 set(SPECTR_SPARKLE_PRACTICE_FEED
     "https://github.com/danielraffel/spectr/releases/download/sparkle-practice/appcast-practice.xml")
 
@@ -32,88 +35,6 @@ set(SPECTR_SPARKLE_FEED_URL "" CACHE STRING
 set(SPECTR_APP_BUILD_VERSION "" CACHE STRING
     "CFBundleVersion for Spectr.app only (default: PROJECT_VERSION); practice packages use a fourth component, e.g. 1.0.7.1")
 
-# ── Delete on SDK bump ───────────────────────────────────────────────────────
-# Fallback for Pulp SDKs that predate pulp_add_sparkle(). It mirrors the SDK
-# function's behaviour for this one app (pinned download, embed, link,
-# Info.plist keys). Once Spectr pins an SDK that provides pulp_add_sparkle(),
-# delete this function, src/mac/sparkle_updater_shim.mm, and the
-# _spectr_sparkle_shim branch below.
-set(_SPECTR_SPARKLE_VERSION "2.10.0")
-set(_SPECTR_SPARKLE_SHA256
-    "c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c")
-
-function(_spectr_sparkle_shim_embed target feed_url public_key)
-    set(_root "${CMAKE_BINARY_DIR}/_deps/sparkle-${_SPECTR_SPARKLE_VERSION}")
-    set(_archive "${_root}/Sparkle-${_SPECTR_SPARKLE_VERSION}.tar.xz")
-    set(_stamp "${_root}/.extracted-${_SPECTR_SPARKLE_SHA256}")
-    if(NOT EXISTS "${_stamp}")
-        file(MAKE_DIRECTORY "${_root}")
-        if(NOT EXISTS "${_archive}")
-            message(STATUS "Spectr: downloading Sparkle ${_SPECTR_SPARKLE_VERSION}")
-            file(DOWNLOAD
-                "https://github.com/sparkle-project/Sparkle/releases/download/${_SPECTR_SPARKLE_VERSION}/Sparkle-${_SPECTR_SPARKLE_VERSION}.tar.xz"
-                "${_archive}" EXPECTED_HASH SHA256=${_SPECTR_SPARKLE_SHA256}
-                TLS_VERIFY ON STATUS _status)
-            list(GET _status 0 _code)
-            if(NOT _code EQUAL 0)
-                file(REMOVE "${_archive}")
-                message(FATAL_ERROR "Spectr: Sparkle download failed: ${_status}")
-            endif()
-        endif()
-        file(SHA256 "${_archive}" _have)
-        if(NOT _have STREQUAL _SPECTR_SPARKLE_SHA256)
-            file(REMOVE "${_archive}")
-            message(FATAL_ERROR "Spectr: Sparkle archive hash mismatch; removed it, re-run configure")
-        endif()
-        file(REMOVE_RECURSE "${_root}/dist")
-        file(MAKE_DIRECTORY "${_root}/dist")
-        execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xf "${_archive}"
-            WORKING_DIRECTORY "${_root}/dist" RESULT_VARIABLE _rc)
-        if(NOT _rc EQUAL 0 OR NOT EXISTS "${_root}/dist/Sparkle.framework")
-            message(FATAL_ERROR "Spectr: could not extract ${_archive}")
-        endif()
-        file(WRITE "${_stamp}" "${_SPECTR_SPARKLE_VERSION}\n")
-    endif()
-    set(_dist "${_root}/dist")
-    find_program(SPECTR_DITTO ditto REQUIRED)
-    find_program(SPECTR_CODESIGN codesign REQUIRED)
-    set(_fw_dir "$<TARGET_BUNDLE_CONTENT_DIR:${target}>/Frameworks")
-    set(_fw "${_fw_dir}/Sparkle.framework")
-    target_link_options(${target} PRIVATE "-F${_dist}" "-Wl,-needed_framework,Sparkle")
-    set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "@executable_path/../Frameworks")
-    set_property(TARGET ${target} APPEND PROPERTY INSTALL_RPATH "@executable_path/../Frameworks")
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_fw}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_fw_dir}"
-        COMMAND "${SPECTR_DITTO}" "${_dist}/Sparkle.framework" "${_fw}"
-        # Non-sandboxed: Sparkle 2's XPC services are only for sandboxed apps.
-        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_fw}/Versions/B/XPCServices" "${_fw}/XPCServices"
-        COMMAND "${SPECTR_CODESIGN}" --force --sign - --options runtime "${_fw}"
-        COMMENT "Embedding Sparkle.framework in ${target}"
-        VERBATIM)
-    # The keys go into the Info.plist TEMPLATE at the end of configure, so a
-    # reconfigure (which regenerates the bundle's Info.plist) never drops them.
-    set_target_properties(${target} PROPERTIES
-        SPECTR_SPARKLE_PLIST_XML
-        "\t<key>SUFeedURL</key>\n\t<string>${feed_url}</string>\n\t<key>SUPublicEDKey</key>\n\t<string>${public_key}</string>\n")
-    cmake_language(EVAL CODE
-        "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL _spectr_sparkle_shim_plist [[${target}]])")
-endfunction()
-function(_spectr_sparkle_shim_plist target)
-    get_target_property(_template ${target} MACOSX_BUNDLE_INFO_PLIST)
-    if(NOT _template)
-        set(_template "${CMAKE_ROOT}/Modules/MacOSXBundleInfo.plist.in")
-    endif()
-    file(READ "${_template}" _text)
-    get_target_property(_keys ${target} SPECTR_SPARKLE_PLIST_XML)
-    string(FIND "${_text}" "</dict>" _close REVERSE)
-    string(SUBSTRING "${_text}" 0 ${_close} _head)
-    string(SUBSTRING "${_text}" ${_close} -1 _tail)
-    set(_out "${CMAKE_BINARY_DIR}/SpectrSparkle/${target}-Info.plist.in")
-    file(WRITE "${_out}" "${_head}${_keys}${_tail}")
-    set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${_out}")
-endfunction()
-# ── end delete on SDK bump ───────────────────────────────────────────────────
 
 function(spectr_configure_sparkle target kind)
     set(SPECTR_SPARKLE_EMBEDDED OFF PARENT_SCOPE)
@@ -138,27 +59,34 @@ function(spectr_configure_sparkle target kind)
     endif()
 
     if(NOT SPECTR_APP_BUILD_VERSION STREQUAL "")
-        # A PREVIEW of X.Y.Z (Z > 0) numbers Spectr.app X.Y.(Z-1).<n>: below
-        # X.Y.Z itself, so the release of X.Y.Z is offered to a preview as
-        # newer, and rising from one preview to the next. (A practice build's
-        # X.Y.Z.<n> sorts ABOVE the release; a preview must not.)
-        set(_spectr_preview_prefix "")
-        if(PROJECT_VERSION_PATCH GREATER 0)
-            math(EXPR _spectr_prev_patch "${PROJECT_VERSION_PATCH} - 1")
-            set(_spectr_preview_prefix
-                "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${_spectr_prev_patch}")
-        endif()
-        if(NOT SPECTR_APP_BUILD_VERSION MATCHES "^${PROJECT_VERSION}(\\.[0-9]+)?$"
+        # A PREVIEW numbers Spectr.app just below X.Y.Z, with a 9nnn
+        # component: X.Y.(Z-1).9nnn, X.(Y-1).9999.9nnn for X.Y.0, or
+        # (X-1).9999.9999.9nnn for X.0.0 (tools/check_release_version.py,
+        # preview_prefix). Below X.Y.Z itself, so the release is offered to a
+        # preview as newer, and rising from one preview to the next. (A
+        # practice build's X.Y.Z.<n> sorts ABOVE the release; a preview must
+        # not.)
+        spectr_sparkle_preview_prefix(_spectr_preview_prefix
+            ${PROJECT_VERSION_MAJOR} ${PROJECT_VERSION_MINOR} ${PROJECT_VERSION_PATCH})
+        spectr_sparkle_regex_escape(_spectr_version_re "${PROJECT_VERSION}")
+        spectr_sparkle_regex_escape(_spectr_preview_re "${_spectr_preview_prefix}")
+        if(NOT SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_version_re}(\\.[0-9]+)?$"
            AND NOT (NOT _spectr_preview_prefix STREQUAL ""
-                    AND SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_preview_prefix}\\.9[0-9][0-9][0-9]$"))
+                    AND SPECTR_APP_BUILD_VERSION MATCHES "^${_spectr_preview_re}\\.9[0-9][0-9][0-9]$"))
             message(FATAL_ERROR
                 "SPECTR_APP_BUILD_VERSION (${SPECTR_APP_BUILD_VERSION}) must be "
                 "${PROJECT_VERSION}, ${PROJECT_VERSION}.<n> (practice) or "
-                "<X.Y.Z-1>.9<nnn> (preview of ${PROJECT_VERSION})")
+                "${_spectr_preview_prefix}.9<nnn> (preview of ${PROJECT_VERSION})")
         endif()
         # Spectr.app only; the plug-in bundles keep PROJECT_VERSION.
         set_target_properties(${target} PROPERTIES
             MACOSX_BUNDLE_BUNDLE_VERSION "${SPECTR_APP_BUILD_VERSION}")
+    endif()
+
+    spectr_sparkle_feed_policy_error(_policy_error "${kind}" "${SPECTR_APP_BUILD_VERSION}"
+        "${PROJECT_VERSION}" "${SPECTR_SPARKLE_FEED_URL}" "${SPECTR_SPARKLE_CHANNEL}")
+    if(NOT _policy_error STREQUAL "")
+        message(FATAL_ERROR "Spectr: ${_policy_error}")
     endif()
 
     if(NOT _feed STREQUAL "" AND NOT _feed MATCHES "^https://" AND
@@ -181,15 +109,65 @@ function(spectr_configure_sparkle target kind)
         ${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses/Sparkle-LICENSE.txt)
     set(SPECTR_SPARKLE_EMBEDDED ON PARENT_SCOPE)
     set(SPECTR_SPARKLE_FEED_EFFECTIVE "${_feed}" PARENT_SCOPE)
-    if(COMMAND pulp_add_sparkle)
-        pulp_add_sparkle(${target}
-            FEED_URL "${_feed}"
-            PUBLIC_ED_KEY "${SPECTR_SPARKLE_PUBLIC_ED_KEY}")
-    else()
-        # Delete on SDK bump (see above).
-        _spectr_sparkle_shim_embed(${target} "${_feed}" "${SPECTR_SPARKLE_PUBLIC_ED_KEY}")
-        target_sources(${target} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/mac/sparkle_updater_shim.mm)
-        target_link_libraries(${target} PRIVATE "-framework Security" "-framework Cocoa")
+    if(NOT COMMAND pulp_add_sparkle)
+        message(FATAL_ERROR "Spectr: the Pulp SDK provides no pulp_add_sparkle(); "
+            "Spectr.app's updater needs Pulp 0.907.0 or newer")
     endif()
+    # What the Settings UPDATES note says is generated from these facts
+    # (docs/updates.md): where releases are published, that an update is the
+    # installer package (quits and reopens Spectr, asks for an administrator
+    # password), and -- AUTOMATIC_INSTALL left off -- that nothing installs
+    # without the user choosing Install. Automatic checks are on from the
+    # first launch; the user turns them off in Settings. Pulp SDKs older than
+    # the update service ignore RELEASES_URL and INSTALLER.
+    pulp_add_sparkle(${target}
+        FEED_URL "${_feed}"
+        PUBLIC_ED_KEY "${SPECTR_SPARKLE_PUBLIC_ED_KEY}"
+        AUTOMATIC_CHECKS ON
+        RELEASES_URL "${SPECTR_RELEASES_PAGE}"
+        INSTALLER package)
+    # Nothing installs without the user choosing Install: Sparkle offers an
+    # "automatically download and install" opt-in unless the app declares
+    # SUAllowsAutomaticUpdates false. Deferred after pulp_add_sparkle's own
+    # template step (registered by the call above), so it reads the final
+    # Sparkle keys whatever the SDK writes.
+    cmake_language(EVAL CODE
+        "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL _spectr_sparkle_no_automatic_install [[${target}]])")
+endfunction()
+
+# Adds SUAllowsAutomaticUpdates = false and SUAutomaticallyUpdate = false to
+# the target's Info.plist template. A key the SDK already writes is kept when
+# it is false and refused when it is true, so there is never a duplicate or a
+# conflict. tools/ship/check_sparkle.py bundles checks the built Info.plist.
+function(_spectr_sparkle_no_automatic_install target)
+    get_target_property(_template "${target}" MACOSX_BUNDLE_INFO_PLIST)
+    if(NOT _template)
+        set(_template "${CMAKE_ROOT}/Modules/MacOSXBundleInfo.plist.in")
+    endif()
+    file(READ "${_template}" _text)
+    set(_add "")
+    foreach(_key SUAllowsAutomaticUpdates SUAutomaticallyUpdate)
+        if(_text MATCHES "<key>${_key}</key>[ \t\r\n]*<([a-z]+)/>")
+            if(NOT CMAKE_MATCH_1 STREQUAL "false")
+                message(FATAL_ERROR "Spectr: ${_template} declares ${_key} "
+                    "${CMAKE_MATCH_1}; Spectr never installs an update automatically")
+            endif()
+        elseif(_text MATCHES "<key>${_key}</key>")
+            message(FATAL_ERROR "Spectr: ${_template} declares ${_key} with a non-boolean value")
+        else()
+            string(APPEND _add "\t<key>${_key}</key>\n\t<false/>\n")
+        endif()
+    endforeach()
+    if(_add STREQUAL "")
+        return()
+    endif()
+    string(FIND "${_text}" "</dict>" _close REVERSE)
+    if(_close EQUAL -1)
+        message(FATAL_ERROR "Spectr: ${_template} has no </dict> to add the Sparkle install keys before")
+    endif()
+    string(SUBSTRING "${_text}" 0 ${_close} _head)
+    string(SUBSTRING "${_text}" ${_close} -1 _tail)
+    set(_out "${CMAKE_BINARY_DIR}/SpectrSparkle/${target}-Info.plist.in")
+    file(WRITE "${_out}" "${_head}${_add}${_tail}")
+    set_target_properties("${target}" PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${_out}")
 endfunction()

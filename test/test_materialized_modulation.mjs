@@ -567,7 +567,9 @@ function findProp(rt, label) {
     if (!node || typeof node !== "object" || found) return;
     if (Array.isArray(node)) { node.forEach(walk); return; }
     const props = node.props || {};
-    if (props.label === label) {
+    // A field row carries its label as a prop; a row nested under one (a
+    // target's Depth) as data-spectr-nested-label.
+    if (props.label === label || props["data-spectr-nested-label"] === label) {
       // The control may sit inside a wrapper (a target's Depth row is), so
       // search the field's subtree, nearest first.
       const queue = [...(node.children || []).flat()];

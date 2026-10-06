@@ -1676,3 +1676,20 @@ TEST_CASE("a band muted after a derived morph outranks the re-derivation",
     INFO("band 3 gain_db: " << snapshot.pre_field.bands[3].gain_db);
     CHECK(snapshot.pre_field.bands[3].gain_db == Approx(-8.0f).margin(0.01f));
 }
+
+#include "spectr/updater_location.hpp"
+
+TEST_CASE("Sparkle's scheduled checks run only from /Applications/Spectr.app",
+          "[updater]") {
+    using spectr::updater_runs_from_install_location;
+    CHECK(updater_runs_from_install_location("/Applications/Spectr.app"));
+    CHECK(updater_runs_from_install_location("/Applications/Spectr.app/"));
+    // Copies an installed update never replaces: each would be re-offered the
+    // same update on every scheduled check.
+    CHECK_FALSE(updater_runs_from_install_location("/Users/me/Downloads/Spectr.app"));
+    CHECK_FALSE(updater_runs_from_install_location("/Users/me/Applications/Spectr.app"));
+    CHECK_FALSE(updater_runs_from_install_location("/Applications/Audio/Spectr.app"));
+    CHECK_FALSE(updater_runs_from_install_location("/Applications/Spectr 2.app"));
+    CHECK_FALSE(updater_runs_from_install_location("/Volumes/X/Applications/Spectr.app"));
+    CHECK_FALSE(updater_runs_from_install_location(""));
+}

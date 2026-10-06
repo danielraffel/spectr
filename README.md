@@ -76,10 +76,20 @@ Pulp_DIR="$(pulp sdk install --local --profile forge-dev --print-path)/lib/cmake
 Pulp_SHA="$(git -C /path/to/exact/pulp-worktree rev-parse HEAD)"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DPulp_DIR="$Pulp_DIR" \
-  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA"
+  -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA" \
+  -DSPECTR_ENABLE_TEST_SEAMS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+`SPECTR_ENABLE_TEST_SEAMS` compiles the `SPECTR_*` environment seams the tests
+drive (script injection, synthetic input, planted defects for negative
+controls; see `include/spectr/test_seams.hpp`) into the plug-ins and app. It is
+OFF by default, and a release is always built with it OFF: `package.sh` refuses
+a build configured with it, and `tools/check_no_test_seams.py` proves the
+shipped binaries carry none of the variable names (`Spectr-test-seams-absent`
+in a release build, `Spectr-test-seams-present` as its positive control in the
+test build).
 
 To try a branch in a DAW next to an installed release, configure a separate
 build directory with `-DSPECTR_DEV_IDENTITY=<Suffix>` (for example `Freeze`).
@@ -106,7 +116,7 @@ Pulp_SHA="$(git -C /path/to/exact-clean-pulp-worktree rev-parse HEAD)"
 cmake -S . -B build-native -DCMAKE_BUILD_TYPE=Release \
   -DPulp_DIR="$TracePrefix/lib/cmake/Pulp" \
   -DSPECTR_EXPECTED_PULP_SDK_SHA="$Pulp_SHA" \
-  -DSPECTR_ENABLE_PERF_FIXTURES=ON
+  -DSPECTR_ENABLE_PERF_FIXTURES=ON -DSPECTR_ENABLE_TEST_SEAMS=ON
 cmake --build build-native --target Spectr_Standalone
 tools/verify_interaction_perf.sh \
   build-native <exact-spectr-sha> <exact-pulp-sdk-sha> artifacts/perf

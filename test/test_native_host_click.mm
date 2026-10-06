@@ -97,7 +97,8 @@ struct HostedEditor {
         pulp::format::configure_native_viewport(*host, hints);
         if (pulp::format::should_pin_design_viewport(hints))
             host->set_design_viewport_top_align(true);
-        host->set_idle_callback(pulp::format::make_editor_idle_pump(*bridge));
+        auto idle = pulp::format::make_editor_idle_pump(*bridge);
+        host->set_idle_callback(idle);
         window = [[NSWindow alloc] initWithContentRect:NSMakeRect(40, 40, kWidth, kHeight)
                                              styleMask:NSWindowStyleMaskTitled
                                                backing:NSBackingStoreBuffered
@@ -108,7 +109,23 @@ struct HostedEditor {
         view = (__bridge NSView*)host->native_handle();
         REQUIRE(view != nil);
         [window orderFront:nil];
-        pump(1.5);
+        pump(0.5);
+        // A hosted editor returns its view before the document is evaluated:
+        // the session mounts it from a later idle poll. A fully transparent
+        // window gets no guaranteed display-link cadence, so drive the same
+        // idle pump the host owns until the document is live instead of
+        // assuming a fixed delay was enough.
+        const auto mounted = [this] {
+            auto* session = bridge->scripted_ui();
+            return session != nullptr && !session->document_load_pending()
+                && session->bridge() != nullptr;
+        };
+        for (int tick = 0; tick < 600 && !mounted(); ++tick) {
+            idle();
+            pump(0.016);
+        }
+        REQUIRE(mounted());
+        pump(0.5);
         bridge->scripted_ui()->bridge()->load_script(R"js((() => {
           globalThis.__hostClicks = 0;
           const inner = globalThis.__dispatch__;

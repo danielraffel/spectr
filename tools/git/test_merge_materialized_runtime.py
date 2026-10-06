@@ -163,9 +163,11 @@ THEIRS_MARK = "/* spectr-merge-test: THEIRS sentinel */"
 def test_disjoint_pair(tmp: str) -> None:
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    # Two anchors far apart, each unique in the document.
-    early = next(l for l in lines[:1200] if l.strip().startswith("function ")
-                 and html.count(l) == 1)
+    # Two anchors far apart, each unique in the document. The first third of
+    # the document rather than a fixed line count, so a few lines added to
+    # the bootstrap script do not move every early function out of reach.
+    early = next(l for l in lines[:max(1200, len(lines) // 3)]
+                 if l.strip().startswith("function ") and html.count(l) == 1)
     late = next(l for l in reversed(lines[-1500:])
                 if l.strip().startswith("function ") and html.count(l) == 1)
     if early == late:
@@ -213,7 +215,7 @@ def test_output_is_stable(tmp: str) -> None:
     """
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    early = next(l for l in lines[:1200] if l.strip().startswith("function ")
+    early = next(l for l in lines[:max(1200, len(lines) // 3)] if l.strip().startswith("function ")
                  and html.count(l) == 1)
     late = next(l for l in reversed(lines[-1500:])
                 if l.strip().startswith("function ") and html.count(l) == 1)
@@ -422,7 +424,7 @@ def test_top_level_counter_refused(tmp: str) -> None:
     bumped["jsx_scripts_compiled"] = rc_block["jsx_scripts_compiled"] + 1
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    a = next(l for l in lines[:1200]
+    a = next(l for l in lines[:max(1200, len(lines) // 3)]
              if l.strip().startswith("function ") and html.count(l) == 1)
     b = next(l for l in reversed(lines[-1500:])
              if l.strip().startswith("function ") and html.count(l) == 1)
@@ -482,7 +484,7 @@ def test_driver_is_actually_invoked(tmp: str) -> None:
                                          os.path.basename(DRIVER)))
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    early = next(l for l in lines[:1200]
+    early = next(l for l in lines[:max(1200, len(lines) // 3)]
                  if l.strip().startswith("function ") and html.count(l) == 1)
     late = next(l for l in reversed(lines[-1500:])
                 if l.strip().startswith("function ") and html.count(l) == 1)
@@ -526,7 +528,7 @@ def test_driver_is_actually_invoked(tmp: str) -> None:
 def test_binding_change_refused(tmp: str) -> None:
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    early = next(l for l in lines[:1200] if l.strip().startswith("function ")
+    early = next(l for l in lines[:max(1200, len(lines) // 3)] if l.strip().startswith("function ")
                  and html.count(l) == 1)
     late = next(l for l in reversed(lines[-1500:])
                 if l.strip().startswith("function ") and html.count(l) == 1)
@@ -612,7 +614,7 @@ def test_fabrication_refused_end_to_end(tmp: str) -> None:
 
     html = load_html(ARTIFACT)
     lines = html.splitlines()
-    early = next(l for l in lines[:1200]
+    early = next(l for l in lines[:max(1200, len(lines) // 3)]
                  if l.strip().startswith("function ") and html.count(l) == 1)
     late = next(l for l in reversed(lines[-1500:])
                 if l.strip().startswith("function ") and html.count(l) == 1)
