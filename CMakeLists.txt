@@ -301,6 +301,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_WP0_HOSTED_PROBE
+       "Compile the opt-in AU hosted WP-0 measurement seam" OFF)
+
 # Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
 # variables that load a script into the editor (SPECTR_EVAL), synthesise
 # input, dump state, tune Auto Gain, or plant a defect so a negative control
@@ -372,6 +375,7 @@ function(spectr_configure_native_target target)
         SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
         SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
         SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        $<$<BOOL:${SPECTR_WP0_HOSTED_PROBE}>:SPECTR_WP0_HOSTED_PROBE=1>
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         SPECTR_PULP_SDK_SOURCE_GIT_SHA="${SPECTR_PULP_SDK_SOURCE_GIT_SHA_VALUE}"
@@ -3478,6 +3482,16 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    # Fixed-base browser fidelity gate for the real design source. The runner
+    # records load/render/console/network evidence, a deterministic DOM marker
+    # and a screenshot, then rejects a planted broken-editor control.
+    add_test(NAME Spectr-browser-editor-fidelity
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_browser_fidelity.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            ${CMAKE_CURRENT_BINARY_DIR}/browser-fidelity-artifacts)
+    set_tests_properties(Spectr-browser-editor-fidelity PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
@@ -4156,6 +4170,10 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
     target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
         "LINKER:-exported_symbol,_spectr_mask_design_backlog_v1"
         "LINKER:-exported_symbol,_spectr_param_sync_backlog_v1")
+    if(SPECTR_WP0_HOSTED_PROBE)
+        target_link_options(${SPECTR_NATIVE_AU_TARGET} PRIVATE
+            "LINKER:-exported_symbol,_spectr_wp0_hosted_measure_v1")
+    endif()
     add_executable(Spectr-au-level-probe tools/au_level_probe.cpp)
     target_link_libraries(Spectr-au-level-probe PRIVATE
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
