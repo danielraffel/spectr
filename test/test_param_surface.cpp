@@ -576,6 +576,30 @@ TEST_CASE("#34: process hands host automation to the control worker") {
     w.proc->release();
 }
 
+TEST_CASE("LFO routing written before prepare survives initialization") {
+    Wired w;
+    const auto bank = spectr::lfo_route_enabled_param_id(
+        0, static_cast<std::size_t>(spectr::ModulationTarget::WholeBank));
+    const auto morph = spectr::lfo_route_enabled_param_id(
+        0, static_cast<std::size_t>(spectr::ModulationTarget::Morph));
+    const auto output_depth = spectr::lfo_route_amount_param_id(
+        1, static_cast<std::size_t>(spectr::ModulationTarget::Output));
+    w.store.set_value(bank, 0.0f);
+    w.store.set_value(morph, 1.0f);
+    w.store.set_value(output_depth, 0.81f);
+
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 32;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    w.proc->prepare(prepare);
+
+    CHECK(w.store.get_value(bank) == Approx(0.0f));
+    CHECK(w.store.get_value(morph) == Approx(1.0f));
+    CHECK(w.store.get_value(output_depth) == Approx(0.81f));
+}
+
 TEST_CASE("#34: paint gesture epochs close on end cancel and reset") {
     Wired w;
 

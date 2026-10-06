@@ -799,7 +799,11 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // an empty cache makes the first block restage a mask that is already live.
     last_staged_layout_ = last_published_layout_;
     last_staged_layout_valid_ = last_published_layout_valid_;
-    processor_prepared_ = renderer_ != nullptr;
+    // During prepare the host may already have written the complete parameter
+    // set (AUval does this before Initialize).  Treat the first adoption as a
+    // snapshot of those values; the legacy LFO target/depth lanes must not be
+    // interpreted as compatibility commands until the processor is live.
+    processor_prepared_ = false;
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         active_design_grid_ = renderer_ ? renderer_->design_grid_size()
@@ -843,6 +847,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "[Spectr] parameter sync worker failed to start; host automation "
             "of the band surface will not reach the DSP");
     }
+    processor_prepared_ = renderer_ != nullptr;
     configure_bridge_(ctx.output_channels);
 }
 

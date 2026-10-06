@@ -721,7 +721,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
             }
         }
     }
-    if (target_lane_changed) {
+    if (target_lane_changed && processor_prepared_) {
         // The host moved the legacy single-target lane (4004): automation
         // written before per-LFO routing existed, or a host edit of it. It
         // must never be silently discarded, so it is honoured as the command
@@ -752,7 +752,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     // written before per-target depth existed -- sets the Depth of every target
     // that LFO currently drives. Never written back.
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
-        if (!depth_lane_changed[lfo]) continue;
+        if (!processor_prepared_ || !depth_lane_changed[lfo]) continue;
         const float depth = lfo == 0 ? next_modulation.depth : next_modulation.lfo2_depth;
         for (std::size_t t = 0; t < kRouteTargetCount; ++t) {
             auto& route = next_modulation.routes[lfo][t];
