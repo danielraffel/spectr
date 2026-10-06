@@ -257,6 +257,32 @@ function stageModules(manifest, emission, emissionDir, stage, { applyPropContrac
       authored = authored.replace(functionMarker, `type SpectrNativeCommandPayload = Readonly<Record<string, unknown>>;\ntype SpectrNativeCommand = (type: string, payload: SpectrNativeCommandPayload, successStatus: string | null, skipState?: boolean) => number;\n${functionMarker}`);
       authored = authored.replace(helperMarker, 'const issueNativeCommand: SpectrNativeCommand = (type, payload, successStatus, skipState = false) => {');
     }
+    if (applyPropContracts && component.name === 'SpectrFreezeLength') {
+      const functionMarker = 'function SpectrFreezeLength() {';
+      const helperMarker = 'const openMenu = (reveal, edge) => {';
+      if (!authored.includes(functionMarker)) fail('SpectrFreezeLength function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('SpectrFreezeLength openMenu contract marker is missing');
+      helperContract = {
+        name: 'openMenu', component: component.name,
+        type: '(reveal:boolean, edge?:"first"|"last") => void',
+        value_type: 'edge optional; keyboard callers use first/last and click callers use the checked row',
+      };
+      authored = authored.replace(functionMarker, `type SpectrFreezeMenuEdge = "first" | "last";\ntype SpectrFreezeOpenMenu = (reveal: boolean, edge?: SpectrFreezeMenuEdge) => void;\n${functionMarker}`);
+      authored = authored.replace(helperMarker, 'const openMenu: SpectrFreezeOpenMenu = (reveal, edge) => {');
+    }
+    if (applyPropContracts && component.name === 'SpectrModulationSettings') {
+      const functionMarker = 'function SpectrModulationSettings() {';
+      const helperMarker = 'const subhead = (label, extra) =>';
+      if (!authored.includes(functionMarker)) fail('SpectrModulationSettings function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('SpectrModulationSettings subhead contract marker is missing');
+      helperContract = {
+        name: 'subhead', component: component.name,
+        type: '(label:string, extra?:unknown) => unknown',
+        value_type: 'extra optional; plain section headings omit the accessory node',
+      };
+      authored = authored.replace(functionMarker, `type SpectrSettingsSubhead = (label: string, extra?: unknown) => unknown;\n${functionMarker}`);
+      authored = authored.replace(helperMarker, 'const subhead: SpectrSettingsSubhead = (label, extra) =>');
+    }
     const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
     fs.writeFileSync(path.join(stage, module.path), output);
     components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}), ...(helperContract ? { helper_contract: helperContract } : {}) });
@@ -279,7 +305,7 @@ function classifyBindings(manifest, artifact) {
   return { groups, authored_script_bindings: [...authored].sort() };
 }
 
-function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType, plantFilterCommandContract }) {
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType, plantFilterCommandContract, plantFreezeMenuContract, plantModulationSubheadContract }) {
   const artifactBytes = readBytes(artifactPath, 'artifact');
   const manifestBytes = readBytes(manifestPath, 'dependency manifest');
   const { value: artifact } = readJson(artifactPath, 'artifact');
@@ -405,6 +431,30 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       if (!diagnostic) fail(`planted FilterBank command-contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
       filterCommandContractNegativeControl = { status: 'passed', component: 'FilterBank', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
     }
+    let freezeMenuContractNegativeControl = { status: 'not-run' };
+    if (plantFreezeMenuContract) {
+      if (plantFreezeMenuContract !== 'SpectrFreezeLength') fail(`Freeze menu contract control must target SpectrFreezeLength, got ${plantFreezeMenuContract}`);
+      const target = path.join(stage, 'components', 'SpectrFreezeLength.tsx');
+      if (!fs.existsSync(target)) fail('Freeze menu contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_freeze_menu_contract_bad__: SpectrFreezeOpenMenu = (reveal, edge) => {};\nconst __wp1_freeze_menu_contract_call__ = __wp1_freeze_menu_contract_bad__(true, "middle");\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrFreezeLength.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /middle/.test(item.message) && /SpectrFreezeMenuEdge/.test(item.message));
+      if (!diagnostic) fail(`planted Freeze menu contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      freezeMenuContractNegativeControl = { status: 'passed', component: 'SpectrFreezeLength', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let modulationSubheadContractNegativeControl = { status: 'not-run' };
+    if (plantModulationSubheadContract) {
+      if (plantModulationSubheadContract !== 'SpectrModulationSettings') fail(`Modulation subhead contract control must target SpectrModulationSettings, got ${plantModulationSubheadContract}`);
+      const target = path.join(stage, 'components', 'SpectrModulationSettings.tsx');
+      if (!fs.existsSync(target)) fail('Modulation subhead contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_modulation_subhead_contract_bad__: SpectrSettingsSubhead = (label, extra) => null;\nconst __wp1_modulation_subhead_contract_call__ = __wp1_modulation_subhead_contract_bad__(42);\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrModulationSettings.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /number/.test(item.message) && /string/.test(item.message));
+      if (!diagnostic) fail(`planted Modulation subhead contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      modulationSubheadContractNegativeControl = { status: 'passed', component: 'SpectrModulationSettings', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
     let jsxChildrenNegativeControl = { status: 'not-run' };
     if (plantJsxChildren) {
       const target = path.join(stage, 'components', 'Hrow.tsx');
@@ -449,6 +499,8 @@ function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknow
       settings_slider_prop_type_negative_control: settingsSliderPropTypeNegativeControl,
       chrome_prop_type_negative_control: chromePropTypeNegativeControl,
       filter_command_contract_negative_control: filterCommandContractNegativeControl,
+      freeze_menu_contract_negative_control: freezeMenuContractNegativeControl,
+      modulation_subhead_contract_negative_control: modulationSubheadContractNegativeControl,
       jsx_children_negative_control: jsxChildrenNegativeControl,
       scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
     };
@@ -464,13 +516,13 @@ function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type' || arg === '--plant-filter-command-contract') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type' || arg === '--plant-filter-command-contract' || arg === '--plant-freeze-menu-contract' || arg === '--plant-modulation-subhead-contract') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
     else if (arg === '--help') args.help = true;
     else fail(`unknown argument ${arg}`);
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons] [--plant-filter-command-contract FilterBank]'); }
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons] [--plant-filter-command-contract FilterBank] [--plant-freeze-menu-contract SpectrFreezeLength] [--plant-modulation-subhead-contract SpectrModulationSettings]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
@@ -480,7 +532,7 @@ try {
   if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
   if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
   if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
-  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type, plantFilterCommandContract: args.plant_filter_command_contract }), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type, plantFilterCommandContract: args.plant_filter_command_contract, plantFreezeMenuContract: args.plant_freeze_menu_contract, plantModulationSubheadContract: args.plant_modulation_subhead_contract }), null, 2)}\n`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);
