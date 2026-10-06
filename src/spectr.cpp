@@ -1886,9 +1886,35 @@ void Spectr::process(
                     }
                     // The Mix destination pulls Mix toward dry (the freeze
                     // blend); the mixer's own ramp carries each block's move.
-                    renderer->set_mix(modulated_mix(
+                    const float played_mix = modulated_mix(
                         std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f),
-                        composed.coords));
+                        composed.coords);
+                    renderer->set_mix(played_mix);
+                    // Display modulation is a parameter-store publication,
+                    // never a host write. The binding layer consumes this
+                    // value and keeps the authored knob/automation baseline.
+                    const auto route_is_audible =
+                        [&](ModulationTarget target) noexcept {
+                            const auto index = static_cast<std::size_t>(target);
+                            return modulation_audible(modulation_settings)
+                                && (modulation_settings.routes[0][index].enabled
+                                    || modulation_settings.routes[1][index].enabled);
+                        };
+                    if (param_store_) {
+                        if (route_is_audible(ModulationTarget::Intensity)) {
+                            param_store_->set_display_modulation(
+                                kParamIntensity,
+                                modulated_intensity(audio_intensity_, composed.coords)
+                                    * 100.0f);
+                        } else {
+                            param_store_->clear_display_modulation(kParamIntensity);
+                        }
+                        if (route_is_audible(ModulationTarget::Mix)) {
+                            param_store_->set_display_modulation(kMix, played_mix * 100.0f);
+                        } else {
+                            param_store_->clear_display_modulation(kMix);
+                        }
+                    }
                     // The Output destination, in dB, at the end of this
                     // slice. Ramped from the previous slice's value across
                     // the samples below, so a running LFO is a smooth gain
@@ -1898,9 +1924,11 @@ void Spectr::process(
                     // and ramping toward that would lag by a slice and steepen
                     // wherever slice lengths differ.
                     float output_mod_end_db = 0.0f;
+                    const auto output_route = static_cast<std::size_t>(
+                        ModulationTarget::Output);
+                    const bool output_route_audible = route_is_audible(
+                        ModulationTarget::Output);
                     {
-                        const auto output_route = static_cast<std::size_t>(
-                            ModulationTarget::Output);
                         const bool routed =
                             modulation_settings.routes[0][output_route].enabled
                             || modulation_settings.routes[1][output_route].enabled;
@@ -1933,6 +1961,21 @@ void Spectr::process(
                     audio_output_mod_primed_ = true;
                     const bool output_modulated =
                         output_mod_start_db != 0.0f || output_mod_end_db != 0.0f;
+                    if (param_store_) {
+                        if (output_route_audible) {
+                            const auto last = static_cast<int32_t>(
+                                out_slice.num_samples() > 0
+                                    ? out_slice.num_samples() - 1 : 0);
+                            const float base_db = cursor.value_at(
+                                kOutputTrim, static_cast<int32_t>(block_offset) + last);
+                            param_store_->set_display_modulation(
+                                kOutputTrim,
+                                std::clamp(base_db + output_mod_end_db,
+                                           kOutputTrimMinDb, kOutputTrimMaxDb));
+                        } else {
+                            param_store_->clear_display_modulation(kOutputTrim);
+                        }
+                    }
 
                     for (std::size_t channel = 0;
                          channel < out_slice.num_channels(); ++channel) {

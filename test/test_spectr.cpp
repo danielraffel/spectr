@@ -1491,6 +1491,51 @@ TEST_CASE("Spectr releases the modulation overlay without a parameter event",
     CHECK_FALSE(plugin->read_modulated_field().active);
 }
 
+TEST_CASE("Spectr publishes and clears level display modulation",
+          "[modulation][display][rt]") {
+    constexpr std::size_t block_size = 256;
+    constexpr double sample_rate = 48000.0;
+
+    pulp::format::HeadlessHost host(create_mixing_spectr);
+    host.prepare(sample_rate, block_size);
+    auto* plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+    REQUIRE(plugin != nullptr);
+
+    pulp::audio::Buffer<float> in(2, block_size), out(2, block_size);
+    auto output = out.view();
+    const float* input_channels[] = {
+        in.channel(0).data(), in.channel(1).data()};
+    pulp::audio::BufferView<const float> input(input_channels, 2, block_size);
+
+    for (std::size_t block = 0; block < 8; ++block) {
+        pulp::state::ParameterEventQueue events;
+        REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(
+                                 0, static_cast<std::size_t>(
+                                        spectr::ModulationTarget::Intensity)),
+                             0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(
+                                 0, static_cast<std::size_t>(
+                                        spectr::ModulationTarget::Intensity)),
+                             0, 1.0f, 0}));
+        host.process(output, input, events);
+    }
+
+    CHECK(plugin->state().displayed_modulation(spectr::kParamIntensity).has_value());
+
+    plugin->state().set_value(spectr::kParamLfoEnabled, 0.0f);
+    plugin->state().set_value(spectr::kParamLfoDepth, 0.0f);
+    const auto ramp_blocks = static_cast<std::size_t>(std::ceil(
+        spectr::kLfoLevelSlewSeconds * sample_rate / block_size));
+    for (std::size_t block = 0; block < ramp_blocks + 2; ++block) {
+        pulp::state::ParameterEventQueue events;
+        host.process(output, input, events);
+    }
+    CHECK_FALSE(plugin->state().displayed_modulation(spectr::kParamIntensity).has_value());
+}
+
 TEST_CASE("a band muted after both snapshots were captured stays silent under "
           "an LFO on morph", "[modulation][mute][rt]") {
     // The user's report, end to end: "if muted these jiggle/kinda glitch when
