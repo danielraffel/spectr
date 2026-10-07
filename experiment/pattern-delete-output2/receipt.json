@@ -1,0 +1,107 @@
+{
+  "schema": "spectr-authored-reimport-pattern-delete-v1",
+  "version": 1,
+  "base": {
+    "artifact_path": "native-ui/materialized/materialized-document.runtime.json",
+    "artifact_bytes": 1152151,
+    "artifact_sha256": "05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c",
+    "manifest_path": "experiment/pattern-delete.manifest.json",
+    "manifest_sha256": "9d8657f5946bbf563b85245c3b94839ff6292279ce534527848a9789c16df51a",
+    "source_commit": "e0b888e7a1dff23f8d692eaf0100525ecb6a7201",
+    "editor_html": {
+      "path": "resources/editor.html",
+      "bytes": 2064405,
+      "sha256": "402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f"
+    },
+    "patch_script_count": 143
+  },
+  "selected_components": [
+    {
+      "name": "MBtn",
+      "source_bytes": 682,
+      "source_sha256": "4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "tsx_bytes": 674,
+      "tsx_sha256": "5c06841db68a19e1ab3f2de0934ba92e27fa292de61f744943d5d346edc83c71",
+      "direct_bytes": 780,
+      "direct_sha256": "a6742fc8fa1f13350cf53cc37938c34e7aa3f80d2cc8a7eeb6a0af7cb5076958",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "React"
+      ]
+    },
+    {
+      "name": "PatternDeleteDialog",
+      "source_bytes": 2967,
+      "source_sha256": "f56979da1b0ae38c6589d860bb39fd024572c90cf31c223feee95adacd18b7e9",
+      "tsx_bytes": 2401,
+      "tsx_sha256": "99fe0b55d46b209b58ab5c4869f9af517cc73f87d4e7c8eb5fe639339d9430fe",
+      "direct_bytes": 2942,
+      "direct_sha256": "7f8164ba903d6cc287133b79ac51867265522884b3dc6e4c79a8c46de90cd704",
+      "dependencies": [
+        "component:MBtn:4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968"
+      ],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "document",
+        "React",
+        "String",
+        "undefined",
+        "usePE"
+      ]
+    }
+  ],
+  "modules": {
+    "MBtn": {
+      "bytes": 878,
+      "sha256": "acc3670b07c92c2ec3424eb07ef11b83aef4ad20522f79da89f608dcfd2805e8",
+      "exports": [
+        "MBtn"
+      ]
+    },
+    "PatternDeleteDialog": {
+      "bytes": 3130,
+      "sha256": "545f9bf8d01509ca95ba5f1fe79661be01a5e19a93eebe603d7482ffb05560ba",
+      "imports": [
+        "./MBtn.js"
+      ],
+      "exports": [
+        "PatternDeleteDialog"
+      ]
+    }
+  },
+  "output": {
+    "artifact_path": "experiment/pattern-delete-output2/reimported.runtime.json",
+    "artifact_bytes": 1152219,
+    "artifact_sha256": "ce1aded3d0df1d422d9b67f1dda3dae794af75c61701f816c5ad1465993b09e2",
+    "fixture_path": "experiment/pattern-delete-output2/browser-fixture.html",
+    "fixture_sha256": "279f37ca4c0be8bf02325c31807a27437e00ef79d071d90cd9bae0ecb2864cf2"
+  },
+  "checks": {
+    "explicit_import_export": true,
+    "imported_identity": true,
+    "vdom_callbacks": true,
+    "browser": true,
+    "negative_control": {
+      "name": "MBtn",
+      "mutation": "height-26-to-27",
+      "detected": true
+    }
+  },
+  "scope": {
+    "editor_html_unchanged": true,
+    "vellum_unchanged": true,
+    "patch_scripts_retired": false,
+    "full_editor_parity": false
+  },
+  "kill_criteria": [
+    "Any dependency edge is unresolved or imported through a hidden global.",
+    "The module identity edge changes during bundling.",
+    "Nested VDOM or callback behavior diverges.",
+    "A planted MBtn identity, style, or handler mutation is not detected.",
+    "Chromium does not match DOM and dialog interactions.",
+    "The real importer needs editor.html or Vellum changes before this boundary is reproducible."
+  ]
+}

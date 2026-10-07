@@ -1,0 +1,94 @@
+<!doctype html><html><body><div id="original"></div><div id="reimport"></div><pre id="result"></pre><script>
+const React={createElement(type,props,...children){const p={...(props||{})};const flat=children.flat(Infinity).filter(x=>x!==null&&x!==undefined&&x!==false);if(flat.length)p.children=flat;return{type,props:p};},Fragment:Symbol('Fragment')};
+const usePE=()=>{};
+const ORIGINAL=(()=>{function MBtn({ children, onClick, primary, danger, action }) {
+  return /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": action, onClick, style: {
+    background: primary ? "rgba(80,140,210,0.22)" : danger ? "rgba(210,80,100,0.15)" : "rgba(255,255,255,0.04)",
+    border: "1px solid " + (primary ? "rgba(140,190,240,0.4)" : danger ? "rgba(240,150,160,0.35)" : "rgba(255,255,255,0.12)"),
+    color: primary ? "#fff" : danger ? "rgba(255,200,210,0.95)" : "rgba(255,255,255,0.85)",
+    padding: "5px 9px",
+    fontFamily: "var(--mono)",
+    fontSize: 10,
+    letterSpacing: 1,
+    borderRadius: 3,
+    cursor: "pointer",
+    height: 26
+  } }, children);
+}
+function PatternDeleteDialog({ pattern, onConfirm, onCancel }) {
+  usePE(() => {
+    if (!pattern) return;
+    // Escape cancels, Return confirms. Captured, and stopped, because
+    // the manager's own Return handler would otherwise apply the very
+    // preset this is asking to delete.
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onConfirm();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [pattern, onConfirm, onCancel]);
+  if (!pattern) return null;
+  return /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      "data-spectr-overlay": "true",
+      "data-spectr-delete-dialog": true,
+      // Opened from the preset manager but not inside its panel, so it names
+      // the panel as the overlay it stacks on; see
+      // tools/patch_materialized_preset_dialogs_stack_on_manager.py.
+      "data-spectr-dialog-stacks-on-manager": true,
+      overlayParent: (() => {
+        const panel = typeof document !== "undefined" && document.querySelector
+          ? document.querySelector("[data-spectr-pattern-manager-panel]") : null;
+        return panel && panel.__pulpId ? String(panel.__pulpId) : undefined;
+      })(),
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": "Confirm delete preset",
+      onClick: (event) => { event.stopPropagation(); onCancel(); },
+      style: {
+        position: "absolute",
+        inset: 0,
+        zIndex: 40,
+        background: "rgba(5,7,10,.72)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center"
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { "data-spectr-delete-panel": true, "data-spectr-overlay": "true", overlay: true, onDismiss: onCancel, onClick: (event) => event.stopPropagation(), style: {
+      width: 360,
+      padding: 18,
+      background: "rgba(12,16,22,.99)",
+      border: "1px solid rgba(240,150,160,.35)",
+      borderRadius: 5,
+      fontFamily: "var(--mono)",
+      color: "#fff"
+    } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, letterSpacing: 2, marginBottom: 12 } }, "DELETE PRESET"), /* @__PURE__ */ React.createElement("div", { "data-spectr-delete-prompt": true, style: { fontSize: 11, lineHeight: 1.5, opacity: 0.8, wordBreak: "break-word" } }, `Delete \u201C${pattern.name}\u201D? This cannot be undone.`), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 14 } }, /* @__PURE__ */ React.createElement(MBtn, { action: "delete-cancel", onClick: onCancel }, "CANCEL"), /* @__PURE__ */ React.createElement(MBtn, { action: "delete-confirm", danger: true, onClick: onConfirm }, "DELETE")))
+  );
+}
+return{MBtn,PatternDeleteDialog};})();
+function load(code,req){const module={exports:{}};const exports=module.exports;eval(code);return module.exports;}
+const MBTN_MODULE="\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.MBtn = MBtn;\nfunction MBtn({ children, onClick, primary, danger, action }) {\n    return /* @__PURE__ */ React.createElement(\"button\", { \"data-spectr-manager-action\": action, onClick: onClick, style: {\n            background: primary ? \"rgba(80,140,210,0.22)\" : danger ? \"rgba(210,80,100,0.15)\" : \"rgba(255,255,255,0.04)\",\n            border: \"1px solid \" + (primary ? \"rgba(140,190,240,0.4)\" : danger ? \"rgba(240,150,160,0.35)\" : \"rgba(255,255,255,0.12)\"),\n            color: primary ? \"#fff\" : danger ? \"rgba(255,200,210,0.95)\" : \"rgba(255,255,255,0.85)\",\n            padding: \"5px 9px\",\n            fontFamily: \"var(--mono)\",\n            fontSize: 10,\n            letterSpacing: 1,\n            borderRadius: 3,\n            cursor: \"pointer\",\n            height: 26\n        } }, children);\n}\n";
+const DIALOG_MODULE="\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.PatternDeleteDialog = PatternDeleteDialog;\nconst MBtn_js_1 = require(\"./MBtn.js\");\nfunction PatternDeleteDialog({ pattern, onConfirm, onCancel }) {\n    usePE(() => {\n        if (!pattern)\n            return;\n        // Escape cancels, Return confirms. Captured, and stopped, because\n        // the manager's own Return handler would otherwise apply the very\n        // preset this is asking to delete.\n        const onKey = (event) => {\n            if (event.key === \"Escape\") {\n                event.preventDefault();\n                event.stopPropagation();\n                onCancel();\n                return;\n            }\n            if (event.key !== \"Enter\")\n                return;\n            event.preventDefault();\n            event.stopPropagation();\n            onConfirm();\n        };\n        document.addEventListener(\"keydown\", onKey, true);\n        return () => document.removeEventListener(\"keydown\", onKey, true);\n    }, [pattern, onConfirm, onCancel]);\n    if (!pattern)\n        return null;\n    return /* @__PURE__ */ React.createElement(\"div\", { \"data-spectr-overlay\": \"true\", \"data-spectr-delete-dialog\": true, \"data-spectr-dialog-stacks-on-manager\": true, overlayParent: (() => {\n            const panel = typeof document !== \"undefined\" && document.querySelector\n                ? document.querySelector(\"[data-spectr-pattern-manager-panel]\") : null;\n            return panel && panel.__pulpId ? String(panel.__pulpId) : undefined;\n        })(), role: \"dialog\", \"aria-modal\": \"true\", \"aria-label\": \"Confirm delete preset\", onClick: (event) => { event.stopPropagation(); onCancel(); }, style: {\n            position: \"absolute\",\n            inset: 0,\n            zIndex: 40,\n            background: \"rgba(5,7,10,.72)\",\n            display: \"flex\",\n            alignItems: \"center\",\n            justifyContent: \"center\"\n        } },\n        React.createElement(\"div\", { \"data-spectr-delete-panel\": true, \"data-spectr-overlay\": \"true\", overlay: true, onDismiss: onCancel, onClick: (event) => event.stopPropagation(), style: {\n                width: 360,\n                padding: 18,\n                background: \"rgba(12,16,22,.99)\",\n                border: \"1px solid rgba(240,150,160,.35)\",\n                borderRadius: 5,\n                fontFamily: \"var(--mono)\",\n                color: \"#fff\"\n            } },\n            React.createElement(\"div\", { style: { fontSize: 11, letterSpacing: 2, marginBottom: 12 } }, \"DELETE PRESET\"),\n            React.createElement(\"div\", { \"data-spectr-delete-prompt\": true, style: { fontSize: 11, lineHeight: 1.5, opacity: 0.8, wordBreak: \"break-word\" } }, `Delete \\u201C${pattern.name}\\u201D? This cannot be undone.`),\n            React.createElement(\"div\", { style: { display: \"flex\", justifyContent: \"flex-end\", gap: 7, marginTop: 14 } },\n                React.createElement(MBtn_js_1.MBtn, { action: \"delete-cancel\", onClick: onCancel }, \"CANCEL\"),\n                React.createElement(MBtn_js_1.MBtn, { action: \"delete-confirm\", danger: true, onClick: onConfirm }, \"DELETE\"))));\n}\n";
+function loadModule(code,req){const module={exports:{}};const exports=module.exports;const require=req;eval(code);return module.exports;}
+const REIMPORT_MBTN=loadModule(MBTN_MODULE,()=>{throw new Error('MBtn import');});
+const REIMPORT_DIALOG=loadModule(DIALOG_MODULE,id=>{if(id==='./MBtn.js')return REIMPORT_MBTN;throw new Error('bad import '+id);});
+function mount(value,parent){if(value===null||value===undefined||value===false)return;if(typeof value==='string'||typeof value==='number'){parent.appendChild(document.createTextNode(String(value)));return;}if(typeof value.type==='function'){mount(value.type(value.props||{}),parent);return;}const element=document.createElement(value.type);for(const[key,item]of Object.entries(value.props||{})){if(key==='children'||key==='className'||key.startsWith('on'))continue;if(key==='style'&&item&&typeof item==='object')Object.assign(element.style,item);else if(item!==undefined)element.setAttribute(key,String(item));}if(value.props?.className)element.className=value.props.className;if(typeof value.props?.onClick==='function')element.addEventListener('click',value.props.onClick);for(const child of(value.props?.children||[]))mount(child,element);parent.appendChild(element);}
+let originalConfirm=0,originalCancel=0,reimportConfirm=0,reimportCancel=0;
+mount(ORIGINAL.PatternDeleteDialog({pattern:{name:'A very long preset'},onConfirm:()=>originalConfirm++,onCancel:()=>originalCancel++}),document.getElementById('original'));
+mount(REIMPORT_DIALOG.PatternDeleteDialog({pattern:{name:'A very long preset'},onConfirm:()=>reimportConfirm++,onCancel:()=>reimportCancel++}),document.getElementById('reimport'));
+if(document.getElementById('original').innerHTML!==document.getElementById('reimport').innerHTML)throw new Error('dialog DOM differs after explicit module import');
+document.querySelector('#original [data-spectr-manager-action="delete-cancel"]').click();document.querySelector('#original [data-spectr-manager-action="delete-confirm"]').click();document.querySelector('#reimport [data-spectr-manager-action="delete-cancel"]').click();document.querySelector('#reimport [data-spectr-manager-action="delete-confirm"]').click();
+if(originalConfirm!==1||originalCancel!==1||reimportConfirm!==1||reimportCancel!==1)throw new Error('dialog callbacks diverged');
+document.documentElement.dataset.spectrAuthoredReimport='OK';document.getElementById('result').textContent='SPECTR_AUTHORED_REIMPORT_PATTERN_DELETE_BROWSER_OK';
+</script></body></html>
