@@ -61,8 +61,9 @@ assert.deepEqual(messages, [{ type: 'range_set', range_db: 12 }], 'only range_se
 assert.equal(html.includes('setCursor("ns-resize")'), true, 'gutter cursor is vertical resize');
 assert.equal(html.includes('clearTimeout(rangeWheelRef.current.timer)'), true, 'accumulator decays on unmount');
 assert.equal(html.includes('spectrRangeHaptic()'), true, 'transition invokes one haptic hook');
-assert.equal(html.includes('bandTransitionCanvasRef'), true, 'band-count transition snapshot exists');
-assert.equal(html.includes('!modulationActiveRef.current && !bandTransitionRef.current'), true, 'modulation does not restart stale full-screen fade');
+assert.equal(html.includes('bandTransitionCanvasRef'), false, 'band-count changes do not add a fade canvas');
+assert.equal(html.includes('bandTransitionRef'), false, 'band-count changes do not run a full-screen fade');
+assert.equal(html.includes('renderGainsRef.current = next.slice()'), true, 'band-count changes keep the existing in-place paint path');
 assert.equal(html.includes('rangeTransitionRef'), true, 'vertical range transition exists');
 assert.equal(html.includes('g.rulerRange'), true, 'axis labels use animated range');
 assert.equal(html.includes('duration: 180'), true, 'transition duration is bounded');
