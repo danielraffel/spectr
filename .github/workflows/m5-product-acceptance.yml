@@ -108,6 +108,13 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         run: python3 tools/ci/test_product_acceptance_contract.py
 
+      # WP-1's parser-backed authored-source gate is selected by CTest below.
+      # Install its lockfile-pinned parser/compiler before configure so the
+      # registered test cannot silently become a setup skip on a clean runner.
+      - name: Gate - install WP-1 parser toolchain
+        if: steps.scope.outputs.docs_only != 'true'
+        run: npm ci --ignore-scripts --prefix tools/wp1-parser
+
       # BLOCKING, and deliberately before the build: seconds, fixtures only, no
       # SDK and no compiler. Until this landed the job ran exactly ONE of a
       # dozen detectors, which is how two of them shipped dead -- crashing on

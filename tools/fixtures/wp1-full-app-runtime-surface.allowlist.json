@@ -1,0 +1,282 @@
+{
+  "schema": "spectr-owned-app-runtime-surface-allowlist-v1",
+  "version": 1,
+  "artifact": {
+    "sha256": "05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c",
+    "bytes": 1152151
+  },
+  "objects": {
+    "window": {
+      "properties": [
+        {
+          "name": "SPECTR_MODULATION_LOOKS",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "Spectr",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "SpectrAnalyzer",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "SpectrFreq",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "SpectrNativePatterns",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "SpectrNativeState",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__pulpRefreshMaterializedState__",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrBandEnergy",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrBuildInfoRequestSerial",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrTestHooks",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "addEventListener",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "devicePixelRatio",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "parent",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "pulp",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "removeEventListener",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "spectrDismissBandMenu",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrPublishMode",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrRecordModulationFrame",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrSetAskBeforeOverride",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrStartOracle",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrStatusBannerKeepAlive",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrStatusBannerShow",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrToggleFreeze",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "useSpectrModulationState",
+          "classification": "plugin-runtime"
+        }
+      ]
+    },
+    "globalThis": {
+      "properties": [
+        {
+          "name": "SPECTR_HELP_TEXT",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__pulpReactEventCallbacks__",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrAskBeforeOverride",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrAskPolicy",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrBandsLabelPaint",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrBoundHandlers__",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrFreezeToggleRenders",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrHeaderTipRequest",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrKeyboard",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrKnobReset",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrLatency",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrLengthLabelPaint",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrMorphReset",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrMorphViewport",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrPlotWakeDraw",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrPresetLabelPaint",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrRange",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrShowTooltips",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__spectrShowTracingBadge",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "on",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrHeaderTip",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrHeaderTipHide",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrOnRange",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrOpenModulationFocus",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrParamDrag",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrParamGesture",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrPlainKeysActive",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrRangeDb",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrRangeLimit",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrRouteLane",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrSetBandCount",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrSetRangeDb",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "spectrSettingsExtraRows",
+          "classification": "plugin-runtime"
+        }
+      ]
+    },
+    "document": {
+      "properties": [
+        {
+          "name": "activeElement",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "addEventListener",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "createElement",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "getElementById",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "hasFocus",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "querySelector",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "querySelectorAll",
+          "classification": "standard-dom"
+        },
+        {
+          "name": "removeEventListener",
+          "classification": "standard-dom"
+        }
+      ]
+    }
+  }
+}

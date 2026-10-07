@@ -452,3 +452,7 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Every shipped bundle declares LSMinimumSystemVersion equal to the binaries'
 # minos (missing from every bundle in 1.0.7 RC1), plus its negative controls.
 ^Spectr-bundle-min-os
+
+# Parser-backed authored-source/import gate. This exact row is pure artifact
+# validation and must remain selected by the M5 focused CTest regex.
+^Spectr-wp1-full-app-runtime-surface$
