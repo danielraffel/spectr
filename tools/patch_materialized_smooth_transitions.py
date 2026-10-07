@@ -41,7 +41,7 @@ repl(
 '''      // Read AFTER the paint. Both of these are analyzer-DERIVED
       // state with its own hold and decay, so both keep moving for
 ''',
-'''      if (rangeTransitionRef.current) busy = true;
+'''      if (typeof rangeTransitionRef !== "undefined" && rangeTransitionRef.current) busy = true;
       // Read AFTER the paint. Both of these are analyzer-DERIVED
       // state with its own hold and decay, so both keep moving for
 ''',
@@ -54,7 +54,7 @@ repl(
 ''',
 '''    const g = getGeom();
     if (!g) return;
-    const rangeTransition = rangeTransitionRef.current;
+    const rangeTransition = typeof rangeTransitionRef !== "undefined" ? rangeTransitionRef.current : null;
     let visualRange = typeof globalThis.spectrRangeDb === "function" ? globalThis.spectrRangeDb() : 24;
     if (rangeTransition) {
       const t = Math.max(0, Math.min(1, (performance.now() - rangeTransition.startedAt) / rangeTransition.duration));
@@ -64,7 +64,7 @@ repl(
       if (t >= 1) {
         visualRange = rangeTransition.to;
         rangeVisualRef.current = visualRange;
-        rangeTransitionRef.current = null;
+        if (typeof rangeTransitionRef !== "undefined") rangeTransitionRef.current = null;
       }
     } else {
       rangeVisualRef.current = visualRange;
