@@ -4627,6 +4627,14 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/git/test_merge_materialized_runtime.py)
     set_tests_properties(Spectr-materialized-merge-driver PROPERTIES TIMEOUT 120)
+    # WP-1's parser-backed authored-source gate resolves the complete App
+    # closure and freezes its browser host runtime surface.  It is pure
+    # Python/Node against the checked-in artifact, so it needs no SDK or
+    # native target and can run before the product build on a clean runner.
+    add_test(NAME Spectr-wp1-full-app-runtime-surface
+        COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_runtime_surface.py)
+    set_tests_properties(Spectr-wp1-full-app-runtime-surface PROPERTIES TIMEOUT 300)
 else()
     message(STATUS
         "Spectr: Python3 interpreter not found; "

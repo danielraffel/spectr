@@ -1,0 +1,42 @@
+{
+  "schema": "spectr-owned-component-dependency-v1",
+  "parser": {
+    "name": "@babel/parser",
+    "version": "7.28.4",
+    "plugins": [
+      "jsx",
+      "typescript"
+    ],
+    "source_type": "script"
+  },
+  "source": {
+    "kind": "artifact",
+    "path": "materialized-document.runtime.json",
+    "sha256": "05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c",
+    "bytes": 1152151
+  },
+  "roots": [
+    "component:MBtn:4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968"
+  ],
+  "component_count": 1,
+  "components": [
+    {
+      "id": "component:MBtn:4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "name": "MBtn",
+      "kind": "function",
+      "owner": null,
+      "script_index": 5,
+      "start": 30218,
+      "end": 30900,
+      "bytes": 682,
+      "sha256": "4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "source_sha256": "4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "dependencies": [],
+      "captures": [],
+      "external_bindings": [
+        "React"
+      ],
+      "unresolved": []
+    }
+  ]
+}

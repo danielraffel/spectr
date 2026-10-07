@@ -1,0 +1,84 @@
+{
+  "schema": "spectr-owned-component-dependency-v1",
+  "parser": {
+    "name": "@babel/parser",
+    "version": "7.28.4",
+    "plugins": [
+      "jsx",
+      "typescript"
+    ],
+    "source_type": "script"
+  },
+  "source": {
+    "kind": "source",
+    "path": "wp1-nested-components.jsx",
+    "sha256": "22fdd07dd2fbfbacd55eb8017e7702b0c5ddba5379fce0160c7e62b636c9ddfc",
+    "bytes": 351
+  },
+  "roots": [
+    "component:Panel:c6b444786a80fd5f2d08d9596506b9bab72afaaf6f01c36b729c6e708ee06987"
+  ],
+  "component_count": 3,
+  "components": [
+    {
+      "id": "component:Inner:5ccab3bfd142d3bc9af02c52ebb6cf618ca223b4996a603808695054be3cca27",
+      "name": "Inner",
+      "kind": "arrow",
+      "owner": "component:Panel:c6b444786a80fd5f2d08d9596506b9bab72afaaf6f01c36b729c6e708ee06987",
+      "script_index": 0,
+      "start": 200,
+      "end": 286,
+      "bytes": 86,
+      "sha256": "5ccab3bfd142d3bc9af02c52ebb6cf618ca223b4996a603808695054be3cca27",
+      "source_sha256": "5ccab3bfd142d3bc9af02c52ebb6cf618ca223b4996a603808695054be3cca27",
+      "dependencies": [
+        "component:MBtn:9e6112e00c146947fb0fbbd90f74282e7f88aee55cd154b35111bf84050e68cd"
+      ],
+      "captures": [
+        "label"
+      ],
+      "external_bindings": [
+        "React"
+      ],
+      "unresolved": []
+    },
+    {
+      "id": "component:MBtn:9e6112e00c146947fb0fbbd90f74282e7f88aee55cd154b35111bf84050e68cd",
+      "name": "MBtn",
+      "kind": "function",
+      "owner": null,
+      "script_index": 0,
+      "start": 76,
+      "end": 163,
+      "bytes": 87,
+      "sha256": "9e6112e00c146947fb0fbbd90f74282e7f88aee55cd154b35111bf84050e68cd",
+      "source_sha256": "9e6112e00c146947fb0fbbd90f74282e7f88aee55cd154b35111bf84050e68cd",
+      "dependencies": [],
+      "captures": [],
+      "external_bindings": [
+        "React"
+      ],
+      "unresolved": []
+    },
+    {
+      "id": "component:Panel:c6b444786a80fd5f2d08d9596506b9bab72afaaf6f01c36b729c6e708ee06987",
+      "name": "Panel",
+      "kind": "function",
+      "owner": null,
+      "script_index": 0,
+      "start": 164,
+      "end": 350,
+      "bytes": 186,
+      "sha256": "c6b444786a80fd5f2d08d9596506b9bab72afaaf6f01c36b729c6e708ee06987",
+      "source_sha256": "c6b444786a80fd5f2d08d9596506b9bab72afaaf6f01c36b729c6e708ee06987",
+      "dependencies": [
+        "component:Inner:5ccab3bfd142d3bc9af02c52ebb6cf618ca223b4996a603808695054be3cca27"
+      ],
+      "captures": [],
+      "external_bindings": [
+        "React"
+      ],
+      "unresolved": []
+    }
+  ]
+}
