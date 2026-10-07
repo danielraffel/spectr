@@ -124,3 +124,33 @@ implementation is claimed by the current branch.
 - Future freeze/sampler scope: `planning/Spectr-Sampler-Phase-Spec.md`
 - Ordered native-then-sampler execution:
   `planning/Spectr-Native-Then-Sampler-Plan.md`
+
+## 2026-10-08 authored App-mount re-import staging proof
+
+The authored `MBtn.tsx` slice now has a bounded App-level re-import proof. Commit
+`ac40c536865def0a0938997b3de1bc4561b53b2c` adds the fixture and harness on
+branch `codex/spectr-authored-app-mount-20261008`; it is not pushed or merged.
+The run14 receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-app-mount-20261008-run14/receipt.json`
+(SHA-256
+`59c00eb90f5cfbf1356c5048e0eaee61f6d68c9f88647e0e3c5b5f95d0fbdcdd`).
+
+The proof compiled the authored TSX with the pinned TypeScript toolchain,
+matched the template render tree, rejected a planted `height: 26 -> 27`
+mutation before browser execution, mounted the real ReactDOM App, opened
+`PRESETS` and `MANAGE`, invoked the re-imported `MBtn` six times, and found
+baseline/patched manager DOM parity. Chromium captured both states; the
+manager screenshot visibly contains the factory band preview rows and the
+mounted App reports two canvas layers. The baseline and patched screenshot
+artifacts are respectively
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-app-mount-20261008-run14/baseline.png`
+(SHA-256
+`2a9c47669024d8a9327fce7414dba62a4fa2640e7b7e3471035bdf95eafe5a42`) and
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-app-mount-20261008-run14/patched.png`
+(SHA-256
+`aae1e4337213f362c5cecc9ddd601a7320b88ddec8ea321be0cc5795a64ff784`).
+
+This remains staging evidence only: `editor.html` and the materialized runtime
+were unchanged, `production_cutover` is false, and `full_native_parity` is
+false. A full authored editor cutover, native parity, and release qualification
+remain open.
