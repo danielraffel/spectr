@@ -58,6 +58,13 @@ window.pulp = {
     if (type === 'editor_ready') {
       queueMicrotask(() => {
         const n = 32;
+        const trace = count => Array.from({ length: count }, (_, index) => {
+          const x = index / Math.max(1, count - 1);
+          const left = Math.exp(-((x - 0.22) ** 2) / 0.008) * 28;
+          const middle = Math.exp(-((x - 0.52) ** 2) / 0.018) * 38;
+          const right = Math.exp(-((x - 0.82) ** 2) / 0.012) * 23;
+          return -96 + left + middle + right;
+        });
         const state = {
           n_visible: n, gain_db: new Array(n).fill(0), muted: new Array(n).fill(false),
           min_hz: 20, max_hz: 20000, motion_mode: 0, analyzer_mode: 0,
@@ -68,6 +75,15 @@ window.pulp = {
         };
         for (const callback of window.__spectrBrowserListeners.processing_state_hydrate || [])
           callback({ type: 'processing_state_hydrate', payload: state });
+        const analyzer = {
+          schema_version: 1, epoch: 0, sequence_number: 0, dropped_frames: 0,
+          source_channels: 2, fft_size: 512, sample_rate: 48000,
+          floor_db: -120, ceiling_db: 24,
+          visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) },
+          overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) },
+        };
+        for (const callback of window.__spectrBrowserListeners.analyzer_frame || [])
+          callback({ type: 'analyzer_frame', payload: analyzer });
       });
     }
     return Promise.resolve({ ok: true, payload: { ok: true } });
@@ -304,6 +320,7 @@ async function main() {
     const receipt = {
       schema: 'spectr-source-matched-external-chromium-oracle-v1',
       source: path.resolve(sourcePath), sourceSha256, chrome: chromeVersion,
+      hostFixture: 'deterministic-analyzer-frame-v1',
       positive, reference, negative,
     };
     fs.writeFileSync(path.join(output, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
