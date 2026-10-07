@@ -9,7 +9,9 @@ const start = html.indexOf('  globalThis.spectrRangeChoices = [3, 6, 12, 24];');
 const end = html.indexOf('  globalThis.spectrRangeDb =', start);
 assert(start >= 0 && end > start, 'range helper source absent');
 const source = html.slice(start, end);
-const context = vm.createContext({ globalThis: {}, navigator: { platform: 'MacIntel' } });
+const hapticCalls = [];
+const context = vm.createContext({ globalThis: {}, navigator: { platform: 'MacIntel' },
+  window: { pulp: { postMessage: (...args) => { hapticCalls.push(args); return Promise.resolve({ ok: true }); } } } });
 vm.runInContext(source, context);
 const g = context.globalThis;
 
@@ -36,6 +38,13 @@ assert.equal(g.spectrRangeWheelAdvance(trackpad, -8, false).steps, 0, 'reversal 
 assert(trackpad.accumulated < 0, 'reversal changes accumulator direction');
 assert.equal(g.spectrRangeWheelAdvance({ accumulated: 0 }, 1, true).steps, 1, 'mouse notch widens once');
 assert.equal(g.spectrRangeWheelAdvance({ accumulated: 20 }, -1, true).steps, -1, 'mouse notch tightens once');
+g.__spectrRangeHapticsEnabled = true;
+g.spectrRangeHaptic();
+assert.equal(hapticCalls[0][0], 'range_haptic', 'macOS transition sends haptic request');
+assert.equal(typeof hapticCalls[0][1], 'object', 'haptic request payload is object');
+g.__spectrRangeHapticsEnabled = false;
+g.spectrRangeHaptic();
+assert.equal(hapticCalls.length, 1, 'haptic preference disables feedback');
 
 const messages = [];
 context.globalThis.spectrSetRangeDb = (db, publish) => {
@@ -52,4 +61,8 @@ assert.deepEqual(messages, [{ type: 'range_set', range_db: 12 }], 'only range_se
 assert.equal(html.includes('setCursor("ns-resize")'), true, 'gutter cursor is vertical resize');
 assert.equal(html.includes('clearTimeout(rangeWheelRef.current.timer)'), true, 'accumulator decays on unmount');
 assert.equal(html.includes('spectrRangeHaptic()'), true, 'transition invokes one haptic hook');
+assert.equal(html.includes('bandTransitionCanvasRef'), true, 'band-count transition snapshot exists');
+assert.equal(html.includes('rangeTransitionRef'), true, 'vertical range transition exists');
+assert.equal(html.includes('g.rulerRange'), true, 'axis labels use animated range');
+assert.equal(html.includes('duration: 180'), true, 'transition duration is bounded');
 console.log('PASS: range stepping, endpoint clamps, gutter hit, detented accumulation, display-only publication, cursor and cleanup');

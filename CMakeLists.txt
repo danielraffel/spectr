@@ -222,6 +222,7 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/mac_haptics.hpp
 )
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
@@ -245,7 +246,9 @@ set(SPECTR_NATIVE_SOURCES
 )
 if(APPLE)
     enable_language(OBJCXX)
-    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+    list(APPEND SPECTR_NATIVE_SOURCES
+        src/ui/host_view_first_mouse_mac.mm
+        src/ui/mac_haptics.mm)
 endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target

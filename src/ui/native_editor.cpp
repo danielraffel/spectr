@@ -3,6 +3,7 @@
 #include <pulp/view/plugin_view_host.hpp>
 
 #include "spectr/editor_bridge.hpp"
+#include "spectr/mac_haptics.hpp"
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/runtime/trace.hpp>
@@ -938,6 +939,16 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             [this](const choc::value::ValueView&) {
                 return pulp::view::EditorBridge::ok_response(
                     make_output_meter_payload(read_output_level()));
+            });
+        // One alignment tick per actual gutter range transition. The JS side
+        // clamps transitions and gates the user's haptic preference; this
+        // handler only schedules platform feedback and never touches DSP.
+        native_editor_bridge_.add_handler(
+            "range_haptic",
+            [this](const choc::value::ValueView&) {
+                (void)this;
+                mac_haptic_alignment_tick();
+                return pulp::view::EditorBridge::ok_response();
             });
         native_editor_handlers_registered_ = true;
     }
