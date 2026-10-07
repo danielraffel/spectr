@@ -1,0 +1,95 @@
+{
+  "schema": "spectr-authored-reimport-three-v1",
+  "version": 1,
+  "base": {
+    "artifact_path": "native-ui/materialized/materialized-document.runtime.json",
+    "artifact_bytes": 1152151,
+    "artifact_sha256": "05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c",
+    "manifest_path": "experiment/three.manifest.json",
+    "manifest_sha256": "2e6df00c79bcc6fc67fefd785c2927bd56f93d2db99e2897dedf5f80c9fd9018",
+    "source_commit": "e0b888e7a1dff23f8d692eaf0100525ecb6a7201",
+    "editor_html": {
+      "path": "resources/editor.html",
+      "bytes": 2064405,
+      "sha256": "402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f"
+    },
+    "patch_script_count": 143
+  },
+  "selected_components": [
+    {
+      "name": "MBtn",
+      "source_bytes": 682,
+      "source_sha256": "4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "tsx_bytes": 674,
+      "tsx_sha256": "5c06841db68a19e1ab3f2de0934ba92e27fa292de61f744943d5d346edc83c71",
+      "compiled_bytes": 780,
+      "compiled_sha256": "a6742fc8fa1f13350cf53cc37938c34e7aa3f80d2cc8a7eeb6a0af7cb5076958",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "React"
+      ]
+    },
+    {
+      "name": "Slider",
+      "source_bytes": 594,
+      "source_sha256": "af95e4b91c5e6472bf7684a8b473368858da150e3c54df39b04397a62dd2bca7",
+      "tsx_bytes": 464,
+      "tsx_sha256": "925c4471bd034703f54a7d229f62820880061d2c8ff68340375b6f1ba8dc7734",
+      "compiled_bytes": 546,
+      "compiled_sha256": "02be1ef03f47804b6eab34b0686b578bc74477662e169d9b956173b5e79f433d",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "parseFloat",
+        "React"
+      ]
+    },
+    {
+      "name": "Toggle",
+      "source_bytes": 614,
+      "source_sha256": "ac252ea5a893fd906136ec40c5ef1dae27a215b83260aac5973300a2c8a62952",
+      "tsx_bytes": 558,
+      "tsx_sha256": "8b1fd063b48ba97e995d44f361cb37778335e8b94f758e66879dc0ec65b45a1f",
+      "compiled_bytes": 785,
+      "compiled_sha256": "0ebcc12565cf06fd39df284912004fac3458a1f9568ef0c2a6e81f61a5f77de3",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "React"
+      ]
+    }
+  ],
+  "output": {
+    "artifact_path": "experiment/reimport-output3/reimported.runtime.json",
+    "artifact_bytes": 1152368,
+    "artifact_sha256": "6e24ae44809d97ecc95f6bc1de88fc0dac920e1103e22066a84ca18eb6ccae1c",
+    "fixture_path": "experiment/reimport-output3/browser-fixture.html",
+    "fixture_sha256": "3ad04b198bb8a76ee6660c04370d8a2c7d9ade1f2b38c11df22f6b833bedc10b"
+  },
+  "checks": {
+    "vdom_structure_and_callbacks": true,
+    "browser": true,
+    "negative_control": {
+      "name": "Toggle",
+      "mutation": "false-toggle-left-19-to-18",
+      "detected": true
+    }
+  },
+  "scope": {
+    "editor_html_unchanged": true,
+    "vellum_unchanged": true,
+    "patch_scripts_retired": false,
+    "full_editor_parity": false
+  },
+  "kill_criteria": [
+    "Any selected component has a dependency, capture, unresolved identifier, or non-deterministic output.",
+    "Original and re-imported VDOM or callback contracts diverge in the bounded suite.",
+    "A planted style or handler mutation fails to turn the comparator red.",
+    "Chromium fixture cannot prove matching DOM and interaction outcomes.",
+    "The slice cannot be integrated into the real importer without changing editor.html or hiding unresolved runtime bindings."
+  ]
+}
