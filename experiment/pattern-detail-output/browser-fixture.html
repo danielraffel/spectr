@@ -1,0 +1,243 @@
+<!doctype html><html><body><div id="original"></div><div id="reimport"></div><div id="patched"></div><pre id="result"></pre><script>
+window.__spectrBrowserErrors=[];window.addEventListener('error',event=>window.__spectrBrowserErrors.push(String(event.message||event.error||'browser error')));window.addEventListener('unhandledrejection',event=>window.__spectrBrowserErrors.push(String(event.reason||'unhandled rejection')));
+const React={createElement(type,props,...children){const p={...(props||{})};const flat=children.flat(Infinity).filter(x=>x!==null&&x!==undefined&&x!==false);if(flat.length)p.children=flat;return{type,props:p};},Fragment:Symbol('Fragment')};
+let browserRenameStartCount=0;const browserHookState=new Map();let browserHookKey=null,browserHookCursor=0;
+const beginBrowserRender=key=>{browserHookKey=key;browserHookCursor=0;};
+const usePM=initial=>{const slots=browserHookState.get(browserHookKey)||[];browserHookState.set(browserHookKey,slots);const index=browserHookCursor++;if(!(index in slots))slots[index]=initial;return[slots[index],next=>{const value=typeof next==='function'?next(slots[index]):next;if(index===0&&value===true)browserRenameStartCount++;slots[index]=value;}];};
+const usePE=()=>{},useMemoPM=effect=>effect(),spectrInputValue=e=>e?.target?.value;
+const iconBtn={background:'transparent',border:'none',color:'#fff'};
+window.Spectr={resolveGains:(pattern,n)=>(pattern.gains||[]).slice(0,n)};
+const ORIGINAL=(()=>{function MBtn({ children, onClick, primary, danger, action }) {
+  return /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": action, onClick, style: {
+    background: primary ? "rgba(80,140,210,0.22)" : danger ? "rgba(210,80,100,0.15)" : "rgba(255,255,255,0.04)",
+    border: "1px solid " + (primary ? "rgba(140,190,240,0.4)" : danger ? "rgba(240,150,160,0.35)" : "rgba(255,255,255,0.12)"),
+    color: primary ? "#fff" : danger ? "rgba(255,200,210,0.95)" : "rgba(255,255,255,0.85)",
+    padding: "5px 9px",
+    fontFamily: "var(--mono)",
+    fontSize: 10,
+    letterSpacing: 1,
+    borderRadius: 3,
+    cursor: "pointer",
+    height: 26
+  } }, children);
+}
+function MiniPreview({ gains, w = 56, h = 22 }) {
+  const N = gains.length;
+  const bw = w / N;
+  return /* @__PURE__ */ React.createElement("svg", { width: w, height: h, style: { opacity: 0.9 } }, gains.map((g, i) => {
+    if (g === -Infinity) {
+      return /* @__PURE__ */ React.createElement("rect", { key: i, x: i * bw, y: h - 2, width: Math.max(1, bw - 0.5), height: 2, fill: "rgba(255,100,100,0.3)" });
+    }
+    const gh = Math.max(1, Math.abs(g) * (h - 2));
+    const y = g >= 0 ? h / 2 - gh : h / 2;
+    const hue = 240 - i / N * 300;
+    return /* @__PURE__ */ React.createElement(
+      "rect",
+      {
+        key: i,
+        x: i * bw,
+        y,
+        width: Math.max(1, bw - 0.5),
+        height: gh,
+        fill: `hsl(${hue}, 75%, 60%)`,
+        opacity: 0.85
+      }
+    );
+  }), /* @__PURE__ */ React.createElement("line", { x1: 0, y1: h / 2, x2: w, y2: h / 2, stroke: "rgba(255,255,255,0.15)", strokeWidth: 0.5 }));
+}
+function PatternDetail({ pattern, N, isDefault, onApply, onRename, onDuplicate, onDelete, onOverwrite, onSetDefault, onExport }) {
+  const [editName, setEditName] = usePM(false);
+  const [draft, setDraft] = usePM(pattern.name);
+  usePE(() => {
+    setDraft(pattern.name);
+    setEditName(false);
+  }, [pattern.id]);
+  const gains = useMemoPM(() => window.Spectr.resolveGains(pattern, N), [pattern, N, pattern.updatedAt]);
+  const isFactory = pattern.source === "factory";
+  return /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-detail": true, style: { flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: 12 } }, /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-heading": true, style: { display: "flex", alignItems: "center", gap: 8, minHeight: 26 } }, editName && !isFactory ? /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      id: "spectr-manager-rename",
+      "data-spectr-manager-rename": true,
+      autoFocus: true,
+      value: draft,
+      onChange: (e) => setDraft(String(spectrInputValue(e) ?? "")),
+      onBlur: () => {
+        onRename(draft);
+        setEditName(false);
+      },
+      onKeyDown: (e) => {
+        if (e.key === "Enter") e.target.blur();
+        if (e.key === "Escape") {
+          setDraft(pattern.name);
+          setEditName(false);
+        }
+      },
+      style: {
+        background: "rgba(255,255,255,0.05)",
+        border: "1px solid rgba(180,210,255,0.4)",
+        color: "#fff",
+        fontFamily: "var(--mono)",
+        fontSize: 14,
+        letterSpacing: 1,
+        padding: "4px 8px",
+        borderRadius: 3,
+        outline: "none",
+        flex: 1
+      }
+    }
+  ) : /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, lineHeight: 1, minHeight: 26, display: "flex", alignItems: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0, maxWidth: 190 } }, pattern.name), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-source": true, style: {
+    display: "flex",
+    alignItems: "center",
+    minHeight: 26,
+    lineHeight: 1,
+    flexShrink: 0,
+    whiteSpace: "nowrap",
+    fontSize: 8.5,
+    letterSpacing: 1.5,
+    opacity: 0.6,
+    padding: "2px 6px",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 2
+  } }, isFactory ? "FACTORY" : "USER"), !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\u270E")), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {
+    background: "rgba(0,0,0,0.35)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: 3,
+    padding: 10,
+    height: 110,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  } }, /* @__PURE__ */ React.createElement(MiniPreview, { gains, w: 380, h: 86 })), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-meta": true, style: { fontSize: 9.5, opacity: 0.55, display: "flex", gap: 14, flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", null, "BANDS (current): ", /* @__PURE__ */ React.createElement("span", { className: "tnum" }, N)), !isFactory && pattern.createdAt && /* @__PURE__ */ React.createElement("span", null, "CREATED: ", pattern.createdAt.slice(0, 10)), !isFactory && pattern.updatedAt && /* @__PURE__ */ React.createElement("span", null, "UPDATED: ", pattern.updatedAt.slice(0, 10))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minHeight: 12 } }), /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-actions": true, style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minHeight: 58 } }, /* @__PURE__ */ React.createElement(MBtn, { action: "apply", primary: true, onClick: onApply }, "APPLY"), /* @__PURE__ */ React.createElement(MBtn, { action: "set-default", onClick: onSetDefault }, isDefault ? "\u2605 DEFAULT" : "SET AS DEFAULT"), /* @__PURE__ */ React.createElement(MBtn, { action: "duplicate", onClick: onDuplicate }, "DUPLICATE"), !isFactory && /* @__PURE__ */ React.createElement(MBtn, { onClick: onOverwrite }, "UPDATE FROM CURRENT"), !isFactory && /* @__PURE__ */ React.createElement(MBtn, { action: "delete", danger: true, onClick: onDelete }, "DELETE"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }), /* @__PURE__ */ React.createElement(MBtn, { action: "export-file", onClick: () => onExport("file") }, "EXPORT (FILE)"), /* @__PURE__ */ React.createElement(MBtn, { action: "export-clip", onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")));
+}
+return{MBtn,MiniPreview,PatternDetail};})();
+function loadModule(code,req){const module={exports:{}};const exports=module.exports;const require=req;eval(code);return module.exports;}
+const REIMPORT_MBTN=loadModule("\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.MBtn = MBtn;\nfunction MBtn({ children, onClick, primary, danger, action }) {\n    return /* @__PURE__ */ React.createElement(\"button\", { \"data-spectr-manager-action\": action, onClick: onClick, style: {\n            background: primary ? \"rgba(80,140,210,0.22)\" : danger ? \"rgba(210,80,100,0.15)\" : \"rgba(255,255,255,0.04)\",\n            border: \"1px solid \" + (primary ? \"rgba(140,190,240,0.4)\" : danger ? \"rgba(240,150,160,0.35)\" : \"rgba(255,255,255,0.12)\"),\n            color: primary ? \"#fff\" : danger ? \"rgba(255,200,210,0.95)\" : \"rgba(255,255,255,0.85)\",\n            padding: \"5px 9px\",\n            fontFamily: \"var(--mono)\",\n            fontSize: 10,\n            letterSpacing: 1,\n            borderRadius: 3,\n            cursor: \"pointer\",\n            height: 26\n        } }, children);\n}\n",()=>{throw new Error('MBtn import');});
+const REIMPORT_MINI=loadModule("\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.MiniPreview = MiniPreview;\nfunction MiniPreview({ gains, w = 56, h = 22 }) {\n    const N = gains.length;\n    const bw = w / N;\n    return /* @__PURE__ */ React.createElement(\"svg\", { width: w, height: h, style: { opacity: 0.9 } },\n        gains.map((g, i) => {\n            if (g === -Infinity) {\n                return /* @__PURE__ */ React.createElement(\"rect\", { key: i, x: i * bw, y: h - 2, width: Math.max(1, bw - 0.5), height: 2, fill: \"rgba(255,100,100,0.3)\" });\n            }\n            const gh = Math.max(1, Math.abs(g) * (h - 2));\n            const y = g >= 0 ? h / 2 - gh : h / 2;\n            const hue = 240 - i / N * 300;\n            return /* @__PURE__ */ React.createElement(\"rect\", { key: i, x: i * bw, y: y, width: Math.max(1, bw - 0.5), height: gh, fill: `hsl(${hue}, 75%, 60%)`, opacity: 0.85 });\n        }),\n        React.createElement(\"line\", { x1: 0, y1: h / 2, x2: w, y2: h / 2, stroke: \"rgba(255,255,255,0.15)\", strokeWidth: 0.5 }));\n}\n",()=>{throw new Error('MiniPreview import');});
+const REIMPORT_DETAIL=loadModule("\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.PatternDetail = PatternDetail;\nconst MBtn_cjs_1 = require(\"./MBtn.cjs\");\nconst MiniPreview_cjs_1 = require(\"./MiniPreview.cjs\");\nfunction PatternDetail({ pattern, N, isDefault, onApply, onRename, onDuplicate, onDelete, onOverwrite, onSetDefault, onExport }) {\n    const [editName, setEditName] = usePM(false);\n    const [draft, setDraft] = usePM(pattern.name);\n    usePE(() => {\n        setDraft(pattern.name);\n        setEditName(false);\n    }, [pattern.id]);\n    const gains = useMemoPM(() => window.Spectr.resolveGains(pattern, N), [pattern, N, pattern.updatedAt]);\n    const isFactory = pattern.source === \"factory\";\n    return /* @__PURE__ */ React.createElement(\"div\", { \"data-spectr-manager-detail\": true, style: { flex: 1, minWidth: 0, minHeight: 0, display: \"flex\", flexDirection: \"column\", gap: 12 } },\n        React.createElement(\"div\", { \"data-spectr-manager-heading\": true, style: { display: \"flex\", alignItems: \"center\", gap: 8, minHeight: 26 } },\n            editName && !isFactory ? /* @__PURE__ */ React.createElement(\"input\", { id: \"spectr-manager-rename\", \"data-spectr-manager-rename\": true, autoFocus: true, value: draft, onChange: (e) => setDraft(String(spectrInputValue(e) ?? \"\")), onBlur: () => {\n                    onRename(draft);\n                    setEditName(false);\n                }, onKeyDown: (e) => {\n                    if (e.key === \"Enter\")\n                        e.target.blur();\n                    if (e.key === \"Escape\") {\n                        setDraft(pattern.name);\n                        setEditName(false);\n                    }\n                }, style: {\n                    background: \"rgba(255,255,255,0.05)\",\n                    border: \"1px solid rgba(180,210,255,0.4)\",\n                    color: \"#fff\",\n                    fontFamily: \"var(--mono)\",\n                    fontSize: 14,\n                    letterSpacing: 1,\n                    padding: \"4px 8px\",\n                    borderRadius: 3,\n                    outline: \"none\",\n                    flex: 1\n                } }) : /* @__PURE__ */ React.createElement(\"div\", { \"data-spectr-manager-title\": true, \"data-spectr-pattern-id\": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, lineHeight: 1, minHeight: 26, display: \"flex\", alignItems: \"center\", whiteSpace: \"nowrap\", overflow: \"hidden\", textOverflow: \"ellipsis\", flexShrink: 0, maxWidth: 190 } }, pattern.name),\n            React.createElement(\"div\", { \"data-spectr-manager-source\": true, style: {\n                    display: \"flex\",\n                    alignItems: \"center\",\n                    minHeight: 26,\n                    lineHeight: 1,\n                    flexShrink: 0,\n                    whiteSpace: \"nowrap\",\n                    fontSize: 8.5,\n                    letterSpacing: 1.5,\n                    opacity: 0.6,\n                    padding: \"2px 6px\",\n                    border: \"1px solid rgba(255,255,255,0.15)\",\n                    borderRadius: 2\n                } }, isFactory ? \"FACTORY\" : \"USER\"),\n            !isFactory && !editName && /* @__PURE__ */ React.createElement(\"button\", { \"data-spectr-manager-action\": \"rename-start\", onClick: () => setEditName(true), style: iconBtn }, \"\\u270E\")),\n        React.createElement(\"div\", { \"data-spectr-manager-preview\": true, \"data-spectr-pattern-id\": pattern.id, style: {\n                background: \"rgba(0,0,0,0.35)\",\n                border: \"1px solid rgba(255,255,255,0.06)\",\n                borderRadius: 3,\n                padding: 10,\n                height: 110,\n                display: \"flex\",\n                alignItems: \"center\",\n                justifyContent: \"center\"\n            } },\n            React.createElement(MiniPreview_cjs_1.MiniPreview, { gains: gains, w: 380, h: 86 })),\n        React.createElement(\"div\", { \"data-spectr-manager-meta\": true, style: { fontSize: 9.5, opacity: 0.55, display: \"flex\", gap: 14, flexWrap: \"wrap\" } },\n            React.createElement(\"span\", null,\n                \"BANDS (current): \",\n                React.createElement(\"span\", { className: \"tnum\" }, N)),\n            !isFactory && pattern.createdAt && /* @__PURE__ */ React.createElement(\"span\", null,\n                \"CREATED: \",\n                pattern.createdAt.slice(0, 10)),\n            !isFactory && pattern.updatedAt && /* @__PURE__ */ React.createElement(\"span\", null,\n                \"UPDATED: \",\n                pattern.updatedAt.slice(0, 10))),\n        React.createElement(\"div\", { style: { flex: 1, minHeight: 12 } }),\n        React.createElement(\"div\", { \"data-spectr-manager-actions\": true, style: { display: \"flex\", gap: 6, flexWrap: \"wrap\", alignItems: \"center\", minHeight: 58 } },\n            React.createElement(MBtn_cjs_1.MBtn, { action: \"apply\", primary: true, onClick: onApply }, \"APPLY\"),\n            React.createElement(MBtn_cjs_1.MBtn, { action: \"set-default\", onClick: onSetDefault }, isDefault ? \"\\u2605 DEFAULT\" : \"SET AS DEFAULT\"),\n            React.createElement(MBtn_cjs_1.MBtn, { action: \"duplicate\", onClick: onDuplicate }, \"DUPLICATE\"),\n            !isFactory && /* @__PURE__ */ React.createElement(MBtn_cjs_1.MBtn, { onClick: onOverwrite }, \"UPDATE FROM CURRENT\"),\n            !isFactory && /* @__PURE__ */ React.createElement(MBtn_cjs_1.MBtn, { action: \"delete\", danger: true, onClick: onDelete }, \"DELETE\"),\n            React.createElement(\"div\", { style: { flex: 1 } }),\n            React.createElement(MBtn_cjs_1.MBtn, { action: \"export-file\", onClick: () => onExport(\"file\") }, \"EXPORT (FILE)\"),\n            React.createElement(MBtn_cjs_1.MBtn, { action: \"export-clip\", onClick: () => onExport(\"clipboard\") }, \"EXPORT (CLIP)\")));\n}\n",id=>{if(id==='./MBtn.cjs')return REIMPORT_MBTN;if(id==='./MiniPreview.cjs')return REIMPORT_MINI;throw new Error('bad import '+id);});
+const PATCHED=(()=>{function MBtn({ children, onClick, primary, danger, action }) {
+    return /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": action, onClick: onClick, style: {
+            background: primary ? "rgba(80,140,210,0.22)" : danger ? "rgba(210,80,100,0.15)" : "rgba(255,255,255,0.04)",
+            border: "1px solid " + (primary ? "rgba(140,190,240,0.4)" : danger ? "rgba(240,150,160,0.35)" : "rgba(255,255,255,0.12)"),
+            color: primary ? "#fff" : danger ? "rgba(255,200,210,0.95)" : "rgba(255,255,255,0.85)",
+            padding: "5px 9px",
+            fontFamily: "var(--mono)",
+            fontSize: 10,
+            letterSpacing: 1,
+            borderRadius: 3,
+            cursor: "pointer",
+            height: 26
+        } }, children);
+}
+function MiniPreview({ gains, w = 56, h = 22 }) {
+    const N = gains.length;
+    const bw = w / N;
+    return /* @__PURE__ */ React.createElement("svg", { width: w, height: h, style: { opacity: 0.9 } },
+        gains.map((g, i) => {
+            if (g === -Infinity) {
+                return /* @__PURE__ */ React.createElement("rect", { key: i, x: i * bw, y: h - 2, width: Math.max(1, bw - 0.5), height: 2, fill: "rgba(255,100,100,0.3)" });
+            }
+            const gh = Math.max(1, Math.abs(g) * (h - 2));
+            const y = g >= 0 ? h / 2 - gh : h / 2;
+            const hue = 240 - i / N * 300;
+            return /* @__PURE__ */ React.createElement("rect", { key: i, x: i * bw, y: y, width: Math.max(1, bw - 0.5), height: gh, fill: `hsl(${hue}, 75%, 60%)`, opacity: 0.85 });
+        }),
+        React.createElement("line", { x1: 0, y1: h / 2, x2: w, y2: h / 2, stroke: "rgba(255,255,255,0.15)", strokeWidth: 0.5 }));
+}
+function PatternDetail({ pattern, N, isDefault, onApply, onRename, onDuplicate, onDelete, onOverwrite, onSetDefault, onExport }) {
+    const [editName, setEditName] = usePM(false);
+    const [draft, setDraft] = usePM(pattern.name);
+    usePE(() => {
+        setDraft(pattern.name);
+        setEditName(false);
+    }, [pattern.id]);
+    const gains = useMemoPM(() => window.Spectr.resolveGains(pattern, N), [pattern, N, pattern.updatedAt]);
+    const isFactory = pattern.source === "factory";
+    return /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-detail": true, style: { flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: 12 } },
+        React.createElement("div", { "data-spectr-manager-heading": true, style: { display: "flex", alignItems: "center", gap: 8, minHeight: 26 } },
+            editName && !isFactory ? /* @__PURE__ */ React.createElement("input", { id: "spectr-manager-rename", "data-spectr-manager-rename": true, autoFocus: true, value: draft, onChange: (e) => setDraft(String(spectrInputValue(e) ?? "")), onBlur: () => {
+                    onRename(draft);
+                    setEditName(false);
+                }, onKeyDown: (e) => {
+                    if (e.key === "Enter")
+                        e.target.blur();
+                    if (e.key === "Escape") {
+                        setDraft(pattern.name);
+                        setEditName(false);
+                    }
+                }, style: {
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(180,210,255,0.4)",
+                    color: "#fff",
+                    fontFamily: "var(--mono)",
+                    fontSize: 14,
+                    letterSpacing: 1,
+                    padding: "4px 8px",
+                    borderRadius: 3,
+                    outline: "none",
+                    flex: 1
+                } }) : /* @__PURE__ */ React.createElement("div", { "data-spectr-manager-title": true, "data-spectr-pattern-id": pattern.id, style: { fontSize: 14, letterSpacing: 1, fontWeight: 500, lineHeight: 1, minHeight: 26, display: "flex", alignItems: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0, maxWidth: 190 } }, pattern.name),
+            React.createElement("div", { "data-spectr-manager-source": true, style: {
+                    display: "flex",
+                    alignItems: "center",
+                    minHeight: 26,
+                    lineHeight: 1,
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                    fontSize: 8.5,
+                    letterSpacing: 1.5,
+                    opacity: 0.6,
+                    padding: "2px 6px",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    borderRadius: 2
+                } }, isFactory ? "FACTORY" : "USER"),
+            !isFactory && !editName && /* @__PURE__ */ React.createElement("button", { "data-spectr-manager-action": "rename-start", onClick: () => setEditName(true), style: iconBtn }, "\u270E")),
+        React.createElement("div", { "data-spectr-manager-preview": true, "data-spectr-pattern-id": pattern.id, style: {
+                background: "rgba(0,0,0,0.35)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                borderRadius: 3,
+                padding: 10,
+                height: 110,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+            } },
+            React.createElement(MiniPreview, { gains: gains, w: 380, h: 86 })),
+        React.createElement("div", { "data-spectr-manager-meta": true, style: { fontSize: 9.5, opacity: 0.55, display: "flex", gap: 14, flexWrap: "wrap" } },
+            React.createElement("span", null,
+                "BANDS (current): ",
+                React.createElement("span", { className: "tnum" }, N)),
+            !isFactory && pattern.createdAt && /* @__PURE__ */ React.createElement("span", null,
+                "CREATED: ",
+                pattern.createdAt.slice(0, 10)),
+            !isFactory && pattern.updatedAt && /* @__PURE__ */ React.createElement("span", null,
+                "UPDATED: ",
+                pattern.updatedAt.slice(0, 10))),
+        React.createElement("div", { style: { flex: 1, minHeight: 12 } }),
+        React.createElement("div", { "data-spectr-manager-actions": true, style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", minHeight: 58 } },
+            React.createElement(MBtn, { action: "apply", primary: true, onClick: onApply }, "APPLY"),
+            React.createElement(MBtn, { action: "set-default", onClick: onSetDefault }, isDefault ? "\u2605 DEFAULT" : "SET AS DEFAULT"),
+            React.createElement(MBtn, { action: "duplicate", onClick: onDuplicate }, "DUPLICATE"),
+            !isFactory && /* @__PURE__ */ React.createElement(MBtn, { onClick: onOverwrite }, "UPDATE FROM CURRENT"),
+            !isFactory && /* @__PURE__ */ React.createElement(MBtn, { action: "delete", danger: true, onClick: onDelete }, "DELETE"),
+            React.createElement("div", { style: { flex: 1 } }),
+            React.createElement(MBtn, { action: "export-file", onClick: () => onExport("file") }, "EXPORT (FILE)"),
+            React.createElement(MBtn, { action: "export-clip", onClick: () => onExport("clipboard") }, "EXPORT (CLIP)")));
+}
+return{MBtn,MiniPreview,PatternDetail};})();
+function mount(value,parent){if(value===null||value===undefined||value===false)return;if(typeof value==='string'||typeof value==='number'){parent.appendChild(document.createTextNode(String(value)));return;}if(typeof value.type==='function'){mount(value.type(value.props||{}),parent);return;}if(typeof value.type==='symbol'){for(const child of(value.props?.children||[]))mount(child,parent);return;}const element=document.createElement(value.type);for(const[key,item]of Object.entries(value.props||{})){if(key==='children'||key==='key'||key==='className'||key.startsWith('on'))continue;if(key==='style'&&item&&typeof item==='object')Object.assign(element.style,item);else if(item!==undefined)element.setAttribute(key,String(item));}if(value.props?.className)element.className=value.props.className;if(typeof value.props?.onClick==='function')element.addEventListener('click',value.props.onClick);if(typeof value.props?.onChange==='function')element.addEventListener('change',value.props.onChange);if(typeof value.props?.onBlur==='function')element.addEventListener('blur',value.props.onBlur);if(typeof value.props?.onKeyDown==='function')element.addEventListener('keydown',value.props.onKeyDown);for(const child of(value.props?.children||[]))mount(child,element);parent.appendChild(element);}
+function renderOne(id,component,props){const parent=document.getElementById(id);parent.replaceChildren();beginBrowserRender(id);mount(component(props),parent);browserHookKey=null;}
+const originalCalls={apply:0,rename:0,renameValue:null,overwrite:0},reimportCalls={apply:0,rename:0,renameValue:null,overwrite:0},patchedCalls={apply:0,rename:0,renameValue:null,overwrite:0};
+const baseProps={pattern:{id:'user:pattern-detail',name:'User Pattern',source:'user',gains:[0.25,-0.5,-Infinity,0.75],createdAt:'2026-01-02T00:00:00Z',updatedAt:'2026-01-03T00:00:00Z'},N:4,isDefault:false,onDuplicate:()=>{},onDelete:()=>{},onSetDefault:()=>{},onExport:()=>{}};
+const props={...baseProps,onApply:()=>originalCalls.apply++,onRename:value=>{originalCalls.rename++;originalCalls.renameValue=value;},onOverwrite:()=>originalCalls.overwrite++};
+const reimportProps={...baseProps,onApply:()=>reimportCalls.apply++,onRename:value=>{reimportCalls.rename++;reimportCalls.renameValue=value;},onOverwrite:()=>reimportCalls.overwrite++};
+const patchedProps={...baseProps,onApply:()=>patchedCalls.apply++,onRename:value=>{patchedCalls.rename++;patchedCalls.renameValue=value;},onOverwrite:()=>patchedCalls.overwrite++};
+renderOne('original',ORIGINAL.PatternDetail,props);renderOne('reimport',REIMPORT_DETAIL.PatternDetail,reimportProps);renderOne('patched',PATCHED.PatternDetail,patchedProps);
+const originalHtml=document.getElementById('original').innerHTML,reimportHtml=document.getElementById('reimport').innerHTML,patchedHtml=document.getElementById('patched').innerHTML;
+if(originalHtml!==reimportHtml){document.getElementById('result').textContent='DOM_DIFF '+originalHtml.length+' '+reimportHtml.length;throw new Error('PatternDetail DOM differs after explicit imports');}
+if(originalHtml!==patchedHtml){document.getElementById('result').textContent='PATCHED_DOM_DIFF '+originalHtml.length+' '+patchedHtml.length;throw new Error('patched runtime DOM differs from original');}
+if(document.querySelectorAll('#original [data-spectr-manager-action]').length!==7||document.querySelectorAll('#reimport svg rect').length!==4||document.querySelectorAll('#patched svg rect').length!==4){document.getElementById('result').textContent='STRUCTURE_DIFF';throw new Error('PatternDetail browser structure changed');}
+for(const [id,calls,component,componentProps] of [['original',originalCalls,ORIGINAL.PatternDetail,props],['reimport',reimportCalls,REIMPORT_DETAIL.PatternDetail,reimportProps],['patched',patchedCalls,PATCHED.PatternDetail,patchedProps]]){let root=document.getElementById(id);root.querySelector('[data-spectr-manager-action="apply"]').click();Array.from(root.querySelectorAll('button')).find(button=>button.textContent==='UPDATE FROM CURRENT').click();root.querySelector('[data-spectr-manager-action="rename-start"]').click();renderOne(id,component,componentProps);root=document.getElementById(id);let input=root.querySelector('[data-spectr-manager-rename]');if(!input)throw new Error('browser rename input missing after state update for '+id);input.value='Renamed Browser Pattern';input.dispatchEvent(new Event('change',{bubbles:true}));renderOne(id,component,componentProps);input=document.getElementById(id).querySelector('[data-spectr-manager-rename]');if(!input)throw new Error('browser rename input missing after edit for '+id);input.dispatchEvent(new Event('blur',{bubbles:true}));if(calls.apply!==1||calls.overwrite!==1||calls.rename!==1||calls.renameValue!=='Renamed Browser Pattern'){document.getElementById('result').textContent=JSON.stringify({id,calls,browserRenameStartCount});throw new Error('browser action or rename callback diverged for '+id);}}
+if(browserRenameStartCount!==3)throw new Error('browser rename-start handlers did not execute');
+document.documentElement.dataset.spectrAuthoredReimport='OK';document.getElementById('result').textContent='SPECTR_AUTHORED_REIMPORT_PATTERN_DETAIL_BROWSER_OK';
+</script></body></html>
