@@ -2260,6 +2260,21 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-insert-index-control-queue-order
         PROPERTIES TIMEOUT 30)
 
+    add_test(NAME Spectr-materialized-tooltip-interaction
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_tooltip_interaction.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    foreach(_tooltip_control IN ITEMS no-press-suppression ignore-popups)
+        add_test(NAME Spectr-materialized-tooltip-control-${_tooltip_control}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_tooltip_interaction.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_tooltip_control} --expect-fail)
+        set_tests_properties(Spectr-materialized-tooltip-control-${_tooltip_control}
+            PROPERTIES TIMEOUT 30)
+    endforeach()
+    set_tests_properties(Spectr-materialized-tooltip-interaction PROPERTIES TIMEOUT 30)
+
     # The modulation display, MEASURED rather than asserted. This drives the
     # shipped rAF `draw` and `applyModulationFrame` out of the materialized
     # document against a known producer and requires the painted peak-to-peak
