@@ -23,7 +23,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
-const ts = createRequire(import.meta.url)(path.join(repo, 'tools', 'wp1-parser', 'node_modules', 'typescript'));
+let ts;
+try {
+  ts = createRequire(import.meta.url)(path.join(repo, 'tools', 'wp1-parser', 'node_modules', 'typescript'));
+} catch (error) {
+  fail(`pinned WP-1 TypeScript toolchain is missing; run npm ci --ignore-scripts --prefix ${path.join(repo, 'tools', 'wp1-parser')} (${error.message})`);
+}
 const SCHEMA = 'spectr-authored-reimport-app-mount-v1';
 
 function fail(message) { throw new Error(`authored App mount failed: ${message}`); }
