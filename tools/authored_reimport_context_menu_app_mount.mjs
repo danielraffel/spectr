@@ -282,7 +282,7 @@ function transformContextMenuSource(original) {
 function patchEditor(editorHtml, originalContextMenu, compiled, mutation = false) {
   const moduleCode = mutation ? compiled.replace('label: "Mute / Unmute"', 'label: "Mute only"') : compiled;
   assert(moduleCode !== compiled || !mutation, 'planted ContextMenu mutation did not change compiled output');
-  const wrapper = `function __wp1ReimportedContextMenuModule() {\n  const module = { exports: {} };\n  const exports = module.exports;\n  ${moduleCode}\n  return module.exports.ContextMenu;\n}\nconst __wp1ReimportedContextMenu = __wp1ReimportedContextMenuModule();\nwindow.__wp1ContextMenuReimported = true;\nwindow.__wp1ContextMenuRenderCount = 0;\nfunction ContextMenu(props) { window.__wp1ContextMenuRenderCount += 1; return __wp1ReimportedContextMenu(props); }`;
+  const wrapper = `function __wp1ReimportedContextMenuModule() {\n  const module = { exports: {} };\n  const exports = module.exports;\n  ${moduleCode}\n  return module.exports.ContextMenu;\n}\nconst __wp1ReimportedContextMenu = __wp1ReimportedContextMenuModule();\nwindow.__wp1ContextMenuReimported = true;\nwindow.__wp1ContextMenuRenderCount = 0;\nwindow.__wp1ContextMenuMuteCalls = 0;\nwindow.__wp1ContextMenuCloseCalls = 0;\nfunction ContextMenu(props) {\n  window.__wp1ContextMenuRenderCount += 1;\n  const observed = { ...props,\n    onMuteBand: (...args) => { window.__wp1ContextMenuMuteCalls += 1; return props.onMuteBand(...args); },\n    onClose: (...args) => { window.__wp1ContextMenuCloseCalls += 1; return props.onClose(...args); },\n  };\n  return __wp1ReimportedContextMenu(observed);\n}`;
   // Earlier bootstrap transforms rewrite ContextMenu before this injection.
   // Use exact declaration/end delimiters and keep both count guards fail closed.
   const startMarker = JSON.stringify('function ContextMenu(');
@@ -361,7 +361,7 @@ async function browserRun(files, chrome, outDir) {
       assert(open, `${name} contextmenu dispatch failed`);
       const menuVisible = `Array.from(document.querySelectorAll('div')).some(x => x.style.position === 'fixed' && x.textContent.includes('Fit full range'))`;
       assert(await waitFor(menuVisible, 10000), `${name} ContextMenu did not open`);
-      const menuSummary = await evaluate(`(() => { const menu = Array.from(document.querySelectorAll('div')).find(x => x.style.position === 'fixed' && x.textContent.includes('Fit full range')); const rect = menu?.getBoundingClientRect(); const buttons = Array.from(menu?.querySelectorAll('button') || []).map(x => x.textContent.trim()); const html = menu?.outerHTML || ''; return { html, normalized_html: html.replace(/ data-spectr-context-menu=""/, ''), text: menu?.innerText || '', buttons, semantic_buttons: buttons.map(x => x.replace(/^[●\\s]+/, '').trim()), renderCount: window.__wp1ContextMenuRenderCount || 0, marker: !!menu?.matches('[data-spectr-context-menu]'), clamped: !!rect && rect.right <= innerWidth && rect.bottom <= innerHeight, left: rect?.left ?? null, top: rect?.top ?? null }; })()`);
+      const menuSummary = await evaluate(`(() => { const menu = Array.from(document.querySelectorAll('div')).find(x => x.style.position === 'fixed' && x.textContent.includes('Fit full range')); const rect = menu?.getBoundingClientRect(); const buttons = Array.from(menu?.querySelectorAll('button') || []).map(x => x.textContent.trim()); const html = menu?.outerHTML || ''; return { html, normalized_html: html.replace(/ data-spectr-context-menu=""/, ''), text: menu?.innerText || '', buttons, semantic_buttons: buttons.map(x => x.replace(/^[●\\s]+/, '').trim()), renderCount: window.__wp1ContextMenuRenderCount || 0, muteCalls: window.__wp1ContextMenuMuteCalls || 0, closeCalls: window.__wp1ContextMenuCloseCalls || 0, marker: !!menu?.matches('[data-spectr-context-menu]'), clamped: !!rect && rect.right <= innerWidth && rect.bottom <= innerHeight, left: rect?.left ?? null, top: rect?.top ?? null }; })()`);
       const transformedSource = await evaluate('window.__wp1ContextMenuTransformedSource || ""');
       if (transformedSource) write(path.join(outDir, 'transformed-context-menu.js'), transformedSource);
       for (const label of ['Mute / Unmute', 'Reset to 0 dB', 'Sculpt', 'Fit full range']) assert(menuSummary.semantic_buttons.some(value => value === label || value.startsWith(label)), `${name} menu is missing ${label}`);
@@ -377,11 +377,14 @@ async function browserRun(files, chrome, outDir) {
       await new Promise(resolve => setTimeout(resolve, 80));
       await evaluate(`document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 2, clientY: 2 }))`);
       assert(await waitFor(`!${menuVisible}`, 5000), `${name} outside pointer did not dismiss menu`);
+      const callbackSummary = await evaluate(`({ muteCalls: window.__wp1ContextMenuMuteCalls || 0, closeCalls: window.__wp1ContextMenuCloseCalls || 0 })`);
       const screenshot = await command('Page.captureScreenshot', { format: 'png' });
       const bytes = Buffer.from(screenshot.data, 'base64'); const screenshotPath = path.join(outDir, `${name}.png`); write(screenshotPath, bytes);
-      results[name] = { ...menuSummary, screenshot: { path: screenshotPath, sha256: sha256(bytes) }, interactions: { opened: true, mute_dismissed: true, escape_dismissed: true, outside_dismissed: true } };
+      results[name] = { ...menuSummary, ...callbackSummary, interaction_counts: callbackSummary, screenshot: { path: screenshotPath, sha256: sha256(bytes) }, interactions: { opened: true, mute_dismissed: true, escape_dismissed: true, outside_dismissed: true, mute_callback: callbackSummary.muteCalls > 0, close_callbacks: callbackSummary.closeCalls } };
     }
     assert(results.patched.renderCount > 0, 'authored ContextMenu was never invoked by mounted App');
+    assert(results.patched.muteCalls > 0, 'authored ContextMenu Mute / Unmute callback was not observed in Chromium');
+    assert(results.patched.closeCalls >= 3, `authored ContextMenu close callback count was ${results.patched.closeCalls}, expected action + Escape + outside`);
     if (results.baseline.normalized_html !== results.patched.normalized_html) {
       const a = results.baseline.normalized_html;
       const b = results.patched.normalized_html;
@@ -431,6 +434,7 @@ async function main(argv) {
       app_mount: true, patched_context_menu_invoked: browser.results.patched.renderCount > 0,
       menu_dom_parity: browser.results.baseline.normalized_html === browser.results.patched.normalized_html,
       open_action_escape_outside: true,
+      browser_callback_counters: { mute_calls: browser.results.patched.muteCalls, close_calls: browser.results.patched.closeCalls, mute_observed: browser.results.patched.muteCalls > 0, three_close_paths_observed: browser.results.patched.closeCalls >= 3 },
       negative_control: { status: 'passed', mutation: 'Mute / Unmute -> Mute only', detected_before_browser: negativeRejected },
     },
     interaction,
