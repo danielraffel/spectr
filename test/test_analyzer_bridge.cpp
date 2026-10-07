@@ -10,6 +10,7 @@
 
 #include "spectr/spectr.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@ using Catch::Approx;
 namespace {
 
 constexpr double kSampleRate = 48000.0;
+constexpr double kPi = 3.141592653589793238462643383279502884;
 
 constexpr int settled_samples() noexcept {
     return spectr::kSpectralLatency + spectr::kSpectralFftSize + 4096;
@@ -32,7 +34,7 @@ void fill_sine(std::vector<float>& ch0, std::vector<float>& ch1,
                double hz, std::size_t start = 0, double sr = kSampleRate,
                float amplitude = 1.0f)
 {
-    const double w = 2.0 * M_PI * hz / sr;
+    const double w = 2.0 * kPi * hz / sr;
     for (std::size_t i = 0; i < ch0.size(); ++i) {
         const float s = amplitude * static_cast<float>(
             std::sin(w * static_cast<double>(i + start)));
@@ -514,4 +516,3 @@ TEST_CASE("Analyzer bridge: after a stalled tick the spectrum shows the newest a
         CHECK(old_db > new_db + 20.0f);
     }
 }
-

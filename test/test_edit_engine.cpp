@@ -11,6 +11,7 @@
 #include "spectr/edit_engine.hpp"
 #include "spectr/edit_modes.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 using Catch::Approx;
