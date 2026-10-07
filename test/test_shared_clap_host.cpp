@@ -8,7 +8,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <dlfcn.h>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -18,7 +17,15 @@
 #include <vector>
 #include <filesystem>
 #include <set>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <unistd.h>
+#include <dlfcn.h>
+#endif
 
 namespace {
 thread_local bool audio_thread=false;
@@ -28,6 +35,11 @@ const clap_host_thread_check_t thread_check{is_main,is_audio};
 const void* extension(const clap_host_t*,const char* id){return std::strcmp(id,CLAP_EXT_THREAD_CHECK)==0?&thread_check:nullptr;}
 void noop(const clap_host_t*){}
 void require(bool c,const char* why){if(!c)throw std::runtime_error(why);}
+#if defined(_WIN32)
+std::uint32_t process_id() noexcept { return GetCurrentProcessId(); }
+#else
+std::uint32_t process_id() noexcept { return static_cast<std::uint32_t>(getpid()); }
+#endif
 struct Events {
     std::array<clap_event_param_value_t,8> values{};unsigned count=0;
     clap_input_events_t input{this,[](const clap_input_events_t* e){return static_cast<const Events*>(e->ctx)->count;},
@@ -40,10 +52,21 @@ struct Events {
 };
 const clap_output_events_t discard{nullptr,[](const clap_output_events_t*,const clap_event_header_t*){return true;}};
 struct Module {
-    void* library=nullptr;const clap_plugin_entry_t* entry=nullptr;const clap_plugin_t* plugin=nullptr;
+#if defined(_WIN32)
+    HMODULE library=nullptr;
+#else
+    void* library=nullptr;
+#endif
+    const clap_plugin_entry_t* entry=nullptr;const clap_plugin_t* plugin=nullptr;
     bool initialized=false,active=false,processing=false;
     ~Module(){close();}
-    void close(){if(plugin){if(processing){audio_thread=true;plugin->stop_processing(plugin);audio_thread=false;}if(active)plugin->deactivate(plugin);plugin->destroy(plugin);}if(initialized)entry->deinit();if(library)dlclose(library);plugin=nullptr;library=nullptr;initialized=false;active=false;processing=false;}
+    void close(){if(plugin){if(processing){audio_thread=true;plugin->stop_processing(plugin);audio_thread=false;}if(active)plugin->deactivate(plugin);plugin->destroy(plugin);}if(initialized)entry->deinit();
+#if defined(_WIN32)
+        if(library) FreeLibrary(library);
+#else
+        if(library) dlclose(library);
+#endif
+        plugin=nullptr;library=nullptr;initialized=false;active=false;processing=false;}
 };
 constexpr unsigned block=512, blocks=256, reset_block=128;
 constexpr int quantum=SPECTR_HOST_HOP/2;
@@ -65,10 +88,18 @@ int main(int argc,char** argv){
         auto identity_record=[&](const std::string& line){std::cout<<line<<std::endl;if(identity_file.is_open()){identity_file<<line<<std::endl;require(bool(identity_file),"identity receipt write failed");}};
         clap_host_t host{CLAP_VERSION,nullptr,"Spectr shared acceptance","Pulp","","1",extension,noop,noop,noop};
         Module m; // The host must outlive plugin teardown, including exception paths.
+#if defined(_WIN32)
+        m.library=LoadLibraryW(std::filesystem::path(argv[1]).c_str());
+        require(m.library,"CLAP binary load failed");
+        m.entry=reinterpret_cast<const clap_plugin_entry_t*>(GetProcAddress(m.library,"clap_entry"));
+        const auto query=reinterpret_cast<SpectrSharedHostQuery>(GetProcAddress(m.library,"spectr_shared_host_probe_v1"));
+        const auto query_v2=reinterpret_cast<SpectrSharedHostQueryV2>(GetProcAddress(m.library,"spectr_shared_host_probe_v2"));
+#else
         m.library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);require(m.library,"CLAP binary load failed");
         m.entry=static_cast<const clap_plugin_entry_t*>(dlsym(m.library,"clap_entry"));
         const auto query=reinterpret_cast<SpectrSharedHostQuery>(dlsym(m.library,"spectr_shared_host_probe_v1"));
         const auto query_v2=reinterpret_cast<SpectrSharedHostQueryV2>(dlsym(m.library,"spectr_shared_host_probe_v2"));
+#endif
         require(m.entry&&query&&query_v2,"diagnostic export absent");require(m.entry->init(argv[1]),"entry init failed");m.initialized=true;
         const auto* factory=static_cast<const clap_plugin_factory_t*>(m.entry->get_factory(CLAP_PLUGIN_FACTORY_ID));
         require(factory&&factory->get_plugin_count(factory)==1,"expected one descriptor");
@@ -102,7 +133,7 @@ int main(int argc,char** argv){
         auto stopped_id=[&](){SpectrSharedHostRequestV2 r;r.snapshot.instance_token=token;require(query_v2(&r)==0&&r.renderer_run_id,"stopped identity query failed");return r.renderer_run_id;};
         auto record_prepare=[&](bool require_gpu){
             const auto id=stopped_id();require(expected_runs.insert(id).second,"prepare reused trace identity");++prepare_ordinal;
-            identity_record("{\"schema\":\"spectr.native-host-trace-inventory.v1\",\"kind\":\"prepared\",\"pid\":"+std::to_string(getpid())+",\"instance_token\":"+std::to_string(token)+",\"prepare_ordinal\":"+std::to_string(prepare_ordinal)+",\"renderer_run_id\":"+std::to_string(id)+",\"gpu_required\":"+(require_gpu?"true":"false")+"}");
+            identity_record("{\"schema\":\"spectr.native-host-trace-inventory.v1\",\"kind\":\"prepared\",\"pid\":"+std::to_string(process_id())+",\"instance_token\":"+std::to_string(token)+",\"prepare_ordinal\":"+std::to_string(prepare_ordinal)+",\"renderer_run_id\":"+std::to_string(id)+",\"gpu_required\":"+(require_gpu?"true":"false")+"}");
             return id;
         };
         auto require_processing_rejected=[&](){SpectrSharedHostRequestV2 r;r.snapshot.instance_token=token;r.renderer_run_id=999;require(query_v2(&r)==2&&r.renderer_run_id==0,"processing identity query accepted");};
@@ -192,7 +223,7 @@ int main(int argc,char** argv){
         require(query_v2(&stale)==4&&stale.renderer_run_id==0,"v2 stale token accepted");
         require(prepare_ordinal==4,"unexpected successful prepare inventory");
         m.close();
-        identity_record("{\"schema\":\"spectr.native-host-trace-inventory.v1\",\"kind\":\"complete\",\"pid\":"+std::to_string(getpid())+",\"prepared_count\":"+std::to_string(prepare_ordinal)+",\"module_closed\":true}");
+        identity_record("{\"schema\":\"spectr.native-host-trace-inventory.v1\",\"kind\":\"complete\",\"pid\":"+std::to_string(process_id())+",\"prepared_count\":"+std::to_string(prepare_ordinal)+",\"module_closed\":true}");
         std::cout<<"shared_clap_acceptance=passed scheduling=ordinary_thread per_sequence_uniqueness=not_tested physical_device=not_used\n";
         return 0;
     }catch(const std::exception& e){audio_thread=false;std::cerr<<e.what()<<'\n';return 1;}
