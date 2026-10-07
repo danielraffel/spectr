@@ -4632,7 +4632,7 @@ if(Python3_Interpreter_FOUND)
     # Python/Node against the checked-in artifact, so it needs no SDK or
     # native target and can run before the product build on a clean runner.
     add_test(NAME Spectr-wp1-full-app-runtime-surface
-        COMMAND ${Python3_EXECUTABLE} -m unittest -v
+        COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_runtime_surface.py)
     set_tests_properties(Spectr-wp1-full-app-runtime-surface PROPERTIES TIMEOUT 300)
 else()
