@@ -777,22 +777,21 @@ TEST_CASE("Level destinations: the pure mapping",
         coords.value[target_index(t)] = c;
         return coords;
     };
-    // Intensity and Mix pull toward 0 in proportion; identity at 0.
+    // Every knob uses its normalized range: at full depth the two LFO
+    // crests reach the real endpoints from any authored value.
     CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 0.0f)) == 0.8f);
-    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 0.5f))
-          == Approx(0.4f));
-    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 1.7f)) == 0.0f);
-    CHECK(spectr::modulated_mix(1.0f, at(ModulationTarget::Mix, 0.25f)) == Approx(0.75f));
-    CHECK(spectr::modulated_mix(0.6f, at(ModulationTarget::Mix, -0.3f)) == Approx(0.6f));
-    // Output: +-6 dB per unit, clamped with the trim into the lane's range.
+    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, 1.0f)) == 1.0f);
+    CHECK(spectr::modulated_intensity(0.8f, at(ModulationTarget::Intensity, -1.0f)) == 0.0f);
+    CHECK(spectr::modulated_mix(0.6f, at(ModulationTarget::Mix, 0.25f)) == Approx(0.7f));
+    CHECK(spectr::modulated_mix(0.6f, at(ModulationTarget::Mix, -0.3f)) == Approx(0.42f));
+    // Output uses the full -24..24 dB normalized lane.
     CHECK(spectr::output_modulation_db(at(ModulationTarget::Output, -0.5f)) == Approx(-3.0f));
     CHECK(spectr::modulated_output_trim_db(2.0f, at(ModulationTarget::Output, 1.0f))
-          == Approx(8.0f));
+          == Approx(24.0f));
     CHECK(spectr::modulated_output_trim_db(22.0f, at(ModulationTarget::Output, 1.0f))
           == Approx(24.0f));
-    // Intensity and Mix are unipolar like the snapshots; Output is bipolar.
-    CHECK(spectr::modulation_target_is_unipolar(ModulationTarget::Intensity));
-    CHECK(spectr::modulation_target_is_unipolar(ModulationTarget::Mix));
+    CHECK_FALSE(spectr::modulation_target_is_unipolar(ModulationTarget::Intensity));
+    CHECK_FALSE(spectr::modulation_target_is_unipolar(ModulationTarget::Mix));
     CHECK_FALSE(spectr::modulation_target_is_unipolar(ModulationTarget::Output));
     spectr::LfoRoutes routes{};
     for (const auto t : {ModulationTarget::Intensity, ModulationTarget::Mix,
@@ -802,8 +801,8 @@ TEST_CASE("Level destinations: the pure mapping",
     }
     ModulationCoordinates coords;
     spectr::accumulate_modulation(coords, routes, 1.0f, -1.0f);  // trough
-    CHECK(coords[ModulationTarget::Intensity] == 0.0f);
-    CHECK(coords[ModulationTarget::Mix] == 0.0f);
+    CHECK(coords[ModulationTarget::Intensity] == Approx(-0.5f));
+    CHECK(coords[ModulationTarget::Mix] == Approx(-0.5f));
     CHECK(coords[ModulationTarget::Output] == Approx(-0.5f));
     // None of them moves the band field or makes the overlay active.
     CHECK_FALSE(spectr::lfo_routes_audible(routes));

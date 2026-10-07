@@ -313,7 +313,7 @@ struct ModulationCoordinates {
 
 inline constexpr bool modulation_target_is_unipolar(ModulationTarget t) noexcept {
     return t == ModulationTarget::SnapshotA || t == ModulationTarget::SnapshotB
-        || t == ModulationTarget::Intensity || t == ModulationTarget::Mix;
+        ;
 }
 
 // ── Level destinations: Intensity, Mix, Output ──────────────────────────
@@ -321,17 +321,9 @@ inline constexpr bool modulation_target_is_unipolar(ModulationTarget t) noexcept
 // These move a level control around the user's setting and never write it:
 // the knob keeps its value, the host lane keeps its automation.
 //
-//   Intensity  unipolar `(wave + 1) / 2 x Depth` pulls the Intensity amount
-//              toward 0 (flat) in proportion: effective = Intensity x (1 - c).
-//              At Depth 100 % the shape breathes between what is drawn and
-//              flat once per cycle, whatever the knob is set to.
-//   Mix        the same pull toward dry: effective = Mix x (1 - c). Over a
-//              frozen sound this is the freeze blend -- frozen and live
-//              alternate at the LFO rate.
-//   Output     bipolar `wave x Depth` x kModulationOutputExcursionDb added to
-//              the Output trim, clamped to the trim's range. Applied after
-//              Auto Gain, which never sees it: Auto Gain compensates the
-//              drawn shape, and a level LFO stays audible as level.
+//   Intensity, Mix, and Output use the normalized range of the underlying
+//              parameter. At 100% depth, -1 reaches the real minimum and +1
+//              reaches the real maximum, regardless of the authored value.
 //
 // Auto Gain is computed from the UNMODULATED Intensity and Mix as well, so
 // no LFO on a level target is cancelled by it.
@@ -342,6 +334,16 @@ inline constexpr float kModulationOutputExcursionDb = 6.0f;
 inline constexpr float kOutputTrimMinDb = -24.0f;
 inline constexpr float kOutputTrimMaxDb = 24.0f;
 
+inline float normalized_modulated_value(float base, float minimum, float maximum,
+                                        float coordinate) noexcept {
+    if (!std::isfinite(base) || !std::isfinite(coordinate)
+        || !(maximum > minimum)) return std::clamp(base, minimum, maximum);
+    const float b = std::clamp(base, minimum, maximum);
+    const float c = std::clamp(coordinate, -1.0f, 1.0f);
+    return c < 0.0f ? b + c * (b - minimum)
+                    : b + c * (maximum - b);
+}
+
 /// The 0..1 pull a unipolar level destination's coordinate asks for.
 inline float level_pull(const ModulationCoordinates& coords,
                         ModulationTarget target) noexcept {
@@ -351,14 +353,14 @@ inline float level_pull(const ModulationCoordinates& coords,
 
 /// Intensity (0..1 factor) after the Intensity destination.
 inline float modulated_intensity(float base, const ModulationCoordinates& coords) noexcept {
-    return std::clamp(base, 0.0f, 1.0f)
-        * (1.0f - level_pull(coords, ModulationTarget::Intensity));
+    return normalized_modulated_value(base, 0.0f, 1.0f,
+                                      coords[ModulationTarget::Intensity]);
 }
 
 /// Mix (0..1, 1 = wet) after the Mix destination.
 inline float modulated_mix(float base, const ModulationCoordinates& coords) noexcept {
-    return std::clamp(base, 0.0f, 1.0f)
-        * (1.0f - level_pull(coords, ModulationTarget::Mix));
+    return normalized_modulated_value(base, 0.0f, 1.0f,
+                                      coords[ModulationTarget::Mix]);
 }
 
 /// The Output destination's offset in dB, before the trim-range clamp.
@@ -370,8 +372,14 @@ inline float output_modulation_db(const ModulationCoordinates& coords) noexcept 
 /// Output trim in dB after the Output destination, clamped to the lane range.
 inline float modulated_output_trim_db(float base_db,
                                       const ModulationCoordinates& coords) noexcept {
-    return std::clamp(base_db + output_modulation_db(coords),
-                      kOutputTrimMinDb, kOutputTrimMaxDb);
+    return normalized_modulated_value(base_db, kOutputTrimMinDb,
+                                      kOutputTrimMaxDb,
+                                      coords[ModulationTarget::Output]);
+}
+
+inline float output_modulation_db(float base_db,
+                                  const ModulationCoordinates& coords) noexcept {
+    return modulated_output_trim_db(base_db, coords) - base_db;
 }
 
 /// Add one LFO's contribution. @p level is the LFO's (slewed) on/off level --

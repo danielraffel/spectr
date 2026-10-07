@@ -1442,9 +1442,10 @@ void Spectr::publish_modulation_controls_(const ModulatedFieldSnapshot& modulate
     if (driven)
         coords = modulation_coordinates(settings, lfo_value(fade_1, phase_1),
                                         lfo_value(fade_2, phase_2));
-    const float intensity_pull = intensity_on ? level_pull(coords, ModulationTarget::Intensity) : 0.0f;
-    const float mix_pull = mix_on ? level_pull(coords, ModulationTarget::Mix) : 0.0f;
-    const float output_db = output_on ? output_modulation_db(coords) : 0.0f;
+    const float intensity_pull = intensity_on ? coords[ModulationTarget::Intensity] : 0.0f;
+    const float mix_pull = mix_on ? coords[ModulationTarget::Mix] : 0.0f;
+    const float output_base_db = param_store_ ? param_store_->get_value(kOutputTrim) : 0.0f;
+    const float output_db = output_on ? output_modulation_db(output_base_db, coords) : 0.0f;
     const float morph_offset = morph_on
         ? coords[ModulationTarget::Morph] * kModulationMorphExcursion : 0.0f;
     // Quantised to well under a pixel of any control's travel: a knob sweeps

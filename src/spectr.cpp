@@ -2817,9 +2817,15 @@ void Spectr::process(
                                 audio_modulation_phase_2_ + slice_beats / std::max(
                                     0.0625, static_cast<double>(
                                         modulation_settings.lfo2_beats_per_cycle)));
+                            const auto output_coords = modulation_coordinates(
+                                modulation_settings, wave_end, wave2_end);
+                            const float output_base_db = cursor.value_at(
+                                kOutputTrim,
+                                static_cast<int32_t>(block_offset
+                                    + (out_slice.num_samples() > 0
+                                        ? out_slice.num_samples() - 1 : 0)));
                             output_mod_end_db = output_modulation_db(
-                                modulation_coordinates(modulation_settings,
-                                                       wave_end, wave2_end));
+                                output_base_db, output_coords);
                         }
                     }
                     const float output_mod_start_db =
