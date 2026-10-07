@@ -154,3 +154,26 @@ This remains staging evidence only: `editor.html` and the materialized runtime
 were unchanged, `production_cutover` is false, and `full_native_parity` is
 false. A full authored editor cutover, native parity, and release qualification
 remain open.
+
+## 2026-10-08 authored PatternRow band-preview staging proof
+
+A second bounded authored-source slice now exercises the manager's visible band
+previews through the real App mount. Commit
+`2904e0176e930f0810c80dcb6684b976c0c18750` on branch
+`codex/spectr-pattern-row-app-mount-20261008` adds authored `PatternRow` and
+`MiniPreview` fixtures plus their App-mount harness. The run3 receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-pattern-row-app-mount-20261008-run3/receipt.json`
+(SHA-256
+`f02b6713bcceffeaf6e045dae02d96c1e69e36c3942e4edd0442b09de47a42b2`).
+
+The proof compiled both TSX modules, matched the adapted template render tree,
+rejected a planted `gap: 10 -> gap: 11` mutation before browser execution,
+mounted the real ReactDOM App, opened `PRESETS` and `MANAGE`, invoked authored
+`PatternRow` eight times, found manager DOM parity, and verified eight pattern
+rows with 261 SVG band bars in Chromium. Baseline and patched screenshots are
+captured in the receipt. The harness reports the exact fresh-worktree preflight:
+`npm ci --ignore-scripts --prefix tools/wp1-parser`.
+
+This remains staging evidence only: `editor.html` and the materialized runtime
+were unchanged, `production_cutover` is false, and `full_native_parity` is
+false. A production component cutover and native parity remain open.
