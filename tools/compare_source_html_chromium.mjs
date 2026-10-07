@@ -8,10 +8,13 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
 const args=process.argv.slice(2); const val=k=>{const i=args.indexOf(k); return i<0?undefined:args[i+1]};
 const source=val('--source'), out=path.resolve(val('--output')), chrome=val('--chrome');
+const importerCapture=val('--importer-capture');
 const strict=args.includes('--strict');
 const requireCanvasInk=args.includes('--require-canvas-ink');
+const requireImporterCanvasInk=args.includes('--require-importer-canvas-ink');
 const plantNoInk=args.includes('--plant-no-ink');
-if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --chrome PATH [--strict] [--require-canvas-ink] [--plant-no-ink]');
+if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --chrome PATH [--strict] [--require-canvas-ink] [--importer-capture DIR] [--require-importer-canvas-ink] [--plant-no-ink]');
+if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-importer-canvas-ink requires --importer-capture DIR');
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
 const bridge=`<script>window.__spectrBrowserPosts=[];window.__spectrBrowserListeners=Object.create(null);window.pulp={on(type,cb){(window.__spectrBrowserListeners[type]??=new Set()).add(cb);return()=>window.__spectrBrowserListeners[type].delete(cb)},postMessage(type,payload){window.__spectrBrowserPosts.push({type,payload});for(const cb of window.__spectrBrowserListeners[type]||[])try{cb({type,payload})}catch(e){};if(type==='editor_ready'){queueMicrotask(()=>{const n=32;const trace=count=>Array.from({length:count},(_,i)=>{const x=i/Math.max(1,count-1);const left=Math.exp(-((x-.22)**2)/.008)*28;const middle=Math.exp(-((x-.52)**2)/.018)*38;const right=Math.exp(-((x-.82)**2)/.012)*23;return -96+left+middle+right});const state={n_visible:n,gain_db:new Array(n).fill(0),muted:new Array(n).fill(false),min_hz:20,max_hz:20000,motion_mode:0,analyzer_mode:0,edit_mode:0,visualization_mode:2,revision:1,snapshots:{A:{populated:false},B:{populated:false}},patterns_json:JSON.stringify({format:'spectr.patterns',version:1,default_id:'factory:flat',patterns:[]})};for(const cb of window.__spectrBrowserListeners.processing_state_hydrate||[])try{cb({type:'processing_state_hydrate',payload:state})}catch(e){};const analyzer={schema_version:1,epoch:0,sequence_number:0,dropped_frames:0,source_channels:2,fft_size:512,sample_rate:48000,floor_db:-120,ceiling_db:24,visible:{min_hz:20,max_hz:20000,magnitude_db:trace(321)},overview:{min_hz:20,max_hz:20000,magnitude_db:trace(121)}};for(const cb of window.__spectrBrowserListeners.analyzer_frame||[])try{cb({type:'analyzer_frame',payload:analyzer})}catch(e){}})}return Promise.resolve({ok:true,payload:{ok:true}})}};window.confirm=()=>true;</script>`;
@@ -39,9 +42,34 @@ try{
  const canvasInk=await evalv(`(()=>{let pixels=0,ink=0,max=0;for(const canvas of document.querySelectorAll('canvas')){const ctx=canvas.getContext('2d');if(!ctx)continue;let data;try{data=ctx.getImageData(0,0,canvas.width,canvas.height).data}catch{continue}pixels+=data.length/4;for(let i=0;i<data.length;i+=4){const value=data[i]+data[i+1]+data[i+2];if(value>max)max=value;if(data[i+3]>0&&value>18)ink++}}return {pixels,inkPixels:ink,inkFraction:pixels?ink/pixels:0,max}})()`);
  if(strict && (info.rootChildren < 1 || info.canvas.length < 1 || consoleErrors.length || networkFailures.length)) throw Error(`strict render check failed: root=${info.rootChildren} canvas=${info.canvas.length} console=${consoleErrors.length} network=${networkFailures.length}`);
  if(requireCanvasInk && canvasInk.inkPixels < 1) throw Error(`canvas ink check failed: canvases=${info.canvas.length} pixels=${canvasInk.pixels} inkPixels=${canvasInk.inkPixels}`);
+ let importer;
+ if(importerCapture){
+  const importerProbe=spawnSync('python3',['-c',String.raw`import json,sys
+from pathlib import Path
+from PIL import Image
+capture=json.loads(Path(sys.argv[1]).read_text())
+expected=sys.argv[3]
+actual=capture.get('provenance',{}).get('source',{}).get('sha256')
+if actual != expected: raise SystemExit(f'importer source SHA mismatch: {actual} != {expected}')
+image=Image.open(sys.argv[2]).convert('RGBA')
+w,h=image.size
+x0,x1=int(w*0.03),int(w*0.97)
+y0,y1=int(h*0.10),int(h*0.85)
+pixels=ink=peak=0
+for r,g,b,a in image.crop((x0,y0,x1,y1)).getdata():
+ pixels += 1
+ value = r + g + b
+ peak = max(peak, value)
+ if a > 0 and value > 60: ink += 1
+print(json.dumps({'sourceSha256':actual,'pngSize':{'width':w,'height':h},'region':{'x':x0,'y':y0,'width':x1-x0,'height':y1-y0},'canvasInk':{'pixels':pixels,'inkPixels':ink,'inkFraction':ink/pixels if pixels else 0,'max':peak,'threshold':60}}))
+`,path.join(importerCapture,'capture.json'),path.join(importerCapture,'browser.png'),sha(bytes)],{encoding:'utf8'});
+  if(importerProbe.status!==0) throw Error(importerProbe.stderr.trim()||'importer capture probe failed');
+  importer=JSON.parse(importerProbe.stdout);
+  if(requireImporterCanvasInk && importer.canvasInk.inkPixels < 1) throw Error(`importer canvas ink check failed: source=${importer.sourceSha256} pixels=${importer.canvasInk.pixels} inkPixels=${importer.canvasInk.inkPixels}`);
+ }
  const shot=await cmd('Page.captureScreenshot',{format:'png',fromSurface:true}); const png=Buffer.from(shot.data,'base64'); const pngPath=path.join(out,'before.png'); fs.writeFileSync(pngPath,png);
  let menuAction=null; if(info.attrs.some(a=>a.attrs['data-spectr-menu-trigger'])){menuAction=await evalv(`(()=>{const n=document.querySelector('[data-spectr-menu-trigger]');if(!n)return null; n.click(); return {expanded:n.getAttribute('aria-expanded')};})()`);await delay(400);const open=await cmd('Page.captureScreenshot',{format:'png',fromSurface:true});const openBytes=Buffer.from(open.data,'base64');fs.writeFileSync(path.join(out,'menu-open.png'),openBytes);menuAction.openPngSha256=sha(openBytes);}
- const receipt={schema:'spectr-html-cdp-comparison-v1',source:path.resolve(source),sourceSha256:sha(bytes),sourceBytes:bytes.length,chrome:spawnSync(chrome,['--version'],{encoding:'utf8'}).stdout.trim(),fixedViewport:{width:1320,height:860,deviceScaleFactor:1},checks:{strict,requireCanvasInk,plantNoInk},positive:{ready,info,canvasInk,consoleErrors,networkFailures,before:{path:pngPath,sha256:sha(png),bytes:png.length},menuAction}};
+ const receipt={schema:'spectr-html-cdp-comparison-v1',source:path.resolve(source),sourceSha256:sha(bytes),sourceBytes:bytes.length,chrome:spawnSync(chrome,['--version'],{encoding:'utf8'}).stdout.trim(),fixedViewport:{width:1320,height:860,deviceScaleFactor:1},checks:{strict,requireCanvasInk,requireImporterCanvasInk,plantNoInk},positive:{ready,info,canvasInk,importer,consoleErrors,networkFailures,before:{path:pngPath,sha256:sha(png),bytes:png.length},menuAction}};
  fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(receipt,null,2)+'\n'); console.log(JSON.stringify(receipt,null,2));
  await cmd('Browser.close').catch(()=>{});
 }catch(e){console.error(e.stack||e);process.exitCode=1}

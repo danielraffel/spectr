@@ -177,3 +177,29 @@ captured in the receipt. The harness reports the exact fresh-worktree preflight:
 This remains staging evidence only: `editor.html` and the materialized runtime
 were unchanged, `production_cutover` is false, and `full_native_parity` is
 false. A production component cutover and native parity remain open.
+
+## 2026-10-08 source-import regression gate
+
+The source comparator on branch `codex/spectr-source-comparator-20261008`
+(PR <https://github.com/danielraffel/spectr/pull/237>) now records strict
+Chromium evidence for both the Claude standalone source and the current
+`resources/editor.html`, including root/canvas readiness, console/network
+failures, screenshot hashes, and a planted no-ink failure control. The latest
+same-browser comparison passed for both old and new HTML: each mounted one
+root with two canvases, zero console/network failures, and nonzero central
+canvas ink. The old standalone source is SHA-256
+`7ae6f1d807f2f356b8473d9e672a95535adbe7affea58af360f9ac5c211daf9e`; the
+current editor is SHA-256
+`402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f`.
+
+The comparator also accepts an importer browser capture and checks its
+provenance source SHA plus a higher-contrast graph-region ink threshold. The
+current standalone re-import capture fails this gate with zero pixels above
+the threshold (its graph-region maximum RGB sum is 43), even though the source
+capture itself passes. This is intentional evidence of an importer fidelity
+gap: importer self-consistency and `Similarity: 100%` do not prove that the
+nonempty analyzer content survived. Evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-source-comparator-pr-20261008/import-standalone-20261008T1315/`.
+
+This remains browser/import evidence only. Native Skia/Dawn parity, production
+cutover, and a repaired nonempty importer capture remain open.
