@@ -72,8 +72,8 @@ function spectrModControlsStore() {
       s.mixOn = p.mix_on === true;
       s.outputOn = p.output_on === true;
       s.morphOn = p.morph_on === true;
-      s.intensityPull = Math.max(0, Math.min(1, num(p.intensity_pull)));
-      s.mixPull = Math.max(0, Math.min(1, num(p.mix_pull)));
+      s.intensityPull = Math.max(-1, Math.min(1, num(p.intensity_pull)));
+      s.mixPull = Math.max(-1, Math.min(1, num(p.mix_pull)));
       s.outputDb = num(p.output_db);
       s.morphOffset = num(p.morph_offset);
       store.frames++;
@@ -93,13 +93,15 @@ function spectrModControlsSubscribe(paint) {
   };
 }
 // The value a knob is playing, in its own units, or null when no LFO drives
-// it. Intensity and Mix are pulls toward 0 in proportion to the knob; Output
-// is an offset in dB, clamped with the trim (include/spectr/modulation.hpp).
+// it. Every target coordinate is normalized: -1 reaches the parameter
+// minimum and +1 reaches its maximum from the authored base value.
 function spectrModulatedKnobValue(name, base, min, max) {
   const s = spectrModControlsStore().state;
   if (!Number.isFinite(base)) return null;
-  if (name === "intensity") return s.intensityOn ? base * (1 - s.intensityPull) : null;
-  if (name === "mix") return s.mixOn ? base * (1 - s.mixPull) : null;
+  const normalized = (c) => c < 0
+    ? base + c * (base - min) : base + c * (max - base);
+  if (name === "intensity") return s.intensityOn ? normalized(s.intensityPull) : null;
+  if (name === "mix") return s.mixOn ? normalized(s.mixPull) : null;
   if (name === "output-trim")
     return s.outputOn ? Math.max(min, Math.min(max, base + s.outputDb)) : null;
   return null;
