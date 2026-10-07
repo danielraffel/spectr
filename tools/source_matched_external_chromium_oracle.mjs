@@ -29,9 +29,10 @@ const outputPath = take('--output') || argv[2]
   || path.join(process.cwd(), 'external-chromium-oracle-artifacts');
 const importerCapturePath = take('--importer-capture');
 const skipNegative = argv.includes('--skip-negative');
+const plantResizeSensitive = argv.includes('--plant-resize-sensitive');
 
 if (!sourcePath || !chromePath) {
-  console.error('usage: source_matched_external_chromium_oracle.mjs --source editor.html --chrome CHROME [--output DIR] [--importer-capture DIR] [--skip-negative]');
+  console.error('usage: source_matched_external_chromium_oracle.mjs --source editor.html --chrome CHROME [--output DIR] [--importer-capture DIR] [--skip-negative] [--plant-resize-sensitive]');
   process.exit(2);
 }
 
@@ -188,8 +189,30 @@ async function launch(htmlPath, outputPrefix) {
       }
       throw new OracleError('state-timeout', `${description} did not become true`);
     };
-    const capture = async name => {
-      const result = await command('Page.captureScreenshot', { format: 'png', fromSurface: true });
+    const viewportSize = () => evaluate(`JSON.stringify({
+      width: Math.round(window.innerWidth), height: Math.round(window.innerHeight),
+    })`).then(JSON.parse);
+    const settleResize = async (width, height) => {
+      await command('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      });
+      await waitFor(`window.innerWidth === ${width} && window.innerHeight === ${height}`,
+        `viewport resize ${width}x${height}`);
+      // Layout and canvas effects consume the new bounds on the next frames.
+      await evaluate(`new Promise(resolve => requestAnimationFrame(() =>
+        requestAnimationFrame(resolve)))`);
+    };
+    const capture = async (name, staleClip = false) => {
+      const viewport = await viewportSize();
+      const clip = staleClip
+        ? { x: 0, y: 0, width: viewport.width + 330, height: viewport.height + 215, scale: 1 }
+        : { x: 0, y: 0, width: viewport.width, height: viewport.height, scale: 1 };
+      if (clip.width > viewport.width || clip.height > viewport.height)
+        throw new OracleError('resize-sensitive',
+          `capture clip ${clip.width}x${clip.height} exceeds viewport ${viewport.width}x${viewport.height}`);
+      const result = await command('Page.captureScreenshot', {
+        format: 'png', fromSurface: true, captureBeyondViewport: false, clip,
+      });
       const file = path.join(output, `${outputPrefix}-${name}.png`);
       fs.writeFileSync(file, Buffer.from(result.data, 'base64'));
       return { path: file, sha256: sha256(fs.readFileSync(file)), size: pngSize(fs.readFileSync(file)) };
@@ -208,7 +231,17 @@ async function launch(htmlPath, outputPrefix) {
       rootChildren: document.getElementById('root')?.children.length || 0,
       menu: document.querySelector('[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]')?.getAttribute('aria-expanded'),
     })`).then(JSON.parse);
+    const initialViewport = await viewportSize();
+    await settleResize(1000, 600);
+    await settleResize(initialViewport.width, initialViewport.height);
+    if (plantResizeSensitive) {
+      await settleResize(990, 645);
+      await capture('resize-sensitive', true);
+    }
     const before = await capture('before');
+    if (before.size.width !== initialViewport.width || before.size.height !== initialViewport.height)
+      throw new OracleError('capture-size',
+        `capture ${before.size.width}x${before.size.height} != viewport ${initialViewport.width}x${initialViewport.height}`);
 
     // Use actual CDP mouse input.  Calling HTMLElement.click() would prove
     // only the JS handler, while this also exercises hit testing and dispatch.
@@ -231,8 +264,43 @@ async function launch(htmlPath, outputPrefix) {
     const openDom = await evaluate(`JSON.stringify({
       expanded: document.querySelector('[data-spectr-menu-root="bands"] [data-spectr-menu-trigger]')?.getAttribute('aria-expanded'),
       optionCount: document.querySelectorAll('[data-spectr-menu-root="bands"] [data-spectr-menu-options] button').length,
+      rect: (() => {
+        const node = document.querySelector('[data-spectr-menu-root="bands"] [data-spectr-menu-options]');
+        if (!node) return null;
+        const box = node.getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height };
+      })(),
     })`).then(JSON.parse);
     const menuOpen = await capture('menu-open');
+
+    const pixelDiff = spawnSync('python3', ['-c', String.raw`
+from PIL import Image, ImageChops
+import json, sys
+a = Image.open(sys.argv[1]).convert('RGB')
+b = Image.open(sys.argv[2]).convert('RGB')
+if a.size != b.size:
+    raise SystemExit('before/menu-open dimensions differ')
+d = ImageChops.difference(a, b)
+pixels = list(d.getdata())
+changed = [index for index, pixel in enumerate(pixels) if pixel != (0, 0, 0)]
+rect = json.loads(sys.argv[3])
+inside = 0
+for index in changed:
+    x = index % a.width
+    y = index // a.width
+    if rect['x'] <= x < rect['x'] + rect['width'] and rect['y'] <= y < rect['y'] + rect['height']:
+        inside += 1
+print(json.dumps({
+  'changed_pixels': len(changed),
+  'changed_fraction': len(changed) / (a.width * a.height),
+  'changed_inside_menu': inside,
+  'changed_inside_fraction': inside / (a.width * a.height),
+}))
+`, before.path, menuOpen.path, JSON.stringify(openDom.rect)], { encoding: 'utf8' });
+    if (pixelDiff.status !== 0) throw new Error(pixelDiff.stderr || 'before/menu-open pixel diff failed');
+    const visualStateChanged = JSON.parse(pixelDiff.stdout);
+    assert(visualStateChanged.changed_inside_menu > 100,
+      'menu interaction did not change pixels inside the opened menu bounds');
 
     await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
     await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
@@ -250,6 +318,7 @@ async function launch(htmlPath, outputPrefix) {
     return {
       initial, before, menuOpen, after, openDom, closedDom,
       interactionCount: 2,
+      visualStateChanged,
       consoleErrors, networkFailures,
       stateChanged: initial.menu !== openDom.expanded && openDom.expanded === 'true'
         && closedDom.expanded === 'false' && openDom.optionCount > 0 && closedDom.optionCount === 0,
@@ -271,6 +340,24 @@ async function main() {
   try {
     const good = path.join(temp, 'editor.html');
     writeSourceFile(good, source);
+    if (plantResizeSensitive) {
+      try {
+        await launch(good, 'external-resize-negative');
+        throw new Error('resize-sensitive source unexpectedly captured');
+      } catch (error) {
+        if (!(error instanceof OracleError) || error.code !== 'resize-sensitive') throw error;
+        const receipt = {
+          schema: 'spectr-source-matched-external-chromium-oracle-v1',
+          source: path.resolve(sourcePath), sourceSha256, chrome: chromeVersion,
+          capturePolicy: { clip: 'current CSS viewport', captureBeyondViewport: false,
+            resizeSettleFrames: 2 },
+          negative: { status: 'rejected', errorCode: error.code, message: error.message },
+        };
+        fs.writeFileSync(path.join(output, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
+        console.log(JSON.stringify(receipt, null, 2));
+        return;
+      }
+    }
     const positive = await launch(good, 'external');
     assert.equal(positive.initial.ready, 1);
     assert.equal(positive.initial.rootChildren, 1);
@@ -320,6 +407,8 @@ async function main() {
     const receipt = {
       schema: 'spectr-source-matched-external-chromium-oracle-v1',
       source: path.resolve(sourcePath), sourceSha256, chrome: chromeVersion,
+      capturePolicy: { clip: 'current CSS viewport', captureBeyondViewport: false,
+        resizeSettleFrames: 2 },
       hostFixture: 'deterministic-analyzer-frame-v1',
       positive, reference, negative,
     };
