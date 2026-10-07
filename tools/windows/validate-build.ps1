@@ -15,6 +15,15 @@ function Require-File([string]$Path, [string]$Label) {
     return (Get-Item -LiteralPath $Path)
 }
 
+function Require-FirstFile([string[]]$Paths, [string]$Label) {
+    foreach ($Path in $Paths) {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            return (Get-Item -LiteralPath $Path)
+        }
+    }
+    throw "$Label is missing; checked: $($Paths -join ', ')"
+}
+
 if ($Build) {
     if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
         throw 'cmake is required for -Build'
@@ -25,7 +34,11 @@ if ($Build) {
 
 $testExe = Require-File (Join-Path $BuildDir 'Spectr-test.exe') 'Spectr test executable'
 $clap = Require-File (Join-Path $BuildDir 'CLAP\Spectr.clap') 'Spectr CLAP artifact'
-$vst3Binary = Require-File (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\x86_64-win\Spectr.vst3') 'Spectr VST3 binary'
+$vst3Binary = Require-FirstFile @(
+    (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\x86_64-win\Spectr.vst3'),
+    (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3'),
+    (Join-Path $BuildDir 'VST3\Spectr.dll')
+) 'Spectr VST3 binary'
 $standalone = Require-File (Join-Path $BuildDir 'Spectr.exe') 'Spectr standalone executable'
 
 $log = Join-Path $BuildDir 'windows-validation.log'

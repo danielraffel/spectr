@@ -46,3 +46,29 @@ binary is absent. It writes a JSON receipt with the exact artifact hashes.
 The ARM64 UTM lane must link against the MSVC-compatible Skia archive before
 it can produce an ARM64 Spectr artifact. After that, REAPER must scan and load
 the plugin with runtime logs and a screenshot; Ableton follows the REAPER pass.
+
+## Headless ARM64 evidence
+
+- Guest: TartCI/QEMU Windows 11 ARM64 overlay on the M5 Ultra, forwarded SSH port
+  `50371`; the VM is disposable and does not consume a macOS runner slot.
+- Pulp SDK: tag `v0.915.0`, source SHA
+  `d9b218422382d29fafad7d116343b7b422eed44f`, installed with MSVC ARM64 and
+  tests disabled for the SDK packaging build.
+- Skia/Dawn: MSVC ARM64 archive from
+  https://github.com/danielraffel/skia-builder/actions/runs/37685090727 with
+  artifact SHA-256
+  `c494cc3fc51b344b35ce776b77e6a70f1cb123b645f216aca07f7be4a281d9cc`.
+- Spectr source: `2bef773265c0f3196db8fc77f761307cbbde9de6`.
+- Focused command: `Spectr-test.exe "Spectr processes audio" --reporter compact`.
+- Result: exit `0`; `All tests passed (2 assertions in 1 test case)`.
+- Architecture: `ARM64`.
+- CLAP: `C:\spectr-headless\build-arm64\CLAP\Spectr.clap`, 8,480,256 bytes,
+  SHA-256 `46D7F14B335C4E83199D126DA41725C263D567A1F98362DDD50ABF6D379A5D5F`.
+- VST3: `C:\spectr-headless\build-arm64\VST3\Spectr.dll`, 8,593,408 bytes,
+  SHA-256 `3DB7C96D167A0A8AD4B889D69BB4F5DBB6E8F932CE4670957C1622FAD7AE5882`.
+- Standalone: `C:\spectr-headless\build-arm64\Spectr.exe`, 9,154,560 bytes,
+  SHA-256 `51DFC83853F04D631F30D98884FEBB2099AB2B9AD1E208D27A58C9C5638B2815`.
+
+This is build and focused audio-test proof. It does not yet prove REAPER or
+Ableton loading. The UTM desktop clone is being repaired separately from this
+headless lane.
