@@ -1,0 +1,29 @@
+﻿{
+    "schema":  1,
+    "generated_at_utc":  "2026-10-07T22:12:51.3844692Z",
+    "architecture":  "ARM64",
+    "git_sha":  "2bef773265c0f3196db8fc77f761307cbbde9de6",
+    "focused_test":  "Spectr processes audio",
+    "focused_test_exit":  0,
+    "artifacts":  {
+                      "clap":  {
+                                   "path":  "C:\\spectr-headless\\build-arm64\\CLAP\\Spectr.clap",
+                                   "bytes":  8480256,
+                                   "sha256":  "46D7F14B335C4E83199D126DA41725C263D567A1F98362DDD50ABF6D379A5D5F"
+                               },
+                      "vst3_binary":  {
+                                          "path":  "C:\\spectr-headless\\build-arm64\\VST3\\Spectr.dll",
+                                          "bytes":  8593408,
+                                          "sha256":  "3DB7C96D167A0A8AD4B889D69BB4F5DBB6E8F932CE4670957C1622FAD7AE5882"
+                                      },
+                      "standalone":  {
+                                         "path":  "C:\\spectr-headless\\build-arm64\\Spectr.exe",
+                                         "bytes":  9154560,
+                                         "sha256":  "51DFC83853F04D631F30D98884FEBB2099AB2B9AD1E208D27A58C9C5638B2815"
+                                     }
+                  },
+    "limitations":  [
+                        "This helper does not claim DAW loading or GUI proof.",
+                        "CTest registration alone is not accepted as a pass."
+                    ]
+}
