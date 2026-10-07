@@ -25,11 +25,6 @@ plugin loads in REAPER or Ableton.
 The guest checkout contains local portability edits and diagnostic files. This
 receipt therefore proves the observed build, not a clean upstream release.
 
-After collecting this evidence, VM 300 was shut down cleanly. Its disk and
-toolchain remain available for a scheduled nightly or an explicitly admitted
-interactive run; leaving a 10 GB Windows guest running would prevent the Mac
-Pro governor from admitting another 4-core Linux job.
-
 ## Repeatable check
 
 From a Windows checkout, run:
