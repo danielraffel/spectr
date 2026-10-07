@@ -13,7 +13,7 @@ void mac_haptic_alignment_tick() noexcept {
         if (@available(macOS 10.11, *)) {
             [[NSHapticFeedbackManager defaultPerformer]
                 performFeedbackPattern:NSHapticFeedbackPatternAlignment
-                performanceTime:NSHapticPerformanceTimeNow];
+                performanceTime:NSHapticFeedbackPerformanceTimeNow];
         }
     });
 #endif
