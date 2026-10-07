@@ -654,7 +654,16 @@ struct Rig {
     // store write lands immediately, but ModulationSettings is rebuilt on the
     // param-sync lane that process() drives, so pump audio before reading it.
     void report_native_state(const char* label) {
+        // Parameter writes from the materialized bridge reach modulation_ via
+        // the audio -> param-sync worker. Waiting only on synthetic UI frames
+        // races that worker, so captures can observe a stale native state.
+        // Drain the worker before reading the state that gates the screenshot.
         feed_tone(4);
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds(250);
+        while (spectr_param_sync_backlog_v1() != 0
+               && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         settle(clock, 8);
         const auto mod = processor.modulation_settings();
         std::printf("[shot] NATIVE %s: store[4000 lfo_enabled]=%.3f "
