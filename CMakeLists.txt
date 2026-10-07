@@ -2264,6 +2264,11 @@ if(SPECTR_NODE_EXECUTABLE)
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_tooltip_interaction.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    add_test(NAME Spectr-materialized-range-gutter-wheel
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_range_gutter_wheel.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-range-gutter-wheel PROPERTIES TIMEOUT 30)
     foreach(_tooltip_control IN ITEMS no-press-suppression ignore-popups)
         add_test(NAME Spectr-materialized-tooltip-control-${_tooltip_control}
             COMMAND ${SPECTR_NODE_EXECUTABLE}
