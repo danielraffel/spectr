@@ -76,7 +76,12 @@ repl(
 ''',
 '''    const source = canvasRef.current;
     const fade = bandTransitionCanvasRef.current;
-    if (source && fade && source.width > 0 && source.height > 0) {
+    // A modulated band count can arrive every frame. Snapshotting the whole
+    // plot for each arrival continually reintroduces stale geometry and reads
+    // as a flash. Only non-modulated structural changes get one snapshot, and
+    // an active fade is never restarted.
+    if (source && fade && source.width > 0 && source.height > 0
+        && !modulationActiveRef.current && !bandTransitionRef.current) {
       fade.width = source.width;
       fade.height = source.height;
       fade.style.width = source.style.width;

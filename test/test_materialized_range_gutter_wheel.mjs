@@ -62,6 +62,7 @@ assert.equal(html.includes('setCursor("ns-resize")'), true, 'gutter cursor is ve
 assert.equal(html.includes('clearTimeout(rangeWheelRef.current.timer)'), true, 'accumulator decays on unmount');
 assert.equal(html.includes('spectrRangeHaptic()'), true, 'transition invokes one haptic hook');
 assert.equal(html.includes('bandTransitionCanvasRef'), true, 'band-count transition snapshot exists');
+assert.equal(html.includes('!modulationActiveRef.current && !bandTransitionRef.current'), true, 'modulation does not restart stale full-screen fade');
 assert.equal(html.includes('rangeTransitionRef'), true, 'vertical range transition exists');
 assert.equal(html.includes('g.rulerRange'), true, 'axis labels use animated range');
 assert.equal(html.includes('duration: 180'), true, 'transition duration is bounded');
