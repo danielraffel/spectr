@@ -1308,6 +1308,11 @@ find_program(SPECTR_CHROME_EXECUTABLE
 # and toggles appeared to vanish because the panel closed instead of the toggle
 # flipping.
 if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-deterministic-analyzer-fixture
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_deterministic_analyzer_fixture.mjs)
+    set_tests_properties(Spectr-deterministic-analyzer-fixture PROPERTIES TIMEOUT 30)
+
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
@@ -2269,6 +2274,16 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
+    add_test(NAME Spectr-browser-deterministic-analyzer-capture
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            ${SPECTR_CHROME_EXECUTABLE}
+            --analyzer-capture
+            --analyzer-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/deterministic-analyzer-v1.json
+            --analyzer-screenshot ${CMAKE_CURRENT_BINARY_DIR}/spectr-deterministic-analyzer.png
+            --analyzer-receipt ${CMAKE_CURRENT_BINARY_DIR}/spectr-deterministic-analyzer-browser-receipt.json)
+    set_tests_properties(Spectr-browser-deterministic-analyzer-capture PROPERTIES TIMEOUT 90)
     add_test(NAME Spectr-browser-resize
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs

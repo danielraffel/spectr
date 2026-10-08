@@ -57,7 +57,9 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -82,6 +84,199 @@ std::string js_string(std::string_view value) {
     }
     result.push_back('"');
     return result;
+}
+
+
+// Test-only source shared with the Chromium analyzer oracle. The product
+// consumes live VisualizationBridge frames; this path exists solely so a
+// native receipt can consume the exact same immutable frame as the browser
+// receipt without depending on RAF timing or host audio.
+struct DeterministicAnalyzerFixture {
+    std::string path;
+    std::string fixture_id;
+    std::string fixture_sha256;
+    std::uint64_t seed = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t sequence_number = 0;
+    std::uint64_t dropped_frames = 0;
+    int source_channels = 0;
+    int fft_size = 0;
+    float sample_rate = 0.0f;
+    float floor_db = -120.0f;
+    float ceiling_db = 24.0f;
+    float min_hz = 20.0f;
+    float max_hz = 20000.0f;
+    std::vector<float> magnitude_db;
+    std::string payload_json;
+};
+
+std::vector<float> fixture_peak_buckets(const DeterministicAnalyzerFixture& fixture,
+                                        float min_hz, float max_hz,
+                                        std::size_t point_count) {
+    std::vector<float> result(point_count, fixture.floor_db);
+    const auto bin_hz = fixture.sample_rate / static_cast<float>(fixture.fft_size);
+    const auto last_bin = static_cast<int>(fixture.magnitude_db.size()) - 1;
+    const auto log_min = std::log(min_hz);
+    const auto log_span = std::log(max_hz) - log_min;
+    for (std::size_t point = 0; point < point_count; ++point) {
+        const auto center = (static_cast<float>(point) + 0.5f)
+                          / static_cast<float>(point_count);
+        const auto lower = static_cast<float>(point)
+                         / static_cast<float>(point_count);
+        const auto upper = static_cast<float>(point + 1)
+                         / static_cast<float>(point_count);
+        const auto center_hz = std::exp(log_min + center * log_span);
+        const auto lower_hz = std::exp(log_min + lower * log_span);
+        const auto upper_hz = std::exp(log_min + upper * log_span);
+        const auto first = std::clamp(static_cast<int>(std::ceil(lower_hz / bin_hz)),
+                                      0, last_bin);
+        const auto last = std::clamp(static_cast<int>(std::floor(upper_hz / bin_hz)),
+                                     0, last_bin);
+        float peak = fixture.floor_db;
+        if (first <= last) {
+            for (int bin = first; bin <= last; ++bin)
+                peak = std::max(peak, fixture.magnitude_db[static_cast<std::size_t>(bin)]);
+        } else {
+            const auto position = std::clamp(center_hz / bin_hz,
+                                             0.0f, static_cast<float>(last_bin));
+            const auto left = static_cast<int>(std::floor(position));
+            const auto right = std::min(left + 1, last_bin);
+            const auto mix = position - static_cast<float>(left);
+            peak = fixture.magnitude_db[static_cast<std::size_t>(left)]
+                 + (fixture.magnitude_db[static_cast<std::size_t>(right)]
+                    - fixture.magnitude_db[static_cast<std::size_t>(left)]) * mix;
+        }
+        result[point] = std::clamp(peak, fixture.floor_db, fixture.ceiling_db);
+    }
+    return result;
+}
+
+choc::value::Value fixture_trace(std::string_view class_name, float min_hz,
+                                 float max_hz, std::span<const float> values) {
+    auto magnitudes = choc::value::createEmptyArray();
+    for (const auto value : values) magnitudes.addArrayElement(static_cast<double>(value));
+    auto trace = choc::value::createObject(class_name);
+    trace.addMember("min_hz", static_cast<double>(min_hz));
+    trace.addMember("max_hz", static_cast<double>(max_hz));
+    trace.addMember("magnitude_db", magnitudes);
+    return trace;
+}
+
+DeterministicAnalyzerFixture load_deterministic_fixture(const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) throw std::runtime_error("cannot read analyzer fixture: " + path);
+    const std::string text((std::istreambuf_iterator<char>(stream)),
+                           std::istreambuf_iterator<char>());
+    const auto root = choc::json::parse(text);
+    DeterministicAnalyzerFixture fixture;
+    fixture.path = path;
+    if (root["schema"].get<std::string>() !=
+        "spectr.deterministic-analyzer-fixture.v1" || root["version"].get<int>() != 1)
+        throw std::runtime_error("unsupported deterministic analyzer fixture schema");
+    fixture.fixture_id = root["fixture_id"].get<std::string>();
+    fixture.fixture_sha256 = root["fixture_sha256"].get<std::string>();
+    const auto safe_unsigned = [&](std::string_view key) {
+        const auto value = root[key].get<double>();
+        if (!std::isfinite(value) || value < 0 || value > 9007199254740991.0
+            || std::floor(value) != value)
+            throw std::runtime_error("invalid analyzer integer: " + std::string(key));
+        return static_cast<std::uint64_t>(value);
+    };
+    fixture.seed = safe_unsigned("seed");
+    fixture.epoch = safe_unsigned("epoch");
+    fixture.sequence_number = safe_unsigned("sequence_number");
+    fixture.dropped_frames = safe_unsigned("dropped_frames");
+    const auto channels = safe_unsigned("source_channels");
+    const auto fft = safe_unsigned("fft_size");
+    if (channels < 1 || channels > 64 || fft < 2 || fft > 1048576
+        || (fft & (fft - 1)) != 0)
+        throw std::runtime_error("invalid analyzer source geometry");
+    fixture.source_channels = static_cast<int>(channels);
+    fixture.fft_size = static_cast<int>(fft);
+    fixture.sample_rate = static_cast<float>(root["sample_rate"].get<double>());
+    fixture.floor_db = static_cast<float>(root["floor_db"].get<double>());
+    fixture.ceiling_db = static_cast<float>(root["ceiling_db"].get<double>());
+    fixture.min_hz = static_cast<float>(root["viewport"]["min_hz"].get<double>());
+    fixture.max_hz = static_cast<float>(root["viewport"]["max_hz"].get<double>());
+    const auto expected_bins = fixture.fft_size / 2 + 1;
+    const auto values = root["magnitude_db"];
+    const auto all_chars = [](const std::string& value, std::string_view allowed) {
+        return std::all_of(value.begin(), value.end(), [&](char c) {
+            return allowed.find(c) != std::string_view::npos;
+        });
+    };
+    if (fixture.fixture_id.empty()
+        || !all_chars(fixture.fixture_id, "abcdefghijklmnopqrstuvwxyz0123456789._-")
+        || fixture.fixture_sha256.size() != 64
+        || !all_chars(fixture.fixture_sha256, "0123456789abcdef")
+        || root["provenance"]["mode"].get<std::string>() != "test-only"
+        || root["provenance"]["generator"].get<std::string>().empty()
+        || !std::isfinite(fixture.sample_rate) || !std::isfinite(fixture.floor_db)
+        || !std::isfinite(fixture.ceiling_db) || !std::isfinite(fixture.min_hz)
+        || !std::isfinite(fixture.max_hz) || fixture.sample_rate <= 40.0f
+        || fixture.source_channels < 1 || fixture.fft_size < 2
+        || values.size() != static_cast<std::uint32_t>(expected_bins)
+        || !(fixture.floor_db < 0.0f && fixture.ceiling_db > fixture.floor_db)
+        || !(fixture.sample_rate > 0.0f && fixture.min_hz > 0.0f
+             && fixture.max_hz > fixture.min_hz))
+        throw std::runtime_error("invalid deterministic analyzer fixture metadata");
+    fixture.magnitude_db.reserve(expected_bins);
+    for (std::uint32_t index = 0; index < values.size(); ++index) {
+        const auto value = static_cast<float>(values[index].get<double>());
+        if (!std::isfinite(value) || value < fixture.floor_db
+            || value > fixture.ceiling_db)
+            throw std::runtime_error("invalid deterministic analyzer magnitude");
+        fixture.magnitude_db.push_back(value);
+    }
+    const auto visible = fixture_peak_buckets(fixture, fixture.min_hz, fixture.max_hz, 321);
+    const auto overview_max = std::min(20000.0f, fixture.sample_rate * 0.5f);
+    const auto overview = fixture_peak_buckets(fixture, 20.0f, overview_max, 121);
+    auto payload = choc::value::createObject("SpectrAnalyzerFrame");
+    payload.addMember("schema_version", 1);
+    payload.addMember("epoch", static_cast<std::int64_t>(fixture.epoch));
+    payload.addMember("sequence_number", static_cast<std::int64_t>(fixture.sequence_number));
+    payload.addMember("dropped_frames", static_cast<std::int64_t>(fixture.dropped_frames));
+    payload.addMember("source_channels", fixture.source_channels);
+    payload.addMember("fft_size", fixture.fft_size);
+    payload.addMember("sample_rate", static_cast<double>(fixture.sample_rate));
+    payload.addMember("floor_db", static_cast<double>(fixture.floor_db));
+    payload.addMember("ceiling_db", static_cast<double>(fixture.ceiling_db));
+    payload.addMember("visible", fixture_trace("SpectrAnalyzerVisible", fixture.min_hz, fixture.max_hz, visible));
+    payload.addMember("overview", fixture_trace("SpectrAnalyzerOverview", 20.0f, overview_max, overview));
+    auto provenance = choc::value::createObject("SpectrAnalyzerFixtureProvenance");
+    provenance.addMember("fixture_id", fixture.fixture_id);
+    provenance.addMember("seed", static_cast<std::int64_t>(fixture.seed));
+    provenance.addMember("fixture_sha256", fixture.fixture_sha256);
+    payload.addMember("provenance", provenance);
+    fixture.payload_json = choc::json::toString(payload, false);
+    return fixture;
+}
+
+void write_deterministic_receipt(const std::string& path,
+                                 const DeterministicAnalyzerFixture& fixture) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("cannot write analyzer receipt: " + path);
+    auto receipt = choc::value::createObject("SpectrDeterministicCaptureReceipt");
+    receipt.addMember("schema", "spectr.deterministic-capture-receipt.v1");
+    receipt.addMember("consumer", "native");
+    receipt.addMember("fixture_id", fixture.fixture_id);
+    receipt.addMember("seed", static_cast<std::int64_t>(fixture.seed));
+    receipt.addMember("fixture_sha256", fixture.fixture_sha256);
+    // The fixture loader validates metadata; the shared Node validator owns
+    // the canonical SHA. Do not disguise a copied manifest value as a native
+    // cryptographic verification.
+    receipt.addMember("fixture_sha256_verification", "manifest-claim; validate-with-shared-tool");
+    receipt.addMember("fixture_path", fixture.path);
+    auto frame = choc::value::createObject("Frame");
+    frame.addMember("epoch", static_cast<std::int64_t>(fixture.epoch));
+    frame.addMember("sequence_number", static_cast<std::int64_t>(fixture.sequence_number));
+    frame.addMember("fft_size", fixture.fft_size);
+    frame.addMember("sample_rate", static_cast<double>(fixture.sample_rate));
+    frame.addMember("source_channels", fixture.source_channels);
+    receipt.addMember("frame", frame);
+    receipt.addMember("status", "captured");
+    output << choc::json::toString(receipt, true) << '\n';
+    if (!output.good()) throw std::runtime_error("failed writing analyzer receipt: " + path);
 }
 
 const pulp::view::Label* find_label(const pulp::view::View& view,
@@ -296,6 +491,32 @@ struct Rig {
         settle(clock, 8);
     }
 
+    // Inject the same immutable frame consumed by the Chromium oracle. This
+    // function is only called by --analyzer-fixture and exits before the broad
+    // visual probe suite; normal native/editor behavior still reads live audio.
+    void publish_deterministic_analyzer(const DeterministicAnalyzerFixture& fixture) {
+        eval("(() => {"
+             "  const publish = globalThis.__spectrPublishNativeMessage;"
+             "  if (typeof publish !== 'function')"
+             "    throw new Error('native analyzer fixture publish hook missing');"
+             "  const payload = " + fixture.payload_json + ";"
+             "  publish('analyzer_frame', payload, 'spectr-deterministic-fixture');"
+             "  const accepted = globalThis.SpectrAnalyzer.debugSnapshot();"
+             "  if (!accepted || accepted.epoch !== payload.epoch"
+             "      || accepted.sequence_number !== payload.sequence_number)"
+             "    throw new Error('native fixture frame was not accepted');"
+             "  if (typeof globalThis.__pulpRuntimeSettle__ === 'function')"
+             "    globalThis.__pulpRuntimeSettle__(8);"
+             "})();", "spectr-deterministic-analyzer-fixture");
+        settle(clock, 16);
+        std::printf("[analyzer-fixture] published id=%s seed=%llu sha256=%s "
+                    "epoch=%llu sequence=%llu\n",
+                    fixture.fixture_id.c_str(),
+                    static_cast<unsigned long long>(fixture.seed),
+                    fixture.fixture_sha256.c_str(),
+                    static_cast<unsigned long long>(fixture.epoch),
+                    static_cast<unsigned long long>(fixture.sequence_number));
+    }
     ~Rig() {
         if (root) processor.on_view_closed(*root);
     }
@@ -1506,6 +1727,9 @@ int main(int argc, char** argv) {
     auto backend = pulp::view::ScreenshotBackend::gpu;
     float scale = 2.0f;
     std::string prefix;
+    std::string analyzer_fixture_path;
+    std::string analyzer_receipt_path;
+    bool analyzer_only = false;
 
     for (int index = 1; index < argc; ++index) {
         const std::string_view arg{argv[index]};
@@ -1525,10 +1749,17 @@ int main(int argc, char** argv) {
             scale = std::stof(std::string(arg.substr(8)));
         } else if (arg.rfind("--prefix=", 0) == 0) {
             prefix = std::string(arg.substr(9));
+        } else if (arg.rfind("--analyzer-fixture=", 0) == 0) {
+            analyzer_fixture_path = std::string(arg.substr(19));
+        } else if (arg.rfind("--analyzer-receipt=", 0) == 0) {
+            analyzer_receipt_path = std::string(arg.substr(19));
+        } else if (arg == "--analyzer-only") {
+            analyzer_only = true;
         } else {
             std::fprintf(stderr,
                          "usage: %s [--out=DIR] [--backend=gpu|skia|coregraphics] "
-                         "[--scale=N] [--prefix=STR]\n",
+                         "[--scale=N] [--prefix=STR] [--analyzer-fixture=PATH] "
+                         "[--analyzer-receipt=PATH] [--analyzer-only]\n",
                          argv[0]);
             return 2;
         }
@@ -1565,6 +1796,18 @@ int main(int argc, char** argv) {
         rig.resize(kDesignWidth, kDesignHeight);
         rig.feed_tone(96);
         settle(rig.clock, 24);
+        std::optional<DeterministicAnalyzerFixture> analyzer_fixture;
+        if (!analyzer_fixture_path.empty()) {
+            analyzer_fixture = load_deterministic_fixture(analyzer_fixture_path);
+            rig.publish_deterministic_analyzer(*analyzer_fixture);
+            capture(rig, dir, prefix + "analyzer-fixture", backend, scale);
+            if (g_failures != 0) return 1;
+            if (!analyzer_receipt_path.empty())
+                write_deterministic_receipt(analyzer_receipt_path, *analyzer_fixture);
+            if (analyzer_only) return 0;
+        } else if (analyzer_only) {
+            throw std::runtime_error("--analyzer-only requires --analyzer-fixture=PATH");
+        }
 
         // COR-4: sweep host sizes through the SHIPPING resize path
         // (on_view_resized -> __spectrResizeNativeEditor), censusing every

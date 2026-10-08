@@ -3,8 +3,21 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { browserFramePayload, loadFixture, receiptFor } from '../tools/deterministic_analyzer_fixture.mjs';
 
-const [htmlPath, chromePath, mode, modeArg] = process.argv.slice(2);
+const [htmlPath, chromePath, ...options] = process.argv.slice(2);
+const mode = options.find(value => [
+  '--emit-instrumented', '--resize-only', '--js-only', '--mute-modes', '--popup-only',
+].includes(value));
+const modeArg = mode ? options[options.indexOf(mode) + 1] : undefined;
+const fixtureFlag = process.argv.indexOf('--analyzer-fixture');
+const fixturePath = fixtureFlag >= 0 ? process.argv[fixtureFlag + 1] : null;
+if (fixtureFlag >= 0 && !fixturePath) throw new Error('--analyzer-fixture requires a path');
+const analyzerFixture = fixturePath ? loadFixture(fixturePath) : null;
+const analyzerFixtureFrame = analyzerFixture ? browserFramePayload(analyzerFixture) : null;
+const receiptFlag = process.argv.indexOf('--analyzer-receipt');
+const receiptPath = receiptFlag >= 0 ? process.argv[receiptFlag + 1] : null;
+if (receiptFlag >= 0 && !receiptPath) throw new Error('--analyzer-receipt requires a path');
 // --emit-instrumented DIR writes the instrumented oracle page and stops, so
 // it can be driven in a real browser when a headless run cannot be trusted
 // (a Chrome that will not settle fails every lane here identically).
@@ -14,6 +27,18 @@ const resizeOnlyMode = mode === '--resize-only';
 const jsOnlyMode = mode === '--js-only';
 const muteModesMode = mode === '--mute-modes';
 const popupOnlyMode = mode === '--popup-only';
+const analyzerCaptureMode = process.argv.includes('--analyzer-capture');
+const screenshotFlag = process.argv.indexOf('--analyzer-screenshot');
+const screenshotPath = screenshotFlag >= 0 ? process.argv[screenshotFlag + 1] : null;
+if (screenshotFlag >= 0 && !screenshotPath) throw new Error('--analyzer-screenshot requires a path');
+if (analyzerCaptureMode && !analyzerFixture) throw new Error('--analyzer-capture requires --analyzer-fixture');
+if ((screenshotPath || receiptPath) && !analyzerFixture)
+  throw new Error('analyzer artifacts require --analyzer-fixture');
+if (screenshotPath && !analyzerCaptureMode)
+  throw new Error('--analyzer-screenshot requires --analyzer-capture');
+if (receiptPath && (resizeOnlyMode || jsOnlyMode || muteModesMode || popupOnlyMode))
+  throw new Error('analyzer receipt requires a lane that consumes the fixture');
+let analyzerRunReceipt = null;
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-analyzer-browser-'));
 try {
@@ -94,6 +119,7 @@ const spectrReopenedSnapshots = () => ({
   A: { populated: true, gain_db: new Array(32).fill(12), muted: new Array(32).fill(false) },
   B: { populated: true, gain_db: new Array(32).fill(-12), muted: Array.from({ length: 32 }, (_, i) => i === 7) },
 });
+const deterministicAnalyzerFrame = ${JSON.stringify(analyzerFixtureFrame)};
 window.__spectrHydration = {
   revision: 0,
   n_visible: 32,
@@ -944,19 +970,21 @@ window.spectrStartOracle = () => {
 
       const sampleAt1k = () => window.SpectrAnalyzer.sample(3, 0, 'visible');
       if (sampleAt1k() !== 0) throw new Error('native pre-frame signal was not silent');
-      const visible = new Array(321).fill(-120);
-      const overview = new Array(121).fill(-120);
-      const exactPeakIndex = (Math.log10(1000) - Math.log10(20))
-        / (Math.log10(20000) - Math.log10(20)) * 320;
-      visible[Math.floor(exactPeakIndex)] = 24;
-      visible[Math.ceil(exactPeakIndex)] = 24;
-      const payload = {
-        schema_version: 1, epoch: 2, sequence_number: 4,
-        dropped_frames: 0, source_channels: 2,
-        fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 24,
-        visible: { min_hz: 20, max_hz: 20000, magnitude_db: visible },
-        overview: { min_hz: 20, max_hz: 20000, magnitude_db: overview },
-      };
+      const payload = deterministicAnalyzerFrame || (() => {
+        const visible = new Array(321).fill(-120);
+        const overview = new Array(121).fill(-120);
+        const exactPeakIndex = (Math.log10(1000) - Math.log10(20))
+          / (Math.log10(20000) - Math.log10(20)) * 320;
+        visible[Math.floor(exactPeakIndex)] = 24;
+        visible[Math.ceil(exactPeakIndex)] = 24;
+        return {
+          schema_version: 1, epoch: 2, sequence_number: 4,
+          dropped_frames: 0, source_channels: 2,
+          fft_size: 8192, sample_rate: 48000, floor_db: -120, ceiling_db: 24,
+          visible: { min_hz: 20, max_hz: 20000, magnitude_db: visible },
+          overview: { min_hz: 20, max_hz: 20000, magnitude_db: overview },
+        };
+      })();
       window.__spectrEmit('analyzer_frame', payload);
       if (sampleAt1k() < 0.95) throw new Error('valid live peak was not sampled');
       const expectedDbfsMapping = [
@@ -993,18 +1021,39 @@ window.spectrStartOracle = () => {
         if (Math.abs(actualY - expectedY) > 1e-9)
           throw new Error('incorrect dBFS projection for ' + db + ': ' + actualY);
       }
+      if (new URL(location.href).searchParams.has('analyzer-capture')) {
+        // Stop before the stale/floor controls and teardown intentionally erase
+        // this frame. Capture evidence must show the supplied peaks.
+        window.__spectrEmit('processing_state_hydrate', {
+          ...window.__spectrHydration,
+          gain_db: new Array(32).fill(0), muted: new Array(32).fill(false),
+          min_hz: payload.visible.min_hz, max_hz: payload.visible.max_hz,
+        });
+        await spectrFrames(90);
+        if (sampleAt1k() < 0.95 || !spectrBundleClean())
+          throw new Error('deterministic peak did not survive settled capture');
+        const snapshot = window.SpectrAnalyzer.debugSnapshot();
+        if (snapshot.epoch !== payload.epoch
+            || snapshot.sequence_number !== payload.sequence_number)
+          throw new Error('settled capture lost fixture identity');
+        result.textContent = 'SPECTR_BROWSER_ANALYZER_CAPTURE_OK';
+        result.style.display = 'none';
+        document.documentElement.dataset.spectrOracle = 'ANALYZER_CAPTURE_OK';
+        return;
+      }
       const accepted = window.SpectrAnalyzer.debugSnapshot();
-      window.__spectrEmit('analyzer_frame', { ...payload, sequence_number: 3 });
+      const fixtureSequence = Number(payload.sequence_number);
+      window.__spectrEmit('analyzer_frame', { ...payload, sequence_number: fixtureSequence - 1 });
       if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
         throw new Error('stale frame replaced live state');
       window.__spectrEmit('analyzer_frame', {
-        ...payload, sequence_number: 5,
+        ...payload, sequence_number: fixtureSequence + 1,
         visible: { ...payload.visible, magnitude_db: [NaN] },
       });
       if (window.SpectrAnalyzer.debugSnapshot() !== accepted)
         throw new Error('malformed frame replaced live state');
       window.__spectrEmit('analyzer_frame', {
-        ...payload, sequence_number: 6,
+        ...payload, sequence_number: fixtureSequence + 2,
         visible: { ...payload.visible, magnitude_db: new Array(321).fill(-120) },
       });
       if (sampleAt1k() !== 0) throw new Error('finite floor did not produce silence');
@@ -1650,20 +1699,43 @@ setTimeout(window.spectrStartOracle, 0);
   // given a brand-new --user-data-dir on macOS. Let native headless create its
   // own ephemeral profile and add incognito explicitly: each call remains an
   // isolated process, while avoiding the broken explicit-profile startup path.
-  const runChrome = (url, width, height) => spawnSync(chromePath, [
+  const runChrome = (url, width, height, extra = []) => spawnSync(chromePath, [
     '--headless=new', '--disable-gpu', '--disable-web-security',
     '--disable-background-networking', '--disable-component-update',
     '--disable-domain-reliability', '--disable-sync', '--incognito',
     '--allow-file-access-from-files', '--no-first-run', '--no-default-browser-check',
     `--window-size=${width},${height}`,
-    '--virtual-time-budget=15000', '--dump-dom', url,
+    '--virtual-time-budget=15000', ...extra, '--dump-dom', url,
   ], { encoding: 'utf8', timeout: 45000, maxBuffer: 64 * 1024 * 1024 });
   const failure = run => run.stdout.match(/data-spectr-oracle="FAIL:[^"]*/)?.[0]
     || run.stdout.match(/<pre id="__spectr_browser_oracle"[^>]*>([^<]*)<\/pre>/)?.[1]
     || run.stderr;
 
   const initialUrl = `file://${instrumented}`;
-  if (popupOnlyMode) {
+  if (analyzerCaptureMode) {
+    if (screenshotPath) fs.mkdirSync(path.dirname(path.resolve(screenshotPath)), { recursive: true });
+    const run = runChrome(initialUrl + '?analyzer-capture=1', 1320, 860,
+      screenshotPath ? [`--screenshot=${path.resolve(screenshotPath)}`] : []);
+    const oraclePassed = /data-spectr-oracle="ANALYZER_CAPTURE_OK"/.test(run.stdout);
+    const watchdog = run.status === 2 && /Teardown watchdog expired/.test(run.stderr);
+    analyzerRunReceipt = {
+      browser_test: 'test/test_editor_analyzer_browser.mjs',
+      mode: 'analyzer-capture',
+      status: run.status === 0 && oraclePassed ? 'passed' : 'failed',
+      oracle: oraclePassed ? 'ANALYZER_CAPTURE_OK' : 'missing-or-failed',
+      process_exit_code: run.status,
+      limitation: watchdog ? 'chrome-teardown-watchdog' : null,
+      screenshot_path: screenshotPath ? path.resolve(screenshotPath) : null,
+      screenshot_written: !!screenshotPath && fs.existsSync(screenshotPath),
+    };
+    if (receiptPath) {
+      fs.mkdirSync(path.dirname(path.resolve(receiptPath)), { recursive: true });
+      fs.writeFileSync(receiptPath, JSON.stringify(receiptFor(analyzerFixture, 'browser', analyzerRunReceipt), null, 2) + '\n');
+    }
+    assert.equal(run.status, 0, watchdog ? 'Chrome teardown watchdog: browser oracle=' + analyzerRunReceipt.oracle : run.stderr);
+    assert(oraclePassed, failure(run));
+    if (screenshotPath) assert(fs.statSync(screenshotPath).size > 0, 'analyzer screenshot is empty');
+  } else if (popupOnlyMode) {
     const run = runChrome(initialUrl + '?popup-only=1', 1320, 860);
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, /data-spectr-oracle="POPUP_OK"/, failure(run));
@@ -1717,6 +1789,14 @@ setTimeout(window.spectrStartOracle, 0);
   assert.equal(reopened.status, 0, reopened.stderr);
   assert.match(reopened.stdout, /data-spectr-oracle="OK"/, failure(reopened));
   }
+  }
+  if (receiptPath && analyzerFixture && !emitInstrumentedDir && !analyzerRunReceipt) {
+    fs.mkdirSync(path.dirname(path.resolve(receiptPath)), { recursive: true });
+    fs.writeFileSync(receiptPath, JSON.stringify(receiptFor(analyzerFixture, 'browser', {
+      browser_test: 'test/test_editor_analyzer_browser.mjs',
+      mode: mode?.startsWith('--analyzer-') ? 'initial' : (mode || 'initial'),
+      status: 'passed',
+    }), null, 2) + '\n');
   }
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
