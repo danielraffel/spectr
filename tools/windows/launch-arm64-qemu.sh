@@ -12,8 +12,13 @@ command -v qemu-img >/dev/null || { echo 'qemu-img is required' >&2; exit 1; }
 command -v qemu-system-aarch64 >/dev/null || { echo 'qemu-system-aarch64 is required' >&2; exit 1; }
 for path in "$BASE_IMAGE" "$FIRMWARE" "$VARS_TEMPLATE"; do [[ -f "$path" ]] || { echo "missing: $path" >&2; exit 1; }; done
 port="${SPECTR_WINDOWS_SSH_PORT:-50375}"
+rdp_port="${SPECTR_WINDOWS_RDP_PORT:-53389}"
 if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
   echo "SSH forward port is already in use: $port" >&2
+  exit 1
+fi
+if nc -z 127.0.0.1 "$rdp_port" >/dev/null 2>&1; then
+  echo "RDP forward port is already in use: $rdp_port" >&2
   exit 1
 fi
 mkdir -p "$STATE_DIR"
@@ -28,6 +33,7 @@ qemu-img create -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$overlay" >/dev/null
 cp "$VARS_TEMPLATE" "$vars"
 echo "Session: $session"
 echo "SSH: admin@127.0.0.1:$port"
+echo "RDP: 127.0.0.1:$rdp_port"
 qemu-system-aarch64 \
   -name spectr-windows-arm64 \
   -accel hvf -machine virt,highmem=on,gic-version=3 -cpu host \
@@ -35,7 +41,7 @@ qemu-system-aarch64 \
   -drive if=pflash,format=raw,readonly=on,file="$FIRMWARE" \
   -drive if=pflash,format=raw,file="$vars" \
   -device ramfb -device qemu-xhci,id=usb -device usb-kbd -device usb-tablet \
-  -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
+  -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22,hostfwd=tcp:127.0.0.1:${rdp_port}-:3389" \
   -device virtio-net-pci,netdev=net0 \
   -drive file="$overlay",if=none,id=nvm,format=qcow2 -device nvme,drive=nvm,serial=spectrwin \
   -display "${MODE#--display=}"
