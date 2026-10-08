@@ -248,3 +248,26 @@ automatic rebases, force-pushes, direct merges, and blind red-check reruns stay
 disabled. A queue-steward health heartbeat and a daily immutable digest should
 make stale transport, missing ownership, and unresolved PRs visible without
 requiring an agent to poll manually.
+
+## 2026-10-08 generated runtime-client staging contract
+
+The renderer-neutral `pulp.postMessage` seam now has a deterministic staging
+client contract on Spectr branch
+`codex/spectr-runtime-client-contract-20261008` at commit
+`a9b78e7a599689cd95ed9be7b61625a272f02982`. The generator reads the C++
+`add_handler` registrations from `src/editor_bridge.cpp` and
+`src/ui/editor_view.cpp`, checks literal command calls in
+`native-ui/materialized/spectr-native-services.js`, and emits 54 handler
+methods plus a TypeScript declaration and source-hash manifest under
+`native-ui/materialized/generated/`. Five focused controls pass: deterministic
+repeat output and Node dispatch, TypeScript declaration compilation, checked-in
+manifest verification, a missing C++ handler rejection, and an unknown service
+command rejection. The CMake acceptance test is
+`Spectr-wp1-runtime-client-contract`.
+
+This is staging evidence only. `resources/editor.html`,
+`native-ui/materialized/runtime.js`, and
+`native-ui/materialized/materialized-document.runtime.json` are unchanged;
+the generated client is not wired into the shipping runtime and does not claim
+browser/native parity or production cutover. The SDK materialized-runtime
+producer remains a separate Pulp follow-up.
