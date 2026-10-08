@@ -11,6 +11,10 @@ ready_timeout="${SPECTR_WINDOWS_SSH_READY_TIMEOUT:-120}"
 [[ "$count" =~ ^[1-9][0-9]*$ ]] || { echo "SPECTR_WINDOWS_SSH_PROBES must be a positive integer" >&2; exit 2; }
 [[ "$ready_timeout" =~ ^[1-9][0-9]*$ ]] || { echo "SPECTR_WINDOWS_SSH_READY_TIMEOUT must be a positive integer" >&2; exit 2; }
 
+# Windows OpenSSH defaults to MaxStartups 10:30:100. Keep this check
+# deliberately sequential: it validates the path used by builds and avoids
+# manufacturing connection resets by opening a burst of sessions.
+
 # A newly booted Windows guest can accept TCP before OpenSSH is ready. Treat
 # resets during that bounded window as boot progress, then fail closed.
 deadline=$(( $(date +%s) + ready_timeout ))

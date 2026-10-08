@@ -13,6 +13,8 @@
 
 The candidate boots on the M5 Ultra with the QEMU parameters below and accepts SSH on the forwarded port. The guest reported `Windows 10 Pro` and `ARM 64-bit Processor`.
 
+The SSH wrapper uses an explicit identity, no inherited stdin, bounded connection attempts, and keepalives. The guest retains Windows OpenSSH's default `MaxStartups 10:30:100`; automation therefore uses sequential probes and a single build session rather than opening a burst of SSH connections. A ten-session burst can legitimately receive `Connection reset by peer` from that guest limit even while the VM is healthy.
+
 ```text
 qemu-system-aarch64 -accel hvf -machine virt,highmem=on,gic-version=3
   -cpu host -smp 8 -m 8192
