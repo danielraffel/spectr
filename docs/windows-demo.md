@@ -93,6 +93,19 @@ For a complete artifact and focused-test receipt, run
 Git SHA lookup is non-fatal when the build tree is not a checkout. A fresh
 clone returned `PASS` with the two-assertion `Spectr processes audio` test.
 
+## Bounded Proxmox x64 check
+
+The Intel path can run without RDP through the Proxmox guest agent:
+
+```bash
+tools/windows/proxmox-validate.sh
+```
+
+It starts VM 300 only when stopped, waits for the guest agent, runs the exact
+`Spectr processes audio` test, and stops the VM in its exit trap only when this
+invocation started it. A live run passed with exit code `0` and two assertions;
+the VM was confirmed `stopped` afterward.
+
 ## Cleanup
 
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware
