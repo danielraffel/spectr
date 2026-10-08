@@ -60,6 +60,13 @@ The resulting receipt proves discovery and hashes the exact host and plugin.
 It does not claim plugin instantiation or audio until those are observed in the
 desktop host.
 
+The scan helper reads the cache with a bounded raw read and regex so it remains
+reliable through Windows OpenSSH. Fresh-clone verification returned:
+
+- REAPER ARM64 SHA-256: `95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8`
+- Spectr VST3 SHA-256: `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`
+- Cache entry: `Spectr.dll=3B5E20C3E956DD01`
+
 ## Build a portable handoff
 
 From the Windows guest, package the warmed build tree:

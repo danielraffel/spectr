@@ -20,15 +20,19 @@ if (-not (Test-Path -LiteralPath $ReaperExe -PathType Leaf)) { throw "REAPER is 
 $plugin = Join-Path $Vst3Root 'Spectr.vst3'
 if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) { throw "Packaged VST3 binary is missing: $plugin" }
 if (-not (Test-Path -LiteralPath $CachePath -PathType Leaf)) { throw "REAPER VST cache is missing: $CachePath" }
-$entry = Get-Content -LiteralPath $CachePath | Where-Object { $_ -like 'Spectr.dll=*' -or $_ -like 'Spectr.vst3=*' } | Select-Object -First 1
+$cacheText = Get-Content -LiteralPath $CachePath -Raw
+$entryMatch = [regex]::Match($cacheText, '(?m)^(?:Spectr\.dll|Spectr\.vst3)=.*$')
+$entry = if ($entryMatch.Success) { $entryMatch.Value } else { $null }
+$reaperHash = (Get-FileHash -LiteralPath $ReaperExe -Algorithm SHA256).Hash
+$pluginHash = (Get-FileHash -LiteralPath $plugin -Algorithm SHA256).Hash
 $receiptObject = [ordered]@{
     schema = 1
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
     reaper = (Get-Item -LiteralPath $ReaperExe).FullName
-    reaper_sha256 = (Get-FileHash -LiteralPath $ReaperExe -Algorithm SHA256).Hash
+    reaper_sha256 = $reaperHash
     architecture = $Architecture
     plugin_path = $plugin
-    plugin_sha256 = (Get-FileHash -LiteralPath $plugin -Algorithm SHA256).Hash
+    plugin_sha256 = $pluginHash
     cache_path = $CachePath
     scan_entry = $entry
     scan_entry_present = ($null -ne $entry)
