@@ -203,3 +203,48 @@ nonempty analyzer content survived. Evidence is retained at
 
 This remains browser/import evidence only. Native Skia/Dawn parity, production
 cutover, and a repaired nonempty importer capture remain open.
+
+## 2026-10-08 PR queue and Shipyard stewardship snapshot
+
+This is a point-in-time read-only snapshot, not a claim that the backlog is
+static. At `2026-10-08T21:57:51Z`, `ghapp` listed 25 open Pulp pull requests
+and 9 open Spectr pull requests. The live lists are:
+
+- Pulp: <https://github.com/Generous-Corp/pulp/pulls?q=is%3Apr+is%3Aopen>
+- Spectr: <https://github.com/danielraffel/spectr/pulls?q=is%3Apr+is%3Aopen>
+
+The Spectr provenance gate is PR
+<https://github.com/danielraffel/spectr/pull/250> at commit
+`86e6ddaec314e78d08f237ca04e90db2ee74fe61`. Its 36-test WP-1 regression
+suite, four provenance controls, and direct Node verifier pass; the M5 product
+acceptance check is still running. The PR records staging identity only and
+does not claim production cutover or native parity.
+
+Pulp uses a GitHub merge queue. During this observation window PR
+<https://github.com/Generous-Corp/pulp/pull/9930> advanced from queue position
+1 and merged at `2026-10-08T21:54:34Z`; the queue was empty on the following
+read while auto-merge remained armed on other PRs. Direct merging around that
+queue is unsafe. Spectr has no configured GitHub merge queue.
+
+Shipyard `0.283.0` currently provides useful read-only landing, queue, and
+`pr-watch` primitives, but it does not own the complete open-PR lifecycle:
+
+- `shipyard ship-state list --json` contains three durable records (two failed
+  and one passed), rather than the complete Pulp/Spectr backlog;
+- `pr-watch wakes` reports zero raised/sent/seen/open wakes, while its digest
+  would send one flag for Pulp PR
+  <https://github.com/Generous-Corp/pulp/pull/9825> (required `macos` red for
+  more than 234 minutes while auto-merge is armed but not queued);
+- the actionable wake producer is disabled because no repository policy is
+  configured, and queue-observe snapshots are stale/manual rather than an
+  always-on follow process.
+
+The safe ownership boundary is therefore: Shipyard should collect bounded
+GitHub state continuously, persist exact head/base/check/queue transitions,
+bucket open PRs by deterministic blocker, and deliver one acknowledged wake to
+the responsible coordinator. Agents should own code fixes and runner repair.
+Mutation should remain opt-in and exact-head/green-gated after a read-only soak;
+automatic rebases, force-pushes, direct merges, and blind red-check reruns stay
+disabled. A queue-steward health heartbeat and a daily immutable digest should
+make stale transport, missing ownership, and unresolved PRs visible without
+requiring an agent to poll manually.
