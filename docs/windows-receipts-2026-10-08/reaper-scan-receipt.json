@@ -1,0 +1,13 @@
+﻿{
+    "schema":  1,
+    "generated_at_utc":  "2026-10-09T04:03:47.9914552Z",
+    "reaper":  "C:\\Program Files\\REAPER (arm64)\\reaper.exe",
+    "reaper_sha256":  "95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8",
+    "architecture":  "arm64-win",
+    "plugin_path":  "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+    "plugin_sha256":  "A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3",
+    "cache_path":  "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-vstplugins64.ini",
+    "scan_entry":  "Spectr.dll=3B5E20C3E956DD01\r",
+    "scan_entry_present":  true,
+    "limitation":  "A cache entry proves discovery only; load and audio acceptance require a desktop-capable host session."
+}
