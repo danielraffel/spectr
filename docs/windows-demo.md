@@ -39,6 +39,9 @@ The script enables the listener and firewall only. It never creates or stores a
 Windows password. RDP requires the user to enter the Administrator password in
 Jump Desktop; SSH key authentication is not reused as a desktop credential.
 
+Fresh-clone verification on 2026-10-09 returned
+`fDenyTSConnections=0`, `term_service=Running`, and `rdp_listener=true`.
+
 Add a Jump Desktop RDP connection to `127.0.0.1:53389`, accept the local
 self-signed certificate when prompted, and enter the Windows credentials.
 
