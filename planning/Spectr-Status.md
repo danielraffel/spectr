@@ -273,3 +273,15 @@ This is staging evidence only. `resources/editor.html`,
 the generated client is not wired into the shipping runtime and does not claim
 browser/native parity or production cutover. The SDK materialized-runtime
 producer remains a separate Pulp follow-up.
+
+## 2026-10-08 runtime-client bridge-source correction
+
+The staging generator was corrected after adversarial review to scan the active
+native bridge (`src/editor_bridge.cpp` and `src/ui/native_editor.cpp`). The
+browser adapter lifecycle command `editor_ready` is now represented explicitly
+as `adapter_only`, while native strict service references remain limited to the
+active bridge. The checked-in manifest records strict, optional, and adapter-only
+service references. The rebased implementation head is
+`00fa31a9b4a193740a2f0dc0f86f5c6218355f2e`; `node tools/generate_spectr_runtime_client.mjs --verify`
+and all six focused contract tests pass. This remains staging-only: no shipping
+runtime, authored `editor.html`, or native/browser parity claim changed.
