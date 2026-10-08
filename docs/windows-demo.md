@@ -66,19 +66,21 @@ import configuration is repaired.
 
 ## Enable RDP for this overlay
 
-The base image keeps desktop access off. Copy and run the setup script as the
-Windows Administrator through SSH:
+The base image keeps desktop access off. Repair the interactive desktop through
+the authenticated SSH path before opening Jump Desktop:
 
 ```bash
-scp -P 50375 tools/windows/enable-rdp.ps1 \
-  admin@127.0.0.1:C:/Users/admin/enable-rdp.ps1
-tools/windows/ssh-qemu.sh \
-  'powershell -ExecutionPolicy Bypass -File C:/Users/admin/enable-rdp.ps1'
+SPECTR_WINDOWS_SSH_PORT=50375 \
+  tools/windows/ensure-rdp-over-ssh.sh
 ```
 
-The script enables the listener and firewall only. It never creates or stores a
-Windows password. RDP requires the user to enter the Administrator password in
-Jump Desktop; SSH key authentication is not reused as a desktop credential.
+The helper repairs the RDP registry flag, firewall group, and dependent
+services on every disposable overlay and fails closed unless TCP 3389 is
+listening. It never creates or stores a Windows password. RDP still requires
+the Administrator password in Jump Desktop; SSH key authentication is not
+reused as a desktop credential. The lower-level
+`tools/windows/enable-rdp.ps1` remains available for a manually authenticated
+PowerShell session.
 
 Fresh-clone verification on 2026-10-09 returned
 `fDenyTSConnections=0`, `term_service=Running`, and `rdp_listener=true`.
