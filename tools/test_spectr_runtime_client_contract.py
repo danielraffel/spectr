@@ -47,7 +47,7 @@ class RuntimeClientContractTest(unittest.TestCase):
             self.assertIn("processing_state_get", handlers)
             self.assertIn("spectral_resolution_request", handlers)
             self.assertEqual(manifest["service_references"]["strict"], [
-                "macro_set_members", "processing_state_get", "processing_state_set",
+                "editor_ready", "macro_set_members", "processing_state_get", "processing_state_set",
                 "redo", "spectral_resolution_request", "undo", "undo_gesture_end",
             ])
 
@@ -107,6 +107,22 @@ class RuntimeClientContractTest(unittest.TestCase):
             result = run_generator(root / "out", bridge=bridge)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("processing_state_get", result.stderr)
+            self.assertIn("unregistered handler", result.stderr)
+
+    def test_missing_editor_ready_handler_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            bridge = root / "editor_view.cpp"
+            bridge.write_text(EDITOR_VIEW.read_text().replace(
+                'bridge_.add_handler("editor_ready"',
+                'bridge_.add_handler("editor_ready_removed"', 1))
+            result = subprocess.run([
+                "node", str(GENERATOR), "--bridge", str(BRIDGE),
+                "--bridge", str(bridge), "--services", str(SERVICES),
+                "--out", str(root / "out"),
+            ], cwd=ROOT, text=True, capture_output=True, check=False, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("editor_ready", result.stderr)
             self.assertIn("unregistered handler", result.stderr)
 
     def test_unknown_service_command_fails_closed(self):

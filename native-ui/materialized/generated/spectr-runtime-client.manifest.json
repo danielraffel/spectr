@@ -403,6 +403,7 @@
   ],
   "service_references": {
     "strict": [
+      "editor_ready",
       "macro_set_members",
       "processing_state_get",
       "processing_state_set",
@@ -412,10 +413,7 @@
       "undo_gesture_end"
     ],
     "optional": [
-      "analyzer_frame",
-      "editor_ready",
-      "processing_state_get",
-      "spectral_resolution_request"
+      "analyzer_frame"
     ]
   },
   "generated": {

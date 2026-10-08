@@ -31,6 +31,9 @@ const GENERATED = [
   'spectr-runtime-client.d.ts',
   'spectr-runtime-client.manifest.json',
 ];
+// These are publication-only branches emitted by the materialized runtime;
+// every other literal branch command must correspond to a native handler.
+const OPTIONAL_PUBLICATION_COMMANDS = new Set(['analyzer_frame']);
 
 function fail(message) { throw new Error(`runtime client generation failed: ${message}`); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
@@ -81,10 +84,12 @@ function extractServiceReferences(source) {
   const direct = /\b(?:dispatch|initial)\(\s*(["'])([a-z][a-z0-9_]*)\1/g;
   let match;
   while ((match = direct.exec(source))) strict.add(match[2]);
-  // These are command-routing branches. `editor_ready` and publication names
-  // are deliberately optional because they are not C++ handler names.
+  // These are command-routing branches. Only publication-only names are
+  // optional; lifecycle and request branches must be backed by C++ handlers.
   const branch = /\btype\s*===\s*(["'])([a-z][a-z0-9_]*)\1/g;
-  while ((match = branch.exec(source))) optional.add(match[2]);
+  while ((match = branch.exec(source))) {
+    (OPTIONAL_PUBLICATION_COMMANDS.has(match[2]) ? optional : strict).add(match[2]);
+  }
   const includes = /\[([^\]]+)\]\s*\.includes\(\s*type\s*\)/g;
   while ((match = includes.exec(source))) {
     const item = /(["'])([a-z][a-z0-9_]*)\1/g;
