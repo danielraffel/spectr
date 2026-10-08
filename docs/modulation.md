@@ -47,6 +47,30 @@ the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
 with); a fresh instance drives Bank from both LFOs, everything else off.
 
+### Selected-band groups
+
+The Bank route is also the fallback for individual bands. The existing
+rubber-band/shift selection can be assigned to the current LFO with **Assign
+selected bands** in the band context menu. That assignment stores a normalized
+depth for the selected bitset without adding 64 host parameters. Up to eight
+assignments are carried in editor state. An individual-band assignment wins
+over a broader group, and an unassigned band inherits the WholeBank depth;
+this makes a broad bank assignment followed by a shift-click refinement
+predictable. The same selection can be assigned again after changing the route
+Depth to create another group with a different strength.
+
+The assignment changes displayed and audible band-level modulation only; it
+never writes a band gain or changes the DSP filter topology. Group masks are
+bounded and published with the existing allocation-free modulation state, so
+audio processing remains real-time safe.
+
+Rate and strength are separate concepts. Rate controls how quickly the LFO
+phase advances; Depth controls the excursion size. Strength changing over time
+is therefore a separate depth-envelope or depth-automation feature, rather than
+a faster LFO. The rate lanes now accept 1/16 beat (down from 1/4 beat) for
+faster tempo-synchronised movement; phase remains continuous and normal route
+smoothing still applies.
+
 ## How stacked targets combine
 
 Deterministic, independent of which LFO is evaluated first, and level-safe:

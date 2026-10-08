@@ -35,6 +35,17 @@ inline constexpr std::size_t kLegacyModulationTargetCount = 4;
 inline constexpr std::size_t kModulationTargetCount = 13;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
+/// Fastest tempo-synchronised cycle: a sixteenth of a beat. This keeps the
+/// phase integrator continuous while making genuinely fast rhythmic LFOs
+/// available; hosts still see one normalized automatable rate lane.
+inline constexpr float kMinLfoBeatsPerCycle = 0.0625f;
+inline constexpr float kMaxLfoBeatsPerCycle = 16.0f;
+/// A bounded number of editor-created band groups. Group membership is an
+/// editor state (a 64-bit slot mask), rather than a host parameter, so it can
+/// be carried through the existing modulation publication without allocating
+/// on the audio thread. The bound keeps the state trivially copyable and
+/// makes malformed/restored sessions safe.
+inline constexpr std::size_t kMaxBandModulationGroups = 8;
 
 /// Sentinel meaning "no explicit destination selection has been made", so the
 /// destination follows the single-target `ModulationSettings::target` enum
@@ -58,6 +69,17 @@ struct ModulationRoute {
     float amount  = 0.5f;  ///< the destination's Depth, 0..1
 };
 using LfoRoutes = std::array<ModulationRoute, kModulationTargetCount>;
+
+struct BandModulationGroup {
+    std::uint64_t members = 0;
+    std::array<float, kLfoCount> depth{};
+    std::array<bool, kLfoCount> assigned{};
+};
+
+struct BandModulationOverrides {
+    std::array<BandModulationGroup, kMaxBandModulationGroups> groups{};
+    std::uint8_t count = 0;
+};
 
 /// A fresh LFO drives the whole bank at 50 % Depth: the destination and depth a
 /// 1.0.x instance opened with, so a new instance sounds as it did.
@@ -89,6 +111,9 @@ struct ModulationSettings {
     /// SLEWED route level (see `slew_lfo_level`) rather than the raw lane.
     std::array<LfoRoutes, kLfoCount> routes{default_lfo_routes(),
                                             default_lfo_routes()};
+    /// Optional selected-band/group overrides for the WholeBank destination.
+    /// A zero count preserves the legacy whole-bank behavior exactly.
+    BandModulationOverrides band_overrides{};
 };
 
 /// The destinations @p routes enables, as a bit mask in enum order.
@@ -402,6 +427,60 @@ inline void accumulate_modulation(ModulationCoordinates& coords,
     }
 }
 
+/// Resolve the depth for one canonical band. A one-member assignment has
+/// explicit individual-band precedence; otherwise the most recently assigned
+/// matching group wins. Unassigned bands inherit the LFO's WholeBank amount.
+inline float band_modulation_depth(const ModulationSettings& settings,
+                                   std::size_t lfo, std::size_t band,
+                                   float fallback) noexcept {
+    if (lfo >= kLfoCount || band >= kMaxBands) return fallback;
+    const auto& groups = settings.band_overrides;
+    const std::uint64_t bit = std::uint64_t{1} << band;
+    int group_index = -1;
+    int individual_index = -1;
+    const auto count = std::min<std::size_t>(groups.count, kMaxBandModulationGroups);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto& group = groups.groups[i];
+        if ((group.members & bit) == 0) continue;
+        if (group.members == bit) individual_index = static_cast<int>(i);
+        else group_index = static_cast<int>(i);
+    }
+    const int selected = individual_index >= 0 ? individual_index : group_index;
+    if (selected < 0 || !groups.groups[static_cast<std::size_t>(selected)].assigned[lfo])
+        return fallback;
+    return std::clamp(groups.groups[static_cast<std::size_t>(selected)].depth[lfo],
+                      0.0f, 1.0f);
+}
+
+/// Set or append a selected-band/group override. Reusing an identical mask
+/// updates it in place; otherwise the bounded list behaves like a small
+/// assignment stack and the oldest entry is replaced when full.
+inline bool set_band_modulation_group(BandModulationOverrides& overrides,
+                                      std::uint64_t members,
+                                      std::size_t lfo, float depth) noexcept {
+    if (members == 0 || lfo >= kLfoCount) return false;
+    const auto count = std::min<std::size_t>(overrides.count,
+                                             kMaxBandModulationGroups);
+    std::size_t slot = count;
+    for (std::size_t i = 0; i < count; ++i)
+        if (overrides.groups[i].members == members) { slot = i; break; }
+    if (slot == count) {
+        if (count < kMaxBandModulationGroups) {
+            overrides.count = static_cast<std::uint8_t>(count + 1);
+        } else {
+            // Preserve the most specific/latest interaction by dropping the
+            // oldest group and shifting the remaining assignments left.
+            for (std::size_t i = 1; i < kMaxBandModulationGroups; ++i)
+                overrides.groups[i - 1] = overrides.groups[i];
+            slot = kMaxBandModulationGroups - 1;
+        }
+    }
+    overrides.groups[slot].members = members;
+    overrides.groups[slot].depth[lfo] = std::clamp(depth, 0.0f, 1.0f);
+    overrides.groups[slot].assigned[lfo] = true;
+    return true;
+}
+
 /// Apply the level destinations (Morph, Snapshot A, Snapshot B, Bank) to
 /// @p canonical. Never mutates its inputs; the authored mute topology always
 /// survives (`preserve_authored_mutes`).
@@ -627,6 +706,41 @@ inline ModulationCoordinates modulation_coordinates(const ModulationSettings& se
     return coords;
 }
 
+/// Variant used by the composed LFO path. Only the WholeBank destination is
+/// split per band; snapshot/morph stages remain shared and retain their
+/// existing ordering and clamping semantics.
+inline BandField apply_field_modulation(const BandField& canonical,
+                                        const SnapshotBank& snapshots,
+                                        float host_morph,
+                                        const ModulationSettings& settings,
+                                        float wave1, float wave2) noexcept {
+    const auto coords = modulation_coordinates(settings, wave1, wave2);
+    auto out = apply_field_modulation(canonical, snapshots, host_morph, coords);
+    const auto whole = static_cast<std::size_t>(ModulationTarget::WholeBank);
+    const float base_bank = coords.value[whole];
+    const float bank1 = settings.enabled
+        ? std::clamp(settings.depth, 0.0f, 1.0f) * wave1
+        : 0.0f;
+    const float bank2 = settings.lfo2_enabled
+        ? std::clamp(settings.lfo2_depth, 0.0f, 1.0f) * wave2
+        : 0.0f;
+    for (std::size_t i = 0; i < kMaxBands; ++i) {
+        const float d1 = band_modulation_depth(settings, 0, i,
+            settings.routes[0][whole].amount);
+        const float d2 = band_modulation_depth(settings, 1, i,
+            settings.routes[1][whole].amount);
+        const float split = (settings.enabled && settings.routes[0][whole].enabled
+                             ? bank1 * d1 : 0.0f)
+            + (settings.lfo2_enabled && settings.routes[1][whole].enabled
+               ? bank2 * d2 : 0.0f);
+        out.bands[i].gain_db = std::clamp(
+            out.bands[i].gain_db + (split - base_bank) * kModulationBankExcursionDb,
+            kBandGainMinDb, kBandGainMaxDb);
+    }
+    preserve_authored_mutes(out, canonical);
+    return out;
+}
+
 /// Whether an LFO in @p settings drives @p target right now: the LFO on (its
 /// level above zero, on the audio owner the slewed level) and the route on
 /// with a non-zero Depth. What decides whether a header control is drawn at
@@ -649,7 +763,8 @@ inline ComposedModulation compose_internal_modulation(const BandField& canonical
                                                       float wave2) noexcept {
     ComposedModulation out;
     out.coords = modulation_coordinates(settings, wave1, wave2);
-    out.field = apply_field_modulation(canonical, snapshots, host_morph, out.coords);
+    out.field = apply_field_modulation(canonical, snapshots, host_morph,
+                                       settings, wave1, wave2);
     return out;
 }
 
