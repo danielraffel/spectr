@@ -12,14 +12,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "tools" / "generate_spectr_runtime_client.mjs"
 SERVICES = ROOT / "native-ui" / "materialized" / "spectr-native-services.js"
 BRIDGE = ROOT / "src" / "editor_bridge.cpp"
-EDITOR_VIEW = ROOT / "src" / "ui" / "editor_view.cpp"
+NATIVE_EDITOR = ROOT / "src" / "ui" / "native_editor.cpp"
 
 
 def run_generator(out: pathlib.Path, *, bridge: pathlib.Path = BRIDGE,
                   services: pathlib.Path = SERVICES,
                   verify: bool = False) -> subprocess.CompletedProcess[str]:
     args = ["node", str(GENERATOR), "--bridge", str(bridge),
-            "--bridge", str(EDITOR_VIEW), "--services", str(services),
+            "--bridge", str(NATIVE_EDITOR), "--services", str(services),
             "--out", str(out)]
     if verify:
         args.append("--verify")
@@ -47,9 +47,10 @@ class RuntimeClientContractTest(unittest.TestCase):
             self.assertIn("processing_state_get", handlers)
             self.assertIn("spectral_resolution_request", handlers)
             self.assertEqual(manifest["service_references"]["strict"], [
-                "editor_ready", "macro_set_members", "processing_state_get", "processing_state_set",
+                "macro_set_members", "processing_state_get", "processing_state_set",
                 "redo", "spectral_resolution_request", "undo", "undo_gesture_end",
             ])
+            self.assertEqual(manifest["service_references"]["adapter_only"], ["editor_ready"])
 
             probe = root / "probe.mjs"
             probe.write_text(
@@ -109,21 +110,14 @@ class RuntimeClientContractTest(unittest.TestCase):
             self.assertIn("processing_state_get", result.stderr)
             self.assertIn("unregistered handler", result.stderr)
 
-    def test_missing_editor_ready_handler_fails_closed(self):
+    def test_adapter_only_editor_ready_is_explicit(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
-            bridge = root / "editor_view.cpp"
-            bridge.write_text(EDITOR_VIEW.read_text().replace(
-                'bridge_.add_handler("editor_ready"',
-                'bridge_.add_handler("editor_ready_removed"', 1))
-            result = subprocess.run([
-                "node", str(GENERATOR), "--bridge", str(BRIDGE),
-                "--bridge", str(bridge), "--services", str(SERVICES),
-                "--out", str(root / "out"),
-            ], cwd=ROOT, text=True, capture_output=True, check=False, timeout=30)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("editor_ready", result.stderr)
-            self.assertIn("unregistered handler", result.stderr)
+            result = run_generator(root / "out")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((root / "out" / "spectr-runtime-client.manifest.json").read_text())
+            self.assertEqual(manifest["service_references"]["adapter_only"], ["editor_ready"])
+            self.assertNotIn("editor_ready", manifest["service_references"]["strict"])
 
     def test_unknown_service_command_fails_closed(self):
         with tempfile.TemporaryDirectory() as td:

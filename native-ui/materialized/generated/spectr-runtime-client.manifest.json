@@ -15,9 +15,9 @@
         "bytes": 75852
       },
       {
-        "path": "src/ui/editor_view.cpp",
-        "sha256": "e6bd819fae00711c464a41215f0c29dac5e6dd20c47cf373868f56d44884f1b8",
-        "bytes": 16635
+        "path": "src/ui/native_editor.cpp",
+        "sha256": "8d38119353803ea22ca6fe0bf448be47293d8fa37a1a8cce391ae63a8228beac",
+        "bytes": 214291
       }
     ]
   },
@@ -83,13 +83,6 @@
       "method": "duplicatePattern",
       "sources": [
         "src/editor_bridge.cpp"
-      ]
-    },
-    {
-      "name": "editor_ready",
-      "method": "editorReady",
-      "sources": [
-        "src/ui/editor_view.cpp"
       ]
     },
     {
@@ -209,6 +202,13 @@
       "method": "morphViewportSet",
       "sources": [
         "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "output_levels_get",
+      "method": "outputLevelsGet",
+      "sources": [
+        "src/ui/native_editor.cpp"
       ]
     },
     {
@@ -369,7 +369,7 @@
       "name": "spectral_resolution_request",
       "method": "spectralResolutionRequest",
       "sources": [
-        "src/ui/editor_view.cpp"
+        "src/ui/native_editor.cpp"
       ]
     },
     {
@@ -403,7 +403,6 @@
   ],
   "service_references": {
     "strict": [
-      "editor_ready",
       "macro_set_members",
       "processing_state_get",
       "processing_state_set",
@@ -414,18 +413,21 @@
     ],
     "optional": [
       "analyzer_frame"
+    ],
+    "adapter_only": [
+      "editor_ready"
     ]
   },
   "generated": {
     "spectr-runtime-client.mjs": {
       "path": "spectr-runtime-client.mjs",
-      "sha256": "ab36ab2213a9a7d058cda7a3b9f09b1ba8c8c0d320dbdc0d815d81fbbdf5242c",
-      "bytes": 6862
+      "sha256": "a6ee34de47604b6e70bfa419fbdd6ec61d2b2261fc5bf595372129604af287d8",
+      "bytes": 6876
     },
     "spectr-runtime-client.d.ts": {
       "path": "spectr-runtime-client.d.ts",
-      "sha256": "b1bcc288dcc9ac264694d62c3aae5eba388c855c5f5a24ab0adabb99c0f38b44",
-      "bytes": 7074
+      "sha256": "6fab749769b285171cc28973aabb6c6a079f220e54f3dbcc232529faba0a4ce7",
+      "bytes": 7083
     }
   }
 }

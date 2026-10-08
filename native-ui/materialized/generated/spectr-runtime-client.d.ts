@@ -9,7 +9,6 @@ export type SpectrCommand =
   | "clipboard_write"
   | "delete_pattern"
   | "duplicate_pattern"
-  | "editor_ready"
   | "freeze_length_describe"
   | "freeze_length_get"
   | "freeze_length_set"
@@ -27,6 +26,7 @@ export type SpectrCommand =
   | "modulation_targets_set"
   | "morph"
   | "morph_viewport_set"
+  | "output_levels_get"
   | "override_ask_set"
   | "paint"
   | "paint_end"
@@ -78,7 +78,6 @@ export interface SpectrRuntimeClient {
   clipboardWrite<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   deletePattern<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   duplicatePattern<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
-  editorReady<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   freezeLengthDescribe<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   freezeLengthGet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   freezeLengthSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
@@ -96,6 +95,7 @@ export interface SpectrRuntimeClient {
   modulationTargetsSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   morph<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   morphViewportSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
+  outputLevelsGet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   overrideAskSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   paint<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   paintEnd<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;

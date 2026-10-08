@@ -23,7 +23,10 @@ const NAME_RE = /^[a-z][a-z0-9_]*$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
 const DEFAULT_BRIDGES = [
   path.join(ROOT, 'src/editor_bridge.cpp'),
-  path.join(ROOT, 'src/ui/editor_view.cpp'),
+  // This is the bridge attached by the shipping native editor. The browser
+  // editor_view bridge has adapter-only lifecycle code and is intentionally
+  // modeled separately below.
+  path.join(ROOT, 'src/ui/native_editor.cpp'),
 ];
 const DEFAULT_SERVICES = path.join(ROOT, 'native-ui/materialized/spectr-native-services.js');
 const GENERATED = [
@@ -34,6 +37,7 @@ const GENERATED = [
 // These are publication-only branches emitted by the materialized runtime;
 // every other literal branch command must correspond to a native handler.
 const OPTIONAL_PUBLICATION_COMMANDS = new Set(['analyzer_frame']);
+const ADAPTER_ONLY_COMMANDS = new Set(['editor_ready']);
 
 function fail(message) { throw new Error(`runtime client generation failed: ${message}`); }
 function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
@@ -68,7 +72,7 @@ function parseArgs(argv) {
 
 function extractHandlers(source, file) {
   const names = [];
-  const re = /\bbridge_?\s*\.\s*add_handler\(\s*["']([^"']+)["']/g;
+  const re = /\b(?:bridge|[A-Za-z_][A-Za-z0-9_]*bridge_)\s*\.\s*add_handler\(\s*["']([^"']+)["']/g;
   let match;
   while ((match = re.exec(source))) {
     const name = match[1];
@@ -81,6 +85,7 @@ function extractHandlers(source, file) {
 function extractServiceReferences(source) {
   const strict = new Set();
   const optional = new Set();
+  const adapterOnly = new Set();
   const direct = /\b(?:dispatch|initial)\(\s*(["'])([a-z][a-z0-9_]*)\1/g;
   let match;
   while ((match = direct.exec(source))) strict.add(match[2]);
@@ -88,7 +93,9 @@ function extractServiceReferences(source) {
   // optional; lifecycle and request branches must be backed by C++ handlers.
   const branch = /\btype\s*===\s*(["'])([a-z][a-z0-9_]*)\1/g;
   while ((match = branch.exec(source))) {
-    (OPTIONAL_PUBLICATION_COMMANDS.has(match[2]) ? optional : strict).add(match[2]);
+    if (OPTIONAL_PUBLICATION_COMMANDS.has(match[2])) optional.add(match[2]);
+    else if (ADAPTER_ONLY_COMMANDS.has(match[2])) adapterOnly.add(match[2]);
+    else strict.add(match[2]);
   }
   const includes = /\[([^\]]+)\]\s*\.includes\(\s*type\s*\)/g;
   while ((match = includes.exec(source))) {
@@ -96,7 +103,11 @@ function extractServiceReferences(source) {
     let itemMatch;
     while ((itemMatch = item.exec(match[1]))) strict.add(itemMatch[2]);
   }
-  return { strict: [...strict].sort(), optional: [...optional].sort() };
+  return {
+    strict: [...strict].sort(),
+    optional: [...optional].sort(),
+    adapter_only: [...adapterOnly].sort(),
+  };
 }
 
 function toCamel(name) {
@@ -155,7 +166,11 @@ function build(args, target) {
       bridges: bridgeRecords.map(record => ({ path: record.path, sha256: sha256(record.bytes), bytes: record.bytes.length })),
     },
     handlers: handlers.map(name => ({ name, method: toCamel(name), sources: [...new Set(handlersByName.get(name))].sort() })),
-    service_references: { strict: references.strict, optional: references.optional },
+    service_references: {
+      strict: references.strict,
+      optional: references.optional,
+      adapter_only: references.adapter_only,
+    },
     generated: Object.fromEntries(Object.entries(outputs).map(([name, bytes]) => [name, { path: name, sha256: sha256(bytes), bytes: bytes.length }])),
   };
   outputs['spectr-runtime-client.manifest.json'] = Buffer.from(canonicalJson(manifest));
