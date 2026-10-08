@@ -241,14 +241,15 @@ if [[ -n "${DIAG_APP:-}" ]]; then
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
-# Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Its nested code must be
-# signed inside-out with the Developer ID identity before the app is sealed.
-# Pulp's recipe does that from the release that added pulp_add_sparkle(); for an
-# older PULP_ROOT, sign the framework here first. Delete this block on the Pulp
-# SDK bump that ships pulp_add_sparkle().
+# Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Sign the source
+# framework inside-out before handing the app to Pulp's combined-installer
+# recipe. The recipe signs a staging copy; validating the original build tree
+# after it returns otherwise sees Sparkle's ad-hoc Autoupdate and rejects a
+# package even though the staged copy was signed. Re-signing here is harmless
+# when the recipe also signs its staging copy and keeps both validation paths
+# honest.
 SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
-if [[ -d "$SPARKLE_FW" ]] &&
-   ! grep -q 'sign_embedded_frameworks' "$PULP_ROOT/tools/scripts/build_combined_installer.sh"; then
+if [[ -d "$SPARKLE_FW" ]]; then
   "$PULP_ROOT/tools/scripts/ensure_signing_ready.sh" --quiet || {
     echo "signing preflight failed; run 'pulp ship doctor'" >&2; exit 2; }
   SPARKLE_V="$SPARKLE_FW/Versions/B"
@@ -258,6 +259,7 @@ if [[ -d "$SPARKLE_FW" ]] &&
   [[ -d "$SPARKLE_V/XPCServices" ]] && {
     echo "Sparkle XPC services are present; a non-sandboxed Spectr must not ship them" >&2; exit 2; }
   codesign --force --options runtime --timestamp -s "$APP_ID" "$SPARKLE_FW"
+  codesign --verify --deep --strict --verbose=2 "$SPARKLE_FW"
 fi
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
