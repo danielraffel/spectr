@@ -66,6 +66,21 @@ import configuration is repaired.
 
 ## Enable RDP for this overlay
 
+### M5/M5S display diagnosis
+
+The ARM64 Windows base currently boots and serves SSH, but its local QEMU
+framebuffer is not a usable desktop. On 2026-10-08, `ramfb`, `virtio-gpu-pci`,
+`bochs-display`, and VGA all produced an inactive framebuffer; the guest
+reported `Microsoft Basic Display Adapter` with `ConfigManagerErrorCode=10`.
+This is a Windows ARM64 guest display-driver/device mismatch. It is not a
+build failure and does not justify cloning or rebuilding the 75 GB base image.
+
+RDP is the supported interactive transport for this image. After the SSH
+repair below, Jump Desktop connected to `127.0.0.1:53392` and reached the
+Windows credential prompt. That proves the RDP listener and session transport;
+plugin UI and audio acceptance still require authenticated desktop credentials
+and an observed REAPER receipt.
+
 The base image keeps desktop access off. Repair the interactive desktop through
 the authenticated SSH path before opening Jump Desktop:
 
