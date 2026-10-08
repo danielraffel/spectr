@@ -254,7 +254,8 @@ requiring an agent to poll manually.
 The renderer-neutral `pulp.postMessage` seam now has a deterministic staging
 client contract on Spectr branch
 `codex/spectr-runtime-client-contract-20261008` at final implementation commit
-`331a1dd43430c3b31ba61f0e9f2935b5a7a375e8`. The generator reads the C++
+`57533422a7605785fbcff712f4b4bbcf6cd47ef3`. The reviewed branch head is
+`d934e761e165edb7b47a886058ef8b115fe9b6ea`. The generator reads the C++
 `add_handler` registrations from `src/editor_bridge.cpp` and
 `src/ui/editor_view.cpp`, checks literal command calls in
 `native-ui/materialized/spectr-native-services.js`, and emits 54 handler
