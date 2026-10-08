@@ -20,7 +20,7 @@ cp "$VARS_TEMPLATE" "$vars"
 cleanup() { rm -f "$overlay" "$vars"; }
 trap cleanup EXIT INT TERM
 port="${SPECTR_WINDOWS_SSH_PORT:-50375}"
-exec qemu-system-aarch64 \
+qemu-system-aarch64 \
   -name spectr-windows-arm64 \
   -accel hvf -machine virt,highmem=on,gic-version=3 -cpu host \
   -smp "${SPECTR_WINDOWS_CPUS:-8}" -m "${SPECTR_WINDOWS_MEMORY_MB:-8192}" \
@@ -30,4 +30,8 @@ exec qemu-system-aarch64 \
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22 \
   -device virtio-net-pci,netdev=net0 \
   -drive file="$overlay",if=none,id=nvm,format=qcow2 -device nvme,drive=nvm,serial=spectrwin \
-  "${MODE}"
+  -display "${MODE#--display=}"
+rc=$?
+cleanup
+trap - EXIT INT TERM
+exit "$rc"
