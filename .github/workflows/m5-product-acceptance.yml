@@ -108,6 +108,15 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         run: python3 tools/ci/test_product_acceptance_contract.py
 
+      # The provenance manifest is a staging-only identity contract. Keep its
+      # positive verification and planted byte/scope negatives in the blocking
+      # lane so a later source, artifact, or manifest drift cannot leave the
+      # acceptance job green merely because the helper was never invoked.
+      - name: Gate - materialized source provenance controls
+        if: steps.scope.outputs.docs_only != 'true'
+        shell: bash
+        run: python3 tools/test_materialized_source_provenance.py
+
       # WP-1's parser-backed authored-source gate is selected by CTest below.
       # Install its lockfile-pinned parser/compiler before configure so the
       # registered test cannot silently become a setup skip on a clean runner.
