@@ -160,6 +160,27 @@ creates one linked overlay and firmware-vars copy, and removes both on exit.
 Use `--display=none` for headless SSH work. This path is separate from TartCI
 and does not consume a macOS runner slot.
 
+### QEMU SSH liveness guard
+
+The intermittent SSH failures observed on the M5S were host-side channel
+handling failures, not guest boot failures. The old invocation inherited the
+caller's stdin and allowed the ssh-agent to try unrelated keys; commands that
+read stdin could therefore leave a healthy guest looking hung. The canonical
+wrapper in `tools/windows/ssh-qemu.sh` now uses `ssh -n`, `BatchMode`,
+`IdentitiesOnly`, the explicit guest key, and a bounded connect timeout.
+
+Before starting a build, run the bounded five-probe guard against the session's
+forwarded port:
+
+```bash
+SPECTR_WINDOWS_SSH_PORT=50492 tools/windows/ssh-qemu-health.sh
+```
+
+Each probe must print `status=ok`; a missing guest, wrong key, inherited stdin,
+or unexpected response fails the command. On 2026-10-08, five fresh probes
+against a new disposable clone passed in 140--190 ms each. The guard is local
+QEMU-only and does not reserve or consume a TartCI/macOS runner.
+
 ## Toolchain provenance follow-up
 
 The ARM64 Skia/Dawn producer now publishes `msvc-toolchain.json` provenance in
