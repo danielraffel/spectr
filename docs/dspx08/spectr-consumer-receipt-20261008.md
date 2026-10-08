@@ -125,16 +125,24 @@ forced-CPU negative control and the limits of the experimental path.
 
 ## Packaging disposition
 
-The produced installer is present at
-`artifacts-dspx08/Spectr-1.0.7.pkg` and has SHA-256
-`b97a6f66895c36ed9a8c4a218d898e1e03ba8429bc6b8e94200c8e016c7051cd`.
-`pkgutil --check-signature` reports a valid, timestamped Developer ID Installer
-signature. The package is **not promoted as a notarized production release**:
-the packaging attempt failed the nested Sparkle `Autoupdate` secure-timestamp
-check and `spctl` reported the app as unnotarized Developer ID code. That is a
-release-signing blocker only; it does not invalidate the exact SDK runtime and
-binary-boundary tests above. The package must be re-signed/notarized and
-revalidated before distribution.
+The first package attempt at the consumer receipt's source head is retained as
+historical negative evidence:
+`artifacts-dspx08/Spectr-1.0.7.pkg` has SHA-256
+`b97a6f66895c36ed9a8c4a218d898e1e03ba8429bc6b8e94200c8e016c7051cd` and its
+post-package check exposed the nested Sparkle `Autoupdate` staging-validation
+bug. Spectr PR [243](https://github.com/Generous-Corp/spectr/pull/243) fixed
+that packaging path by signing source Sparkle helpers before staging and
+checking the extracted stapled app after notarization.
+
+The fixed exact-SDK Release package is
+`/Users/danielraffel/Code/spectr-package-sparkle-20261008/artifacts-package-final/Spectr-1.0.7.pkg`
+(SHA-256
+`990fd3e7c4784bf48cfa0caf55c67c69495739dd62127fa3a7475a5e35a5385f`,
+75,253,219 bytes). Apple notary submission
+`2ca7dac3-a77c-49a7-a2e6-f4b619c74892` was `Accepted`; `xcrun stapler validate`
+and `pkgutil --check-signature` passed, and the extracted stapled app plus
+AU/VST3/CLAP passed `check_sparkle.py bundles --signed`. This is now a
+notarized production package proof.
 
 ## Scope conclusion
 
@@ -142,7 +150,7 @@ revalidated before distribution.
 runtime, unified controls, positive tests, typed-negative controls, and CLAP /
 VST3 / AU host execution are proven on this branch.
 
-**OPEN:** default-on GPU policy, a Forge graph/catalog consumer, packaged
-notarized artifact, and GPU-NAM/Spectr model-provider work remain outside this
-receipt. Those require separate architecture/provider evidence and must not be
+**OPEN:** default-on GPU policy, a Forge graph/catalog consumer, DSPX-07
+WAM/WebCLAP packaged parity, and GPU-NAM/Spectr model-provider work remain
+outside this receipt. Those require separate architecture/provider evidence and must not be
 inferred from this consumer proof.
