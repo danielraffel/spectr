@@ -172,6 +172,12 @@ creates one linked overlay and firmware-vars copy, and removes both on exit.
 Use `--display=none` for headless SSH work. This path is separate from TartCI
 and does not consume a macOS runner slot.
 
+To enable RDP inside a disposable overlay, copy and run
+`tools/windows/enable-rdp.ps1` as Administrator. It enables the Windows RDP
+listener and firewall rules but never creates or stores a password. RDP still
+requires a Windows password; SSH key authentication alone is intentionally not
+treated as desktop authentication.
+
 ### QEMU SSH liveness guard
 
 The intermittent SSH failures observed on the M5S were host-side channel
