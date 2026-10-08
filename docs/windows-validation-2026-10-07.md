@@ -151,3 +151,12 @@ For a bounded interactive session on macOS, use
 creates one linked overlay and firmware-vars copy, and removes both on exit.
 Use `--display=none` for headless SSH work. This path is separate from TartCI
 and does not consume a macOS runner slot.
+
+## Toolchain provenance follow-up
+
+The ARM64 Skia/Dawn producer now publishes `msvc-toolchain.json` provenance in
+https://github.com/danielraffel/skia-builder/pull/29. The validated archive was
+built with VS 18 / MSVC 14.51.36231, Windows SDK 10.0.26100.0, ARM64 COFF and
+static `/MT`. Future Windows GPU rebuilds should retain that producer/consumer
+match; the older MSVC 14.44 experiment failed in Dawn's ARM64 resource compiler
+step and was not used for the accepted artifact.
