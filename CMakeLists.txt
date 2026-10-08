@@ -675,9 +675,23 @@ catch_discover_tests(Spectr-test)
 if(SPECTR_BUILD_FORGE_ADAPTER)
     add_executable(Spectr-forge-adapter-test test/test_forge_adapter.cpp)
     target_link_libraries(Spectr-forge-adapter-test PRIVATE
-        Spectr::ForgeAdapter Catch2::Catch2WithMain)
+        Spectr::ForgeAdapter Catch2::Catch2WithMain Pulp::host)
+    # pulp_add_plugin exposes the product core as an OBJECT target.  The
+    # adapter test is a standalone executable, so include those objects
+    # explicitly instead of relying on the format wrappers to pull them in.
+    target_sources(Spectr-forge-adapter-test PRIVATE
+        $<TARGET_OBJECTS:${SPECTR_NATIVE_CORE_TARGET}>)
     target_include_directories(Spectr-forge-adapter-test PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(Spectr-forge-adapter-test PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
     catch_discover_tests(Spectr-forge-adapter-test)
 endif()
 # The stream-start case with the framework's full-overlap stream start turned
