@@ -51,6 +51,13 @@ This VM is kept as the interactive user image. The warmed Spectr build cache
 and disposable linked clones remain on the direct QEMU golden image, so UTM
 does not consume another golden or a macOS CI runner.
 
+An attempted compressed conversion of the warmed direct-QEMU disk was checked
+with `qemu-img check` but did not boot under the current UTM firmware/device
+configuration (`Guest has not initialized the display (yet.)` and no SSH
+banner). That image was removed and the known-good interactive disk and EFI
+vars were restored. Direct QEMU remains the warmed build authority; UTM remains
+the stable user desktop image until its import configuration is repaired.
+
 ## Enable RDP for this overlay
 
 The base image keeps desktop access off. Copy and run the setup script as the
