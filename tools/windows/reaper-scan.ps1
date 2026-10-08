@@ -4,11 +4,14 @@ param(
     [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'x86_64-win',
     [string]$ReaperExe = '',
     [string]$CachePath = (Join-Path $env:APPDATA 'REAPER\reaper-vstplugins64.ini'),
-    [string]$Receipt = (Join-Path (Split-Path $Vst3Root -Parent) 'reaper-scan-receipt.json')
+    [string]$Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $Vst3Root = (Resolve-Path -LiteralPath $Vst3Root).Path
+if ([string]::IsNullOrWhiteSpace($Receipt)) {
+    $Receipt = Join-Path (Split-Path $Vst3Root -Parent) 'reaper-scan-receipt.json'
+}
 if ([string]::IsNullOrWhiteSpace($ReaperExe)) {
     $reaperDirectory = if ($Architecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
     $ReaperExe = Join-Path (Join-Path $env:ProgramFiles $reaperDirectory) 'reaper.exe'
