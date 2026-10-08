@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <pulp/host/signal_graph.hpp>
-#include <pulp/format/headless_host.hpp>
+#include <pulp/format/headless.hpp>
 
 #include <cmath>
 #include <vector>
@@ -115,7 +115,11 @@ TEST_CASE("Spectr Forge adapter reports an explicit GPU capability negative",
     if (!spectr::Spectr::gpu_processing_available()) {
         CHECK(status.availability != spectr::GpuAudioStatus::Availability::Available);
         CHECK_FALSE(status.delivery.has_value());
-        CHECK_FALSE(spectr_processor->set_gpu_processing(true));
+        // The control setter records the user's preference before prepare;
+        // capability refusal is represented by the status projection and the
+        // absence of a delivery, not by rejecting that deferred preference.
+        CHECK(spectr_processor->set_gpu_processing(true));
+        CHECK_FALSE(spectr_processor->gpu_audio_status().delivery.has_value());
     } else {
         CHECK(status.availability != spectr::GpuAudioStatus::Availability::NotBuilt);
     }
