@@ -60,6 +60,9 @@ if (-not [string]::IsNullOrWhiteSpace($ObservedAcceptanceReceipt)) {
     if ($observedAcceptance.reaper_sha256 -ne $reaperHash) {
         throw "Acceptance receipt REAPER hash does not match $ReaperExe"
     }
+    if ($null -eq $failedScanPath) {
+        throw 'Acceptance receipt requires -FailedScanEvidence proving that Spectr is absent from the failed-scan list'
+    }
 }
 
 $acceptanceStatus = if ($null -ne $observedAcceptance) { 'accepted' } else { 'blocked' }
@@ -87,6 +90,9 @@ $receiptObject | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Receipt -En
 if ($null -eq $entry) { throw "REAPER did not record Spectr in $CachePath" }
 if ($null -ne $failedScanPluginPresent -and $failedScanPluginPresent) {
     throw "REAPER failed-scan evidence still lists Spectr: $failedScanPath"
+}
+if ($null -ne $observedAcceptance -and $failedScanPluginPresent -ne $false) {
+    throw "Acceptance receipt requires failed-scan evidence that does not list Spectr: $failedScanPath"
 }
 if ($RequireAcceptance -and $null -eq $observedAcceptance) {
     throw 'REAPER acceptance is blocked: provide -ObservedAcceptanceReceipt with plugin_instance_observed=true and failed_scan_list_empty=true'
