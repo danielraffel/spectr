@@ -23,6 +23,29 @@ SPECTR_WINDOWS_SSH_PORT=50375 tools/windows/ssh-qemu-health.sh
 The guard absorbs normal Windows boot resets for up to 120 seconds, then runs
 five bounded probes. It fails closed when the guest, key, or port is wrong.
 
+## Optional UTM interactive path
+
+UTM 5.0.6 is registered as the persistent interactive Windows VM. Its network
+mode is **Emulated VLAN** with one forwarding rule:
+
+```text
+TCP 127.0.0.1:50376 -> 10.0.2.15:22
+```
+
+Start it with:
+
+```bash
+/Applications/UTM.app/Contents/MacOS/utmctl start \
+  36132D8D-99F7-4916-A6D8-935A6F4AF55F
+SPECTR_WINDOWS_SSH_PORT=50376 \
+  tools/windows/ssh-qemu-health.sh
+```
+
+The live 2026-10-08 check passed five probes and returned hostname `pulp-win`.
+This VM is kept as the interactive user image. The warmed Spectr build cache
+and disposable linked clones remain on the direct QEMU golden image, so UTM
+does not consume another golden or a macOS CI runner.
+
 ## Enable RDP for this overlay
 
 The base image keeps desktop access off. Copy and run the setup script as the
