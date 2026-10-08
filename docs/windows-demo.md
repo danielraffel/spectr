@@ -41,6 +41,11 @@ SPECTR_WINDOWS_SSH_PORT=50376 \
   tools/windows/ssh-qemu-health.sh
 ```
 
+If `utmctl list` reports `started` but the forwarded port does not answer,
+open the VM window in UTM and press **Start/Resume** once. UTM 5.0.6 can leave
+the QEMU process paused after a CLI start; the health guard will then wait and
+fail closed instead of treating the listener as a booted guest.
+
 The live 2026-10-08 check passed five probes and returned hostname `pulp-win`.
 This VM is kept as the interactive user image. The warmed Spectr build cache
 and disposable linked clones remain on the direct QEMU golden image, so UTM
