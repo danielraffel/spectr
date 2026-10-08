@@ -1,0 +1,433 @@
+{
+  "schema": "spectr-generated-runtime-client-v1",
+  "version": 1,
+  "scope": "staging-runtime-client-contract",
+  "sources": {
+    "services": {
+      "path": "native-ui/materialized/spectr-native-services.js",
+      "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8",
+      "bytes": 20976
+    },
+    "bridges": [
+      {
+        "path": "src/editor_bridge.cpp",
+        "sha256": "0970972d21ac13cd3796f1afffdbf7065c9cef6ea81d23e426d759aee32ded30",
+        "bytes": 75852
+      },
+      {
+        "path": "src/ui/editor_view.cpp",
+        "sha256": "e6bd819fae00711c464a41215f0c29dac5e6dd20c47cf373868f56d44884f1b8",
+        "bytes": 16635
+      }
+    ]
+  },
+  "handlers": [
+    {
+      "name": "ab_toggle",
+      "method": "abToggle",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "band_field_set",
+      "method": "bandFieldSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "build_info_copy",
+      "method": "buildInfoCopy",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "build_info_get",
+      "method": "buildInfoGet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "capture_snapshot",
+      "method": "captureSnapshot",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "clear_snapshot",
+      "method": "clearSnapshot",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "clipboard_write",
+      "method": "clipboardWrite",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "delete_pattern",
+      "method": "deletePattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "duplicate_pattern",
+      "method": "duplicatePattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "editor_ready",
+      "method": "editorReady",
+      "sources": [
+        "src/ui/editor_view.cpp"
+      ]
+    },
+    {
+      "name": "freeze_length_describe",
+      "method": "freezeLengthDescribe",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "freeze_length_get",
+      "method": "freezeLengthGet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "freeze_length_set",
+      "method": "freezeLengthSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "freeze_set",
+      "method": "freezeSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "gpu_processing_set",
+      "method": "gpuProcessingSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "keyboard_policy_get",
+      "method": "keyboardPolicyGet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "keyboard_shortcuts_set",
+      "method": "keyboardShortcutsSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "load_pattern",
+      "method": "loadPattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "load_preset",
+      "method": "loadPreset",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "macro_drag_end",
+      "method": "macroDragEnd",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "macro_drag_start",
+      "method": "macroDragStart",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "macro_set",
+      "method": "macroSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "macro_set_members",
+      "method": "macroSetMembers",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "mode_set",
+      "method": "modeSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "modulation_targets_set",
+      "method": "modulationTargetsSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "morph",
+      "method": "morph",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "morph_viewport_set",
+      "method": "morphViewportSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "override_ask_set",
+      "method": "overrideAskSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "paint",
+      "method": "paint",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "paint_end",
+      "method": "paintEnd",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "paint_start",
+      "method": "paintStart",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_drag_end",
+      "method": "paramDragEnd",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_drag_start",
+      "method": "paramDragStart",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_edit",
+      "method": "paramEdit",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_gesture_begin",
+      "method": "paramGestureBegin",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_gesture_end",
+      "method": "paramGestureEnd",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "param_set",
+      "method": "paramSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "preset_modulation_set",
+      "method": "presetModulationSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "processing_state_get",
+      "method": "processingStateGet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "processing_state_set",
+      "method": "processingStateSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "range_get",
+      "method": "rangeGet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "range_set",
+      "method": "rangeSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "recall_snapshot",
+      "method": "recallSnapshot",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "redo",
+      "method": "redo",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "rename_pattern",
+      "method": "renamePattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "render_mode_set",
+      "method": "renderModeSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "save_current_pattern",
+      "method": "saveCurrentPattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "save_preset",
+      "method": "savePreset",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "set_default_pattern",
+      "method": "setDefaultPattern",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "spectral_resolution_request",
+      "method": "spectralResolutionRequest",
+      "sources": [
+        "src/ui/editor_view.cpp"
+      ]
+    },
+    {
+      "name": "tooltips_set",
+      "method": "tooltipsSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "undo",
+      "method": "undo",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "undo_gesture_end",
+      "method": "undoGestureEnd",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "undo_gesture_start",
+      "method": "undoGestureStart",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    }
+  ],
+  "service_references": {
+    "strict": [
+      "macro_set_members",
+      "processing_state_get",
+      "processing_state_set",
+      "redo",
+      "spectral_resolution_request",
+      "undo",
+      "undo_gesture_end"
+    ],
+    "optional": [
+      "analyzer_frame",
+      "editor_ready",
+      "processing_state_get",
+      "spectral_resolution_request"
+    ]
+  },
+  "generated": {
+    "spectr-runtime-client.mjs": {
+      "path": "spectr-runtime-client.mjs",
+      "sha256": "ab36ab2213a9a7d058cda7a3b9f09b1ba8c8c0d320dbdc0d815d81fbbdf5242c",
+      "bytes": 6862
+    },
+    "spectr-runtime-client.d.ts": {
+      "path": "spectr-runtime-client.d.ts",
+      "sha256": "b1bcc288dcc9ac264694d62c3aae5eba388c855c5f5a24ab0adabb99c0f38b44",
+      "bytes": 7074
+    }
+  }
+}
