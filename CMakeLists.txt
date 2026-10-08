@@ -4116,6 +4116,17 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
         RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
+# macOS codesign treats arbitrary files under Contents/MacOS as nested code.
+# Pulp emits control-shipping evidence beside each plugin binary for local
+# inspection; relocate the AAX evidence into sealed Resources before signing.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    add_custom_command(TARGET ${SPECTR_NATIVE_AAX_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DBUNDLE_CONTENTS=$<TARGET_FILE_DIR:${SPECTR_NATIVE_AAX_TARGET}>/..
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/relocate_aax_control_sidecars.cmake
+        VERBATIM)
+endif()
+
 # ── Plugin targets ─────────────────────────────────────────────────────
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)
