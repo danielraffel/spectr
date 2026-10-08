@@ -87,6 +87,12 @@ The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
 the warmed ARM64 build tree.
 
+For a complete artifact and focused-test receipt, run
+`tools/windows/validate-build.ps1 -BuildDir C:\builds\spectr-arm64-gpu
+-Architecture arm64-win`. Architecture selection is explicit, and the optional
+Git SHA lookup is non-fatal when the build tree is not a checkout. A fresh
+clone returned `PASS` with the two-assertion `Spectr processes audio` test.
+
 ## Cleanup
 
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware
