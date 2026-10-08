@@ -176,10 +176,13 @@ forwarded port:
 SPECTR_WINDOWS_SSH_PORT=50492 tools/windows/ssh-qemu-health.sh
 ```
 
-Each probe must print `status=ok`; a missing guest, wrong key, inherited stdin,
-or unexpected response fails the command. On 2026-10-08, five fresh probes
-against a new disposable clone passed in 140--190 ms each. The guard is local
-QEMU-only and does not reserve or consume a TartCI/macOS runner.
+The guard first waits up to 120 seconds for OpenSSH to become ready, absorbing
+the connection resets that are normal during Windows boot, and then runs the
+five probes. Each probe must print `status=ok`; a missing guest, wrong key,
+inherited stdin, or unexpected response fails the command. On 2026-10-08, five
+fresh probes against a new disposable clone passed in 140--190 ms each after
+readiness. The guard is local QEMU-only and does not reserve or consume a
+TartCI/macOS runner.
 
 ## Toolchain provenance follow-up
 
