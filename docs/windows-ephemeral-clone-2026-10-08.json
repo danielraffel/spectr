@@ -11,17 +11,24 @@
   "mode": "headless",
   "overlay": {
     "created": true,
-    "ssh_forward": "127.0.0.1:50479",
+    "ssh_forward": "127.0.0.1:50481",
     "vcpus": 8,
     "memory_mb": 8192,
     "boot_observed": true,
-    "boot_observation_seconds": 2,
+    "boot_observation_seconds": 5,
     "guest_architecture": "ARM 64-bit Processor",
     "spectr_gpu_vst3_present": true,
     "reaper_present": true,
     "reaper_scan_entry": "Spectr.dll=3B5E20C3E956DD01",
     "cleanup_after_stop": true,
-    "overlay_and_vars_remaining": false
+    "overlay_and_vars_remaining": false,
+    "focused_test": {
+      "name": "Spectr processes audio",
+      "exit": 0,
+      "assertions": 2,
+      "cases": 1,
+      "output": "All tests passed (2 assertions in 1 test case)"
+    }
   },
   "macos_ci_impact": "none; direct QEMU process used a separate port and no TartCI runner slot"
 }
