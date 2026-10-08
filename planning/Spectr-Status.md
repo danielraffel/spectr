@@ -253,16 +253,17 @@ requiring an agent to poll manually.
 
 The renderer-neutral `pulp.postMessage` seam now has a deterministic staging
 client contract on Spectr branch
-`codex/spectr-runtime-client-contract-20261008` at commit
-`a9b78e7a599689cd95ed9be7b61625a272f02982`. The generator reads the C++
+`codex/spectr-runtime-client-contract-20261008` at final implementation commit
+`331a1dd43430c3b31ba61f0e9f2935b5a7a375e8`. The generator reads the C++
 `add_handler` registrations from `src/editor_bridge.cpp` and
 `src/ui/editor_view.cpp`, checks literal command calls in
 `native-ui/materialized/spectr-native-services.js`, and emits 54 handler
 methods plus a TypeScript declaration and source-hash manifest under
-`native-ui/materialized/generated/`. Five focused controls pass: deterministic
+`native-ui/materialized/generated/`. Six focused controls pass: deterministic
 repeat output and Node dispatch, TypeScript declaration compilation, checked-in
-manifest verification, a missing C++ handler rejection, and an unknown service
-command rejection. The CMake acceptance test is
+manifest verification, missing C++ handler rejection (including the lifecycle
+`editor_ready` handler), and unknown service command rejection. TypeScript
+validation fails closed when the pinned compiler is unavailable. The CMake acceptance test is
 `Spectr-wp1-runtime-client-contract`.
 
 This is staging evidence only. `resources/editor.html`,
