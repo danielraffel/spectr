@@ -92,7 +92,8 @@ replace_once(
       wrapRef.current.style.cursor = "crosshair";
     } else {
 ''',
-'''    } else if (globalThis.spectrRangeGutterHit(x, y, g.inner)) {
+'''    } else if (typeof globalThis.spectrRangeGutterHit === "function"
+        && globalThis.spectrRangeGutterHit(x, y, g.inner)) {
       // The complete numeric dB gutter is interactive, including the space
       // between labels. It never becomes a drag target.
       updatePointerHover(null);
@@ -125,7 +126,9 @@ new = '''  const onWheel = (e) => {
     const rect = wrapRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left) * wrapRef.current.clientWidth / rect.width;
     const y = (e.clientY - rect.top) * wrapRef.current.clientHeight / rect.height;
-    if (globalThis.spectrRangeGutterHit(x, y, g.inner) && Math.abs(Number(e.deltaY) || 0) > 0) {
+    if (typeof globalThis.spectrRangeGutterHit === "function"
+        && globalThis.spectrRangeGutterHit(x, y, g.inner)
+        && Math.abs(Number(e.deltaY) || 0) > 0) {
       const wheel = rangeWheelRef.current;
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       // A pause marks a new trackpad gesture. Mouse wheels (line/page mode or
