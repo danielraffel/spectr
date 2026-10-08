@@ -144,6 +144,18 @@ The productive M5 Ultra lane now has a reusable packaging check:
 files beside the plugin. The live guest package was rebuilt and its plugin hash
 is `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`.
 
+The scan helper accepts both host architectures. For the installed ARM64 REAPER
+host, use:
+
+```powershell
+.\tools\windows\reaper-scan.ps1 `
+  -Architecture arm64-win `
+  -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win'
+```
+
+This records the ARM64 host hash and any cache entry while retaining the
+discovery-only limitation described above.
+
 REAPER ARM64EC beta was installed from
 https://www.reaper.fm/files/7.x/reaper782_win11_arm64ec_beta-install.exe.
 The installer hash is
