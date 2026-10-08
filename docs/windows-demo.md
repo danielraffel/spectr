@@ -46,10 +46,13 @@ open the VM window in UTM and press **Start/Resume** once. UTM 5.0.6 can leave
 the QEMU process paused after a CLI start; the health guard will then wait and
 fail closed instead of treating the listener as a booted guest.
 
-The live 2026-10-08 check passed five probes and returned hostname `pulp-win`.
-This VM is kept as the interactive user image. The warmed Spectr build cache
-and disposable linked clones remain on the direct QEMU golden image, so UTM
-does not consume another golden or a macOS CI runner.
+An earlier live 2026-10-08 check passed five probes and returned hostname
+`pulp-win`. That is historical evidence for this UTM configuration. The final
+post-conversion restart did not reproduce the SSH banner, so UTM is currently
+stopped and needs its boot/firmware state repaired before it can be used as the
+user-facing DAW image. The warmed Spectr build cache and disposable linked
+clones remain on the direct QEMU golden image, so UTM does not consume another
+golden or a macOS CI runner.
 
 An attempted compressed conversion of the warmed direct-QEMU disk was checked
 with `qemu-img check` but did not boot under the current UTM firmware/device
