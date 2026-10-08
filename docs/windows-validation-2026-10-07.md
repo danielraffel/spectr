@@ -43,9 +43,17 @@ binary is absent. It writes a JSON receipt with the exact artifact hashes.
 
 ## Still required
 
-The ARM64 UTM lane must link against the MSVC-compatible Skia archive before
-it can produce an ARM64 Spectr artifact. After that, REAPER must scan and load
-the plugin with runtime logs and a screenshot; Ableton follows the REAPER pass.
+The direct-QEMU ARM64 lane below has produced a GPU/Skia Spectr artifact.
+REAPER must still load the plugin with runtime logs and a screenshot; Ableton
+follows the REAPER pass.
+
+The registered UTM 5.0.6 package still holds a separate 27 GB older disk copy,
+while the productive direct-QEMU base is a 58 GB disk under `/Volumes/Atelier`.
+`utmctl start` reports started for the registered package, but `utmctl status`
+returns OSStatus -2700 and `utmctl ip-address` reports no guest agent. Its
+captured display says `Guest has not initialized the display (yet).` That UTM
+package is not a validated desktop or build lane. It was stopped after the
+bounded probe. The working linked-clone receipt below belongs to direct QEMU.
 
 ## Headless ARM64 evidence
 
