@@ -127,6 +127,21 @@ artifacts, runtime DLL/data files when present, and a SHA-256 manifest. A fresh
 clone produced a 35,675,271-byte ZIP with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
 
+Install that package into the standard Windows locations from an elevated
+PowerShell prompt:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\windows\install-package.ps1 `
+  -Package C:\Users\admin\Spectr-windows-arm64-win.zip
+```
+
+The installer verifies every manifest hash before copying the standalone,
+VST3, and CLAP artifacts. It is a development installer script, not a signed
+MSI. After installation, use the REAPER demo helper and capture the real
+Windows desktop/DAW receipt; a successful copy or scan alone is not plugin
+instantiation or audio proof. Ableton should be attempted only after REAPER
+has passed.
+
 The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
 the warmed ARM64 build tree.
