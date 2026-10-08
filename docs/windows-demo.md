@@ -58,8 +58,11 @@ An attempted compressed conversion of the warmed direct-QEMU disk was checked
 with `qemu-img check` but did not boot under the current UTM firmware/device
 configuration (`Guest has not initialized the display (yet.)` and no SSH
 banner). That image was removed and the known-good interactive disk and EFI
-vars were restored. Direct QEMU remains the warmed build authority; UTM remains
-the stable user desktop image until its import configuration is repaired.
+vars were restored. UTM was also retuned to match the direct ARM machine
+(`-cpu host`, `gic-version=3`) and explicitly resumed from its paused state;
+the restored disk still did not reach a display or SSH banner. Direct QEMU
+remains the warmed build authority; UTM remains stopped until its firmware or
+import configuration is repaired.
 
 ## Enable RDP for this overlay
 
