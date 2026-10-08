@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-07T23:15:00Z",
+  "guest": {"os": "Windows 11", "architecture": "ARM64", "ssh": "127.0.0.1:50375"},
+  "source_git_sha": "2bef773265c0f3196db8fc77f761307cbbde9de6",
+  "pulp": {
+    "build": "PULP_ENABLE_GPU=ON",
+    "toolset": "MSVC 19.51.36260 / 14.51.36231",
+    "cli_sha256": "151AC8F1BEBDD04DD8CE8A9F4757C90743A869C5AA937F2AFFCD19BA328DAA44"
+  },
+  "spectr_build": {"steps": 186, "exit": 0},
+  "focused_test": {"name": "Spectr processes audio", "exit": 0, "assertions": 2, "cases": 1},
+  "artifacts": {
+    "standalone": {"path": "C:\\builds\\spectr-arm64-gpu\\Spectr.exe", "bytes": 23944704, "sha256": "48faba70e4dda89653c8859a0a44470c551ed607f249bf0951eb667fc5f18999"},
+    "vst3": {"path": "C:\\builds\\spectr-arm64-gpu\\VST3\\Spectr.dll", "bytes": 23444992, "sha256": "a0611bc25bb3f31af440c43e4ef82e684c88e9dff861e55d1ead19de9e1a92a3"},
+    "clap": {"path": "C:\\builds\\spectr-arm64-gpu\\CLAP\\Spectr.clap", "bytes": 23331328, "sha256": "59f7b1d6cc67e42230fed10fe1a9835c6d06807ad22a330ab3c19fca50498aac"}
+  },
+  "negative_proof": [
+    "Direct SSH/QEMU session has no GUI display; standalone WindowHost cannot be accepted.",
+    "Spectr-artifact-test initialized CLAP but hung in headless mode and was stopped.",
+    "REAPER and Ableton are not installed in this guest; no DAW scan/load claim exists."
+  ]
+}

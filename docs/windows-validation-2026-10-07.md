@@ -72,3 +72,49 @@ the plugin with runtime logs and a screenshot; Ableton follows the REAPER pass.
 This is build and focused audio-test proof. It does not yet prove REAPER or
 Ableton loading. The UTM desktop clone is being repaired separately from this
 headless lane.
+
+## Native ARM64 GPU/Skia proof (M5 Ultra QEMU guest)
+
+The direct QEMU ARM64 guest is the productive headless path. UTM 5.0.6 still
+returns to UEFI and does not provide a usable guest-agent/network state for this
+image; this does not block the headless lane.
+
+- Guest: Windows 11 ARM64, SSH `admin@127.0.0.1:50375`; disposable candidate
+  `/Volumes/Atelier/VMs/bench/pulp-windows-build-24h2-arm64-utm-fresh-20261007.qcow2`.
+- Pulp GPU build: MSVC 19.51.36260 / toolset 14.51.36231, `PULP_ENABLE_GPU=ON`,
+  Skia/Dawn archive SHA-256
+  `c494cc3fc51b344b35ce776b77e6a70f1cb123b645f216aca07f7be4a281d9cc`.
+- Pulp CLI: `C:\builds\pulp-915-gpu-ninja18\tools\cli\pulp-cpp.exe`,
+  27,180,032 bytes, SHA-256
+  `151AC8F1BEBDD04DD8CE8A9F4757C90743A869C5AA937F2AFFCD19BA328DAA44`.
+- SDK staging: `C:\pulp-gpu-sdk` completed with
+  `cmake --install C:\builds\pulp-915-gpu-ninja18 --prefix C:\pulp-gpu-sdk --config Release`
+  exit `0`; `PulpConfig.cmake` and 54 Pulp libraries are present.
+- Spectr source: `2bef773265c0f3196db8fc77f761307cbbde9de6`.
+- Spectr configure: `Pulp_DIR=C:\pulp-gpu-sdk\lib\cmake\Pulp`, Skia from the
+  staged SDK; configure completed with MSVC ARM64.
+- GPU build: `ninja Spectr_Standalone Spectr_VST3 Spectr_CLAP Spectr-test -j4`,
+  186/186 steps succeeded.
+- Focused test: `Spectr-test.exe "Spectr processes audio" --reporter compact`,
+  exit `0`; 2 assertions in 1 test case.
+- ARM64 artifacts:
+  - `C:\builds\spectr-arm64-gpu\Spectr.exe`, 23,944,704 bytes, SHA-256
+    `48faba70e4dda89653c8859a0a44470c551ed607f249bf0951eb667fc5f18999`.
+  - `C:\builds\spectr-arm64-gpu\VST3\Spectr.dll`, 23,444,992 bytes, SHA-256
+    `a0611bc25bb3f31af440c43e4ef82e684c88e9dff861e55d1ead19de9e1a92a3`.
+  - `C:\builds\spectr-arm64-gpu\CLAP\Spectr.clap`, 23,331,328 bytes, SHA-256
+    `59f7b1d6cc67e42230fed10fe1a9835c6d06807ad22a330ab3c19fca50498aac`.
+
+### Negative host evidence
+
+- `Spectr.exe` reaches `WindowHost::create()` with `PULP_AUDIO_DEVICE=null` but
+  cannot open a GUI from the SSH-only QEMU session. Without the null device,
+  Windows reports no WASAPI default output.
+- `Spectr-artifact-test.exe` initialized the built CLAP (`CLAP: initialized
+  'Spectr'`) but did not terminate in the headless session; it was stopped after
+  the live process check.
+- No REAPER or Ableton executable is installed in this guest, so there is no
+  DAW scan/load claim or screenshot yet.
+
+The GPU/GUI build is therefore proven at compile and focused audio-test level.
+REAPER scan/load remains the next acceptance gate, followed by Ableton.
