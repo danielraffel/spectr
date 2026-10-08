@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-08T09:20:00Z",
+  "probe": "UTM linked external qcow2 bundle",
+  "source_image": "/Volumes/Atelier/VMs/bench/pulp-windows-build-24h2-arm64-utm-fresh-20261007.qcow2",
+  "result": "fail_closed",
+  "evidence": "UTM QEMU rejected the symlinked external image with Operation not permitted",
+  "implication": "UTM sandbox requires an imported image or security-scoped external path; do not duplicate the 58 GB base merely to force this probe",
+  "disposition": "probe bundle deleted; direct QEMU remains the validated ARM64 lane"
+}
