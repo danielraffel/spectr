@@ -150,7 +150,11 @@ notarized production package proof.
 runtime, unified controls, positive tests, typed-negative controls, and CLAP /
 VST3 / AU host execution are proven on this branch.
 
-**OPEN:** default-on GPU policy, a Forge graph/catalog consumer, DSPX-07
+**OPEN:** default-on GPU policy and a Forge catalog consumer. The opt-in owner
+adapter's graph and CPU-oracle proof is recorded in
+[`spectr-forge-adapter-receipt-20261008.md`](spectr-forge-adapter-receipt-20261008.md);
+that receipt does not claim catalog registration or hardware GPU delivery.
+DSPX-07
 WAM/WebCLAP packaged parity, and GPU-NAM/Spectr model-provider work remain
 outside this receipt. Those require separate architecture/provider evidence and must not be
 inferred from this consumer proof.
