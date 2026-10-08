@@ -121,3 +121,33 @@ image; this does not block the headless lane.
 
 The GPU/GUI build is therefore proven at compile and focused audio-test level.
 REAPER scan/load remains the next acceptance gate, followed by Ableton.
+
+## Repeatable ARM64 packaging and REAPER discovery
+
+The productive M5 Ultra lane now has a reusable packaging check:
+
+```powershell
+.\tools\windows\package-vst3.ps1 -BuildDir C:\builds\spectr-arm64-gpu -Architecture arm64-win
+.\tools\windows\reaper-scan.ps1 -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win'
+```
+
+`package-vst3.ps1` creates the Windows VST3 layout
+`Spectr.vst3\Contents\arm64-win\Spectr.vst3` and carries the ICU/WebGPU runtime
+files beside the plugin. The live guest package was rebuilt and its plugin hash
+is `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`.
+
+REAPER ARM64EC beta was installed from
+https://www.reaper.fm/files/7.x/reaper782_win11_arm64ec_beta-install.exe.
+The installer hash is
+`CA562D2ABB6A8C7C9A3675CF70C4F1C3DA643338C9531DA5F0BF61B6EBEC36EB` and the
+installed host hash is
+`EA910AF76B1160411F54DEA978084D054BB8E397A391E7E84DE91088904C7F26`.
+REAPER's cache contains `Spectr.dll=3B5E20C3E956DD01`, proving discovery by the
+ARM64EC host. This is not yet load/audio proof; a desktop-capable session and a
+screenshot are still required.
+
+For a bounded interactive session on macOS, use
+`tools/windows/launch-arm64-qemu.sh --display=cocoa`. It keeps one base image,
+creates one linked overlay and firmware-vars copy, and removes both on exit.
+Use `--display=none` for headless SSH work. This path is separate from TartCI
+and does not consume a macOS runner slot.
