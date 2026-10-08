@@ -113,8 +113,11 @@ image; this does not block the headless lane.
 - `Spectr-artifact-test.exe` initialized the built CLAP (`CLAP: initialized
   'Spectr'`) but did not terminate in the headless session; it was stopped after
   the live process check.
-- No REAPER or Ableton executable is installed in this guest, so there is no
-  DAW scan/load claim or screenshot yet.
+- REAPER 7.82 x64 is installed at `C:\Program Files\REAPER (x64)\reaper.exe`,
+  but the staged Spectr binary is pure ARM64. The x64 REAPER process therefore
+  cannot provide ARM64 plugin ABI proof. A headless launch reached VST/CLAP scan
+  initialization but did not terminate cleanly over SSH; it was stopped.
+- Ableton is not installed, so there is no Ableton scan/load claim or screenshot.
 
 The GPU/GUI build is therefore proven at compile and focused audio-test level.
 REAPER scan/load remains the next acceptance gate, followed by Ableton.
