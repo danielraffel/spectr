@@ -41,11 +41,15 @@ artifact. It does not prove REAPER or Ableton compatibility.
 
 ## CLAP result
 
-The corresponding CLAP test initialized the artifact and reached the same
-audio assertions, but failed the final `slot.has_editor()` assertion because
-the guest had no logged-in desktop session. It is therefore recorded as
-headless runtime evidence with the editor gate open, not as a CLAP acceptance
-pass.
+The corresponding CLAP test passes in the same explicit headless mode:
+
+```text
+CLAP: initialized 'Spectr'
+All tests passed (1499 assertions in 1 test case)
+```
+
+Headless mode skips only the editor assertion. The normal test path still
+requires `slot.has_editor()`, so this does not weaken desktop acceptance.
 
 ## Remaining desktop gate
 
