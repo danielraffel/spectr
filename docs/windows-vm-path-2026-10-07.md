@@ -4,7 +4,9 @@
 
 - Immutable golden: `/Volumes/Atelier/VMs/goldens/pulp-windows-build-24h2-arm64-2026-06-12-cacheopt.qcow2`.
 - Single disposable candidate: `/Volumes/Atelier/VMs/bench/pulp-windows-build-24h2-arm64-utm-fresh-20261007.qcow2`.
-- Both images pass `qemu-img check`. The failed 50 GB UTM import was removed after preserving the golden.
+- Both images pass `qemu-img check`. Stale failed-import images, their firmware
+  vars, an old overlay, and a duplicate bench copy were moved to Trash; the
+  bench directory now contains only the 75 GB candidate and its firmware.
 - The candidate is kept separate from macOS runners and is stopped when not in use.
 
 ## Boot evidence
