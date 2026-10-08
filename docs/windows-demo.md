@@ -67,6 +67,22 @@ reliable through Windows OpenSSH. Fresh-clone verification returned:
 - Spectr VST3 SHA-256: `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`
 - Cache entry: `Spectr.dll=3B5E20C3E956DD01`
 
+## Launch the desktop demo
+
+After logging into Windows, use the fail-closed helper to verify the active
+desktop session, hash the exact ARM64 host and plugin, and launch REAPER:
+
+```powershell
+.\tools\windows\reaper-demo.ps1 `
+  -Architecture arm64-win `
+  -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win' `
+  -Launch
+```
+
+Without an active Windows desktop session the helper exits with an actionable
+error. Its receipt proves the launch inputs and process, while plugin
+instantiation, audio, and screenshots still require an observed DAW receipt.
+
 ## Build a portable handoff
 
 From the Windows guest, package the warmed build tree:
