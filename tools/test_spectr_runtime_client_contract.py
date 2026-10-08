@@ -78,7 +78,7 @@ class RuntimeClientContractTest(unittest.TestCase):
     def test_typescript_declaration_accepts_typed_client_usage(self):
         tsc = ROOT / "tools" / "wp1-parser" / "node_modules" / "typescript" / "bin" / "tsc"
         if not tsc.exists():
-            self.skipTest("pinned TypeScript toolchain is not installed")
+            self.fail("pinned TypeScript toolchain is not installed; declaration validation must fail closed")
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             source = ROOT / "native-ui" / "materialized" / "generated" / "spectr-runtime-client.d.ts"
