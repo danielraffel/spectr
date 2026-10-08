@@ -6,5 +6,11 @@
   "result": "fail_closed",
   "evidence": "UTM QEMU rejected the symlinked external image with Operation not permitted",
   "implication": "UTM sandbox requires an imported image or security-scoped external path; do not duplicate the 58 GB base merely to force this probe",
-  "disposition": "probe bundle deleted; direct QEMU remains the validated ARM64 lane"
+  "disposition": "probe bundle deleted; direct QEMU remains the validated ARM64 lane",
+  "vmpal_probe": {
+    "result": "not_applicable_on_macos",
+    "evidence": "VMPal 0.40 New Virtual Machine > Import From offered only Parallels Desktop and Choose a Parallels VM",
+    "qcow2_import": "not_available_in_macos_ui",
+    "disposition": "do not buy or add an image solely for VMPal"
+  }
 }
