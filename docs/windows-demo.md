@@ -60,6 +60,22 @@ The resulting receipt proves discovery and hashes the exact host and plugin.
 It does not claim plugin instantiation or audio until those are observed in the
 desktop host.
 
+## Build a portable handoff
+
+From the Windows guest, package the warmed build tree:
+
+```powershell
+.\tools\windows\package-release.ps1 `
+  -BuildDir C:\builds\spectr-arm64-gpu `
+  -Architecture arm64-win `
+  -Output C:\Users\admin\Spectr-windows-arm64.zip
+```
+
+The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
+artifacts, runtime DLL/data files when present, and a SHA-256 manifest. A fresh
+clone produced a 35,675,271-byte ZIP with SHA-256
+`AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
+
 ## Cleanup
 
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware
