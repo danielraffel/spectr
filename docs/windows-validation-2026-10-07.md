@@ -154,7 +154,10 @@ host, use:
 ```
 
 This records the ARM64 host hash and any cache entry while retaining the
-discovery-only limitation described above.
+discovery-only status described above. A cache entry is not a load result: the
+receipt now records `acceptance_status=blocked` unless failed-scan evidence and
+a matching observed host-instance receipt are supplied. The current guest has
+Spectr in REAPER's failed-scan list, so it must remain blocked.
 
 REAPER ARM64EC beta was installed from
 https://www.reaper.fm/files/7.x/reaper782_win11_arm64ec_beta-install.exe.

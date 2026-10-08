@@ -115,8 +115,28 @@ login, run:
 ```
 
 The resulting receipt proves discovery and hashes the exact host and plugin.
-It does not claim plugin instantiation or audio until those are observed in the
-desktop host.
+It is explicitly **discovery-only**: a cache entry can exist while REAPER
+lists the plug-in under “Plug-ins that failed to scan”. The helper records
+`acceptance_status=blocked` unless a matching observed host-instance receipt
+is supplied. It never treats a cache entry as proof of loading, instantiation,
+audio, or a screenshot.
+
+When a desktop observation is available, run the strict form and provide the
+exported failed-scan evidence plus the host receipt:
+
+```powershell
+.\tools\windows\reaper-scan.ps1 `
+  -Architecture arm64-win `
+  -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win' `
+  -FailedScanEvidence C:\Users\admin\reaper-failed-scan.txt `
+  -ObservedAcceptanceReceipt C:\Users\admin\reaper-acceptance-receipt.json `
+  -RequireAcceptance
+```
+
+The strict form fails if the failed-scan evidence names Spectr, if the receipt
+does not set both `plugin_instance_observed=true` and
+`failed_scan_list_empty=true`, or if its REAPER/plugin hashes do not match the
+current files.
 
 The scan helper reads the cache with a bounded raw read and regex so it remains
 reliable through Windows OpenSSH. Fresh-clone verification returned:

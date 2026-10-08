@@ -24,6 +24,14 @@ This is a real host compatibility failure, not a cache-only problem.
 - No Spectr application-crash event is emitted. The failure is therefore at
   REAPER's scanner/ABI boundary rather than a Windows process crash.
 
+The cache entry is discovery metadata only. `tools/windows/reaper-scan.ps1`
+now records `discovery_status` separately from `acceptance_status` and fails
+closed when supplied failed-scan evidence still names Spectr. Its strict mode
+also requires a matching host receipt with `plugin_instance_observed=true`,
+`failed_scan_list_empty=true`, and exact REAPER/plugin hashes. Running the
+helper without those observations intentionally reports `DISCOVERY ONLY` and
+`acceptance_status=blocked`.
+
 ## Attempted ARM64EC build
 
 Adding `/arm64EC` to the Spectr build produces ARM64EC objects, but linking
