@@ -301,6 +301,9 @@ pulp_add_binary_data(spectr_native_assets
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
 
+option(SPECTR_BUILD_FORGE_ADAPTER
+       "Expose an opt-in in-process Processor factory for Forge graph consumers" OFF)
+
 # Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
 # variables that load a script into the editor (SPECTR_EVAL), synthesise
 # input, dump state, tune Auto Gain, or plant a defect so a negative control
@@ -456,6 +459,18 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+
+if(SPECTR_BUILD_FORGE_ADAPTER)
+    # The adapter is deliberately an interface target over Spectr's existing
+    # Processor core. Forge consumes the same product implementation and
+    # control authority; no second DSP or provider registry is introduced.
+    add_library(Spectr_ForgeAdapter INTERFACE)
+    add_library(Spectr::ForgeAdapter ALIAS Spectr_ForgeAdapter)
+    target_include_directories(Spectr_ForgeAdapter INTERFACE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(Spectr_ForgeAdapter INTERFACE
+        "${SPECTR_NATIVE_CORE_TARGET}")
+endif()
 
 # ── Product icon ───────────────────────────────────────────────────────
 # Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
@@ -656,6 +671,15 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+if(SPECTR_BUILD_FORGE_ADAPTER)
+    add_executable(Spectr-forge-adapter-test test/test_forge_adapter.cpp)
+    target_link_libraries(Spectr-forge-adapter-test PRIVATE
+        Spectr::ForgeAdapter Catch2::Catch2WithMain)
+    target_include_directories(Spectr-forge-adapter-test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    catch_discover_tests(Spectr-forge-adapter-test)
+endif()
 # The stream-start case with the framework's full-overlap stream start turned
 # off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
 # measurement must reject it, or it could not see the fade it exists to catch.
