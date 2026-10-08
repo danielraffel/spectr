@@ -3327,6 +3327,14 @@ window.PatternManager = PatternManager;`,
               <span className="tnum" style={{ lineHeight: 1.2, whiteSpace: 'nowrap' }}>{settings.bandCount + ' bands ▾'}</span>`,
       'band count label shares one vertical center');
     replaceSpectrSource(
+      String.raw`        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>`,
+      String.raw`        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, minWidth: 0, whiteSpace: 'nowrap', fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>`,
+      'header bands and zoom row reserves its width');
+    replaceSpectrSource(
+      String.raw`          <span className="tnum">{info.zoom}× zoom</span>`,
+      String.raw`          <span className="tnum" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{info.zoom}× zoom</span>`,
+      'header zoom readout keeps its label intact');
+    replaceSpectrSource(
       String.raw`                      background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',
                       border: '1px solid ' + (info.N === n ? 'rgba(180,210,255,0.4)' : 'rgba(255,255,255,0.06)'),
                       color: '#fff', padding: '4px 8px', borderRadius: 2,
@@ -3813,8 +3821,8 @@ window.PatternManager = PatternManager;`,
       'GPU status pill sits above the bottom rail');
     replaceSpectrSource(
       '      </div>\n\n      {/* Status banner */}',
-      '      </div>\n\n      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n\n      {/* Status banner */}',
-      'GPU mode indicator follows zoom readout');
+      '      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n      </div>\n\n      {/* Status banner */}',
+      'GPU mode indicator follows zoom readout in the top bar');
     replaceSpectrSource(
       'function StatusBanner({ message, disabled }) {',
       String.raw`function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
@@ -3831,7 +3839,7 @@ window.PatternManager = PatternManager;`,
     style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10,
       padding: '3px 8px', borderRadius: 3, border: '1px solid ' + color,
       background: 'rgba(255,255,255,0.03)', color, fontFamily: 'var(--mono)',
-      fontSize: 10, letterSpacing: 1 }}>
+      fontSize: 10, letterSpacing: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>
     <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3,
       background: color, boxShadow: ready ? '0 0 6px ' + color : 'none' }} />{label}
   </button>;
@@ -3853,7 +3861,7 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
     text = 'GPU | ' + gpu + ' blocks | ' + fallback + ' CPU fallback';
   }
   return <div data-spectr-gpu-audio-status-pill data-spectr-gpu-audio-state={ready ? 'gpu' : 'cpu'}
-    style={{ position: 'absolute', left: '50%', bottom: 62, transform: 'translateX(-50%)',
+    style={{ position: 'absolute', left: '50%', bottom: 88, transform: 'translateX(-50%)',
       display: 'inline-flex', alignItems: 'center', gap: 6, zIndex: 6, pointerEvents: 'none',
       padding: '5px 10px', borderRadius: 3, border: '1px solid ' + color,
       background: 'rgba(8,12,18,0.9)', color, fontFamily: 'var(--mono)',
