@@ -83,6 +83,10 @@ artifacts, runtime DLL/data files when present, and a SHA-256 manifest. A fresh
 clone produced a 35,675,271-byte ZIP with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
 
+The lower-level `package-vst3.ps1` helper also derives its destination and
+receipt paths after binding `BuildDir`; its default invocation now succeeds on
+the warmed ARM64 build tree.
+
 ## Cleanup
 
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware

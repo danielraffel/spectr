@@ -1,13 +1,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
-    [string]$Destination = (Join-Path $BuildDir 'VST3\\Spectr.vst3'),
+    [string]$Destination = '',
     [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'arm64-win',
-    [string]$Receipt = (Join-Path $BuildDir 'windows-vst3-package.json')
+    [string]$Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+if ([string]::IsNullOrWhiteSpace($Destination)) {
+    $Destination = Join-Path $BuildDir 'VST3\\Spectr.vst3'
+}
+if ([string]::IsNullOrWhiteSpace($Receipt)) {
+    $Receipt = Join-Path $BuildDir 'windows-vst3-package.json'
+}
 $source = Join-Path $BuildDir 'VST3'
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "VST3 output directory is missing: $source" }
 
