@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-08-11. This is the concise state-of-the-world for
+_Last updated: 2026-10-09. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Release 1 product state
@@ -124,6 +124,67 @@ implementation is claimed by the current branch.
 - Future freeze/sampler scope: `planning/Spectr-Sampler-Phase-Spec.md`
 - Ordered native-then-sampler execution:
   `planning/Spectr-Native-Then-Sampler-Plan.md`
+
+## 2026-10-09 bounded authored FilterBank re-import browser gate
+
+The next importer slice is now exercised by a fresh Chromium run from the
+current materialized artifact. The harness
+`tools/authored_reimport_filter_bank_app_mount.mjs` regenerates the dependency
+manifest and authored `FilterBank.tsx`, compiles it with the pinned TypeScript
+toolchain, injects it into a served copy of `resources/editor.html`, and runs
+the real ReactDOM/App mount with deterministic native state and analyzer frames.
+It captures before/after screenshots, checks changing analyzer traces, samples
+canvas ink, and verifies every 32- and 64-band hit-test position. A planted
+no-ink mutation must fail the central-canvas ink gate.
+
+Run-5 receipt and screenshots are retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run5/receipt.json`.
+The exact source identities are:
+
+- materialized artifact SHA-256
+  `05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c`;
+- generated authored `FilterBank.tsx` SHA-256
+  `3f5ef95e055ce64c3259433c16cc89a5788ffee739c9e84aeb16cba6d1f5568f`;
+- editor template SHA-256
+  `a5ab76e4b841a74f5749c49a9370db9daf3cfd37577cb46e3a313ac0e215a65a`.
+
+The positive lanes mounted with zero runtime errors, two analyzer emissions,
+changed canvas hashes, central-canvas colorful-pixel counts above 150,000, and
+complete 32/64-band geometry. The no-ink control was rejected with zero canvas
+ink. CMake registers this as optional
+`Spectr-browser-authored-filter-bank-reimport` when Node and Chrome are
+available, and the acceptance pattern includes it through `^Spectr-browser-`.
+The run-5 receipt SHA-256 is
+`121070ec9f75ecb303e5918d08a6e5140fb777ac5a7ce5d21543de0f5e555c1f`.
+
+The follow-on full-App closure probe now runs against the current materialized
+runtime, which contains the complete helper/component closure missing from the
+older Claude template. `tools/authored_reimport_full_app_materialized_browser.mjs`
+regenerates and provenance-checks the authored `App`, injects it into a copy of
+the materialized runtime, and compares baseline/re-imported ReactDOM trees in
+Chromium. Run-8 evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run8/receipt.json`
+(SHA-256
+`ddc8f4b675d3ef9a7c5411b989f5fcd35996d9fb9aef0805a05a5f671704e0e0`). Both
+baseline and re-imported captures mounted three canvas layers, received
+sequence 1 then sequence 2 through the native analyzer publication surface,
+had zero runtime/browser errors, showed positive first-canvas ink, proved the
+authored App invocation count was 0 for baseline and 5 for re-import, and
+produced the identical settled screenshot SHA-256
+`f91e4a193087f1719415e49267bd20c1595ae5b40f4514d7df8047dd0f6ffff7`.
+The planted hidden-node App mutation was rejected by the DOM parity gate.
+The CMake browser lane registers this probe alongside the FilterBank gate.
+
+This closes a staging proof for the complete authored App closure only. It
+still does not replace `editor.html`, establish native Skia/Dawn parity, or
+qualify production cutover.
+
+This is staging/browser evidence only. `resources/editor.html` and the
+materialized runtime were unchanged. The complete authored `App` closure is
+verified against the current materialized runtime; the older Claude
+`editor.html` template still lacks newer helpers such as `SpectrControlMenu`,
+so replacing that template, native Skia/Dawn parity, and production cutover
+remain open.
 
 ## 2026-10-08 authored App-mount re-import staging proof
 

@@ -3649,6 +3649,32 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     set_tests_properties(Spectr-browser-preset-truncation-negative-control PROPERTIES
         TIMEOUT 120
         WILL_FAIL TRUE)
+    # Bounded authored-source import proof.  This regenerates the current
+    # FilterBank TSX from the artifact, injects it into a served copy of the
+    # Claude editor template, and captures deterministic analyzer before/after
+    # screenshots in Chromium.  The no-ink mutation is run as a separate
+    # planted failure, so a harness that stops observing central canvas ink
+    # cannot pass silently.  This remains staging evidence; it never mutates
+    # editor.html or the materialized runtime and does not claim native parity.
+    add_test(NAME Spectr-browser-authored-filter-bank-reimport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_filter_bank_app_mount.mjs
+            --editor ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/authored-filter-bank-reimport)
+    set_tests_properties(Spectr-browser-authored-filter-bank-reimport PROPERTIES TIMEOUT 180)
+    # Full authored App closure proof against the current materialized runtime.
+    # The older Claude template is intentionally not used as its baseline: it
+    # predates SpectrControlMenu and newer helpers.  This remains staging
+    # evidence and does not imply native parity or production cutover.
+    add_test(NAME Spectr-browser-authored-full-app-materialized-reimport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_full_app_materialized_browser.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/authored-full-app-materialized-reimport)
+    set_tests_properties(Spectr-browser-authored-full-app-materialized-reimport PROPERTIES TIMEOUT 180)
 endif()
 
 # These need node only -- NOT chrome. Registered under the browser
