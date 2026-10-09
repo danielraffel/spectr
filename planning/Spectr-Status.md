@@ -125,6 +125,44 @@ implementation is claimed by the current branch.
 - Ordered native-then-sampler execution:
   `planning/Spectr-Native-Then-Sampler-Plan.md`
 
+## 2026-10-09 bounded authored FilterBank re-import browser gate
+
+The next importer slice is now exercised by a fresh Chromium run from the
+current materialized artifact. The harness
+`tools/authored_reimport_filter_bank_app_mount.mjs` regenerates the dependency
+manifest and authored `FilterBank.tsx`, compiles it with the pinned TypeScript
+toolchain, injects it into a served copy of `resources/editor.html`, and runs
+the real ReactDOM/App mount with deterministic native state and analyzer frames.
+It captures before/after screenshots, checks changing analyzer traces, samples
+canvas ink, and verifies every 32- and 64-band hit-test position. A planted
+no-ink mutation must fail the central-canvas ink gate.
+
+Run-2 receipt and screenshots are retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run2/receipt.json`.
+The exact source identities are:
+
+- materialized artifact SHA-256
+  `05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c`;
+- generated authored `FilterBank.tsx` SHA-256
+  `3f5ef95e055ce64c3259433c16cc89a5788ffee739c9e84aeb16cba6d1f5568f`;
+- editor template SHA-256
+  `a5ab76e4b841a74f5749c49a9370db9daf3cfd37577cb46e3a313ac0e215a65a`.
+
+The positive lanes mounted with zero runtime errors, two analyzer emissions,
+changed canvas hashes, central-canvas colorful-pixel counts above 150,000, and
+complete 32/64-band geometry. The no-ink control was rejected with zero canvas
+ink. CMake registers this as optional
+`Spectr-browser-authored-filter-bank-reimport` when Node and Chrome are
+available, and the acceptance pattern includes it through `^Spectr-browser-`.
+The run-2 receipt SHA-256 is
+`1c6a6743df5091c361e228639f4ee0c7d69005d7615f92e71962f82bee9ece44`.
+
+This is staging/browser evidence only. `resources/editor.html` and the
+materialized runtime were unchanged; the full authored `App` replacement still
+has a real closure gap (`SpectrControlMenu` and newer helpers are absent from
+the older Claude template), so full App parity, native Skia/Dawn parity, and
+production cutover remain open.
+
 ## 2026-10-08 authored App-mount re-import staging proof
 
 The authored `MBtn.tsx` slice now has a bounded App-level re-import proof. Commit
