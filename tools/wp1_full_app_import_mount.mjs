@@ -65,6 +65,8 @@ function validateSurface(file, artifactBytes, manifestBytes, emissionDir) {
   if (value.artifact?.sha256 !== sha256(artifactBytes) || value.artifact?.bytes !== artifactBytes.length) fail('runtime surface artifact identity changed');
   if (value.dependency_manifest?.sha256 !== sha256(manifestBytes)) fail('runtime surface dependency identity changed');
   if (value.emission?.path !== path.basename(emissionDir)) fail('runtime surface emission identity changed');
+  const emissionBytes = readBytes(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
+  if (value.emission?.sha256 !== sha256(emissionBytes)) fail('runtime surface emission identity changed');
   for (const fileRecord of value.files) {
     assertKeys(fileRecord, new Set(['path', 'sha256', 'bytes']), 'runtime surface file');
     assertDigest(fileRecord.sha256, `${fileRecord.path}.sha256`); assertInteger(fileRecord.bytes, `${fileRecord.path}.bytes`);
@@ -236,7 +238,7 @@ function canonicalReceipt(inputs, mounted) {
     runtime_surface: { path: path.basename(inputs.surfacePath), sha256: sha256(inputs.surface.raw), modules: surfaceValue.module_count },
     mount: { root: 'App', modules: mounted.moduleCount, exports: mounted.exports, render_tree: { type: typeof mounted.rendered.type === 'string' ? mounted.rendered.type : 'symbol', child_count: Array.isArray(mounted.rendered.props?.children) ? mounted.rendered.props.children.length : 0 } },
     modules: inputs.modules.map(({ component, module, bytes }) => ({ id: component.id, name: component.name, authored_source_sha256: module.source_sha256, emitted_sha256: sha256(bytes), emitted_bytes: bytes.length })),
-    checks: { artifact_manifest_identity: true, emission_identity: true, runtime_surface_identity: true, module_import_resolution: true, explicit_runtime_facade: true, authored_app_executed: true, runtime_command_facade: false, chromium_parity: false, native_parity: false, production_cutover: false },
+    checks: { artifact_manifest_identity: true, emission_identity: true, runtime_surface_identity: true, module_import_resolution: true, explicit_runtime_facade: true, authored_app_root_invoked: true, runtime_command_facade: false, chromium_parity: false, native_parity: false, production_cutover: false },
   };
 }
 
@@ -247,7 +249,7 @@ function runEmitterVerify(inputs) {
 }
 
 function runSurfaceVerify(args) {
-  if (!args.allowlistPath) return;
+  if (!args.allowlistPath) fail('runtime surface allowlist is required; refusing unverifiable mount');
   const surfaceTool = path.join(ROOT, 'wp1_full_app_runtime_surface.mjs');
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-surface-verify-'));
   try {
@@ -292,13 +294,14 @@ function parseArgs(argv) {
   }
   return args;
 }
-function usage() { console.log('usage: node tools/wp1_full_app_import_mount.mjs --artifact FILE --manifest FILE --emission DIR --surface FILE|DIR [--allowlist FILE] --out DIR [--verify]'); }
+function usage() { console.log('usage: node tools/wp1_full_app_import_mount.mjs --artifact FILE --manifest FILE --emission DIR --surface FILE|DIR --allowlist FILE --out DIR [--verify]'); }
 
 try {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) { usage(); process.exit(0); }
   for (const name of ['artifactPath', 'manifestPath', 'emissionPath', 'surfacePath', 'outPath']) if (!args[name]) fail(`--${name.slice(0, -4)} is required`);
   args.emissionDir = path.resolve(args.emissionPath); args.outDir = path.resolve(args.outPath); args.artifactPath = path.resolve(args.artifactPath); args.manifestPath = path.resolve(args.manifestPath); args.surfacePath = surfacePath(args.surfacePath);
-  if (args.allowlistPath) args.allowlistPath = path.resolve(args.allowlistPath);
+  if (!args.allowlistPath) fail('--allowlist is required');
+  args.allowlistPath = path.resolve(args.allowlistPath);
   if (args.verify) verify(args); else process.stdout.write(`${JSON.stringify(build(args), null, 2)}\n`);
 } catch (error) { console.error(error.message); process.exit(1); }

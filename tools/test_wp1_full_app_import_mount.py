@@ -54,8 +54,7 @@ class FullAppImportMountTest(unittest.TestCase):
         out = out or (self.root / "mount")
         args = ["node", str(GATE), "--artifact", str(ARTIFACT), "--manifest", str(self.manifest),
                 "--emission", str(emission or self.emission), "--surface", str(surface or self.surface), "--out", str(out)]
-        if allowlist:
-            args.extend(["--allowlist", str(allowlist)])
+        args.extend(["--allowlist", str(allowlist or ALLOWLIST)])
         if verify:
             args.append("--verify")
         return run(args)
@@ -69,6 +68,7 @@ class FullAppImportMountTest(unittest.TestCase):
         self.assertEqual(receipt["mount"]["modules"], 59)
         self.assertEqual(receipt["mount"]["render_tree"]["type"], "div")
         self.assertTrue(receipt["checks"]["explicit_runtime_facade"])
+        self.assertTrue(receipt["checks"]["authored_app_root_invoked"])
         self.assertFalse(receipt["checks"]["runtime_command_facade"])
         checked = self.gate(out=first, verify=True)
         self.assertEqual(checked.returncode, 0, checked.stderr)
@@ -107,7 +107,25 @@ class FullAppImportMountTest(unittest.TestCase):
         contract.write_text(json.dumps(data, indent=2) + "\n")
         result = self.gate(surface=surface, allowlist=ALLOWLIST, out=self.root / "drift-output")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runtime surface regeneration differs from supplied receipt", result.stderr)
+        self.assertIn("runtime surface emission identity changed", result.stderr)
+
+    def test_runtime_surface_emission_identity_drift_is_rejected(self):
+        surface = self.root / "emission-drift-surface"
+        shutil.copytree(self.surface, surface)
+        contract = surface / "runtime-surface-contract.json"
+        data = json.loads(contract.read_text())
+        data["emission"]["sha256"] = "0" * 64
+        contract.write_text(json.dumps(data, indent=2) + "\n")
+        result = self.gate(surface=surface, out=self.root / "emission-drift-output")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime surface emission identity changed", result.stderr)
+
+    def test_missing_allowlist_fails_closed(self):
+        result = run(["node", str(GATE), "--artifact", str(ARTIFACT),
+                      "--manifest", str(self.manifest), "--emission", str(self.emission),
+                      "--surface", str(self.surface), "--out", str(self.root / "no-allowlist")])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--allowlist is required", result.stderr)
 
     def test_canonical_artifact_and_editor_are_unchanged(self):
         result = self.gate(out=self.root / "immutability-output")
