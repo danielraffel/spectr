@@ -21,14 +21,14 @@ same lanes, so either follows the other live.
 | Bank | every band's level, together | +/-12 dB |
 | Band shift | slides the whole band set up/down in frequency, width kept | +/-1 decade (about 3.3 octaves) |
 | Band spread | spreads the bands wider/narrower about their centre | width x2 / x0.5 (log-frequency) |
-| Intensity | pulls the Intensity amount toward flat and back (unipolar) | all the way to flat at the wave's top |
-| Mix | pulls Mix toward dry and back (unipolar): the freeze blend | all the way to dry at the wave's top |
+| Intensity | moves across the normalized Intensity range | minimum to maximum from the authored value |
+| Mix | moves across the normalized Mix range: the freeze blend | minimum to maximum from the authored value |
 | Morph | the A/B morph position, around the Morph slider | +/-0.5 of the morph range |
 | Freeze | LIVE / FROZEN, gated by the LFO | frozen the whole cycle (Depth = frozen duty) |
 | Length | the next freeze's loop length, around the user's LENGTH | +/-8 steps of the LENGTH list |
 | Bands | the band count the mask is built with, around the user's BANDS | +/-4 steps (the whole 32...64 list) |
 | Preset | morphs toward the neighbouring presets' band gains (menu order) | +/-4 presets |
-| Output | the Output trim, after Auto Gain | +/-6 dB (clamped with the trim to +/-24 dB) |
+| Output | moves across the normalized Output trim range, after Auto Gain | -24..+24 dB endpoints from the authored value |
 | Snapshot A / B | blends toward that captured snapshot and back (unipolar) | all the way there |
 
 Parameter IDs: the first eight targets at 4020... (on/off) and 4030...
@@ -46,6 +46,30 @@ for when it is switched on again. Switching a target never moves the row under
 the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
 with); a fresh instance drives Bank from both LFOs, everything else off.
+
+### Selected-band groups
+
+The Bank route is also the fallback for individual bands. The existing
+rubber-band/shift selection can be assigned to the current LFO with **Assign
+selected bands** in the band context menu. That assignment stores a normalized
+depth for the selected bitset without adding 64 host parameters. Up to eight
+assignments are carried in editor state. An individual-band assignment wins
+over a broader group, and an unassigned band inherits the WholeBank depth;
+this makes a broad bank assignment followed by a shift-click refinement
+predictable. The same selection can be assigned again after changing the route
+Depth to create another group with a different strength.
+
+The assignment changes displayed and audible band-level modulation only; it
+never writes a band gain or changes the DSP filter topology. Group masks are
+bounded and published with the existing allocation-free modulation state, so
+audio processing remains real-time safe.
+
+Rate and strength are separate concepts. Rate controls how quickly the LFO
+phase advances; Depth controls the excursion size. Strength changing over time
+is therefore a separate depth-envelope or depth-automation feature, rather than
+a faster LFO. The rate lanes now accept 1/16 beat (down from 1/4 beat) for
+faster tempo-synchronised movement; phase remains continuous and normal route
+smoothing still applies.
 
 ## How stacked targets combine
 
@@ -77,18 +101,14 @@ These move a level control around the user's setting and never write it: the
 knob shows its own value and, over it, the value playing; its host lane keeps
 its automation.
 
-- **Intensity** and **Mix** are unipolar pulls, in proportion to the knob:
-  `effective = knob x (1 - c)`, `c = (wave + 1) / 2 x Depth` (summed over
-  LFOs, clamped to 0..1). Proportional rather than an offset so the full
-  Depth is always usable without clipping -- the knobs default to 100 %, where
-  an offset could only ever move one way -- and a knob set lower is scaled
-  rather than pinned at zero. At Depth 100 % Intensity reaches flat and Mix
-  reaches dry once per cycle. Over a frozen sound the Mix target is the freeze
-  blend: frozen and live alternate at the LFO rate.
-- **Output** is bipolar: `wave x Depth x 6 dB` added to the trim, the sum
-  clamped into the trim's +/-24 dB range. 6 dB each way (12 dB peak to peak)
-  is a clear tremolo without the level jumps a +/-12 dB swing on the final
-  gain would invite; two LFOs on Output add.
+- **Intensity** and **Mix** use their actual `0..1` parameter ranges. The LFO
+  coordinate is normalized: at full depth, -1 reaches 0 and +1 reaches 1
+  from any authored knob value. Intermediate depth interpolates between the
+  authored value and the corresponding endpoint. Mix remains the freeze
+  blend: its normalized motion sweeps between dry and wet.
+- **Output** uses the complete `-24..24 dB` trim range. The normalized
+  coordinate reaches either endpoint from the authored trim, and the result
+  is applied after Auto Gain; two LFOs on Output add before the range clamp.
 
 **Auto Gain never cancels them.** It is computed from the unmodulated
 Intensity and Mix (the knobs), and the Output target is applied after it, on
@@ -108,12 +128,12 @@ Measured (`test/test_level_controls.cpp`, 48 kHz, 512-sample blocks):
 
 | Case | Result |
 | --- | --- |
-| Output, Depth 100 % / 50 %, square at its top, Auto Gain on (+12.000 dB make-up) | +6.000 / +3.000 dB, Auto Gain unchanged |
-| Intensity on a +12 dB shape, Depth 100 % / 50 % | 0.000 / +6.000 dB; Auto Gain -11.989 dB with and without the route (v2: the tone sits inside the boost) |
-| Mix on a -24 dB shape, Depth 100 % / 50 % | 0.000 dB (dry) / -5.49 dB |
-| Output LFO running (sine, 1 beat, Depth 100 %): largest 1 ms envelope step | 0.075 dB (gate 0.2; per-block plant 0.80) |
-| Output switched on at a crest | 0.100 dB / ms |
-| Intensity switched on at a crest, +12 dB shape | 1.05 dB per block (Bank-LFO yardstick 2.3) |
+| Output, Depth 100 % / 50 %, square at its top, Auto Gain on (+12.000 dB make-up) | +24.000 / +12.000 dB, Auto Gain unchanged |
+| Intensity on a +12 dB shape authored at 50 %, Depth 100 % / 50 % | +12.000 / +9.000 dB; Auto Gain -6.000 dB with and without the route |
+| Mix on a -30 dB shape authored at 50 %, Depth 100 % / 50 % | -24.000 dB / -10.535 dB |
+| Output LFO running (sine, 1 beat, Depth 100 %): largest 1 ms envelope step | 0.301 dB (gate 0.6; per-block plant 0.80) |
+| Output switched on at a crest | 0.399 dB / ms |
+| Intensity switched on at a crest, +12 dB shape authored at 50 % | 1.09 dB per block (gate 2.3) |
 
 `Spectr-level-target-step-negative-control` re-runs the smoothness case with
 `SPECTR_MODULATION_PLANT=level-target-step` (the Output gain lands once per

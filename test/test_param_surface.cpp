@@ -398,7 +398,7 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(enabled->kind == pulp::state::ParamKind::Toggle);
     CHECK(shape->kind == pulp::state::ParamKind::Enum);
     CHECK(shape->value_labels.size() == 4);
-    CHECK(rate->range.min == Approx(0.25f));
+    CHECK(rate->range.min == Approx(spectr::kMinLfoBeatsPerCycle));
     CHECK(rate->range.max == Approx(16.0f));
     CHECK(rate->range.default_value == Approx(4.0f));
     CHECK(depth->range.min == Approx(0.0f));
@@ -417,6 +417,7 @@ TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
         REQUIRE(rate->from_string);
         CHECK(rate->to_string(4.0f) == "4 beats");
         CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(spectr::kMinLfoBeatsPerCycle) == "0.0625 beats");
         CHECK(rate->to_string(1.0f) == "1 beat");
         CHECK(rate->from_string("2 beats") == Approx(2.0f));
         CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));

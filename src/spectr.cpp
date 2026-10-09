@@ -2052,7 +2052,8 @@ void Spectr::process(
                         std::clamp(static_cast<int>(std::lround(
                             cursor.value(kParamLfoShape))), 0, 3));
                     modulation_settings.beats_per_cycle = std::clamp(
-                        cursor.value(kParamLfoRate), 0.25f, 16.0f);
+                        cursor.value(kParamLfoRate), kMinLfoBeatsPerCycle,
+                        kMaxLfoBeatsPerCycle);
                     modulation_settings.depth = std::clamp(
                         cursor.value(kParamLfoDepth), 0.0f, 1.0f);
                     modulation_settings.target =
@@ -2071,13 +2072,19 @@ void Spectr::process(
                                 lfo_route_amount_param_id(lfo, t)), 0.0f, 1.0f);
                         }
                     }
+                    // Band/group depth assignments are editor state carried
+                    // by the latest-value publication, alongside routing.
+                    // They are intentionally not host lanes.
+                    modulation_settings.band_overrides =
+                        audio_modulation.settings.band_overrides;
                     modulation_settings.lfo2_enabled =
                         cursor.value(kParamLfo2Enabled) >= 0.5f;
                     modulation_settings.lfo2_shape = static_cast<LfoShape>(
                         std::clamp(static_cast<int>(std::lround(
                             cursor.value(kParamLfo2Shape))), 0, 3));
                     modulation_settings.lfo2_beats_per_cycle = std::clamp(
-                        cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
+                        cursor.value(kParamLfo2Rate), kMinLfoBeatsPerCycle,
+                        kMaxLfoBeatsPerCycle);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
                     // The legacy lanes are COMMANDS (see apply_surface_params):
@@ -2817,9 +2824,15 @@ void Spectr::process(
                                 audio_modulation_phase_2_ + slice_beats / std::max(
                                     0.0625, static_cast<double>(
                                         modulation_settings.lfo2_beats_per_cycle)));
+                            const auto output_coords = modulation_coordinates(
+                                modulation_settings, wave_end, wave2_end);
+                            const float output_base_db = cursor.value_at(
+                                kOutputTrim,
+                                static_cast<int32_t>(block_offset
+                                    + (out_slice.num_samples() > 0
+                                        ? out_slice.num_samples() - 1 : 0)));
                             output_mod_end_db = output_modulation_db(
-                                modulation_coordinates(modulation_settings,
-                                                       wave_end, wave2_end));
+                                output_base_db, output_coords);
                         }
                     }
                     const float output_mod_start_db =
@@ -3460,7 +3473,10 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             viewport_ = store_view;
             layout_ = store_layout;
             reset_supplemental_state_(snapshots_, patterns_);
-            if (param_store_) modulation_ = modulation_from_store_();
+            if (param_store_) {
+                modulation_ = modulation_from_store_();
+                modulation_.band_overrides = band_modulation_overrides_;
+            }
             else modulation_.target_mask = kModulationTargetMaskUnset;
             morph_applies_viewport_ = true;
             editor_range_db_ = kEditorRangeDefaultDb;
@@ -3914,6 +3930,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // selection this blob just carried.
         if (param_store_) {
             modulation_ = modulation_from_store_();
+            modulation_.band_overrides = band_modulation_overrides_;
         } else {
             modulation_.target_mask = new_target_mask;
         }
@@ -3999,6 +4016,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         modulation_ = modulation_from_store_();
+        modulation_.band_overrides = band_modulation_overrides_;
         publish_audio_modulation_state_();
     }
     if (!has_lfo_routing && param_store_) {
@@ -4023,6 +4041,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         }
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         modulation_ = modulation_from_store_();
+        modulation_.band_overrides = band_modulation_overrides_;
         publish_audio_modulation_state_();
     }
     for (std::size_t slot = 0; param_store_ && slot < kSurfaceCacheSlots; ++slot) {

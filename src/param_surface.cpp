@@ -330,7 +330,7 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {0.25f, 16.0f, 4.0f};
+        info.range = {kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle, 4.0f};
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -382,7 +382,7 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {0.25f, 16.0f, 4.0f};
+        info.range = {kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle, 4.0f};
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -537,7 +537,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
     settings.beats_per_cycle = std::clamp(
-        store->get_value(kParamLfoRate), 0.25f, 16.0f);
+        store->get_value(kParamLfoRate), kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle);
     settings.depth = std::clamp(
         store->get_value(kParamLfoDepth), 0.0f, 1.0f);
     settings.target = static_cast<ModulationTarget>(std::clamp(
@@ -546,7 +546,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.lfo2_shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
     settings.lfo2_beats_per_cycle = std::clamp(
-        store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
+        store->get_value(kParamLfo2Rate), kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle);
     settings.lfo2_depth = std::clamp(
         store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
@@ -703,6 +703,7 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     }
 
     ModulationSettings next_modulation = modulation_from_store_();
+    next_modulation.band_overrides = band_modulation_overrides_;
     const std::array<float, 9> modulation_values{
         next_modulation.enabled ? 1.0f : 0.0f,
         static_cast<float>(next_modulation.shape),
@@ -856,6 +857,25 @@ float Spectr::editor_mode_param(pulp::state::ParamID id) const noexcept {
 ModulationSettings Spectr::modulation_settings() const noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     return modulation_;
+}
+
+BandModulationOverrides Spectr::band_modulation_overrides() const noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return band_modulation_overrides_;
+}
+
+bool Spectr::set_band_modulation_group(std::uint64_t members, std::size_t lfo,
+                                       float depth) noexcept {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    if (!spectr::set_band_modulation_group(band_modulation_overrides_, members,
+                                           lfo, depth))
+        return false;
+    modulation_.band_overrides = band_modulation_overrides_;
+    publish_audio_modulation_state_();
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
 }
 
 bool Spectr::morph_applies_viewport() const noexcept {

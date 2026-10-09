@@ -222,6 +222,7 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/mac_haptics.hpp
 )
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
@@ -245,7 +246,9 @@ set(SPECTR_NATIVE_SOURCES
 )
 if(APPLE)
     enable_language(OBJCXX)
-    list(APPEND SPECTR_NATIVE_SOURCES src/ui/host_view_first_mouse_mac.mm)
+    list(APPEND SPECTR_NATIVE_SOURCES
+        src/ui/host_view_first_mouse_mac.mm
+        src/ui/mac_haptics.mm)
 endif()
 
 # Shipping Spectr is a native cutover consumer. Requiring the dedicated target
@@ -409,10 +412,11 @@ set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
 set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
 set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
+set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP Standalone
+    FORMATS VST3 AU CLAP AAX Standalone
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -420,6 +424,8 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
     MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
     VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
@@ -435,7 +441,8 @@ foreach(_spectr_native_target
         ${SPECTR_NATIVE_STANDALONE_TARGET}
         ${SPECTR_NATIVE_VST3_TARGET}
         ${SPECTR_NATIVE_AU_TARGET}
-        ${SPECTR_NATIVE_CLAP_TARGET})
+        ${SPECTR_NATIVE_CLAP_TARGET}
+        ${SPECTR_NATIVE_AAX_TARGET})
     if(TARGET ${_spectr_native_target})
         spectr_configure_native_target(${_spectr_native_target})
         if(SPECTR_NATIVE_PREVIEW_IDENTITY)
@@ -2326,6 +2333,31 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-insert-index-control-queue-order
         PROPERTIES TIMEOUT 30)
 
+    add_test(NAME Spectr-materialized-tooltip-interaction
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_tooltip_interaction.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    add_test(NAME Spectr-materialized-range-gutter-wheel
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_range_gutter_wheel.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-range-gutter-wheel PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-vertical-range-grid
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_vertical_range_grid.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-vertical-range-grid PROPERTIES TIMEOUT 30)
+    foreach(_tooltip_control IN ITEMS no-press-suppression ignore-popups)
+        add_test(NAME Spectr-materialized-tooltip-control-${_tooltip_control}
+            COMMAND ${SPECTR_NODE_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_tooltip_interaction.mjs
+                ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+                --plant-${_tooltip_control} --expect-fail)
+        set_tests_properties(Spectr-materialized-tooltip-control-${_tooltip_control}
+            PROPERTIES TIMEOUT 30)
+    endforeach()
+    set_tests_properties(Spectr-materialized-tooltip-interaction PROPERTIES TIMEOUT 30)
+
     # The modulation display, MEASURED rather than asserted. This drives the
     # shipped rAF `draw` and `applyModulationFrame` out of the materialized
     # document against a known producer and requires the painted peak-to-peak
@@ -4180,6 +4212,17 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
     set_tests_properties(Spectr-settings-render-mode-no-reflow-live PROPERTIES
         TIMEOUT 600
         RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# macOS codesign treats arbitrary files under Contents/MacOS as nested code.
+# Pulp emits control-shipping evidence beside each plugin binary for local
+# inspection; relocate the AAX evidence into sealed Resources before signing.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    add_custom_command(TARGET ${SPECTR_NATIVE_AAX_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DBUNDLE_CONTENTS=$<TARGET_FILE_DIR:${SPECTR_NATIVE_AAX_TARGET}>/..
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/relocate_aax_control_sidecars.cmake
+        VERBATIM)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

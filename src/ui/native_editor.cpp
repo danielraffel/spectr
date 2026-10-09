@@ -3,6 +3,7 @@
 #include <pulp/view/plugin_view_host.hpp>
 
 #include "spectr/editor_bridge.hpp"
+#include "spectr/mac_haptics.hpp"
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/runtime/trace.hpp>
@@ -939,6 +940,16 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
                 return pulp::view::EditorBridge::ok_response(
                     make_output_meter_payload(read_output_level()));
             });
+        // One alignment tick per actual gutter range transition. The JS side
+        // clamps transitions and gates the user's haptic preference; this
+        // handler only schedules platform feedback and never touches DSP.
+        native_editor_bridge_.add_handler(
+            "range_haptic",
+            [this](const choc::value::ValueView&) {
+                (void)this;
+                mac_haptic_alignment_tick();
+                return pulp::view::EditorBridge::ok_response();
+            });
         native_editor_handlers_registered_ = true;
     }
     native_editor_bridge_.attach_native_runtime(
@@ -1442,9 +1453,10 @@ void Spectr::publish_modulation_controls_(const ModulatedFieldSnapshot& modulate
     if (driven)
         coords = modulation_coordinates(settings, lfo_value(fade_1, phase_1),
                                         lfo_value(fade_2, phase_2));
-    const float intensity_pull = intensity_on ? level_pull(coords, ModulationTarget::Intensity) : 0.0f;
-    const float mix_pull = mix_on ? level_pull(coords, ModulationTarget::Mix) : 0.0f;
-    const float output_db = output_on ? output_modulation_db(coords) : 0.0f;
+    const float intensity_pull = intensity_on ? coords[ModulationTarget::Intensity] : 0.0f;
+    const float mix_pull = mix_on ? coords[ModulationTarget::Mix] : 0.0f;
+    const float output_base_db = param_store_ ? param_store_->get_value(kOutputTrim) : 0.0f;
+    const float output_db = output_on ? output_modulation_db(output_base_db, coords) : 0.0f;
     const float morph_offset = morph_on
         ? coords[ModulationTarget::Morph] * kModulationMorphExcursion : 0.0f;
     // Quantised to well under a pixel of any control's travel: a knob sweeps
@@ -1618,6 +1630,18 @@ void Spectr::publish_modulation_frame_() {
     payload.addMember("n_visible", static_cast<std::int32_t>(visible));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
+    // Send the audible window on the paint lane, never the authored-state
+    // lane: displaying modulation must not ratchet the user's baseline.
+    const bool viewport_on = modulated.active
+        && (modulation_drives(modulated.settings, ModulationTarget::ViewportPosition)
+            || modulation_drives(modulated.settings, ModulationTarget::ViewportZoom));
+    const auto drawn_viewport = apply_viewport_modulation(
+        modulated.base_viewport,
+        modulation_coordinates(modulated.settings, lfo_value(fade_1, phase_1),
+                               lfo_value(fade_2, phase_2)));
+    payload.addMember("viewport_on", viewport_on);
+    payload.addMember("min_hz", static_cast<double>(drawn_viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(drawn_viewport.max_hz));
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage",

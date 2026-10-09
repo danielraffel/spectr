@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <functional>
 #include <thread>
 #include <vector>
@@ -184,6 +185,56 @@ TEST_CASE("a target's Depth alone scales its modulation", "[modulation][routing]
     const auto off = spectr::compose_internal_modulation(
         b.canonical, b.bank, 0.0f, two_lfos(r, 1.0f), 1.0f, 0.0f);
     CHECK(off.field.bands[0].gain_db == Approx(-6.0f));
+}
+
+TEST_CASE("selected band groups override WholeBank depth with individual precedence",
+          "[modulation][routing][bands]") {
+    Bank b;
+    for (auto& band : b.canonical.bands) band.gain_db = 0.0f;
+    auto settings = two_lfos(
+        routes_of({ModulationTarget::WholeBank}, 0.5f), 1.0f);
+
+    // Bands 0 and 1 use a gentler selected-group depth; band 2 inherits the
+    // ordinary WholeBank route. The group is an editor assignment, so the
+    // host-visible WholeBank lane remains 50%.
+    REQUIRE(spectr::set_band_modulation_group(
+        settings.band_overrides, (std::uint64_t{1} << 0) | (std::uint64_t{1} << 1),
+        0, 0.25f));
+    auto out = spectr::compose_internal_modulation(
+        b.canonical, b.bank, 0.0f, settings, 1.0f, 0.0f);
+    CHECK(out.field.bands[0].gain_db == Approx(3.0f));
+    CHECK(out.field.bands[1].gain_db == Approx(3.0f));
+    CHECK(out.field.bands[2].gain_db == Approx(6.0f));
+
+    // A later single-band assignment wins over the broader group even if the
+    // group was authored first. This is the intended shift-select workflow:
+    // assign a bank, then refine one band without rebuilding the bank route.
+    REQUIRE(spectr::set_band_modulation_group(
+        settings.band_overrides, std::uint64_t{1} << 1, 0, 1.0f));
+    out = spectr::compose_internal_modulation(
+        b.canonical, b.bank, 0.0f, settings, 1.0f, 0.0f);
+    CHECK(out.field.bands[0].gain_db == Approx(3.0f));
+    CHECK(out.field.bands[1].gain_db == Approx(12.0f));
+    CHECK(out.field.bands[2].gain_db == Approx(6.0f));
+
+    // Clearing the assignment is represented by a zero depth, which is a
+    // deliberate mute of modulation for that selection, not a fallback.
+    REQUIRE(spectr::set_band_modulation_group(
+        settings.band_overrides, std::uint64_t{1} << 0, 0, 0.0f));
+    out = spectr::compose_internal_modulation(
+        b.canonical, b.bank, 0.0f, settings, 1.0f, 0.0f);
+    CHECK(out.field.bands[0].gain_db == Approx(0.0f));
+
+    // An assignment is per LFO. An LFO that was not assigned to the group
+    // still inherits its own WholeBank route instead of treating zero as an
+    // implicit override.
+    auto two = two_lfos(routes_of({ModulationTarget::WholeBank}, 0.25f), 1.0f,
+                        routes_of({ModulationTarget::WholeBank}, 0.75f), 1.0f);
+    REQUIRE(spectr::set_band_modulation_group(
+        two.band_overrides, std::uint64_t{1} << 0, 0, 0.0f));
+    out = spectr::compose_internal_modulation(
+        b.canonical, b.bank, 0.0f, two, 1.0f, 1.0f);
+    CHECK(out.field.bands[0].gain_db == Approx(9.0f)); // LFO 1 muted, LFO 2 9 dB
 }
 
 TEST_CASE("viewport position slides and zoom scales about the centre", "[modulation][routing][viewport]") {

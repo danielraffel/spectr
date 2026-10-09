@@ -164,11 +164,13 @@ if (blockSource.length < componentSource.length) {
 // ------------------------------------------------------------- gate 1: PARSE
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-modgroup-'));
-const modulePath = path.join(tmp, 'block.mjs');
-fs.writeFileSync(modulePath, blockSource, 'utf8');
+// Materialized component blocks intentionally use `with (globalThis)` to
+// resolve the captured document's cross-block exports. ES modules are strict
+// and reject that construct before parsing, so use the same non-strict
+// Function parser as the runtime host for this syntax gate.
 try {
-  await import(pathToFileURL(modulePath).href);
-  pass('PARSE: script block parsed and executed');
+  new Function(blockSource);
+  pass('PARSE: script block parsed');
 } catch (error) {
   if (error instanceof SyntaxError) fail('PARSE: SyntaxError: ' + error.message);
   else pass('PARSE: parsed (ran to ' + error.constructor.name + ', expected without a DOM)');
