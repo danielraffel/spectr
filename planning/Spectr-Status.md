@@ -296,3 +296,16 @@ https://github.com/danielraffel/spectr/actions/runs/37863531996/job/113604703004
 Local generation verification and six focused tests pass. The branch remains
 staging-only and does not establish authored-source replacement, native/browser
 parity, or production cutover.
+
+## 2026-10-09 hosted acceptance for runtime-client contract
+
+The exact PR 254 head `473ff1dcd5dab1c33835cb03244cc1187b9e97e6` passed the
+Spectr M5 product-acceptance run:
+https://github.com/danielraffel/spectr/actions/runs/37863575839. Static contract,
+provenance, focused behavior, native capture, control-reachability, packaging,
+and AUv2 validation completed successfully. The release configure log explicitly
+reports the browser oracle disabled because Node/Chrome were unavailable on that
+runner; independent Chromium evidence remains the authoritative browser receipt.
+The app-driven detector failures are non-blocking and remain known acceptance
+gaps. This PR still stages the runtime-client contract only and does not claim
+production runtime adoption or native/browser pixel parity.
