@@ -5,4 +5,8 @@
 
 #include <pulp/format/aax_entry.hpp>
 
+#if defined(PULP_AAX_HEADLESS)
+PULP_AAX_PLUGIN(spectr::create_spectr)
+#else
 PULP_AAX_PLUGIN_WITH_GUI(spectr::create_spectr)
+#endif

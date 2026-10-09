@@ -406,11 +406,11 @@ set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
 set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
 set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
-set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
+set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless_AAX")
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP AAX Standalone
+    FORMATS VST3 AU CLAP Standalone
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -435,8 +435,7 @@ foreach(_spectr_native_target
         ${SPECTR_NATIVE_STANDALONE_TARGET}
         ${SPECTR_NATIVE_VST3_TARGET}
         ${SPECTR_NATIVE_AU_TARGET}
-        ${SPECTR_NATIVE_CLAP_TARGET}
-        ${SPECTR_NATIVE_AAX_TARGET})
+        ${SPECTR_NATIVE_CLAP_TARGET})
     if(TARGET ${_spectr_native_target})
         spectr_configure_native_target(${_spectr_native_target})
         if(SPECTR_NATIVE_PREVIEW_IDENTITY)
@@ -460,6 +459,73 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+
+# AAX is intentionally a separate processor-only target. Pulp's native UI
+# target links the Metal/WebGPU view stack, which makes Pro Tools load GPU/UI
+# code while it is only parsing the AAX descriptor. Keeping this target free of
+# NATIVE_UI and using PULP_AAX_PLUGIN gives discovery and audio instantiation a
+# stable, headless binary; the AU/VST3/Standalone siblings retain the editor.
+set(SPECTR_AAX_SOURCES
+    src/spectr.cpp
+    src/mask_renderer.cpp
+    src/param_surface.cpp
+    src/edit_engine.cpp
+    src/editor_authority.cpp
+    src/pattern.cpp
+    src/preset_format.cpp
+    src/snapshot.cpp
+    src/level_controls.cpp)
+set(SPECTR_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless")
+pulp_add_plugin(${SPECTR_AAX_TARGET}
+    AAX_HEADLESS
+    FORMATS AAX
+    SOURCES ${SPECTR_AAX_SOURCES}
+    PROCESSOR_FACTORY spectr::create_spectr
+    PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
+    BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}.aax"
+    MANUFACTURER "Pulp"
+    MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
+    VERSION "${PROJECT_VERSION}"
+    CATEGORY Effect)
+if(TARGET ${SPECTR_AAX_TARGET}_AAX)
+    target_include_directories(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
+if(TARGET ${SPECTR_AAX_TARGET}_Core)
+    target_include_directories(${SPECTR_AAX_TARGET}_Core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_Core PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
 
 # ── Product icon ───────────────────────────────────────────────────────
 # Spectr's own five-bar spectrum mark, on the dark ground the editor chrome

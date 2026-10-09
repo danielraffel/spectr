@@ -6,7 +6,7 @@
 
 #include <pulp/runtime/trace.hpp>
 #include <pulp/format/param_processing.hpp>
-#if !defined(SPECTR_NATIVE_EDITOR)
+#if !defined(SPECTR_NATIVE_EDITOR) && !defined(SPECTR_AAX_HEADLESS)
 #include "spectr/ui/editor_view.hpp"
 #endif
 
@@ -1355,7 +1355,12 @@ void Spectr::preroll_surviving_hold_() {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
-#if defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_AAX_HEADLESS)
+    // AAX discovery and audio instantiation must not load the native view
+    // stack. Pro Tools parses the AAX module in-process before it has a UI
+    // host; returning no editor keeps that path processor-only.
+    return nullptr;
+#elif defined(SPECTR_NATIVE_EDITOR)
     return create_native_editor_();
 #else
     // Release 1 embeds the reviewed editor.html. Visual parity remains
@@ -1375,7 +1380,9 @@ pulp::format::ViewSize Spectr::view_size() const {
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
-#if defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_AAX_HEADLESS)
+    (void)view;
+#elif defined(SPECTR_NATIVE_EDITOR)
     open_native_editor_(view);
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
@@ -1385,7 +1392,11 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 }
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
-#if defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_AAX_HEADLESS)
+    (void)view;
+    (void)w;
+    (void)h;
+#elif defined(SPECTR_NATIVE_EDITOR)
     if (&view != native_editor_root_ || w == 0 || h == 0) return;
     native_host_width_ = w;
     native_host_height_ = h;
@@ -1476,7 +1487,9 @@ void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
 #endif
 
 void Spectr::on_view_closed(pulp::view::View& view) {
-#if defined(SPECTR_NATIVE_EDITOR)
+#if defined(SPECTR_AAX_HEADLESS)
+    (void)view;
+#elif defined(SPECTR_NATIVE_EDITOR)
     if (&view == native_editor_root_) close_native_editor_();
 #else
     if (auto* editor = dynamic_cast<EditorView*>(&view)) {
@@ -2997,6 +3010,7 @@ void Spectr::process(
                     std::memory_order_relaxed);
             }
 
+ #if !defined(SPECTR_AAX_HEADLESS)
             const auto nc = output.num_channels();
             if (nc > 0 && nc <= 8) {
                 const float* ptrs[8];
@@ -3005,6 +3019,7 @@ void Spectr::process(
                 bridge_.process(ptrs, static_cast<int>(nc),
                                 static_cast<int>(output.num_samples()));
             }
+ #endif
             // Sampled BEFORE the block ran, so a write that lands while it is
             // running still reads as drift on the next one.
             audio_applied_surface_ = audio_surface_scratch_;
@@ -3068,6 +3083,7 @@ void Spectr::process(
         }
 
         // Publish post-engine audio to the UI thread via VisualizationBridge.
+#if !defined(SPECTR_AAX_HEADLESS)
         const auto nc = output.num_channels();
         if (nc > 0 && nc <= 8) {
             const float* ptrs[8];
@@ -3077,6 +3093,7 @@ void Spectr::process(
             bridge_.process(ptrs, static_cast<int>(nc),
                             static_cast<int>(output.num_samples()));
         }
+#endif
         return;
     }
 
