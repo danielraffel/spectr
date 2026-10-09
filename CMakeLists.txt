@@ -620,10 +620,14 @@ include(Catch)
 # — which build from SPECTR_NATIVE_SOURCES — stay green, so the breakage looks like
 # a product failure when it is only the legacy test graph.
 set(SPECTR_SDK_HAS_WEBVIEW OFF)
+set(SPECTR_SDK_HAS_DESIGN_IMPORT OFF)
 if(TARGET Pulp::view)
     get_target_property(_spectr_pulp_view_defs Pulp::view INTERFACE_COMPILE_DEFINITIONS)
     if(_spectr_pulp_view_defs MATCHES "PULP_BUILD_WEBVIEW=1")
         set(SPECTR_SDK_HAS_WEBVIEW ON)
+    endif()
+    if(_spectr_pulp_view_defs MATCHES "PULP_HAS_DESIGN_IMPORT=1")
+        set(SPECTR_SDK_HAS_DESIGN_IMPORT ON)
     endif()
     unset(_spectr_pulp_view_defs)
 endif()
@@ -663,7 +667,6 @@ add_executable(Spectr-test
     test/test_editor_resize.cpp
     test/test_pattern.cpp
     ${SPECTR_TEST_WEBVIEW_CASES}
-    test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_param_surface.cpp
@@ -683,6 +686,13 @@ add_executable(Spectr-test
     test/test_auto_gain_v2_transients.cpp
     ${SPECTR_TEST_SOURCES}
 )
+if(SPECTR_SDK_HAS_DESIGN_IMPORT)
+    # Import-fidelity exercises pulp::view::parse_claude_bundle, which is
+    # intentionally absent from the normal browser-free SDK. Keep the cases
+    # in the design-import lane instead of allowing an SDK capability mismatch
+    # to make every Windows audio build fail at link time.
+    target_sources(Spectr-test PRIVATE test/test_import_fidelity.cpp)
+endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
