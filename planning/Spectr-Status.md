@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-08-11. This is the concise state-of-the-world for
+_Last updated: 2026-10-09. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Release 1 product state
@@ -137,8 +137,8 @@ It captures before/after screenshots, checks changing analyzer traces, samples
 canvas ink, and verifies every 32- and 64-band hit-test position. A planted
 no-ink mutation must fail the central-canvas ink gate.
 
-Run-2 receipt and screenshots are retained at
-`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run2/receipt.json`.
+Run-3 receipt and screenshots are retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run3/receipt.json`.
 The exact source identities are:
 
 - materialized artifact SHA-256
@@ -154,21 +154,23 @@ complete 32/64-band geometry. The no-ink control was rejected with zero canvas
 ink. CMake registers this as optional
 `Spectr-browser-authored-filter-bank-reimport` when Node and Chrome are
 available, and the acceptance pattern includes it through `^Spectr-browser-`.
-The run-2 receipt SHA-256 is
-`753fbba8bb460486a3b692bbdf0d924d9cf67e3f031ef15f283489b3e1c4beb3`.
+The run-3 receipt SHA-256 is
+`faf5866ff0af4fd676b02d76ea1877ef09cf46d24ff860f8395f160dd56ff174`.
 
 The follow-on full-App closure probe now runs against the current materialized
 runtime, which contains the complete helper/component closure missing from the
 older Claude template. `tools/authored_reimport_full_app_materialized_browser.mjs`
 regenerates and provenance-checks the authored `App`, injects it into a copy of
 the materialized runtime, and compares baseline/re-imported ReactDOM trees in
-Chromium. Run-2 evidence is retained at
-`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run2/receipt.json`
+Chromium. Run-3 evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run3/receipt.json`
 (SHA-256
-`5eac5f8515adfe66b6ccce4537fca1cef88e7de04dea5e017ee10868ae85e005`). Both
-captures mounted three canvas layers, received two analyzer frames, had zero
-runtime/browser errors, and produced the identical screenshot SHA-256
-`8bb7b8171a9bc9cad40452fbd2879bdf185a0b155e8e93eef07e1284d8bc12c2`.
+`6173a88cf17ecf66769df0fd5d76a50a9dbd418c6df31d5257c1d16a5d55438a`). Both
+baseline and re-imported captures mounted three canvas layers, received
+sequence 1 then sequence 2 through the native analyzer publication surface,
+had zero runtime/browser errors, showed positive first-canvas ink, and produced
+the identical settled screenshot SHA-256
+`f91e4a193087f1719415e49267bd20c1595ae5b40f4514d7df8047dd0f6ffff7`.
 The CMake browser lane registers this probe alongside the FilterBank gate.
 
 This closes a staging proof for the complete authored App closure only. It
@@ -176,10 +178,11 @@ still does not replace `editor.html`, establish native Skia/Dawn parity, or
 qualify production cutover.
 
 This is staging/browser evidence only. `resources/editor.html` and the
-materialized runtime were unchanged; the full authored `App` replacement still
-has a real closure gap (`SpectrControlMenu` and newer helpers are absent from
-the older Claude template), so full App parity, native Skia/Dawn parity, and
-production cutover remain open.
+materialized runtime were unchanged. The complete authored `App` closure is
+verified against the current materialized runtime; the older Claude
+`editor.html` template still lacks newer helpers such as `SpectrControlMenu`,
+so replacing that template, native Skia/Dawn parity, and production cutover
+remain open.
 
 ## 2026-10-08 authored App-mount re-import staging proof
 

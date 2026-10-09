@@ -32,14 +32,29 @@ function read(file) { try { return fs.readFileSync(file); } catch (error) { fail
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); }
 function sha256(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 function prepareOutputDirectory(outDir) {
-  if (!fs.existsSync(outDir)) { fs.mkdirSync(outDir, { recursive: true }); return; }
+  const markerPath = path.join(outDir, '.harness-schema');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  let owned = false;
+  if (fs.existsSync(markerPath)) {
+    try { owned = fs.readFileSync(markerPath, 'utf8').trim() === SCHEMA; }
+    catch (error) { fail(`existing output directory has an unreadable harness marker: ${error.message}`); }
+  }
   const receiptPath = path.join(outDir, 'receipt.json');
-  assert(fs.existsSync(receiptPath), `output directory already exists without a prior receipt: ${outDir}`);
-  let receipt;
-  try { receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')); }
-  catch (error) { fail(`existing output directory has an invalid receipt: ${error.message}`); }
-  assert(receipt.schema === SCHEMA, `refusing to clear an output directory from another harness: ${outDir}`);
-  for (const entry of fs.readdirSync(outDir)) fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+  if (!owned && !fs.existsSync(receiptPath)) {
+    assert(fs.readdirSync(outDir).length === 0,
+      `output directory already exists without a prior receipt or harness marker: ${outDir}`);
+    owned = true;
+  }
+  if (!owned && fs.existsSync(receiptPath)) {
+    let receipt;
+    try { receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')); }
+    catch (error) { fail(`existing output directory has an invalid receipt: ${error.message}`); }
+    owned = receipt.schema === SCHEMA;
+  }
+  assert(owned, `refusing to clear an output directory from another harness: ${outDir}`);
+  for (const entry of fs.readdirSync(outDir))
+    if (entry !== '.harness-schema') fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+  write(markerPath, `${SCHEMA}\n`);
 }
 function runNode(script, args, label) {
   const result = spawnSync(process.execPath, [script, ...args], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -107,8 +122,12 @@ function state(n = 64) {
 }
 function bridgeScript() {
   const native = state();
-  const frame = (sequence, phase) => ({ schema_version: 1, epoch: 1, sequence_number: sequence, dropped_frames: 0, source_channels: 2, fft_size: 1024, sample_rate: 48000, floor_db: -96, ceiling_db: 0, visible: { min_hz: 20, max_hz: 20000, magnitude_db: Array.from({ length: 321 }, (_, i) => -92 + 78 * Math.exp(-Math.pow((i / 320 - (0.25 + phase * 0.1)) / 0.06, 2))) }, overview: { min_hz: 20, max_hz: 20000, magnitude_db: [-60, -30, -72] } });
-  return `<script>\nwindow.__spectrHandlers = Object.create(null); window.__spectrRuntimeErrors = []; window.__spectrAnalyzerEmissions = 0; window.__spectrFrameOne = ${JSON.stringify(frame(1, 0))}; window.__spectrFrameTwo = ${JSON.stringify(frame(2, 1))}; window.addEventListener('error', e => window.__spectrRuntimeErrors.push(String(e.message || e.type))); window.addEventListener('unhandledrejection', e => window.__spectrRuntimeErrors.push(String(e.reason || 'unhandled rejection'))); window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = id => clearTimeout(id); Element.prototype.setPointerCapture = () => {}; Element.prototype.releasePointerCapture = () => {}; const state = ${JSON.stringify(native)}; const clone = v => JSON.parse(JSON.stringify(v)); const buildInfo = { ok: true, product_version: '1.0.7-staging', sdk_version: 'pinned-staging', sdk_sha: 'authored-reimport', build_type: 'staging', build_time: '2026-10-09T00:00:00Z' }; window.__spectrEmit = (type, payload) => { if (type === 'analyzer_frame') window.__spectrAnalyzerEmissions++; for (const cb of window.__spectrHandlers[type] || []) cb({ type, payload: clone(payload) }); }; window.pulp = { initial: type => type === 'processing_state_get' ? clone(state) : (type === 'build_info_get' ? buildInfo : null), on: (type, cb) => { (window.__spectrHandlers[type] ||= new Set()).add(cb); return () => window.__spectrHandlers[type].delete(cb); }, postMessage: (type, payload) => { if (type === 'editor_ready') { setTimeout(() => window.__spectrEmit('processing_state_hydrate', state), 0); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameOne), 120); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameTwo), 420); } if (type === 'build_info_get') return Promise.resolve({ ok: true, payload: buildInfo }); return Promise.resolve({ ok: true, payload: { ok: true } }); } };\n</script>`;
+  const frame = (sequence, phase) => {
+    const trace = count => Array.from({ length: count }, (_, i) =>
+      -92 + 78 * Math.exp(-Math.pow((i / (count - 1) - (0.25 + phase * 0.1)) / 0.06, 2)));
+    return { schema_version: 1, epoch: 1, sequence_number: sequence, dropped_frames: 0, source_channels: 2, fft_size: 1024, sample_rate: 48000, floor_db: -96, ceiling_db: 0, visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) }, overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) } };
+  };
+  return `<script>\nwindow.__spectrHandlers = Object.create(null); window.__spectrRuntimeErrors = []; window.__spectrAnalyzerEmissions = 0; window.__spectrFrameOne = ${JSON.stringify(frame(1, 0))}; window.__spectrFrameTwo = ${JSON.stringify(frame(2, 1))}; window.addEventListener('error', e => window.__spectrRuntimeErrors.push(String(e.message || e.type))); window.addEventListener('unhandledrejection', e => window.__spectrRuntimeErrors.push(String(e.reason || 'unhandled rejection'))); window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = id => clearTimeout(id); Element.prototype.setPointerCapture = () => {}; Element.prototype.releasePointerCapture = () => {}; const state = ${JSON.stringify(native)}; const clone = v => JSON.parse(JSON.stringify(v)); const buildInfo = { ok: true, product_version: '1.0.7-staging', sdk_version: 'pinned-staging', sdk_sha: 'authored-reimport', build_type: 'staging', build_time: '2026-10-09T00:00:00Z' }; window.__spectrEmit = (type, payload) => { if (type === 'analyzer_frame') window.__spectrAnalyzerEmissions++; if (type === 'analyzer_frame' && typeof window.__spectrPublishNativeMessage === 'function') window.__spectrPublishNativeMessage(type, payload); for (const cb of window.__spectrHandlers[type] || []) cb({ type, payload: clone(payload) }); }; window.pulp = { initial: type => type === 'processing_state_get' ? clone(state) : (type === 'build_info_get' ? buildInfo : null), on: (type, cb) => { (window.__spectrHandlers[type] ||= new Set()).add(cb); return () => window.__spectrHandlers[type].delete(cb); }, postMessage: (type, payload) => { if (type === 'editor_ready') { setTimeout(() => window.__spectrEmit('processing_state_hydrate', state), 0); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameOne), 120); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameTwo), 420); } if (type === 'build_info_get') return Promise.resolve({ ok: true, payload: buildInfo }); return Promise.resolve({ ok: true, payload: { ok: true } }); } };\n</script>`;
 }
 function reactVendorScripts() {
   const editor = read(path.join(REPO, 'resources', 'editor.html')).toString('utf8');
@@ -141,13 +160,96 @@ async function browser(files, chrome, outDir) {
     let ws; const deadline = Date.now() + 15000; while (!ws && Date.now() < deadline) { try { ws = (await (await fetch(`http://127.0.0.1:${debugPort}/json`)).json()).find(p => p.type === 'page')?.webSocketDebuggerUrl; } catch {} if (!ws) await new Promise(r => setTimeout(r, 50)); } assert(ws, `Chrome did not start: ${stderr}`);
     socket = new WebSocket(ws); await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); }); socket.addEventListener('message', event => { const msg = JSON.parse(event.data); if (msg.method === 'Runtime.exceptionThrown') errors.push(msg.params.exceptionDetails?.text || 'exception'); if (msg.method === 'Runtime.consoleAPICalled' && ['error', 'assert'].includes(msg.params.type)) { const text = (msg.params.args || []).map(arg => arg.value ?? arg.description ?? '').join(' '); if (!text.startsWith('Warning:')) errors.push(`console.${msg.params.type}:${text}`); } if (!msg.id || !pending.has(msg.id)) return; const waiter = pending.get(msg.id); pending.delete(msg.id); msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result); });
     const command = (method, params = {}) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); }); const evaluate = async expr => { const result = await command('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'evaluation failed'); return result.result.value; }; await command('Page.enable'); await command('Runtime.enable');
-    const results = {}; for (const name of Object.keys(files)) { errors.length = 0; const url = `http://127.0.0.1:${server.address().port}/${name}`; await command('Page.navigate', { url }); const readyDeadline = Date.now() + 45000; while (Date.now() < readyDeadline && !(await evaluate(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete' && document.querySelector('#root')?.children.length > 0`))) await new Promise(r => setTimeout(r, 100)); const ready = await evaluate(`location.href === ${JSON.stringify(url)} && document.querySelector('#root')?.children.length > 0`); if (!ready) { const diagnostic = await evaluate(`({ body: document.body?.innerText?.slice(-1400) || '', root: document.querySelector('#root')?.outerHTML?.slice(0, 700) || '', error: document.getElementById('__bundler_err')?.textContent || '', runtime: window.__spectrRuntimeErrors || [], title: document.title })`); fail(`${name} did not mount the root: ${JSON.stringify(diagnostic)}`); } await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 700))))'); const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, ready: document.querySelector("#root")?.children.length > 0, canvas: window.__spectrCanvasSummary(), analyzer: window.__spectrAnalyzerEmissions, errors: window.__spectrRuntimeErrors || [] })'); const shot = await command('Page.captureScreenshot', { format: 'png' }); const bytes = Buffer.from(shot.data, 'base64'); write(path.join(outDir, `${name}.png`), bytes); results[name] = { ...summary, browser_errors: [...errors], screenshot: { path: path.join(outDir, `${name}.png`), sha256: sha256(bytes), bytes: bytes.length } }; }
-    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases >= 2 && results.reimported.canvases >= 2, 'App did not render both canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
+    const results = {};
+    for (const name of Object.keys(files)) {
+      errors.length = 0;
+      const url = `http://127.0.0.1:${server.address().port}/${name}`;
+      await command('Page.navigate', { url });
+      const readyDeadline = Date.now() + 45000;
+      while (Date.now() < readyDeadline && !(await evaluate(
+        `location.href === ${JSON.stringify(url)} && document.readyState === 'complete' && document.querySelector('#root')?.children.length > 0`)))
+        await new Promise(r => setTimeout(r, 100));
+      const ready = await evaluate(
+        `location.href === ${JSON.stringify(url)} && document.querySelector('#root')?.children.length > 0`);
+      if (!ready) {
+        const diagnostic = await evaluate(`({ body: document.body?.innerText?.slice(-1400) || '', root: document.querySelector('#root')?.outerHTML?.slice(0, 700) || '', error: document.getElementById('__bundler_err')?.textContent || '', runtime: window.__spectrRuntimeErrors || [], title: document.title })`);
+        fail(`${name} did not mount the root: ${JSON.stringify(diagnostic)}`);
+      }
+      await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      const firstSequence = await evaluate(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + 5000;
+        const poll = () => {
+          const frame = window.SpectrAnalyzer?.debugSnapshot?.();
+          if (frame && frame.sequence_number >= 1) { resolve(frame.sequence_number); return; }
+          if (Date.now() >= deadline) { reject(new Error('first analyzer frame did not arrive')); return; }
+          setTimeout(poll, 20);
+        };
+        poll();
+      })`);
+      assert(firstSequence === 1, `${name} first analyzer sequence was ${firstSequence}, expected 1`);
+      const first = await evaluate('window.SpectrAnalyzer.debugSnapshot()');
+      const canvasBefore = await evaluate('window.__spectrCanvasSummary()');
+      const beforeShot = await command('Page.captureScreenshot', { format: 'png' });
+      const beforeBytes = Buffer.from(beforeShot.data, 'base64');
+      const beforePath = path.join(outDir, `${name}.before.png`);
+      write(beforePath, beforeBytes);
+      const secondSequence = await evaluate(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + 5000;
+        const poll = () => {
+          const frame = window.SpectrAnalyzer?.debugSnapshot?.();
+          if (frame && frame.sequence_number >= 2) { resolve(frame.sequence_number); return; }
+          if (Date.now() >= deadline) { reject(new Error('second analyzer frame did not arrive')); return; }
+          setTimeout(poll, 20);
+        };
+        poll();
+      })`);
+      assert(secondSequence >= 2, `${name} second analyzer sequence was ${secondSequence}, expected >= 2`);
+      await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 300))))');
+      const second = await evaluate('window.SpectrAnalyzer.debugSnapshot()');
+      const canvasAfter = await evaluate('window.__spectrCanvasSummary()');
+      const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, ready: document.querySelector("#root")?.children.length > 0, analyzer: window.__spectrAnalyzerEmissions, errors: window.__spectrRuntimeErrors || [] })');
+      const shot = await command('Page.captureScreenshot', { format: 'png' });
+      const bytes = Buffer.from(shot.data, 'base64');
+      const screenshotPath = path.join(outDir, `${name}.png`);
+      write(screenshotPath, bytes);
+      const analyzerTrace = {
+        first_sha256: sha256(Buffer.from(JSON.stringify(first?.visible?.magnitude_db || []))),
+        second_sha256: sha256(Buffer.from(JSON.stringify(second?.visible?.magnitude_db || []))),
+        first_sequence: first?.sequence_number,
+        second_sequence: second?.sequence_number,
+        sequence_delta: (second?.sequence_number || 0) - (first?.sequence_number || 0),
+      };
+      results[name] = {
+        ...summary,
+        browser_errors: [...errors],
+        canvasBefore,
+        canvasAfter,
+        analyzerSnapshot: second,
+        analyzerTrace,
+        screenshot: { path: screenshotPath, sha256: sha256(bytes), bytes: bytes.length },
+        screenshots: {
+          before: { path: beforePath, sha256: sha256(beforeBytes), bytes: beforeBytes.length },
+          after: { path: screenshotPath, sha256: sha256(bytes), bytes: bytes.length },
+        },
+      };
+      assert(summary.errors.length === 0, `${name} page errors: ${summary.errors.join('; ')}`);
+      assert(summary.analyzer >= 2, `${name} did not receive both deterministic analyzer frames`);
+      assert(summary.canvases >= 2, `${name} did not render both canvas layers`);
+      assert(Array.isArray(canvasBefore) && canvasBefore[0]?.ink > 0,
+        `${name} first analyzer frame central canvas ink is missing: ${JSON.stringify(canvasBefore)}`);
+      assert(Array.isArray(canvasAfter) && canvasAfter[0]?.ink > 0,
+        `${name} settled central canvas ink is missing: ${JSON.stringify(canvasAfter)}`);
+      assert(analyzerTrace.first_sha256 !== analyzerTrace.second_sha256,
+        `${name} analyzer trace did not change between deterministic frames`);
+      assert(analyzerTrace.second_sequence >= 2,
+        `${name} analyzer snapshot did not retain sequence >= 2: ${JSON.stringify(analyzerTrace)}`);
+    }
+    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases >= 2 && results.reimported.canvases >= 2, 'App did not render both canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); assert(results.baseline.screenshot.sha256 === results.reimported.screenshot.sha256, `settled screenshots differ: ${results.baseline.screenshot.sha256} vs ${results.reimported.screenshot.sha256}`); return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
   } finally { try { socket?.close(); } catch {} if (child && !child.killed) child.kill('SIGTERM'); await new Promise(r => setTimeout(r, 250)); if (child && !child.killed) child.kill('SIGKILL'); if (server.closeAllConnections) server.closeAllConnections(); await new Promise(r => server.close(() => r())); fs.rmSync(profile, { recursive: true, force: true }); }
 }
 async function main(argv) {
   const args = parseArgs(argv); if (args.help) { console.log('usage: node tools/authored_reimport_full_app_materialized_browser.mjs --artifact FILE --chrome PATH --out DIR'); return; }
   for (const key of ['artifact', 'out']) assert(args[key], `--${key} is required`); const artifact = path.resolve(args.artifact); const outDir = path.resolve(args.out); const chrome = path.resolve(args.chrome || CHROME_DEFAULT); assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`); prepareOutputDirectory(outDir);
-  const staged = stage(artifact); try { const document = JSON.parse(read(artifact)); const html = document.html; const compiled = compile(staged.source); const authored = JSON.parse(read(staged.manifest)).components.find(item => item.name === 'App'); assert(authored, 'App source provenance component missing'); assert(sha256(Buffer.from(sliceFunction(html, 'App'))) === authored.source_sha256, 'App source provenance hash mismatch'); const patched = patchApp(html, compiled.compiled); const baseline = Buffer.from(injected(html)); const reimported = Buffer.from(injected(patched)); write(path.join(outDir, 'baseline.html'), baseline); write(path.join(outDir, 'reimported.html'), reimported); const run = await browser({ baseline: baseline, reimported: reimported }, chrome, outDir); const receipt = { schema: SCHEMA, version: 1, source: { artifact: path.basename(artifact), artifact_sha256: sha256(read(artifact)), app_source_sha256: authored.source_sha256, app_emitted_sha256: JSON.parse(read(path.join(staged.emission, 'authored-modules.manifest.json'))).modules.find(item => item.name === 'App').output_sha256 }, checks: { closure_verified: true, authored_app_compiled: true, app_source_provenance: true, browser_ready: true, root_dom_parity: true, canvas_layers: true, analyzer_frames: true, console_network_clean: true }, browser: run, scope: { materialized_runtime_baseline: true, editor_html_unchanged: true, runtime_artifact_changed: false, full_native_parity: false, production_cutover: false } }; write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`); process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`); } finally { fs.rmSync(staged.dir, { recursive: true, force: true }); }
+  const staged = stage(artifact); try { const document = JSON.parse(read(artifact)); const html = document.html; const compiled = compile(staged.source); const authored = JSON.parse(read(staged.manifest)).components.find(item => item.name === 'App'); assert(authored, 'App source provenance component missing'); assert(sha256(Buffer.from(sliceFunction(html, 'App'))) === authored.source_sha256, 'App source provenance hash mismatch'); const patched = patchApp(html, compiled.compiled); const baseline = Buffer.from(injected(html)); const reimported = Buffer.from(injected(patched)); write(path.join(outDir, 'baseline.html'), baseline); write(path.join(outDir, 'reimported.html'), reimported); const run = await browser({ baseline: baseline, reimported: reimported }, chrome, outDir); const receipt = { schema: SCHEMA, version: 1, source: { artifact: path.basename(artifact), artifact_sha256: sha256(read(artifact)), app_source_sha256: authored.source_sha256, app_emitted_sha256: JSON.parse(read(path.join(staged.emission, 'authored-modules.manifest.json'))).modules.find(item => item.name === 'App').output_sha256 }, checks: { closure_verified: true, authored_app_compiled: true, app_source_provenance: true, browser_ready: true, root_dom_parity: true, canvas_layers: true, analyzer_frames: true, console_network_clean: true, settled_screenshot_parity: true }, browser: run, scope: { materialized_runtime_baseline: true, editor_html_unchanged: true, runtime_artifact_changed: false, full_native_parity: false, production_cutover: false } }; write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`); process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`); } finally { fs.rmSync(staged.dir, { recursive: true, force: true }); }
 }
 main(process.argv.slice(2)).catch(error => { console.error(error.stack || error.message); process.exit(1); });

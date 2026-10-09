@@ -41,14 +41,28 @@ function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true
 function sha256(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 
 function prepareOutputDirectory(outDir) {
-  if (!fs.existsSync(outDir)) { fs.mkdirSync(outDir, { recursive: true }); return; }
-  const receiptPath = path.join(outDir, 'receipt.json');
-  assert(fs.existsSync(receiptPath), `output directory already exists without a prior receipt: ${outDir}`);
-  let receipt;
-  try { receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')); }
-  catch (error) { fail(`existing output directory has an invalid receipt: ${error.message}`); }
-  assert(receipt.schema === SCHEMA, `refusing to clear an output directory from another harness: ${outDir}`);
-  for (const entry of fs.readdirSync(outDir)) fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+  const markerPath = path.join(outDir, '.harness-schema');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  let owned = false;
+  if (fs.existsSync(markerPath)) {
+    try { owned = fs.readFileSync(markerPath, 'utf8').trim() === SCHEMA; }
+    catch (error) { fail(`existing output directory has an unreadable harness marker: ${error.message}`); }
+  }
+  if (!owned && !fs.existsSync(path.join(outDir, 'receipt.json'))) {
+    assert(!fs.existsSync(outDir) || fs.readdirSync(outDir).length === 0,
+      `output directory already exists without a prior receipt or harness marker: ${outDir}`);
+    owned = true;
+  }
+  if (!owned && fs.existsSync(path.join(outDir, 'receipt.json'))) {
+    let receipt;
+    try { receipt = JSON.parse(fs.readFileSync(path.join(outDir, 'receipt.json'), 'utf8')); }
+    catch (error) { fail(`existing output directory has an invalid receipt: ${error.message}`); }
+    owned = receipt.schema === SCHEMA;
+  }
+  assert(owned, `refusing to clear an output directory from another harness: ${outDir}`);
+  for (const entry of fs.readdirSync(outDir))
+    if (entry !== '.harness-schema') fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+  write(markerPath, `${SCHEMA}\n`);
 }
 
 function parseArgs(argv) {
@@ -662,32 +676,33 @@ async function main(argv) {
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
   prepareOutputDirectory(outDir);
   assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`);
-  const { html, template, originalFilterBank, directRuntime } = templateFromEditor(editor);
-  const authored = read(sourcePath).toString('utf8');
-  const compiled = compileAuthored(authored, sourcePath);
-  const patched32 = makePage(patchFilterBank(html, originalFilterBank, compiled), bridgeScript(32), instrumentScript());
-  const patched64 = makePage(patchFilterBank(html, originalFilterBank, compiled), bridgeScript(64), instrumentScript());
-  const negative64 = makePage(patchFilterBank(html, originalFilterBank, compiled, true), bridgeScript(64), instrumentScript());
-  const files = { 'patched-32.html': Buffer.from(patched32), 'patched-64.html': Buffer.from(patched64) };
-  write(path.join(outDir, 'source.tsx'), authored);
-  write(path.join(outDir, 'compiled.cjs'), compiled);
-  write(path.join(outDir, 'patched-32.html'), patched32);
-  write(path.join(outDir, 'patched-64.html'), patched64);
-  // The positive lanes are deliberately strict.  Run the no-ink page in its
-  // own Chromium pass below so its failure cannot be hidden by a later pass.
-  const browser = await browserRun(files, chrome, outDir);
-  const negativeOut = path.join(outDir, 'negative-no-ink');
-  fs.mkdirSync(negativeOut, { recursive: true });
-  const negative = await browserRun({ 'negative-64.html': Buffer.from(negative64) }, chrome, negativeOut)
-    .then(result => ({ status: 'unexpected-pass', result }))
-    .catch(error => {
-      const message = String(error.message);
-      assert(message.includes('central canvas ink is too small'),
-        `planted no-ink control failed for an unrelated reason: ${message}`);
-      return { status: 'passed', error: message };
-    });
-  assert(negative.status === 'passed', 'planted no-ink control unexpectedly passed the positive gate');
-  const receipt = {
+  try {
+    const { html, template, originalFilterBank, directRuntime } = templateFromEditor(editor);
+    const authored = read(sourcePath).toString('utf8');
+    const compiled = compileAuthored(authored, sourcePath);
+    const patched32 = makePage(patchFilterBank(html, originalFilterBank, compiled), bridgeScript(32), instrumentScript());
+    const patched64 = makePage(patchFilterBank(html, originalFilterBank, compiled), bridgeScript(64), instrumentScript());
+    const negative64 = makePage(patchFilterBank(html, originalFilterBank, compiled, true), bridgeScript(64), instrumentScript());
+    const files = { 'patched-32.html': Buffer.from(patched32), 'patched-64.html': Buffer.from(patched64) };
+    write(path.join(outDir, 'source.tsx'), authored);
+    write(path.join(outDir, 'compiled.cjs'), compiled);
+    write(path.join(outDir, 'patched-32.html'), patched32);
+    write(path.join(outDir, 'patched-64.html'), patched64);
+    // The positive lanes are deliberately strict.  Run the no-ink page in its
+    // own Chromium pass below so its failure cannot be hidden by a later pass.
+    const browser = await browserRun(files, chrome, outDir);
+    const negativeOut = path.join(outDir, 'negative-no-ink');
+    fs.mkdirSync(negativeOut, { recursive: true });
+    const negative = await browserRun({ 'negative-64.html': Buffer.from(negative64) }, chrome, negativeOut)
+      .then(result => ({ status: 'unexpected-pass', result }))
+      .catch(error => {
+        const message = String(error.message);
+        assert(message.includes('central canvas ink is too small'),
+          `planted no-ink control failed for an unrelated reason: ${message}`);
+        return { status: 'passed', error: message };
+      });
+    assert(negative.status === 'passed', 'planted no-ink control unexpectedly passed the positive gate');
+    const receipt = {
     schema: SCHEMA,
     version: 1,
     source: {
@@ -709,15 +724,17 @@ async function main(argv) {
     browser,
     scope: { editor_html_unchanged: true, runtime_artifact_changed: false, direct_materialized_runtime: directRuntime, full_native_parity: false, production_cutover: false },
   };
-  if (generated) {
-    receipt.source.artifact = path.basename(path.resolve(args.artifact));
-    receipt.source.artifact_sha256 = sha256(read(path.resolve(args.artifact)));
-    receipt.source.dependency_manifest_sha256 = sha256(read(generated.manifest));
-    receipt.source.generated_module_manifest_sha256 = sha256(read(path.join(generated.emission, 'authored-modules.manifest.json')));
+    if (generated) {
+      receipt.source.artifact = path.basename(path.resolve(args.artifact));
+      receipt.source.artifact_sha256 = sha256(read(path.resolve(args.artifact)));
+      receipt.source.dependency_manifest_sha256 = sha256(read(generated.manifest));
+      receipt.source.generated_module_manifest_sha256 = sha256(read(path.join(generated.emission, 'authored-modules.manifest.json')));
+    }
+    write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+  } finally {
+    if (generated) fs.rmSync(generated.stage, { recursive: true, force: true });
   }
-  write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
-  process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
-  if (generated) fs.rmSync(generated.stage, { recursive: true, force: true });
 }
 
 main(process.argv.slice(2)).catch(error => { console.error(error.stack || error.message); process.exit(1); });
