@@ -270,6 +270,26 @@ set(SPECTR_NATIVE_ASSET_SOURCES
     # design.js; it assigns one string to globalThis.SPECTR_HELP_TEXT.
     native-ui/materialized/help-content.js
 )
+
+# Fail closed before the native asset encoder can capture an incomplete
+# materialized document.  These selectors are the stable product bridge used
+# by native_shot and the shipping native editor; embedding a runtime without
+# them produces a visually valid home frame that cannot satisfy interaction
+# contracts.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+    RESULT_VARIABLE _spectr_native_marker_check
+    OUTPUT_VARIABLE _spectr_native_marker_output
+    ERROR_VARIABLE _spectr_native_marker_error
+)
+if(NOT _spectr_native_marker_check EQUAL 0)
+    message(FATAL_ERROR
+        "Spectr native materialized runtime failed marker contract:\n"
+        "${_spectr_native_marker_output}${_spectr_native_marker_error}")
+endif()
 foreach(_forbidden_native_asset
         resources/editor.html
         native-ui/materialized/editor.ir.json)
