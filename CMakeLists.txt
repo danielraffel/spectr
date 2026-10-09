@@ -468,6 +468,34 @@ if(SPECTR_BUILD_FORGE_ADAPTER)
     add_library(Spectr::ForgeAdapter ALIAS Spectr_ForgeAdapter)
     target_include_directories(Spectr_ForgeAdapter INTERFACE
         "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    # Spectr's public Processor type has a build contract: the editor-enabled
+    # class layout and its geometry/version constants must match the owner core
+    # object linked below. Export those definitions through the consumer seam
+    # so Forge (and any other in-process host) cannot compile a mismatched
+    # header view by including <spectr/forge_adapter.hpp> alone.
+    target_compile_definitions(Spectr_ForgeAdapter INTERFACE
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_NATIVE_EDITOR=1
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        $<$<BOOL:${SPECTR_SHARED_PRODUCT_ACCEPTANCE}>:SPECTR_SHARED_PRODUCT_ACCEPTANCE=1>
+        $<$<BOOL:${SPECTR_EXPERIMENTAL_SHARED_RENDERER}>:SPECTR_EXPERIMENTAL_SHARED_RENDERER=1>)
+    # pulp_add_plugin exposes the product implementation as an OBJECT target;
+    # an interface link alone does not carry those objects to a downstream
+    # executable.  Publish the exact owner objects through the adapter so a
+    # Forge GraphNode consumer receives the same Processor implementation as
+    # Spectr's format wrappers.
+    target_sources(Spectr_ForgeAdapter INTERFACE
+        $<TARGET_OBJECTS:${SPECTR_NATIVE_CORE_TARGET}>)
     target_link_libraries(Spectr_ForgeAdapter INTERFACE
         "${SPECTR_NATIVE_CORE_TARGET}")
 endif()
