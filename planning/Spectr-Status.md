@@ -341,3 +341,15 @@ The CMake browser lane now registers this parity harness when Node and Chrome
 are available. Commit, governed gates, and merge remain open; this is scoped
 adapter parity evidence and does not claim full editor/native pixel parity or
 production cutover.
+
+Adversarial review found no functional issue. Its independent checks passed:
+six runtime-client contract tests, generated/client replay and materialized
+runtime synchronization, JS syntax, paint micro and commit-scope tests, eight
+full-App runtime-surface tests, five runtime-facade contract tests, and the
+same VM/Chromium parity harness. A deterministic exhaustive probe exercised
+all 54 generated handlers plus adapter-only `editor_ready`: baseline and
+facade each made 56 processor calls with identical JSON results and traces
+(`firstDiff = -1`). It used a fake JSON echo dispatcher, so this establishes
+command-adapter behavior rather than full `editor.html` or native pixel parity.
+The review's one documentation mismatch in the generated ESM header was fixed
+and the generated module and manifest were refreshed.

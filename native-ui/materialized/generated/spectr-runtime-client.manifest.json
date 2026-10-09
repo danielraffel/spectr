@@ -421,8 +421,8 @@
   "generated": {
     "spectr-runtime-client.mjs": {
       "path": "spectr-runtime-client.mjs",
-      "sha256": "a6ee34de47604b6e70bfa419fbdd6ec61d2b2261fc5bf595372129604af287d8",
-      "bytes": 6876
+      "sha256": "16acb165a9313d1ec4de942cd3754ce0fd625dab164c148498408f387cf20c85",
+      "bytes": 6930
     },
     "spectr-runtime-client.d.ts": {
       "path": "spectr-runtime-client.d.ts",
