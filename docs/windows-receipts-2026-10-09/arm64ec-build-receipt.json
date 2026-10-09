@@ -38,6 +38,11 @@
       "path": "C:\\builds\\spectr-arm64ec\\CLAP\\Spectr.clap",
       "bytes": null,
       "sha256": "B1FC43BE4A8F107739559D06240BA164D25A662D29D6EFF00C8AA1D4542B9DD4"
+    },
+    "standalone": {
+      "path": "C:\\builds\\spectr-arm64ec\\Spectr.exe",
+      "bytes": 9345536,
+      "sha256": "CFA42039403F6625CFA0D4E4016E1E8B8E5AD546730755CCD12F3E762C974CF7"
     }
   },
   "runtime": {
@@ -46,7 +51,7 @@
     "ableton": "not installed",
     "audio_quality_lab": "not run for this ARM64EC artifact",
     "perfetto": "not captured for this ARM64EC artifact",
-    "standalone": "build attempted; blocked by stale Debug pulp-standalone-native.lib in SDK (LIBCMTD/iterator 2)"
+    "standalone": "Release executable linked after replacing stale Debug pulp-standalone-native.lib; interactive desktop screenshot still open"
   },
   "acceptance": "BUILD_AND_FOCUSED_AUDIO_PROVEN_DAW_UNVERIFIED"
 }
