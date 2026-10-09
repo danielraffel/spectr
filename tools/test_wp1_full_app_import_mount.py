@@ -107,7 +107,7 @@ class FullAppImportMountTest(unittest.TestCase):
         contract.write_text(json.dumps(data, indent=2) + "\n")
         result = self.gate(surface=surface, allowlist=ALLOWLIST, out=self.root / "drift-output")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runtime surface emission identity changed", result.stderr)
+        self.assertIn("runtime surface regeneration differs from supplied receipt", result.stderr)
 
     def test_runtime_surface_emission_identity_drift_is_rejected(self):
         surface = self.root / "emission-drift-surface"
