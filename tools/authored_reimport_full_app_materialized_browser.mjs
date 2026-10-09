@@ -91,13 +91,18 @@ function sliceFunction(source, name) {
 }
 function stage(artifact) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-authored-full-app-materialized-'));
-  const manifest = path.join(dir, 'manifest.json'); const emission = path.join(dir, 'emitted');
-  runNode(path.join(ROOT, 'wp1_dependency_manifest.mjs'), ['--artifact', artifact, '--root', 'App', '--out', manifest], 'dependency manifest');
-  runNode(path.join(ROOT, 'wp1_authored_module_emitter.mjs'), ['--artifact', artifact, '--manifest', manifest, '--out', emission], 'authored module emission');
-  const data = JSON.parse(read(path.join(emission, 'authored-modules.manifest.json')));
-  const app = data.modules.find(item => item.name === 'App');
-  assert(app, 'emitted closure has no App module');
-  return { dir, manifest, emission, app, source: path.join(emission, 'components', 'App.tsx') };
+  try {
+    const manifest = path.join(dir, 'manifest.json'); const emission = path.join(dir, 'emitted');
+    runNode(path.join(ROOT, 'wp1_dependency_manifest.mjs'), ['--artifact', artifact, '--root', 'App', '--out', manifest], 'dependency manifest');
+    runNode(path.join(ROOT, 'wp1_authored_module_emitter.mjs'), ['--artifact', artifact, '--manifest', manifest, '--out', emission], 'authored module emission');
+    const data = JSON.parse(read(path.join(emission, 'authored-modules.manifest.json')));
+    const app = data.modules.find(item => item.name === 'App');
+    assert(app, 'emitted closure has no App module');
+    return { dir, manifest, emission, app, source: path.join(emission, 'components', 'App.tsx') };
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 function compile(sourcePath) {
   const source = read(sourcePath).toString('utf8');
@@ -112,10 +117,16 @@ function compile(sourcePath) {
 }
 function patchApp(html, compiled) {
   const original = sliceFunction(html, 'App');
-  const wrapper = `function App() {\n  const module = { exports: {} };\n  const exports = module.exports;\n  ${compiled}\n  return module.exports.App.apply(this, arguments);\n}`;
+  const wrapper = `function App() {\n  globalThis.__spectrAuthoredAppInvocations = (globalThis.__spectrAuthoredAppInvocations || 0) + 1;\n  const module = { exports: {} };\n  const exports = module.exports;\n  ${compiled}\n  return module.exports.App.apply(this, arguments);\n}`;
   const at = html.indexOf(original);
   assert(at >= 0 && html.indexOf(original, at + 1) < 0, 'materialized App declaration is missing or duplicated');
   return html.slice(0, at) + wrapper + html.slice(at + original.length);
+}
+function mutatePatchedApp(html) {
+  const token = 'return module.exports.App.apply(this, arguments);';
+  assert(html.includes(token), 'authored App invocation marker is missing from patched App');
+  return html.replace(token,
+    "const rendered = module.exports.App.apply(this, arguments); return React.createElement(React.Fragment, null, rendered, React.createElement('div', { 'data-spectr-negative-app': 'true', style: { display: 'none' } }));");
 }
 function state(n = 64) {
   return { revision: 0, n_visible: n, gain_db: Array.from({ length: n }, (_, i) => [12, 6, 0, -6][i % 4]), muted: Array(n).fill(false), min_hz: 20, max_hz: 20000, motion_mode: 0, analyzer_mode: 2, edit_mode: 0, visualization_mode: 2, snapshots: { A: { populated: false, gain_db: [], muted: [] }, B: { populated: false, gain_db: [], muted: [] } }, patterns_json: JSON.stringify({ format: 'spectr.patterns', version: 1, default_id: 'factory:flat', patterns: [] }) };
@@ -127,7 +138,7 @@ function bridgeScript() {
       -92 + 78 * Math.exp(-Math.pow((i / (count - 1) - (0.25 + phase * 0.1)) / 0.06, 2)));
     return { schema_version: 1, epoch: 1, sequence_number: sequence, dropped_frames: 0, source_channels: 2, fft_size: 1024, sample_rate: 48000, floor_db: -96, ceiling_db: 0, visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) }, overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) } };
   };
-  return `<script>\nwindow.__spectrHandlers = Object.create(null); window.__spectrRuntimeErrors = []; window.__spectrAnalyzerEmissions = 0; window.__spectrFrameOne = ${JSON.stringify(frame(1, 0))}; window.__spectrFrameTwo = ${JSON.stringify(frame(2, 1))}; window.addEventListener('error', e => window.__spectrRuntimeErrors.push(String(e.message || e.type))); window.addEventListener('unhandledrejection', e => window.__spectrRuntimeErrors.push(String(e.reason || 'unhandled rejection'))); window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = id => clearTimeout(id); Element.prototype.setPointerCapture = () => {}; Element.prototype.releasePointerCapture = () => {}; const state = ${JSON.stringify(native)}; const clone = v => JSON.parse(JSON.stringify(v)); const buildInfo = { ok: true, product_version: '1.0.7-staging', sdk_version: 'pinned-staging', sdk_sha: 'authored-reimport', build_type: 'staging', build_time: '2026-10-09T00:00:00Z' }; window.__spectrEmit = (type, payload) => { if (type === 'analyzer_frame') window.__spectrAnalyzerEmissions++; if (type === 'analyzer_frame' && typeof window.__spectrPublishNativeMessage === 'function') window.__spectrPublishNativeMessage(type, payload); for (const cb of window.__spectrHandlers[type] || []) cb({ type, payload: clone(payload) }); }; window.pulp = { initial: type => type === 'processing_state_get' ? clone(state) : (type === 'build_info_get' ? buildInfo : null), on: (type, cb) => { (window.__spectrHandlers[type] ||= new Set()).add(cb); return () => window.__spectrHandlers[type].delete(cb); }, postMessage: (type, payload) => { if (type === 'editor_ready') { setTimeout(() => window.__spectrEmit('processing_state_hydrate', state), 0); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameOne), 120); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameTwo), 420); } if (type === 'build_info_get') return Promise.resolve({ ok: true, payload: buildInfo }); return Promise.resolve({ ok: true, payload: { ok: true } }); } };\n</script>`;
+  return `<script>\nwindow.__spectrHandlers = Object.create(null); window.__spectrRuntimeErrors = []; window.__spectrAnalyzerEmissions = 0; window.__spectrAuthoredAppInvocations = 0; window.__spectrFrameOne = ${JSON.stringify(frame(1, 0))}; window.__spectrFrameTwo = ${JSON.stringify(frame(2, 1))}; window.addEventListener('error', e => window.__spectrRuntimeErrors.push(String(e.message || e.type))); window.addEventListener('unhandledrejection', e => window.__spectrRuntimeErrors.push(String(e.reason || 'unhandled rejection'))); window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 16); window.cancelAnimationFrame = id => clearTimeout(id); Element.prototype.setPointerCapture = () => {}; Element.prototype.releasePointerCapture = () => {}; const state = ${JSON.stringify(native)}; const clone = v => JSON.parse(JSON.stringify(v)); const buildInfo = { ok: true, product_version: '1.0.7-staging', sdk_version: 'pinned-staging', sdk_sha: 'authored-reimport', build_type: 'staging', build_time: '2026-10-09T00:00:00Z' }; window.__spectrEmit = (type, payload) => { if (type === 'analyzer_frame') window.__spectrAnalyzerEmissions++; if (type === 'analyzer_frame' && typeof window.__spectrPublishNativeMessage === 'function') window.__spectrPublishNativeMessage(type, payload); for (const cb of window.__spectrHandlers[type] || []) cb({ type, payload: clone(payload) }); }; window.pulp = { initial: type => type === 'processing_state_get' ? clone(state) : (type === 'build_info_get' ? buildInfo : null), on: (type, cb) => { (window.__spectrHandlers[type] ||= new Set()).add(cb); return () => window.__spectrHandlers[type].delete(cb); }, postMessage: (type, payload) => { if (type === 'editor_ready') { setTimeout(() => window.__spectrEmit('processing_state_hydrate', state), 0); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameOne), 120); setTimeout(() => window.__spectrEmit('analyzer_frame', window.__spectrFrameTwo), 420); } if (type === 'build_info_get') return Promise.resolve({ ok: true, payload: buildInfo }); return Promise.resolve({ ok: true, payload: { ok: true } }); } };\n</script>`;
 }
 function reactVendorScripts() {
   const editor = read(path.join(REPO, 'resources', 'editor.html')).toString('utf8');
@@ -207,7 +218,7 @@ async function browser(files, chrome, outDir) {
       await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 300))))');
       const second = await evaluate('window.SpectrAnalyzer.debugSnapshot()');
       const canvasAfter = await evaluate('window.__spectrCanvasSummary()');
-      const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, ready: document.querySelector("#root")?.children.length > 0, analyzer: window.__spectrAnalyzerEmissions, errors: window.__spectrRuntimeErrors || [] })');
+      const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, ready: document.querySelector("#root")?.children.length > 0, analyzer: window.__spectrAnalyzerEmissions, authoredAppInvocations: window.__spectrAuthoredAppInvocations || 0, errors: window.__spectrRuntimeErrors || [] })');
       const shot = await command('Page.captureScreenshot', { format: 'png' });
       const bytes = Buffer.from(shot.data, 'base64');
       const screenshotPath = path.join(outDir, `${name}.png`);
@@ -234,6 +245,8 @@ async function browser(files, chrome, outDir) {
       };
       assert(summary.errors.length === 0, `${name} page errors: ${summary.errors.join('; ')}`);
       assert(summary.analyzer >= 2, `${name} did not receive both deterministic analyzer frames`);
+      assert(name === 'baseline' ? summary.authoredAppInvocations === 0 : summary.authoredAppInvocations > 0,
+        `${name} authored App invocation count was ${summary.authoredAppInvocations}`);
       assert(summary.canvases >= 2, `${name} did not render both canvas layers`);
       assert(Array.isArray(canvasBefore) && canvasBefore[0]?.ink > 0,
         `${name} first analyzer frame central canvas ink is missing: ${JSON.stringify(canvasBefore)}`);
@@ -248,8 +261,89 @@ async function browser(files, chrome, outDir) {
   } finally { try { socket?.close(); } catch {} if (child && !child.killed) child.kill('SIGTERM'); await new Promise(r => setTimeout(r, 250)); if (child && !child.killed) child.kill('SIGKILL'); if (server.closeAllConnections) server.closeAllConnections(); await new Promise(r => server.close(() => r())); fs.rmSync(profile, { recursive: true, force: true }); }
 }
 async function main(argv) {
-  const args = parseArgs(argv); if (args.help) { console.log('usage: node tools/authored_reimport_full_app_materialized_browser.mjs --artifact FILE --chrome PATH --out DIR'); return; }
-  for (const key of ['artifact', 'out']) assert(args[key], `--${key} is required`); const artifact = path.resolve(args.artifact); const outDir = path.resolve(args.out); const chrome = path.resolve(args.chrome || CHROME_DEFAULT); assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`); prepareOutputDirectory(outDir);
-  const staged = stage(artifact); try { const document = JSON.parse(read(artifact)); const html = document.html; const compiled = compile(staged.source); const authored = JSON.parse(read(staged.manifest)).components.find(item => item.name === 'App'); assert(authored, 'App source provenance component missing'); assert(sha256(Buffer.from(sliceFunction(html, 'App'))) === authored.source_sha256, 'App source provenance hash mismatch'); const patched = patchApp(html, compiled.compiled); const baseline = Buffer.from(injected(html)); const reimported = Buffer.from(injected(patched)); write(path.join(outDir, 'baseline.html'), baseline); write(path.join(outDir, 'reimported.html'), reimported); const run = await browser({ baseline: baseline, reimported: reimported }, chrome, outDir); const receipt = { schema: SCHEMA, version: 1, source: { artifact: path.basename(artifact), artifact_sha256: sha256(read(artifact)), app_source_sha256: authored.source_sha256, app_emitted_sha256: JSON.parse(read(path.join(staged.emission, 'authored-modules.manifest.json'))).modules.find(item => item.name === 'App').output_sha256 }, checks: { closure_verified: true, authored_app_compiled: true, app_source_provenance: true, browser_ready: true, root_dom_parity: true, canvas_layers: true, analyzer_frames: true, console_network_clean: true, settled_screenshot_parity: true }, browser: run, scope: { materialized_runtime_baseline: true, editor_html_unchanged: true, runtime_artifact_changed: false, full_native_parity: false, production_cutover: false } }; write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`); process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`); } finally { fs.rmSync(staged.dir, { recursive: true, force: true }); }
+  const args = parseArgs(argv);
+  if (args.help) {
+    console.log('usage: node tools/authored_reimport_full_app_materialized_browser.mjs --artifact FILE --chrome PATH --out DIR');
+    return;
+  }
+  for (const key of ['artifact', 'out']) assert(args[key], `--${key} is required`);
+  const artifact = path.resolve(args.artifact);
+  const outDir = path.resolve(args.out);
+  const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
+  assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`);
+  prepareOutputDirectory(outDir);
+  const staged = stage(artifact);
+  try {
+    const document = JSON.parse(read(artifact));
+    const html = document.html;
+    const compiled = compile(staged.source);
+    const authored = JSON.parse(read(staged.manifest)).components.find(item => item.name === 'App');
+    assert(authored, 'App source provenance component missing');
+    assert(sha256(Buffer.from(sliceFunction(html, 'App'))) === authored.source_sha256,
+      'App source provenance hash mismatch');
+    const patched = patchApp(html, compiled.compiled);
+    const negativePatched = mutatePatchedApp(patched);
+    const baseline = Buffer.from(injected(html));
+    const reimported = Buffer.from(injected(patched));
+    write(path.join(outDir, 'baseline.html'), baseline);
+    write(path.join(outDir, 'reimported.html'), reimported);
+    const run = await browser({ baseline, reimported }, chrome, outDir);
+    const negativeOut = path.join(outDir, 'negative-dom-mutation');
+    const negative = await browser({
+      baseline: Buffer.from(injected(html)),
+      reimported: Buffer.from(injected(negativePatched)),
+    }, chrome, negativeOut)
+      .then(result => ({ status: 'unexpected-pass', result }))
+      .catch(error => {
+        const message = String(error.message);
+        assert(message.includes('baseline and authored App DOM differ')
+          || message.includes('settled screenshots differ'),
+        `planted authored App mutation failed for an unrelated reason: ${message}`);
+        return { status: 'passed', error: message };
+      });
+    assert(negative.status === 'passed', 'planted authored App mutation unexpectedly passed parity');
+    const appManifest = JSON.parse(read(path.join(staged.emission, 'authored-modules.manifest.json')));
+    const appModule = appManifest.modules.find(item => item.name === 'App');
+    assert(appModule, 'emitted closure manifest has no App module');
+    const receipt = {
+      schema: SCHEMA,
+      version: 1,
+      source: {
+        artifact: path.basename(artifact),
+        artifact_sha256: sha256(read(artifact)),
+        app_source_sha256: authored.source_sha256,
+        app_emitted_sha256: appModule.output_sha256,
+      },
+      checks: {
+        closure_verified: true,
+        authored_app_compiled: true,
+        app_source_provenance: true,
+        authored_app_invocation: true,
+        browser_ready: true,
+        root_dom_parity: true,
+        canvas_layers: true,
+        analyzer_frames: true,
+        console_network_clean: true,
+        settled_screenshot_parity: true,
+        negative_control: {
+          status: negative.status,
+          mutation: 'append a hidden data-spectr-negative-app node from the authored App wrapper',
+          evidence: negative.error,
+        },
+      },
+      browser: run,
+      scope: {
+        materialized_runtime_baseline: true,
+        editor_html_unchanged: true,
+        runtime_artifact_changed: false,
+        full_native_parity: false,
+        production_cutover: false,
+      },
+    };
+    write(path.join(outDir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+  } finally {
+    fs.rmSync(staged.dir, { recursive: true, force: true });
+  }
 }
 main(process.argv.slice(2)).catch(error => { console.error(error.stack || error.message); process.exit(1); });

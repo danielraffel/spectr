@@ -88,15 +88,20 @@ function runNode(script, args, label) {
 
 function materializeFilterBankSource(artifact) {
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-authored-filter-bank-stage-'));
-  const manifest = path.join(stage, 'manifest.json');
-  const emission = path.join(stage, 'emitted');
-  runNode(path.join(repo, 'tools', 'wp1_dependency_manifest.mjs'),
-    ['--artifact', artifact, '--root', 'FilterBank', '--out', manifest], 'dependency manifest');
-  runNode(path.join(repo, 'tools', 'wp1_authored_module_emitter.mjs'),
-    ['--artifact', artifact, '--manifest', manifest, '--out', emission], 'authored module emission');
-  const source = path.join(emission, 'components', 'FilterBank.tsx');
-  assert(fs.existsSync(source), `emitted FilterBank source is missing: ${source}`);
-  return { stage, source, manifest, emission };
+  try {
+    const manifest = path.join(stage, 'manifest.json');
+    const emission = path.join(stage, 'emitted');
+    runNode(path.join(repo, 'tools', 'wp1_dependency_manifest.mjs'),
+      ['--artifact', artifact, '--root', 'FilterBank', '--out', manifest], 'dependency manifest');
+    runNode(path.join(repo, 'tools', 'wp1_authored_module_emitter.mjs'),
+      ['--artifact', artifact, '--manifest', manifest, '--out', emission], 'authored module emission');
+    const source = path.join(emission, 'components', 'FilterBank.tsx');
+    assert(fs.existsSync(source), `emitted FilterBank source is missing: ${source}`);
+    return { stage, source, manifest, emission };
+  } catch (error) {
+    fs.rmSync(stage, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function functionSlice(source, name) {
@@ -670,13 +675,14 @@ async function main(argv) {
   assert(args.source || args.artifact, 'one of --source or --artifact is required');
   assert(!(args.source && args.artifact), '--source and --artifact are mutually exclusive');
   const editor = path.resolve(args.editor);
-  const generated = args.artifact ? materializeFilterBankSource(path.resolve(args.artifact)) : null;
-  const sourcePath = path.resolve(args.source || generated.source);
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
   prepareOutputDirectory(outDir);
   assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`);
+  let generated = null;
   try {
+    generated = args.artifact ? materializeFilterBankSource(path.resolve(args.artifact)) : null;
+    const sourcePath = path.resolve(args.source || generated.source);
     const { html, template, originalFilterBank, directRuntime } = templateFromEditor(editor);
     const authored = read(sourcePath).toString('utf8');
     const compiled = compileAuthored(authored, sourcePath);
