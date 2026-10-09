@@ -285,3 +285,14 @@ service references. The rebased implementation head is
 `00fa31a9b4a193740a2f0dc0f86f5c6218355f2e`; `node tools/generate_spectr_runtime_client.mjs --verify`
 and all six focused contract tests pass. This remains staging-only: no shipping
 runtime, authored `editor.html`, or native/browser parity claim changed.
+
+## 2026-10-08 runtime-client contract PR
+
+The corrected staging contract is open for hosted validation at
+https://github.com/danielraffel/spectr/pull/254 with exact head
+`5b598ddc541001f8f96dcdd7ddedae194f4bb35a`. The Spectr M5 product-acceptance
+gate is queued at
+https://github.com/danielraffel/spectr/actions/runs/37863531996/job/113604703004.
+Local generation verification and six focused tests pass. The branch remains
+staging-only and does not establish authored-source replacement, native/browser
+parity, or production cutover.
