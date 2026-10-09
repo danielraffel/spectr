@@ -155,7 +155,25 @@ ink. CMake registers this as optional
 `Spectr-browser-authored-filter-bank-reimport` when Node and Chrome are
 available, and the acceptance pattern includes it through `^Spectr-browser-`.
 The run-2 receipt SHA-256 is
-`1c6a6743df5091c361e228639f4ee0c7d69005d7615f92e71962f82bee9ece44`.
+`753fbba8bb460486a3b692bbdf0d924d9cf67e3f031ef15f283489b3e1c4beb3`.
+
+The follow-on full-App closure probe now runs against the current materialized
+runtime, which contains the complete helper/component closure missing from the
+older Claude template. `tools/authored_reimport_full_app_materialized_browser.mjs`
+regenerates and provenance-checks the authored `App`, injects it into a copy of
+the materialized runtime, and compares baseline/re-imported ReactDOM trees in
+Chromium. Run-2 evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run2/receipt.json`
+(SHA-256
+`5eac5f8515adfe66b6ccce4537fca1cef88e7de04dea5e017ee10868ae85e005`). Both
+captures mounted three canvas layers, received two analyzer frames, had zero
+runtime/browser errors, and produced the identical screenshot SHA-256
+`8bb7b8171a9bc9cad40452fbd2879bdf185a0b155e8e93eef07e1284d8bc12c2`.
+The CMake browser lane registers this probe alongside the FilterBank gate.
+
+This closes a staging proof for the complete authored App closure only. It
+still does not replace `editor.html`, establish native Skia/Dawn parity, or
+qualify production cutover.
 
 This is staging/browser evidence only. `resources/editor.html` and the
 materialized runtime were unchanged; the full authored `App` replacement still

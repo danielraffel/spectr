@@ -40,6 +40,17 @@ function read(file) { try { return fs.readFileSync(file); } catch (error) { fail
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); }
 function sha256(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 
+function prepareOutputDirectory(outDir) {
+  if (!fs.existsSync(outDir)) { fs.mkdirSync(outDir, { recursive: true }); return; }
+  const receiptPath = path.join(outDir, 'receipt.json');
+  assert(fs.existsSync(receiptPath), `output directory already exists without a prior receipt: ${outDir}`);
+  let receipt;
+  try { receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')); }
+  catch (error) { fail(`existing output directory has an invalid receipt: ${error.message}`); }
+  assert(receipt.schema === SCHEMA, `refusing to clear an output directory from another harness: ${outDir}`);
+  for (const entry of fs.readdirSync(outDir)) fs.rmSync(path.join(outDir, entry), { recursive: true, force: true });
+}
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -649,7 +660,7 @@ async function main(argv) {
   const sourcePath = path.resolve(args.source || generated.source);
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
-  assert(!fs.existsSync(outDir), `output directory already exists: ${outDir}`);
+  prepareOutputDirectory(outDir);
   assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`);
   const { html, template, originalFilterBank, directRuntime } = templateFromEditor(editor);
   const authored = read(sourcePath).toString('utf8');
@@ -669,7 +680,12 @@ async function main(argv) {
   fs.mkdirSync(negativeOut, { recursive: true });
   const negative = await browserRun({ 'negative-64.html': Buffer.from(negative64) }, chrome, negativeOut)
     .then(result => ({ status: 'unexpected-pass', result }))
-    .catch(error => ({ status: 'passed', error: String(error.message) }));
+    .catch(error => {
+      const message = String(error.message);
+      assert(message.includes('central canvas ink is too small'),
+        `planted no-ink control failed for an unrelated reason: ${message}`);
+      return { status: 'passed', error: message };
+    });
   assert(negative.status === 'passed', 'planted no-ink control unexpectedly passed the positive gate');
   const receipt = {
     schema: SCHEMA,

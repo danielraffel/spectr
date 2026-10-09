@@ -3664,6 +3664,17 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/authored-filter-bank-reimport)
     set_tests_properties(Spectr-browser-authored-filter-bank-reimport PROPERTIES TIMEOUT 180)
+    # Full authored App closure proof against the current materialized runtime.
+    # The older Claude template is intentionally not used as its baseline: it
+    # predates SpectrControlMenu and newer helpers.  This remains staging
+    # evidence and does not imply native parity or production cutover.
+    add_test(NAME Spectr-browser-authored-full-app-materialized-reimport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_full_app_materialized_browser.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/authored-full-app-materialized-reimport)
+    set_tests_properties(Spectr-browser-authored-full-app-materialized-reimport PROPERTIES TIMEOUT 180)
 endif()
 
 # These need node only -- NOT chrome. Registered under the browser
