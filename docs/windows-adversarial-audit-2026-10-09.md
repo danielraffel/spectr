@@ -11,7 +11,7 @@ intentionally not a product acceptance claim.
 | Warm cache and disposable overlay | `tools/windows/launch-arm64-qemu.sh` creates a QCOW2 linked overlay and removes it on exit | PASS |
 | No macOS CI runner consumption | launcher is local QEMU; no TartCI registration or runner labels | PASS |
 | ARM64EC/ARM64X artifact shape | `dumpbin /headers`: `8664 machine (x64) (ARM64X)`; hashes in `docs/windows-receipts-2026-10-09/` | PASS |
-| Focused Windows DSP test on this ARM64EC tree | `Spectr-test.exe` did not link because the installed SDK mixes Debug `pulp-audio-analysis` with Release objects and lacks optional Claude symbol | FAIL; SDK/test lane needs a consistent Release package |
+| Focused Windows DSP test on this ARM64EC tree | `Spectr-test.exe "Spectr processes audio" --reporter compact` | PASS; 2 assertions in 1 test case |
 | REAPER plugin instance | scan cache exists, but REAPER previously lists Spectr under failed scans; no observed instance receipt | FAIL / open |
 | REAPER screenshot | no authenticated observed plugin window | FAIL / open |
 | Real REAPER render/audio | no host render receipt | FAIL / open |
@@ -25,9 +25,9 @@ intentionally not a product acceptance claim.
 ## Remaining must-fix
 
 1. Rebuild and reinstall the Pulp ARM64EC Release SDK so every static library,
-   including `pulp-audio-analysis`, matches the Release Spectr test tree and the
-   optional Claude bundle is either linked or the test target is scoped without
-   that optional symbol.
+   including `pulp-standalone-native.lib`, matches the Release Spectr tree. The
+   Spectr test lane now gates import-fidelity sources on `PULP_HAS_DESIGN_IMPORT=1`;
+   the focused audio test is green.
 2. Obtain an authenticated interactive Windows session and make REAPER accept
    the ARM64X/ARM64EC VST3. Record the failed-scan list, exact host/plugin
    hashes, observed instance, screenshot, and a real rendered WAV.
