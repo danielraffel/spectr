@@ -137,8 +137,8 @@ It captures before/after screenshots, checks changing analyzer traces, samples
 canvas ink, and verifies every 32- and 64-band hit-test position. A planted
 no-ink mutation must fail the central-canvas ink gate.
 
-Run-4 receipt and screenshots are retained at
-`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run4/receipt.json`.
+Run-5 receipt and screenshots are retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-filter-bank-reimport-20261009-run5/receipt.json`.
 The exact source identities are:
 
 - materialized artifact SHA-256
@@ -154,18 +154,18 @@ complete 32/64-band geometry. The no-ink control was rejected with zero canvas
 ink. CMake registers this as optional
 `Spectr-browser-authored-filter-bank-reimport` when Node and Chrome are
 available, and the acceptance pattern includes it through `^Spectr-browser-`.
-The run-4 receipt SHA-256 is
-`608e21dd4b2c7b94cb24878babba8f04385d636209bc926beb991aa1ea788012`.
+The run-5 receipt SHA-256 is
+`121070ec9f75ecb303e5918d08a6e5140fb777ac5a7ce5d21543de0f5e555c1f`.
 
 The follow-on full-App closure probe now runs against the current materialized
 runtime, which contains the complete helper/component closure missing from the
 older Claude template. `tools/authored_reimport_full_app_materialized_browser.mjs`
 regenerates and provenance-checks the authored `App`, injects it into a copy of
 the materialized runtime, and compares baseline/re-imported ReactDOM trees in
-Chromium. Run-4 evidence is retained at
-`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run4/receipt.json`
+Chromium. Run-5 evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run5/receipt.json`
 (SHA-256
-`828953f82838d9542c3dbd99881ad4ae74c8c50d4f999e2c2410bafa94e021c1`). Both
+`5da69edddb01e7801022f376063e77dcf45bb4698ae1db253cdbb3c87c8e88f1`). Both
 baseline and re-imported captures mounted three canvas layers, received
 sequence 1 then sequence 2 through the native analyzer publication surface,
 had zero runtime/browser errors, showed positive first-canvas ink, proved the

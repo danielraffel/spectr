@@ -656,9 +656,9 @@ async function browserRun(files, chrome, outDir) {
     return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
   } finally {
     try { socket?.close(); } catch {}
-    if (child && !child.killed) child.kill('SIGTERM');
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     await new Promise(resolve => setTimeout(resolve, 250));
-    if (child && !child.killed) child.kill('SIGKILL');
+    if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     if (server.closeAllConnections) server.closeAllConnections();
     await new Promise(resolve => server.close(() => resolve()));
     fs.rmSync(profile, { recursive: true, force: true });
