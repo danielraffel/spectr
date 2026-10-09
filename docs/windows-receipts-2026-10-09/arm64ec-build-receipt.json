@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-09T16:00:00Z",
+  "host": "M5S macOS host, native QEMU Windows ARM64 guest",
+  "guest": "Windows ARM64, admin@127.0.0.1:50375",
+  "source": {
+    "spectr_checkout": "C:\\spectr-gui",
+    "spectr_build": "C:\\builds\\spectr-arm64ec",
+    "pulp_sdk": "C:\\pulp-arm64ec-sdk",
+    "pulp_followup_pr": "https://github.com/Generous-Corp/pulp/pull/9973"
+  },
+  "configure": {
+    "architecture": "ARM64EC",
+    "compiler_flag": "/arm64EC",
+    "simd_backend": "scalar",
+    "build_type": "Release",
+    "scripted_ui": true,
+    "js_engine": "quickjs"
+  },
+  "build": {
+    "command": "ninja -C C:\\builds\\spectr-arm64ec Spectr_VST3 Spectr_CLAP Spectr-test",
+    "plugin_targets": "PASS",
+    "plugin_steps": 178,
+    "test_target": "FAIL at test executable link",
+    "test_failure": "SDK pulp-audio-analysis.lib is Debug-built while Spectr-test objects are Release; optional Claude bundle symbol is absent",
+    "test_failure_is_plugin_link_failure": false
+  },
+  "artifacts": {
+    "vst3": {
+      "path": "C:\\builds\\spectr-arm64ec\\VST3\\Spectr.dll",
+      "bytes": 8746496,
+      "sha256": "7060EC4F7DE2ED5E441697436BC24FD531E7E8A3480BB00AEBEC6D8A0DB50417",
+      "pe_machine": "8664 machine (x64) (ARM64X)"
+    },
+    "clap": {
+      "path": "C:\\builds\\spectr-arm64ec\\CLAP\\Spectr.clap",
+      "bytes": 8636416,
+      "sha256": "9D24513D83083305EAEAEA8976FE73E415170553DF783B8E99CF7273E6E1F8E2"
+    }
+  },
+  "runtime": {
+    "loadlibrary_getpluginfactory": "prior native ARM proof; ARM64EC host-instance proof still open",
+    "reaper_arm64": "installed but no observed plugin instance",
+    "ableton": "not installed",
+    "audio_quality_lab": "not run for this ARM64EC artifact",
+    "perfetto": "not captured for this ARM64EC artifact"
+  },
+  "acceptance": "BUILD_ARTIFACTS_PROVEN_DAW_UNVERIFIED"
+}
