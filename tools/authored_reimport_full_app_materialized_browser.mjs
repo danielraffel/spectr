@@ -162,18 +162,28 @@ function injected(html) {
   return html.replace('</script>', () => `</script>${reactVendorScripts()}${bridgeScript()}${instrumentScript()}`);
 }
 function reservePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
-async function browser(files, chrome, outDir) {
-  const server = http.createServer((req, res) => { const key = new URL(req.url, 'http://127.0.0.1').pathname.slice(1); const body = files[key]; if (!body) { res.writeHead(404); res.end(); return; } res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length }); res.end(body); });
+async function browser(files, chrome, outDir, assets = new Map()) {
+  const server = http.createServer((req, res) => {
+    const key = new URL(req.url, 'http://127.0.0.1').pathname.slice(1);
+    const body = files[key] || assets.get(key)?.body;
+    if (!body) { res.writeHead(404); res.end(); return; }
+    const contentType = files[key] ? 'text/html; charset=utf-8' : (assets.get(key)?.mime || 'application/octet-stream');
+    res.writeHead(200, { 'content-type': contentType, 'content-length': body.length });
+    res.end(body);
+  });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const debugPort = await reservePort(); const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-authored-full-app-materialized-chrome-')); let child; let socket; let nextId = 1; let stderr = ''; const pending = new Map(); const errors = [];
   try {
     child = spawn(path.resolve(chrome), ['--headless=new', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`, '--window-size=1320,860', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] }); child.stderr.on('data', c => { stderr += c; });
     let ws; const deadline = Date.now() + 15000; while (!ws && Date.now() < deadline) { try { ws = (await (await fetch(`http://127.0.0.1:${debugPort}/json`)).json()).find(p => p.type === 'page')?.webSocketDebuggerUrl; } catch {} if (!ws) await new Promise(r => setTimeout(r, 50)); } assert(ws, `Chrome did not start: ${stderr}`);
-    socket = new WebSocket(ws); await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); }); socket.addEventListener('message', event => { const msg = JSON.parse(event.data); if (msg.method === 'Runtime.exceptionThrown') errors.push(msg.params.exceptionDetails?.text || 'exception'); if (msg.method === 'Runtime.consoleAPICalled' && ['error', 'assert'].includes(msg.params.type)) { const text = (msg.params.args || []).map(arg => arg.value ?? arg.description ?? '').join(' '); if (!text.startsWith('Warning:')) errors.push(`console.${msg.params.type}:${text}`); } if (!msg.id || !pending.has(msg.id)) return; const waiter = pending.get(msg.id); pending.delete(msg.id); msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result); });
-    const command = (method, params = {}) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); }); const evaluate = async expr => { const result = await command('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'evaluation failed'); return result.result.value; }; await command('Page.enable'); await command('Runtime.enable');
+    const networkFailures = [];
+    const requestUrls = new Map();
+    socket = new WebSocket(ws); await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); }); socket.addEventListener('message', event => { const msg = JSON.parse(event.data); if (msg.method === 'Runtime.exceptionThrown') errors.push(msg.params.exceptionDetails?.text || 'exception'); if (msg.method === 'Runtime.consoleAPICalled' && ['error', 'assert'].includes(msg.params.type)) { const text = (msg.params.args || []).map(arg => arg.value ?? arg.description ?? '').join(' '); if (!text.startsWith('Warning:')) errors.push(`console.${msg.params.type}:${text}`); } if (msg.method === 'Network.requestWillBeSent') requestUrls.set(msg.params.requestId, msg.params.request.url); if (msg.method === 'Network.responseReceived' && msg.params.response.status >= 400 && !msg.params.response.url.endsWith('/favicon.ico')) networkFailures.push({ kind: 'http', status: msg.params.response.status, url: msg.params.response.url }); if (msg.method === 'Network.loadingFailed' && !String(requestUrls.get(msg.params.requestId) || '').endsWith('/favicon.ico')) networkFailures.push({ kind: 'load', error: msg.params.errorText, url: requestUrls.get(msg.params.requestId) || '' }); if (!msg.id || !pending.has(msg.id)) return; const waiter = pending.get(msg.id); pending.delete(msg.id); msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result); });
+    const command = (method, params = {}) => new Promise((resolve, reject) => { const id = nextId++; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); }); const evaluate = async expr => { const result = await command('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'evaluation failed'); return result.result.value; }; await command('Page.enable'); await command('Runtime.enable'); await command('Network.enable');
     const results = {};
     for (const name of Object.keys(files)) {
       errors.length = 0;
+      networkFailures.length = 0;
       const url = `http://127.0.0.1:${server.address().port}/${name}`;
       await command('Page.navigate', { url });
       const readyDeadline = Date.now() + 45000;
@@ -233,6 +243,7 @@ async function browser(files, chrome, outDir) {
       results[name] = {
         ...summary,
         browser_errors: [...errors],
+        networkFailures: [...networkFailures],
         canvasBefore,
         canvasAfter,
         analyzerSnapshot: second,
@@ -244,10 +255,12 @@ async function browser(files, chrome, outDir) {
         },
       };
       assert(summary.errors.length === 0, `${name} page errors: ${summary.errors.join('; ')}`);
+      assert(networkFailures.length === 0,
+        `${name} network failures: ${JSON.stringify(networkFailures)}`);
       assert(summary.analyzer >= 2, `${name} did not receive both deterministic analyzer frames`);
       assert(name === 'baseline' ? summary.authoredAppInvocations === 0 : summary.authoredAppInvocations > 0,
         `${name} authored App invocation count was ${summary.authoredAppInvocations}`);
-      assert(summary.canvases >= 2, `${name} did not render both canvas layers`);
+      assert(summary.canvases === 3, `${name} rendered ${summary.canvases} canvas layers; expected 3`);
       assert(Array.isArray(canvasBefore) && canvasBefore[0]?.ink > 0,
         `${name} first analyzer frame central canvas ink is missing: ${JSON.stringify(canvasBefore)}`);
       assert(Array.isArray(canvasAfter) && canvasAfter[0]?.ink > 0,
@@ -257,7 +270,7 @@ async function browser(files, chrome, outDir) {
       assert(analyzerTrace.second_sequence >= 2,
         `${name} analyzer snapshot did not retain sequence >= 2: ${JSON.stringify(analyzerTrace)}`);
     }
-    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases >= 2 && results.reimported.canvases >= 2, 'App did not render both canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); assert(results.baseline.screenshot.sha256 === results.reimported.screenshot.sha256, `settled screenshots differ: ${results.baseline.screenshot.sha256} vs ${results.reimported.screenshot.sha256}`); return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
+    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases === 3 && results.reimported.canvases === 3, 'App did not render exactly three canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.networkFailures.length === 0 && results.reimported.networkFailures.length === 0, `network failures: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); assert(results.baseline.screenshot.sha256 === results.reimported.screenshot.sha256, `settled screenshots differ: ${results.baseline.screenshot.sha256} vs ${results.reimported.screenshot.sha256}`); return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
   } finally { try { socket?.close(); } catch {} if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await new Promise(r => setTimeout(r, 250)); if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); if (server.closeAllConnections) server.closeAllConnections(); await new Promise(r => server.close(() => r())); fs.rmSync(profile, { recursive: true, force: true }); }
 }
 async function main(argv) {
@@ -276,6 +289,10 @@ async function main(argv) {
   try {
     const document = JSON.parse(read(artifact));
     const html = document.html;
+    const assets = new Map((document.assets || []).map(asset => [
+      asset.id,
+      { body: Buffer.from(asset.data_base64, 'base64'), mime: asset.mime_type },
+    ]));
     const compiled = compile(staged.source);
     const authored = JSON.parse(read(staged.manifest)).components.find(item => item.name === 'App');
     assert(authored, 'App source provenance component missing');
@@ -287,12 +304,12 @@ async function main(argv) {
     const reimported = Buffer.from(injected(patched));
     write(path.join(outDir, 'baseline.html'), baseline);
     write(path.join(outDir, 'reimported.html'), reimported);
-    const run = await browser({ baseline, reimported }, chrome, outDir);
+    const run = await browser({ baseline, reimported }, chrome, outDir, assets);
     const negativeOut = path.join(outDir, 'negative-dom-mutation');
     const negative = await browser({
       baseline: Buffer.from(injected(html)),
       reimported: Buffer.from(injected(negativePatched)),
-    }, chrome, negativeOut)
+    }, chrome, negativeOut, assets)
       .then(result => ({ status: 'unexpected-pass', result }))
       .catch(error => {
         const message = String(error.message);

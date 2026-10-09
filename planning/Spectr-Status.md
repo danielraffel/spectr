@@ -162,10 +162,10 @@ runtime, which contains the complete helper/component closure missing from the
 older Claude template. `tools/authored_reimport_full_app_materialized_browser.mjs`
 regenerates and provenance-checks the authored `App`, injects it into a copy of
 the materialized runtime, and compares baseline/re-imported ReactDOM trees in
-Chromium. Run-5 evidence is retained at
-`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run5/receipt.json`
+Chromium. Run-8 evidence is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-authored-full-app-materialized-reimport-20261009-run8/receipt.json`
 (SHA-256
-`5da69edddb01e7801022f376063e77dcf45bb4698ae1db253cdbb3c87c8e88f1`). Both
+`ddc8f4b675d3ef9a7c5411b989f5fcd35996d9fb9aef0805a05a5f671704e0e0`). Both
 baseline and re-imported captures mounted three canvas layers, received
 sequence 1 then sequence 2 through the native analyzer publication surface,
 had zero runtime/browser errors, showed positive first-canvas ink, proved the
