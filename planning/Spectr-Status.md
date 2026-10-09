@@ -360,3 +360,27 @@ suite now registers `Spectr-runtime-client-inline-sync`, and the contract suite
 includes a planted mismatch that changes embedded `ab_toggle` to `ab_togglx`.
 The clean copy passes while the planted copy exits nonzero with the stale-facade
 diagnostic. All seven contract tests and the direct inline sync check pass.
+
+## 2026-10-09 authored full-App import mount (staging)
+
+PR <https://github.com/danielraffel/spectr/pull/257> adds the next bounded
+import gate at commit
+<https://github.com/danielraffel/spectr/commit/0ed69d879e49cf0569a357550e56d6bf5b9d72d2>.
+The gate validates the artifact, App dependency manifest, emitted module
+closure, runtime-surface contract, and every emitted module hash before
+assembling and executing all 59 authored modules in a deterministic VM. It
+invokes the authored `App` root with a named browser/runtime facade and records
+the resulting root render tree. The allowlist is required; omitting it fails
+closed so a forged runtime-surface receipt cannot bypass regeneration.
+
+The focused harness has positive and planted-negative controls for deterministic
+receipt identity, missing helpers, stale module bytes, runtime-surface member
+and emission identity drift, missing allowlists, and canonical artifact/editor
+immutability. CMake registers `Spectr-wp1-full-app-import-mount` and the
+acceptance pattern selects it. This remains a staging VM gate: effects, real
+DOM/browser behavior, generated command-facade wiring, Chromium screenshot
+parity, native Skia/Dawn parity, and production replacement of
+`resources/editor.html` remain open. The existing source comparator continues
+to record that a standalone re-import can be self-consistent while losing the
+nonempty analyzer content, so a successful mount receipt is not an editor
+fidelity claim.
