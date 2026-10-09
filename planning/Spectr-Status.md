@@ -248,3 +248,64 @@ automatic rebases, force-pushes, direct merges, and blind red-check reruns stay
 disabled. A queue-steward health heartbeat and a daily immutable digest should
 make stale transport, missing ownership, and unresolved PRs visible without
 requiring an agent to poll manually.
+
+## 2026-10-08 generated runtime-client staging contract
+
+The renderer-neutral `pulp.postMessage` seam now has a deterministic staging
+client contract on Spectr branch
+`codex/spectr-runtime-client-contract-20261008` at final implementation commit
+`57533422a7605785fbcff712f4b4bbcf6cd47ef3`. The reviewed branch head is
+`d934e761e165edb7b47a886058ef8b115fe9b6ea`. The generator reads the C++
+`add_handler` registrations from `src/editor_bridge.cpp` and
+`src/ui/editor_view.cpp`, checks literal command calls in
+`native-ui/materialized/spectr-native-services.js`, and emits 54 handler
+methods plus a TypeScript declaration and source-hash manifest under
+`native-ui/materialized/generated/`. Six focused controls pass: deterministic
+repeat output and Node dispatch, TypeScript declaration compilation, checked-in
+manifest verification, missing C++ handler rejection (including the lifecycle
+`editor_ready` handler), and unknown service command rejection. TypeScript
+validation fails closed when the pinned compiler is unavailable. The CMake acceptance test is
+`Spectr-wp1-runtime-client-contract`.
+
+This is staging evidence only. `resources/editor.html`,
+`native-ui/materialized/runtime.js`, and
+`native-ui/materialized/materialized-document.runtime.json` are unchanged;
+the generated client is not wired into the shipping runtime and does not claim
+browser/native parity or production cutover. The SDK materialized-runtime
+producer remains a separate Pulp follow-up.
+
+## 2026-10-08 runtime-client bridge-source correction
+
+The staging generator was corrected after adversarial review to scan the active
+native bridge (`src/editor_bridge.cpp` and `src/ui/native_editor.cpp`). The
+browser adapter lifecycle command `editor_ready` is now represented explicitly
+as `adapter_only`, while native strict service references remain limited to the
+active bridge. The checked-in manifest records strict, optional, and adapter-only
+service references. The rebased implementation head is
+`00fa31a9b4a193740a2f0dc0f86f5c6218355f2e`; `node tools/generate_spectr_runtime_client.mjs --verify`
+and all six focused contract tests pass. This remains staging-only: no shipping
+runtime, authored `editor.html`, or native/browser parity claim changed.
+
+## 2026-10-08 runtime-client contract PR
+
+The corrected staging contract is open for hosted validation at
+https://github.com/danielraffel/spectr/pull/254 with exact head
+`5b598ddc541001f8f96dcdd7ddedae194f4bb35a`. The Spectr M5 product-acceptance
+gate is queued at
+https://github.com/danielraffel/spectr/actions/runs/37863531996/job/113604703004.
+Local generation verification and six focused tests pass. The branch remains
+staging-only and does not establish authored-source replacement, native/browser
+parity, or production cutover.
+
+## 2026-10-09 hosted acceptance for runtime-client contract
+
+The exact PR 254 head `473ff1dcd5dab1c33835cb03244cc1187b9e97e6` passed the
+Spectr M5 product-acceptance run:
+https://github.com/danielraffel/spectr/actions/runs/37863575839. Static contract,
+provenance, focused behavior, native capture, control-reachability, packaging,
+and AUv2 validation completed successfully. The release configure log explicitly
+reports the browser oracle disabled because Node/Chrome were unavailable on that
+runner; independent Chromium evidence remains the authoritative browser receipt.
+The app-driven detector failures are non-blocking and remain known acceptance
+gaps. This PR still stages the runtime-client contract only and does not claim
+production runtime adoption or native/browser pixel parity.

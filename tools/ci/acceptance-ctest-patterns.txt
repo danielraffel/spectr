@@ -38,6 +38,10 @@ Built Spectr
 Spectr editor
 # A backtick in an editor.html String.raw patch silently unmounts the mirror.
 ^Spectr-editor-html-raw-templates$
+# The generated native-client contract is a pure source/provenance gate. It
+# must be selected explicitly so a missing CMake registration cannot silently
+# make the typed bridge seam disappear from acceptance.
+^Spectr-wp1-runtime-client-contract$
 # The AU artifact case run with the parameter-adoption worker held back, so
 # it can only pass if a plain parameter WRITE reaches the DSP without that
 # thread. The plain run of the same case lives under `^Pulp host loads`, which
