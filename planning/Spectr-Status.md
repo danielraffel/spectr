@@ -794,3 +794,14 @@ allowlist pin: it still referenced the pre-typography runtime
 SHA and byte count. The eight runtime-surface tests and seven full-App import
 mount tests pass, including their tamper and negative controls. This is a
 Spectr fixture refresh only; no Pulp/Vellum source path is involved.
+
+## 2026-10-09 authored full-App import mount (staging; adopted from PR 258)
+
+PR <https://github.com/danielraffel/spectr/pull/257> adds the bounded import gate
+at commit <https://github.com/danielraffel/spectr/commit/0ed69d879e49cf0569a357550e56d6bf5b9d72d2>.
+It validates the artifact, App dependency manifest, emitted module closure,
+runtime-surface contract, and every emitted module hash before assembling and
+executing all 59 authored modules in a deterministic VM. The allowlist is
+required and fails closed when omitted. This remains staging evidence; browser
+behavior, Chromium parity, native Skia/Dawn parity, and production replacement
+of `resources/editor.html` remain open.
