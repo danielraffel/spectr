@@ -489,6 +489,13 @@ if(SPECTR_BUILD_FORGE_ADAPTER)
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
         $<$<BOOL:${SPECTR_SHARED_PRODUCT_ACCEPTANCE}>:SPECTR_SHARED_PRODUCT_ACCEPTANCE=1>
         $<$<BOOL:${SPECTR_EXPERIMENTAL_SHARED_RENDERER}>:SPECTR_EXPERIMENTAL_SHARED_RENDERER=1>)
+    # pulp_add_plugin exposes the product implementation as an OBJECT target;
+    # an interface link alone does not carry those objects to a downstream
+    # executable.  Publish the exact owner objects through the adapter so a
+    # Forge GraphNode consumer receives the same Processor implementation as
+    # Spectr's format wrappers.
+    target_sources(Spectr_ForgeAdapter INTERFACE
+        $<TARGET_OBJECTS:${SPECTR_NATIVE_CORE_TARGET}>)
     target_link_libraries(Spectr_ForgeAdapter INTERFACE
         "${SPECTR_NATIVE_CORE_TARGET}")
 endif()
