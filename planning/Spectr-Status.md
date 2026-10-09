@@ -309,3 +309,35 @@ runner; independent Chromium evidence remains the authoritative browser receipt.
 The app-driven detector failures are non-blocking and remain known acceptance
 gaps. This PR still stages the runtime-client contract only and does not claim
 production runtime adoption or native/browser pixel parity.
+
+## 2026-10-09 runtime-client facade adoption (in progress)
+
+PR 254 is now merged at
+<https://github.com/danielraffel/spectr/commit/a06987e9f141c69d33673f6f66f6936a15e088e1>.
+The follow-up adoption is being developed in a fresh worktree on branch
+`codex/spectr-runtime-facade-adoption-20261009`. The maintained native service
+bridge embeds the generated inline client and routes valid `pulp.postMessage`
+requests through its allowlisted command set before invoking the existing
+processor dispatch core. Unknown commands are rejected before the processor;
+the old direct dispatcher remains available only as the parity baseline in the
+test harness. `resources/editor.html` and
+`native-ui/materialized/materialized-document.runtime.json` are unchanged.
+
+Local evidence currently passing:
+
+- six generated-contract tests, including deterministic equality of the new
+  inline artifact;
+- materialized paint micro test and generated-service synchronization check;
+- Node syntax checks for the maintained service and materialized runtime; and
+- VM plus real headless Chromium parity. Seven valid commands produce equal
+  envelopes, traces, and responses with and without the facade. The baseline
+  forwards `unknown_command` (eight processor calls), while the facade rejects
+  it before dispatch (seven calls). Both browser captures are identical at
+  SHA-256
+  `3418c31839ea0e96655f5f586a6f749ca90e7b887cb934e679e9f16522571f21`
+  (4,428 bytes).
+
+The CMake browser lane now registers this parity harness when Node and Chrome
+are available. Commit, governed gates, and merge remain open; this is scoped
+adapter parity evidence and does not claim full editor/native pixel parity or
+production cutover.

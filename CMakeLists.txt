@@ -3550,6 +3550,12 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
+    add_test(NAME Spectr-browser-runtime-facade
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_spectr_runtime_facade_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/spectr-native-services.js
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-runtime-facade PROPERTIES TIMEOUT 45)
     add_test(NAME Spectr-browser-resize
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs

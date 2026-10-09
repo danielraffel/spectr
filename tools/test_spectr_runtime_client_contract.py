@@ -37,7 +37,8 @@ class RuntimeClientContractTest(unittest.TestCase):
             result = run_generator(second)
             self.assertEqual(result.returncode, 0, result.stderr)
             names = ["spectr-runtime-client.mjs", "spectr-runtime-client.d.ts",
-                     "spectr-runtime-client.manifest.json"]
+                     "spectr-runtime-client.manifest.json",
+                     "spectr-runtime-client.inline.js"]
             for name in names:
                 self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
             manifest = json.loads((first / names[2]).read_text())
