@@ -465,3 +465,6 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Parser-backed authored-source/import gate. This exact row is pure artifact
 # validation and must remain selected by the M5 focused CTest regex.
 ^Spectr-wp1-full-app-runtime-surface$
+# Full authored App closure mount: deterministic VM execution plus planted
+# identity/allowlist negatives. Browser/native parity remain separate gates.
+^Spectr-wp1-full-app-import-mount$

@@ -4707,6 +4707,12 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_runtime_surface.py)
     set_tests_properties(Spectr-wp1-full-app-runtime-surface PROPERTIES TIMEOUT 300)
+    # Execute the complete authored App closure in a deterministic staging VM.
+    # This remains separate from browser/native parity and production cutover.
+    add_test(NAME Spectr-wp1-full-app-import-mount
+        COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_import_mount.py)
+    set_tests_properties(Spectr-wp1-full-app-import-mount PROPERTIES TIMEOUT 300)
     # The native services use the renderer-neutral `pulp.postMessage` seam.
     # Keep generated commands aligned with the C++ handlers, then verify the
     # checked-in inline facade is the one embedded in the maintained service.
