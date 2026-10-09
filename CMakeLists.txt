@@ -4707,14 +4707,18 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_runtime_surface.py)
     set_tests_properties(Spectr-wp1-full-app-runtime-surface PROPERTIES TIMEOUT 300)
-    # The native services still use the renderer-neutral `pulp.postMessage`
-    # seam. Keep its generated command client honest against the C++ handler
-    # registrations and make stale output fail closed. This is a staging
-    # contract; it does not switch editor.html or the materialized runtime.
+    # The native services use the renderer-neutral `pulp.postMessage` seam.
+    # Keep generated commands aligned with the C++ handlers, then verify the
+    # checked-in inline facade is the one embedded in the maintained service.
+    # Materialized runtime replay has its own synchronization check above.
     add_test(NAME Spectr-wp1-runtime-client-contract
         COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_spectr_runtime_client_contract.py)
     set_tests_properties(Spectr-wp1-runtime-client-contract PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-runtime-client-inline-sync
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/sync_generated_runtime_client.py --check)
+    set_tests_properties(Spectr-runtime-client-inline-sync PROPERTIES TIMEOUT 30)
 else()
     message(STATUS
         "Spectr: Python3 interpreter not found; "

@@ -353,3 +353,10 @@ facade each made 56 processor calls with identical JSON results and traces
 command-adapter behavior rather than full `editor.html` or native pixel parity.
 The review's one documentation mismatch in the generated ESM header was fixed
 and the generated module and manifest were refreshed.
+
+The review also found that hosted acceptance did not verify that the generated
+inline client matched the block embedded in the maintained service. The CMake
+suite now registers `Spectr-runtime-client-inline-sync`, and the contract suite
+includes a planted mismatch that changes embedded `ab_toggle` to `ab_togglx`.
+The clean copy passes while the planted copy exits nonzero with the stale-facade
+diagnostic. All seven contract tests and the direct inline sync check pass.
