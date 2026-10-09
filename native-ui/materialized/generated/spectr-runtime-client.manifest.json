@@ -5,8 +5,8 @@
   "sources": {
     "services": {
       "path": "native-ui/materialized/spectr-native-services.js",
-      "sha256": "b2d00e7e030cf93a7ce5232c39eb2a85e252079e66d3d566f0a5fa741312dbd8",
-      "bytes": 20976
+      "sha256": "893d3e89cbe91a1da6b3a9de595b8555570d4237668f265ace2ec8238ae6d24d",
+      "bytes": 23222
     },
     "bridges": [
       {
@@ -421,13 +421,18 @@
   "generated": {
     "spectr-runtime-client.mjs": {
       "path": "spectr-runtime-client.mjs",
-      "sha256": "a6ee34de47604b6e70bfa419fbdd6ec61d2b2261fc5bf595372129604af287d8",
-      "bytes": 6876
+      "sha256": "16acb165a9313d1ec4de942cd3754ce0fd625dab164c148498408f387cf20c85",
+      "bytes": 6930
     },
     "spectr-runtime-client.d.ts": {
       "path": "spectr-runtime-client.d.ts",
       "sha256": "6fab749769b285171cc28973aabb6c6a079f220e54f3dbcc232529faba0a4ce7",
       "bytes": 7083
+    },
+    "spectr-runtime-client.inline.js": {
+      "path": "spectr-runtime-client.inline.js",
+      "sha256": "fd2dd7d5a6159307a7538f841314dfc3980addd013d0e71cf8bd7f690d27dac8",
+      "bytes": 1987
     }
   }
 }

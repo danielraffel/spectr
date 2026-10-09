@@ -42,6 +42,11 @@ Spectr editor
 # must be selected explicitly so a missing CMake registration cannot silently
 # make the typed bridge seam disappear from acceptance.
 ^Spectr-wp1-runtime-client-contract$
+# The generated inline client must match the block embedded in the maintained
+# service. The contract above verifies generated files, and the materialized
+# replay check verifies service versus runtime, but neither detects inline
+# drift by itself. Keep this row independently selected on the M5 lane.
+^Spectr-runtime-client-inline-sync$
 # The AU artifact case run with the parameter-adoption worker held back, so
 # it can only pass if a plain parameter WRITE reaches the DSP without that
 # thread. The plain run of the same case lives under `^Pulp host loads`, which

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,8 @@ GENERATOR = ROOT / "tools" / "generate_spectr_runtime_client.mjs"
 SERVICES = ROOT / "native-ui" / "materialized" / "spectr-native-services.js"
 BRIDGE = ROOT / "src" / "editor_bridge.cpp"
 NATIVE_EDITOR = ROOT / "src" / "ui" / "native_editor.cpp"
+INLINE = ROOT / "native-ui" / "materialized" / "generated" / "spectr-runtime-client.inline.js"
+INLINE_SYNC = ROOT / "tools" / "sync_generated_runtime_client.py"
 
 
 def run_generator(out: pathlib.Path, *, bridge: pathlib.Path = BRIDGE,
@@ -37,7 +40,8 @@ class RuntimeClientContractTest(unittest.TestCase):
             result = run_generator(second)
             self.assertEqual(result.returncode, 0, result.stderr)
             names = ["spectr-runtime-client.mjs", "spectr-runtime-client.d.ts",
-                     "spectr-runtime-client.manifest.json"]
+                     "spectr-runtime-client.manifest.json",
+                     "spectr-runtime-client.inline.js"]
             for name in names:
                 self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
             manifest = json.loads((first / names[2]).read_text())
@@ -75,6 +79,28 @@ class RuntimeClientContractTest(unittest.TestCase):
         result = run_generator(checked_in, verify=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"verified": true', result.stdout)
+
+    def test_embedded_inline_facade_sync_rejects_planted_drift(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            script = root / "tools" / INLINE_SYNC.name
+            service = root / "native-ui" / "materialized" / SERVICES.name
+            inline = root / "native-ui" / "materialized" / "generated" / INLINE.name
+            for path in (script, service, inline):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(INLINE_SYNC, script)
+            shutil.copyfile(SERVICES, service)
+            shutil.copyfile(INLINE, inline)
+            good = subprocess.run(["python3", str(script), "--check"], cwd=root,
+                                  text=True, capture_output=True, check=False, timeout=30)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            original = service.read_text()
+            self.assertEqual(original.count('"ab_toggle"'), 1)
+            service.write_text(original.replace('"ab_toggle"', '"ab_togglx"', 1))
+            bad = subprocess.run(["python3", str(script), "--check"], cwd=root,
+                                 text=True, capture_output=True, check=False, timeout=30)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("generated runtime client facade is stale", bad.stderr)
 
     def test_typescript_declaration_accepts_typed_client_usage(self):
         tsc = ROOT / "tools" / "wp1-parser" / "node_modules" / "typescript" / "bin" / "tsc"
