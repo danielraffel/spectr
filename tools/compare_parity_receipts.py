@@ -71,6 +71,15 @@ def main():
     expected_artifact = state.get("source", {}).get("sha256")
     if expected_artifact and browser_artifact != expected_artifact:
         fail("state source SHA does not match browser receipt")
+    expected_state = state.get("stateSha256")
+    receipt_state = browser.get("stateSha256")
+    if expected_state and receipt_state != expected_state:
+        fail("state digest does not match browser receipt")
+    expected_size = state.get("viewport", {}).get("png")
+    if expected_size:
+        expected_dimensions = (expected_size["width"], expected_size["height"])
+        if browser_image.size != expected_dimensions:
+            fail(f"browser dimensions {browser_image.size} do not match state {expected_dimensions}")
 
     left = browser_image
     right = native_image

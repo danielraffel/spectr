@@ -20,14 +20,18 @@ def main():
         browser_png = out / "before.png"
         native_png.write_bytes(browser_png.read_bytes())
         source_sha = "a" * 64
+        state = {"schema": "spectr-parity-state-v1", "version": 1,
+                 "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3}}
+        import hashlib
+        state_hash = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        state["stateSha256"] = state_hash
         receipt = {
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
+            "stateSha256": state_hash,
             "positive": {"before": {"path": str(browser_png),
                                       "sha256": __import__("hashlib").sha256(browser_png.read_bytes()).hexdigest()}},
         }
-        state = {"schema": "spectr-parity-state-v1", "version": 1,
-                 "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3}}
         receipt_path = out / "browser-receipt.json"
         state_path = out / "state.json"
         receipt_path.write_text(json.dumps(receipt))
