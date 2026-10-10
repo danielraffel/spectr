@@ -53,6 +53,9 @@ def main():
         fail("invalid parity state digest")
 
     output.mkdir(parents=True, exist_ok=True)
+    png = output / "parity-deterministic-analyzer.png"
+    if png.exists():
+        png.unlink()
     scale = state.get("viewport", {}).get("deviceScaleFactor", 1)
     run = subprocess.run([
         str(shot), f"--out={output}", f"--backend={args.backend}",
@@ -66,7 +69,6 @@ def main():
     if run.returncode != 0:
         fail(f"native shot exited {run.returncode}")
 
-    png = output / "parity-deterministic-analyzer.png"
     if not png.exists():
         fail(f"native shot did not produce {png}")
     with Image.open(png) as image:

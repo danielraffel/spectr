@@ -24,7 +24,7 @@ def main():
         out = Path(temp)
         fake = out / "native-shot"
         fake.write_text("#!/bin/sh\n"
-                        "python3 -c 'from PIL import Image; import sys, pathlib; "
+                        f"{sys.executable} -c 'from PIL import Image; import sys, pathlib; "
                         "p=pathlib.Path(sys.argv[1].split(\"=\",1)[1]); p.mkdir(parents=True,exist_ok=True); "
                         "Image.new(\"RGBA\",(4,3),(20,40,60,255)).save(p/\"parity-deterministic-analyzer.png\")' \"$1\"\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
