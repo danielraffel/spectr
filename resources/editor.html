@@ -181,11 +181,6 @@ document.addEventListener('DOMContentLoaded', async function() {
     // viewport into one atomic EditorBridge publication per animation frame.
     const spectrStateNeedle = '  // ---- public methods (via sharedState ref) ----\n  useEffect(() => {';
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
-  const spectrPublicationProvenance = () => ({
-    lmin: viewRef.current.lmin,
-    lmax: viewRef.current.lmax,
-    drawn: nativeAppliedRevisionRef.current
-  });
   useEffect(() => {
     if (!nativeHydrated) return;
     if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
