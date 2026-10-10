@@ -417,6 +417,42 @@ const baseGlobals = {
   else if (set.payload.drawn_revision !== 15)
     fail(`the render publication carried drawn_revision `
       + `${set.payload.drawn_revision}, expected 15`);
+
+  // 6. Several direct pointer samples in one presentation interval collapse
+  //    to the latest complete state. Release still flushes that final state
+  //    synchronously, so callers do not need to wait for the next frame.
+  posted.length = 0;
+  if (typeof surface.props.onPointerMove !== "function")
+    fail("the surface has no pointer-move handler for the coalescing probe");
+  else {
+    surface.props.onPointerDown(pointer(centre(24), PLOT_Y));
+    for (let i = 1; i <= 5; i++)
+      surface.props.onPointerMove(pointer(centre(24) + i * 2, PLOT_Y));
+    const beforeFramePublishes = posted.filter((p) => p.type === "processing_state_set");
+    if (beforeFramePublishes.length !== 0)
+      fail(`rapid move samples published ${beforeFramePublishes.length} states before a frame`);
+    advance(16);
+    const framePublishes = posted.filter((p) => p.type === "processing_state_set");
+    if (framePublishes.length !== 1)
+      fail(`rapid move samples published ${framePublishes.length} states in one frame; expected 1`);
+    surface.props.onPointerUp(pointer(centre(24) + 10, PLOT_Y));
+    const releasePublishes = posted.filter((p) => p.type === "processing_state_set");
+    if (releasePublishes.length !== 1)
+      fail(`pointer release published ${releasePublishes.length} states after the frame flush; expected 1`);
+
+    // A release can arrive before the scheduled frame. The release handler
+    // must apply its final edit first, then the surface wrapper flushes the
+    // latest complete state. Flushing at handler entry would publish the
+    // previous move and then publish the release as a second state.
+    posted.length = 0;
+    surface.props.onPointerDown(pointer(centre(25), PLOT_Y));
+    for (let i = 1; i <= 5; i++)
+      surface.props.onPointerMove(pointer(centre(25) + i * 2, PLOT_Y));
+    surface.props.onPointerUp(pointer(centre(25) + 12, PLOT_Y));
+    const sameFrameReleasePublishes = posted.filter((p) => p.type === 'processing_state_set');
+    if (sameFrameReleasePublishes.length !== 1)
+      fail(`same-frame pointer release published ${sameFrameReleasePublishes.length} states; expected 1`);
+  }
 }
 
 const passed = failures.length === 0;

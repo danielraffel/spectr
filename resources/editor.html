@@ -669,8 +669,12 @@ window.FilterBank = FilterBank;`,
       'band context consumes dismissal gestures');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativePublicationFrameRef = useRef(0);\n  const nativePendingPublicationRef = useRef(null);\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
+    replaceSpectrSource(
+      'onPointerUp={onPointerUp}',
+      'onPointerUp={event => { onPointerUp(event); flushNativeProcessingStatePublication(); }}',
+      'flush final publication after pointer release');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
       // Map old → new by proportional index
@@ -713,7 +717,24 @@ window.FilterBank = FilterBank;`,
       return nxt;
     });
   };`,
-      String.raw`  const queueNativeProcessingStatePublication = () => {
+      String.raw`  const sendNativeProcessingStatePublication = (publication) => {
+    try {
+      Promise.resolve(window.pulp.postMessage('processing_state_set', publication, 'spectr-processing-state')).catch(error => {
+        console.error('[Spectr] native direct-edit publication failed', error);
+      });
+    } catch (error) {
+      console.error('[Spectr] native direct-edit publication failed', error);
+    }
+  };
+  const flushNativeProcessingStatePublication = () => {
+    const frame = nativePublicationFrameRef.current;
+    nativePublicationFrameRef.current = 0;
+    if (frame) cancelAnimationFrame(frame);
+    const publication = nativePendingPublicationRef.current;
+    nativePendingPublicationRef.current = null;
+    if (publication) sendNativeProcessingStatePublication(publication);
+  };
+  const queueNativeProcessingStatePublication = () => {
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.
     if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
@@ -723,18 +744,38 @@ window.FilterBank = FilterBank;`,
       ? (Number.isFinite(mutedGainDbRef.current[i])
           ? mutedGainDbRef.current[i] : 0)
       : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+    // Advance the command sequence at user intent time, before the frame
+    // flush, so an older async native response cannot overwrite this edit.
+    ++nativeCommandSequenceRef.current;
+    // Stamp the signature when queued so the render effect cannot publish a
+    // duplicate while the coalesced frame is waiting. The payload is copied
+    // now; a later host projection cannot replace the user's latest edit.
     nativeDirectPublicationSignatureRef.current = JSON.stringify([
       N, gainDb, muted, view.lmin, view.lmax,
     ]);
-    ++nativeCommandSequenceRef.current;
-    Promise.resolve(window.pulp.postMessage('processing_state_set', {
+    nativePendingPublicationRef.current = {
       n_visible: N, gain_db: gainDb, muted,
       min_hz: Math.pow(10, view.lmin),
       max_hz: Math.pow(10, view.lmax),
-    }, 'spectr-processing-state')).catch(error => {
-      console.error('[Spectr] native direct-edit publication failed', error);
-    });
+    };
+    if (!nativePublicationFrameRef.current)
+      nativePublicationFrameRef.current = requestAnimationFrame(() => {
+        nativePublicationFrameRef.current = 0;
+        flushNativeProcessingStatePublication();
+      });
   };
+  // Pointerup bubbles after the target handler, so the final edit is flushed
+  // immediately while move samples within one frame still coalesce.
+  useEffect(() => {
+    const flush = () => flushNativeProcessingStatePublication();
+    window.addEventListener('pointerup', flush);
+    window.addEventListener('pointercancel', flush);
+    return () => {
+      window.removeEventListener('pointerup', flush);
+      window.removeEventListener('pointercancel', flush);
+      flushNativeProcessingStatePublication();
+    };
+  }, []);
   const commitGain = (idx, value, deferReact = false) => {
     // A real pointer edit is authoritative even if it arrives before the
     // hydration echo-suppression effect has consumed its one-shot latch.
