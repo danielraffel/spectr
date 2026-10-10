@@ -25,6 +25,21 @@ five bounded probes. It fails closed when the guest, key, or port is wrong.
 
 ## Optional UTM interactive path
 
+For the repeatable interactive path, run this one host-side command from the
+checkout:
+
+```bash
+tools/windows/open-utm-desktop.sh
+```
+
+It starts the retained VM if needed, waits for SSH, repairs RDP, and opens Jump
+Desktop. The saved `pulp-win-ci` connection now matches the guest hostname
+`PULP-WIN-CI` and local `ci` account, so there is no per-run domain mismatch.
+The guest desktop has a `REAPER (ARM64)` shortcut pointing at the installed
+ARM64 binary. Ableton Live is not installed in this ARM64 guest: its current
+installer rejects the virtual CPU because AVX/AVX2 are unavailable. Use the
+Windows x64 Proxmox session for Ableton Live validation.
+
 UTM 5.0.6 is registered as the persistent interactive Windows VM. Its network
 mode is **Emulated** with two forwarding rules:
 
