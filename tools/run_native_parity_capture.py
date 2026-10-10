@@ -81,6 +81,8 @@ def main():
         fail(f"native shot exited {run.returncode}")
     if "OK  parity-deterministic-analyzer" not in run.stdout:
         fail("native shot did not report a successful deterministic capture")
+    if "OK  parity-deterministic-analyzer-ready contract=spectr-parity-v1 sequence=2" not in run.stdout:
+        fail("native shot did not report the named parity readiness contract")
 
     if not png.exists():
         fail(f"native shot did not produce {png}")
