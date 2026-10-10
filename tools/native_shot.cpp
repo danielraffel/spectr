@@ -6634,8 +6634,16 @@ int main(int argc, char** argv) {
                     "(() => { const owners = globalThis.__pulpMaterializedCanvasBehaviorOwners__;"
                     " console.log('[canvas-map] ' + JSON.stringify(owners || null)); })();",
                     "canvas_ownership_map");
-                const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22",
-                                     "__behavior_pr_1", "__behavior_pr_2"};
+                const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22"};
+                std::vector<pulp::view::CanvasWidget*> all_canvases;
+                std::function<void(pulp::view::View&)> collect_canvases =
+                    [&](pulp::view::View& node) {
+                        if (auto* canvas = dynamic_cast<pulp::view::CanvasWidget*>(&node))
+                            all_canvases.push_back(canvas);
+                        for (std::size_t i = 0; i < node.child_count(); ++i)
+                            collect_canvases(*node.child_at(i));
+                    };
+                collect_canvases(root);
                 for (const char* id : ids) {
                     auto* view = find_by_id(root, id);
                     auto* canvas = view == nullptr
@@ -6670,12 +6678,21 @@ int main(int argc, char** argv) {
                          view->pointer_events() == pulp::view::View::PointerEvents::none ||
                          hit == nullptr || hit->id().empty()))
                         canvas_probe_ok = false;
-                    if ((std::string_view{id}.find("__behavior_") == 0) &&
-                        (view->opacity() > 0.01f ||
-                         view->pointer_events() != pulp::view::View::PointerEvents::none))
-                        canvas_probe_ok = false;
                 }
-                auto* behavior = find_by_id(root, "__behavior_pr_1");
+                pulp::view::CanvasWidget* behavior = nullptr;
+                int hidden_sources = 0;
+                for (auto* canvas : all_canvases) {
+                    if (canvas->opacity() <= 0.01f &&
+                        canvas->pointer_events() == pulp::view::View::PointerEvents::none) {
+                        ++hidden_sources;
+                        if (behavior == nullptr && canvas->command_count() > 0)
+                            behavior = canvas;
+                    }
+                }
+                std::printf("[canvas] discovered=%zu hidden_relay_sources=%d\n",
+                            all_canvases.size(), hidden_sources);
+                if (hidden_sources < 2 || behavior == nullptr)
+                    canvas_probe_ok = false;
                 if (behavior != nullptr) {
                     float x = 0.0f;
                     float y = 0.0f;
