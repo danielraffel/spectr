@@ -31,7 +31,7 @@ constexpr std::string_view kTemplateDigest =
 // goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
 // bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "8d40ad4883716b6ccae48992f0f8381af692ff4b62c471ec2d575f7cc961e9eb";
+    "9370038ea445036ac85e709c3c8c701bb62c76c0e9133f9274b5c1188c965b6f";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
