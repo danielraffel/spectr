@@ -6,6 +6,7 @@
     "vm_uuid": "36132D8D-99F7-4916-A6D8-935A6F4AF55F",
     "name": "pulp-windows-build-24h2-arm64-utm-fresh-20261007",
     "start_result": "started",
+    "ui_resume_attempted": true,
     "forwarded_ssh": "127.0.0.1:50376 -> 10.0.2.15:22",
     "stop_result": "stopped"
   },
@@ -13,7 +14,7 @@
     "tcp_listener": true,
     "ssh_banner": false,
     "result": "FAIL",
-    "observed_error": "Connection timed out during banner exchange"
+    "observed_error": "Connection timed out during banner exchange after bounded 90 second wait"
   },
   "disposition": "UTM remains optional and is not a build authority; direct QEMU remains the validated native-ARM path."
 }
