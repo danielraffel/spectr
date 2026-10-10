@@ -1,22 +1,25 @@
-# Windows ARM64EC build receipt — 2026-10-09
+# Windows ARM64/ARM64EC build receipts — 2026-10-09
 
-This receipt records the first current ARM64EC Spectr plugin link on the native
-Windows guest running under QEMU on the M5S. The Pulp follow-up is published at
+These receipts record current Spectr Windows work on the native ARM guest
+running under QEMU on the M5S. The Pulp follow-up is published at
 https://github.com/Generous-Corp/pulp/pull/9973.
 
-The VST3 and CLAP targets linked successfully after Pulp exported the generated
-control-shipping marker with `__declspec(dllexport)`. `dumpbin /headers` reports
-`8664 machine (x64) (ARM64X)`, which is the image type required by the ARM64EC
-REAPER host boundary.
+The ARM64EC VST3, CLAP, and standalone targets linked successfully. The
+focused test passed:
 
-The aggregate Spectr test executable did not link because the installed SDK's
-`pulp-audio-analysis.lib` is Debug-built while this Release test tree is not,
-and the optional Claude bundle symbol is absent. That failure is recorded as a
-separate SDK/test-harness consistency defect; it is not treated as plugin-test
-success.
+```text
+Spectr-test.exe "Spectr processes audio" --reporter compact
+All tests passed (2 assertions in 1 test case)
+```
 
-The plugin is still **not accepted in REAPER**. The required observed host
-instance, failed-scan evidence, real render, desktop screenshot, Windows audio
-harness/Quality Lab result, and Perfetto trace remain open. The existing helper
-is fail-closed and must be run with a matching observed acceptance receipt; a
-scan cache entry or `LoadLibrary` result is insufficient.
+The authenticated RDP transport and Windows desktop are proven, and ARM64
+REAPER is installed and launches. The standalone desktop path is still blocked:
+Pulp's Windows build has no standalone `WindowHost` factory, so
+`WindowHost::create()` returns null. The desktop receipt records this negative
+proof explicitly.
+
+Spectr is **not accepted in REAPER yet**. The required observed Spectr host
+instance, real render, Windows audio harness/Quality Lab result, and Perfetto
+trace remain open. A scan cache entry or `LoadLibrary` result is insufficient.
+See `arm64ec-build-receipt.json` and `desktop-launch-receipt.json` for the
+current receipts.
