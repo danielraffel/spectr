@@ -33,7 +33,7 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" "$repo_root/tools/windows/utm-daw-status.sh"
 open -a "Jump Desktop"
 cat <<EOF
 UTM desktop ready.
-Jump Desktop: open the saved pulp-win-ci connection.
+Jump Desktop: open the saved pulp-win-ci connection (127.0.0.1:${rdp_port}).
 SSH: 127.0.0.1:${ssh_port}
 RDP: 127.0.0.1:${rdp_port}
 Windows guest: PULP-WIN-CI / ci

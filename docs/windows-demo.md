@@ -33,8 +33,12 @@ tools/windows/open-utm-desktop.sh
 ```
 
 It starts the retained VM if needed, waits for SSH, repairs RDP, and opens Jump
-Desktop. The saved `pulp-win-ci` connection now matches the guest hostname
+Desktop. The saved `pulp-win-ci` connection points at the retained UTM guest's
+local RDP forward (`127.0.0.1:53390`) and matches the guest hostname
 `PULP-WIN-CI` and local `ci` account, so there is no per-run domain mismatch.
+The first reconnect may ask for the existing Windows credential; leave Jump
+Desktop's **Save password** option enabled and subsequent launches are one
+command.
 The guest desktop has `REAPER (ARM64)` and `Ableton Live 10 Trial` shortcuts.
 The retained image contains REAPER ARM64 and Ableton Live 10.1.43 Trial. The
 current Live 12 installer rejects this ARM64 guest because AVX/AVX2 are
