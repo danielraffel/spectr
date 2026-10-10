@@ -298,10 +298,17 @@ if [[ -d "$SPARKLE_FW" ]]; then
       exit 2
     }
   fi
+  if [[ "${NOTARIZE:-1}" == 1 ]]; then
+    stapler validate "$PKG"
+    spctl --assess --type install --verbose=2 "$PKG"
+  fi
   feed_args=()
   [[ "$APP_BUILD" == "$VER" ]] && feed_args=(--feed "$RELEASE_FEED")
+  gatekeeper_args=()
+  [[ "${NOTARIZE:-1}" == 1 ]] && gatekeeper_args=(--skip-gatekeeper)
   python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$SPARKLE_CHECK_APP" \
-    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" ${feed_args[@]+"${feed_args[@]}"}
+    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" \
+    "${gatekeeper_args[@]}" ${feed_args[@]+"${feed_args[@]}"}
 fi
 
 # A practice package is named for its build so two of them can sit side by side
