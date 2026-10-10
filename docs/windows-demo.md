@@ -243,3 +243,18 @@ the VM was confirmed `stopped` afterward.
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware
 variables are removed by the launcher trap. The 75 GB base image is retained;
 no second golden image is created.
+
+## Proxmox Ableton launch evidence (2026-10-10)
+
+The older official Ableton Live 10.1.43 trial is installed on VM 300 and was
+launched in the authenticated `ci` desktop session. The screenshot is
+[`.local-evidence/ableton/proxmox-ableton-live10-desktop.png`](../.local-evidence/ableton/proxmox-ableton-live10-desktop.png)
+(SHA-256 `70006c16d06195c3fb75ab5af0c35adc29f507ea1138881b0c05b8eaee86efaa`).
+The exact receipt is
+[`docs/windows-receipts-2026-10-10/proxmox-ableton-live10-receipt.json`](windows-receipts-2026-10-10/proxmox-ableton-live10-receipt.json).
+
+This proves the desktop application launches. It does not prove Spectr loads
+in Ableton: the Live 10 trial welcome dialog remained open and no plugin or
+audio acceptance was recorded. Live 12 remains blocked by the AVX/AVX2
+preflight on both current guests; a newer AVX2-capable x64 Windows host is
+required for current Ableton validation.
