@@ -181,6 +181,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // viewport into one atomic EditorBridge publication per animation frame.
     const spectrStateNeedle = '  // ---- public methods (via sharedState ref) ----\n  useEffect(() => {';
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
+  const spectrPublicationProvenance = () => ({
+    lmin: viewRef.current.lmin,
+    lmax: viewRef.current.lmax,
+    drawn: nativeAppliedRevisionRef.current
+  });
   useEffect(() => {
     if (!nativeHydrated) return;
     if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
@@ -197,11 +202,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (Number.isFinite(mutedGainDbRef.current[i])
             ? mutedGainDbRef.current[i] : 0)
         : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
-      const live = {
-        lmin: viewRef.current.lmin,
-        lmax: viewRef.current.lmax,
-        drawn: nativeAppliedRevisionRef.current,
-      };
+      const live = spectrPublicationProvenance();
       const publicationSignature = JSON.stringify([
         N, gainDb, muted, live.lmin, live.lmax,
       ]);
@@ -740,11 +741,6 @@ window.FilterBank = FilterBank;`,
     nativePendingPublicationRef.current = null;
     if (publication) sendNativeProcessingStatePublication(publication);
   };
-  const spectrPublicationProvenance = () => ({
-    lmin: viewRef.current.lmin,
-    lmax: viewRef.current.lmax,
-    drawn: nativeAppliedRevisionRef.current,
-  });
   const queueNativeProcessingStatePublication = () => {
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.

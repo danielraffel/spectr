@@ -7,8 +7,8 @@
   },
   "source": {
     "path": "resources/editor.html",
-    "sha256": "e9cd9142e01cb47a515dc3486ddb557b9527c8844c427a99000ce53000777072",
-    "bytes": 2067811
+    "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
+    "bytes": 2067538
   },
   "artifact": {
     "path": "native-ui/materialized/materialized-document.runtime.json",
