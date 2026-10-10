@@ -188,8 +188,10 @@ From the Windows guest, package the warmed build tree:
 
 The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
-`Install-Spectr.ps1`. The installer verifies every manifest hash before it
-writes the VST3, CLAP, and standalone files to their standard Windows
+`Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
+specific VST3 binary so the installed editor can resolve them; legacy root
+copies remain in the handoff ZIP. The installer verifies every manifest hash
+before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
