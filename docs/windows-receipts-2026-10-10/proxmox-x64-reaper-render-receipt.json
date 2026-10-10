@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T22:41:00Z",
+  "host": {
+    "provider": "Proxmox",
+    "vmid": 300,
+    "guest": "pulp-win-ci",
+    "address": "192.168.86.21",
+    "architecture": "x86_64-win",
+    "reaper_version": "7.82",
+    "reaper_sha256": "ea910af76b1160411f54dea978084d054bb8e397a391e7e84de91088904c7f26",
+    "audio_device": "Dummy Audio",
+    "audio_settings": "44.1 kHz, 24-bit WAV, 1024 samples"
+  },
+  "plugin": {
+    "format": "VST3",
+    "display_name": "VST3: Spectr (Pulp)",
+    "sha256": "329d2fbf55d1cb5b47b7fb6dd150e94308233b77a60635dcbb776c125471c8620",
+    "editor": "PASS: REAPER UI visibly rendered Spectr parameter controls after Dummy Audio selection and REAPER restart"
+  },
+  "input": {
+    "guest_path": "C:\\Users\\ci\\x64-test-input.wav",
+    "format": "stereo test WAV, 3 seconds",
+    "sha256": "768ec91faf910a02f61320331189e9f61a31a7a40bd700b0cbb8a63283c1038a"
+  },
+  "render": {
+    "guest_path": "C:\\Users\\ci\\Documents\\REAPER Media\\x64-spectr-render.wav",
+    "host_copy": "docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.wav",
+    "sha256": "2a521c655ee0739509f5bcd0433d1a56aa125c26da39be3f5dab122ab378f9a4",
+    "format": "stereo 44.1 kHz 24-bit PCM WAV",
+    "frames": 132300,
+    "duration_seconds": 3.0,
+    "peak_linear": 0.3661805391,
+    "rms_linear": 0.2589366988,
+    "reaper_render_meter": "peak -8.7 dBFS, clip 0, LUFS-M -9.4",
+    "result": "PASS: non-silent audio rendered through Spectr in REAPER"
+  },
+  "visual_evidence": {
+    "capture": "CUA Jump Desktop screenshot displayed the live x64 REAPER Spectr editor with Mix, Output, Intensity, Auto Gain, Freeze, Freeze Length, and Band Gain controls",
+    "capture_time_utc": "2026-10-10T22:38:00Z",
+    "durable_file": false,
+    "note": "The CUA capture is in the session transcript; no filesystem screenshot API was available."
+  },
+  "scope": {
+    "status": "x64_reaper_editor_and_audio_pass",
+    "ableton": "unverified; Live 12 requires AVX2-capable host"
+  }
+}

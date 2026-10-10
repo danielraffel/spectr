@@ -29,7 +29,7 @@
   "scope": {
     "status": "focused_x64_dsp_pass",
     "reaper_instantiation": "proven separately by proxmox-reaper-x64-receipt.json",
-    "x64_editor": "open; guest exposes Microsoft Basic Display Adapter with AdapterRAM 0",
-    "x64_host_render": "open; no configured render receipt"
+    "x64_editor": "PASS in proxmox-x64-reaper-render-receipt.json after Dummy Audio selection and REAPER restart",
+    "x64_host_render": "PASS in proxmox-x64-reaper-render-receipt.json"
   }
 }

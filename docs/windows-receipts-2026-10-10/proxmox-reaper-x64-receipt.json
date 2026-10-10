@@ -14,10 +14,10 @@
     "plugin_scan": "PASS: startup scan visibly reported Spectr.vst3",
     "plugin_browser": "PASS: Add FX browser listed VST3: Spectr (Pulp)",
     "plugin_instance": "PASS: VST3: Spectr (Pulp) was added to Track 1",
-    "editor_surface": "LIMITATION: instantiated editor remained blank white on this x64 guest",
-    "audio_device": "CLOSED: REAPER ran without a selected audio device",
+    "editor_surface": "Historical limitation: the first session remained blank before selecting Dummy Audio and restarting REAPER",
+    "audio_device": "Superseded by Dummy Audio render session in proxmox-x64-reaper-render-receipt.json",
     "screenshot": ".local-evidence/proxmox/reaper-x64-spectr-instantiated.png",
     "screenshot_sha256": "58fda441c4586f4bb126ca5da86b05b7e623310ed909881e405c8aebccf4635a"
   },
-  "disposition": "The x64 Windows VST3 builds, scans, and instantiates in REAPER. The x64 editor-rendering path and audio render remain open; the ARM64 UTM path has the stronger UI and audio proof."
+  "disposition": "Historical first-session receipt. The x64 editor and audio path are now proven by proxmox-x64-reaper-render-receipt.json."
 }
