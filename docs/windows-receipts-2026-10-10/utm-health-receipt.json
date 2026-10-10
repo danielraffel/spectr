@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T17:21:46Z",
+  "utm": {
+    "version": "5.0.6",
+    "vm_uuid": "36132D8D-99F7-4916-A6D8-935A6F4AF55F",
+    "name": "pulp-windows-build-24h2-arm64-utm-fresh-20261007",
+    "start_result": "started",
+    "forwarded_ssh": "127.0.0.1:50376 -> 10.0.2.15:22",
+    "stop_result": "stopped"
+  },
+  "health": {
+    "tcp_listener": true,
+    "ssh_banner": false,
+    "result": "FAIL",
+    "observed_error": "Connection timed out during banner exchange"
+  },
+  "disposition": "UTM remains optional and is not a build authority; direct QEMU remains the validated native-ARM path."
+}
