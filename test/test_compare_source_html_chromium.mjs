@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,11 +32,21 @@ try {
     const sourcePath = path.join(temp, `${testCase.name}.html`);
     const outputPath = path.join(temp, testCase.name);
     fs.writeFileSync(sourcePath, testCase.source);
+    const statePath = path.join(temp, `${testCase.name}-state.json`);
+    const state = {schema: 'spectr-parity-state-v1', version: 1,
+      source: {sha256: crypto.createHash('sha256').update(testCase.source).digest('hex')},
+      viewport: {width: 1320, height: 860, deviceScaleFactor: 1}};
+    const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
+      : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`
+      : JSON.stringify(value);
+    state.stateSha256 = crypto.createHash('sha256').update(canonical(state)).digest('hex');
+    fs.writeFileSync(statePath, JSON.stringify(state));
     const run = spawnSync(process.execPath, [
       comparatorPath,
       '--source', sourcePath,
       '--output', outputPath,
       '--chrome', chromePath,
+      '--state', statePath,
       '--strict',
     ], {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
     assert.equal(run.error, undefined, run.error && run.error.message);
@@ -45,6 +56,7 @@ try {
     const receipt = JSON.parse(fs.readFileSync(path.join(outputPath, 'receipt.json'), 'utf8'));
     assert.equal(receipt.positive.info.compatMode, testCase.expectedCompatMode,
       `${testCase.name} compatMode`);
+    assert.equal(receipt.stateSha256, state.stateSha256, `${testCase.name} state digest`);
 
     const injected = fs.readFileSync(path.join(outputPath, 'source-with-bridge.html'), 'utf8');
     if (testCase.expectedCompatMode === 'CSS1Compat') {
