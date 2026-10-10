@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,8 +21,10 @@ def sha256(path):
 
 
 def canonical(value):
-    return json.dumps(canonical_value(value), sort_keys=True,
-                      separators=(",", ":"), ensure_ascii=False).encode()
+    encoded = json.dumps(canonical_value(value), sort_keys=True,
+                         separators=(",", ":"), ensure_ascii=False)
+    encoded = re.sub(r"e([+-])0+(\d+)", r"e\1\2", encoded)
+    return encoded.encode()
 
 
 def canonical_value(value):

@@ -10,6 +10,7 @@ this tool only joins them after checking their provenance and dimensions.
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -27,7 +28,9 @@ def canonical(value):
         value = [canonical_value(value_item) for value_item in value]
     elif isinstance(value, float) and value.is_integer():
         value = int(value)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    encoded = re.sub(r"e([+-])0+(\d+)", r"e\1\2", encoded)
+    return encoded.encode()
 
 
 def canonical_value(value):

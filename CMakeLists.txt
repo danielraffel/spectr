@@ -1282,6 +1282,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
     set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
 endif()
+find_program(SPECTR_NODE_EXECUTABLE node)
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-parity-state-canonical-node
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.mjs)
+    set_tests_properties(Spectr-parity-state-canonical-node PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp

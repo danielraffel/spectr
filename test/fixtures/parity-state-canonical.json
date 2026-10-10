@@ -4,6 +4,6 @@
   "source": {"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
   "viewport": {"width": 1320, "height": 860, "deviceScaleFactor": 2.0},
   "native": {"binarySha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-  "analyzer": {"sequence": 1.0, "points": [1.0, 2.5], "label": "é"},
-  "stateSha256": "4d50c80a4cf43b8896954d61dad024e9db837d7d404a59a988db9b7a4492fce4"
+  "analyzer": {"sequence": 1.0, "points": [1.0, 2.5], "tiny": 1e-07, "label": "é"},
+  "stateSha256": "b4cf27e82fc139e77a5ed10b9f273d53efcf269968e6b4b893f687bcd7503422"
 }
