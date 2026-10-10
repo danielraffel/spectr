@@ -25,10 +25,14 @@ def main():
         browser_png.replace(out / "before.png")
         browser_png = out / "before.png"
         native_png.write_bytes(browser_png.read_bytes())
-        source_sha = "a" * 64
+        source_artifact = out / "source.html"
+        source_artifact.write_text("source fixture")
+        import hashlib
+        source_sha = hashlib.sha256(source_artifact.read_bytes()).hexdigest()
+        native_binary = out / "native-binary"
+        native_binary.write_bytes(b"fixture")
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3}}
-        import hashlib
         state["native"] = {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}
         state_hash = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         state["stateSha256"] = state_hash
@@ -54,6 +58,8 @@ def main():
         run = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
                               "--native-png", str(native_png), "--state", str(state_path),
                               "--native-receipt", str(native_receipt_path),
+                              "--source-artifact", str(source_artifact),
+                              "--native-binary", str(native_binary),
                               "--output", str(report)], capture_output=True, text=True)
         assert run.returncode == 0, run.stderr
         assert json.loads(report.read_text())["comparison"]["exact"]
@@ -61,10 +67,25 @@ def main():
         negative = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
                                    "--native-png", str(native_png), "--state", str(state_path),
                                    "--native-receipt", str(native_receipt_path),
+                                   "--source-artifact", str(source_artifact),
+                                   "--native-binary", str(native_binary),
                                    "--output", str(out / "negative.json"), "--plant-negative"],
                                   capture_output=True, text=True)
         assert negative.returncode == 0, negative.stderr
         assert json.loads((out / "negative.json").read_text())["comparison"]["differingPixels"] > 0
+        mismatch = out / "mismatch.png"
+        Image.new("RGBA", (4, 3), (21, 40, 60, 255)).save(mismatch)
+        mismatch_receipt = dict(native_receipt)
+        mismatch_receipt["pngSha256"] = hashlib.sha256(mismatch.read_bytes()).hexdigest()
+        mismatch_receipt_path = out / "mismatch-receipt.json"
+        mismatch_receipt_path.write_text(json.dumps(mismatch_receipt))
+        rejected = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                                   "--native-png", str(mismatch), "--state", str(state_path),
+                                   "--native-receipt", str(mismatch_receipt_path),
+                                   "--source-artifact", str(source_artifact),
+                                   "--native-binary", str(native_binary),
+                                   "--output", str(out / "rejected.json")], capture_output=True, text=True)
+        assert rejected.returncode != 0, rejected.stdout
     print("PASS: parity receipt exact match and planted negative")
 
 

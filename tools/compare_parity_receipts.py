@@ -40,6 +40,8 @@ def main():
     parser.add_argument("--browser-receipt", required=True)
     parser.add_argument("--native-png", required=True)
     parser.add_argument("--native-receipt", required=True)
+    parser.add_argument("--source-artifact", required=True)
+    parser.add_argument("--native-binary", required=True)
     parser.add_argument("--state", required=True,
                         help="JSON state manifest shared by both captures")
     parser.add_argument("--output", required=True)
@@ -50,8 +52,10 @@ def main():
     browser_path = Path(args.browser_receipt)
     native_path = Path(args.native_png)
     native_receipt_path = Path(args.native_receipt)
+    source_artifact = Path(args.source_artifact)
+    native_binary = Path(args.native_binary)
     state_path = Path(args.state)
-    for path in (browser_path, native_path, native_receipt_path, state_path):
+    for path in (browser_path, native_path, native_receipt_path, state_path, source_artifact, native_binary):
         if not path.exists():
             fail(f"missing input: {path}")
 
@@ -98,10 +102,14 @@ def main():
         fail("state digest does not match native receipt")
     if native.get("sourceSha256") != expected_artifact:
         fail("source SHA does not match native receipt")
+    if digest(source_artifact.read_bytes()) != expected_artifact:
+        fail("source artifact SHA does not match parity state")
     expected_binary = state.get("native", {}).get("binarySha256")
     if not expected_binary or not native.get("binarySha256"):
         fail("native binary SHA is required in state and native receipt")
     if native["binarySha256"] != expected_binary:
+        fail("native binary SHA does not match parity state")
+    if digest(native_binary.read_bytes()) != expected_binary:
         fail("native binary SHA does not match parity state")
     expected_size = state.get("viewport", {}).get("png")
     if not expected_size and state.get("viewport", {}).get("width"):
@@ -161,8 +169,8 @@ def main():
     print(json.dumps(report, indent=2))
     if args.plant_negative:
         return 0
-    return 0 if exact else 1
+    return 0 if args.plant_negative or exact else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
