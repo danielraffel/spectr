@@ -6629,6 +6629,7 @@ int main(int argc, char** argv) {
             // hit-test their painted centres.
             if (std::getenv("SPECTR_CANVAS_OWNERSHIP_PROBE") != nullptr) {
                 std::printf("--- canvas ownership ---\n");
+                bool canvas_probe_ok = true;
                 rig.eval(
                     "(() => { const owners = globalThis.__pulpMaterializedCanvasBehaviorOwners__;"
                     " console.log('[canvas-map] ' + JSON.stringify(owners || null)); })();",
@@ -6642,6 +6643,7 @@ int main(int argc, char** argv) {
                         : dynamic_cast<pulp::view::CanvasWidget*>(view);
                     if (view == nullptr || canvas == nullptr) {
                         std::printf("[canvas] id=%s missing_or_not_canvas\n", id);
+                        canvas_probe_ok = false;
                         continue;
                     }
                     float x = 0.0f;
@@ -6663,6 +6665,15 @@ int main(int argc, char** argv) {
                         b.height, hb.x, hb.y, hb.width, hb.height,
                         canvas->command_count(), hit == nullptr || hit->id().empty()
                             ? "(none)" : hit->id().c_str());
+                    if ((std::string_view{id}.find("Browser_canvas_") == 0) &&
+                        (view->opacity() < 0.99f ||
+                         view->pointer_events() == pulp::view::View::PointerEvents::none ||
+                         hit == nullptr || hit->id().empty()))
+                        canvas_probe_ok = false;
+                    if ((std::string_view{id}.find("__behavior_") == 0) &&
+                        (view->opacity() > 0.01f ||
+                         view->pointer_events() != pulp::view::View::PointerEvents::none))
+                        canvas_probe_ok = false;
                 }
                 auto* behavior = find_by_id(root, "__behavior_pr_1");
                 if (behavior != nullptr) {
@@ -6681,7 +6692,12 @@ int main(int argc, char** argv) {
                                 static_cast<unsigned long long>(after),
                                 static_cast<long long>(after) -
                                     static_cast<long long>(before));
+                    if (after <= before) canvas_probe_ok = false;
                 }
+                std::printf("[canvas] ownership_verdict=%s\n",
+                            canvas_probe_ok ? "PASS" : "FAIL");
+                if (!canvas_probe_ok)
+                    return 1;
             }
 
             auto report = [&root](const char* label, const char* id) {
