@@ -27,7 +27,19 @@
     "reaper_plugin_browser": "PASS: Add FX browser visibly listed CLAP: Spectr (Pulp)",
     "reaper_plugin_instance": "PASS: CLAP: Spectr (Pulp) instantiated on Track 1; controls rendered and enabled",
     "screenshot_captured": "PASS: Jump Desktop capture showed REAPER plugin browser and instantiated Spectr UI",
-    "audio_render": "OPEN: no rendered WAV receipt yet"
+    "audio_render": {
+      "result": "PASS",
+      "guest_path": "C:\\Users\\admin\\Documents\\REAPER Media\\spectr-reaper-output.wav",
+      "local_copy": "/Users/danielraffel/Code/spectr-windows-build-20261007/.local-evidence/spectr-reaper-output.wav",
+      "sha256": "66a431843b92f3e063c9c6aa888a2b02fd279daecc0d36c584e772c87c7d0fb8",
+      "format": "stereo 44.1 kHz 24-bit PCM, 5 seconds, 220500 frames",
+      "render_ui": "Finished in 0:00 (7.4x realtime); peak -14.0 dB, clip 0, LUFS-M -14.7"
+    },
+    "reaper_audio_input": {
+      "guest_path": "C:\\Users\\admin\\Downloads\\spectr-reaper-input.wav",
+      "sha256": "53fb159bc3b4513ea0ea044b42b7ca389c0bab2c9c73bbb8a28cb8a0504ffddc",
+      "format": "stereo 48 kHz PCM, 5 seconds"
+    }
   },
-  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, and live instantiation are proven. Audio render and Ableton remain separate follow-up evidence."
+  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, live instantiation, and a non-silent 5-second REAPER render are proven. Ableton remains a separate follow-up."
 }
