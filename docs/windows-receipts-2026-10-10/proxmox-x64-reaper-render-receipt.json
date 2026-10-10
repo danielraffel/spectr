@@ -44,5 +44,16 @@
   "scope": {
     "status": "x64_reaper_editor_and_audio_pass",
     "ableton": "unverified; Live 12 requires AVX2-capable host"
+  },
+  "analysis": {
+    "summarize_command": "pulp audio validate summarize docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.wav --json",
+    "doctor_command": "pulp audio validate doctor docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.wav --thd --channel 0",
+    "artifact": "docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.thd.json",
+    "artifact_sha256": "a61dbe224f27db9e0a87b94d2a3b2e04d9e5af799ab44a7877bb05a08bd85fbb",
+    "channels": "2/2 finite, no NaN/Inf, no clipped samples, longest silence run 1 frame",
+    "peak_dbfs": -8.72609409794801,
+    "rms_dbfs": -11.736127033315416,
+    "thd_440hz_percent": 0.0025131,
+    "result": "PASS: Pulp offline audio analysis confirms finite, unclipped, non-silent render"
   }
 }
