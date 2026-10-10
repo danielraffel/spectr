@@ -17,8 +17,23 @@ if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --c
 if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-importer-canvas-ink requires --importer-capture DIR');
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
+// A bridge script must not precede a source document's doctype.  Chromium
+// switches to quirks mode when anything (including a script) appears before
+// the doctype token, which can change layout metrics in the comparison page.
+// Keep the source bytes intact and insert the bridge immediately after a
+// leading HTML doctype.  Documents without a leading doctype remain
+// BackCompat, matching their original browser behavior.
+const leadingDoctype=/^(?:\uFEFF)?[\t\n\f\r ]*<!doctype[\t\n\f\r ]+[^>]*>/i;
+const injectBridge=(sourceBytes,bridgeSource)=>{
+ const sourceText=sourceBytes.toString('utf8');
+ const match=sourceText.match(leadingDoctype);
+ const bridgeBytes=Buffer.from(bridgeSource);
+ if(!match)return Buffer.concat([bridgeBytes,sourceBytes]);
+ const doctypeEnd=Buffer.byteLength(match[0],'utf8');
+ return Buffer.concat([sourceBytes.subarray(0,doctypeEnd),bridgeBytes,sourceBytes.subarray(doctypeEnd)]);
+};
 const bridge=`<script>window.__spectrBrowserPosts=[];window.__spectrBrowserListeners=Object.create(null);window.pulp={on(type,cb){(window.__spectrBrowserListeners[type]??=new Set()).add(cb);return()=>window.__spectrBrowserListeners[type].delete(cb)},postMessage(type,payload){window.__spectrBrowserPosts.push({type,payload});for(const cb of window.__spectrBrowserListeners[type]||[])try{cb({type,payload})}catch(e){};if(type==='editor_ready'){queueMicrotask(()=>{const n=32;const trace=count=>Array.from({length:count},(_,i)=>{const x=i/Math.max(1,count-1);const left=Math.exp(-((x-.22)**2)/.008)*28;const middle=Math.exp(-((x-.52)**2)/.018)*38;const right=Math.exp(-((x-.82)**2)/.012)*23;return -96+left+middle+right});const state={n_visible:n,gain_db:new Array(n).fill(0),muted:new Array(n).fill(false),min_hz:20,max_hz:20000,motion_mode:0,analyzer_mode:0,edit_mode:0,visualization_mode:2,revision:1,snapshots:{A:{populated:false},B:{populated:false}},patterns_json:JSON.stringify({format:'spectr.patterns',version:1,default_id:'factory:flat',patterns:[]})};for(const cb of window.__spectrBrowserListeners.processing_state_hydrate||[])try{cb({type:'processing_state_hydrate',payload:state})}catch(e){};const analyzer={schema_version:1,epoch:0,sequence_number:0,dropped_frames:0,source_channels:2,fft_size:512,sample_rate:48000,floor_db:-120,ceiling_db:24,visible:{min_hz:20,max_hz:20000,magnitude_db:trace(321)},overview:{min_hz:20,max_hz:20000,magnitude_db:trace(121)}};for(const cb of window.__spectrBrowserListeners.analyzer_frame||[])try{cb({type:'analyzer_frame',payload:analyzer})}catch(e){}})}return Promise.resolve({ok:true,payload:{ok:true}})}};window.confirm=()=>true;</script>`;
-const html=Buffer.concat([Buffer.from(bridge),bytes]);
+const html=injectBridge(bytes,bridge);
 const temp=path.join(out,'source-with-bridge.html'); fs.writeFileSync(temp,html);
 const profile=fs.mkdtempSync(path.join(out,'chrome-profile-'));
 const proc=spawn(chrome,['--headless=new','--disable-gpu','--disable-background-networking','--disable-component-update','--disable-domain-reliability','--disable-sync','--no-first-run','--no-default-browser-check','--allow-file-access-from-files','--run-all-compositor-stages-before-draw','--window-size=1320,860','--force-device-scale-factor=1','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
@@ -38,7 +53,7 @@ try{
  const stop=Date.now()+30000; let ready;
  while(Date.now()<stop){ready=await evalv(`(()=>({ready:document.readyState,root:document.getElementById('root')?.children.length||0,canvas:document.querySelectorAll('canvas').length,body:document.body?.children.length||0,title:document.title}))()`); if(ready.ready==='complete'&&(ready.root>0||ready.canvas>0||ready.body>0))break; await delay(100)}
  await delay(500);
- const info=await evalv(`(()=>{const cs=[...document.querySelectorAll('canvas')].map((c,i)=>({i,width:c.width,height:c.height,css:[c.getBoundingClientRect().width,c.getBoundingClientRect().height]}));const root=document.getElementById('root');const txt=(document.body?.innerText||'').slice(0,2000);const attrs=[...document.querySelectorAll('[data-spectr-menu-root],[data-spectr-menu-trigger],[data-spectr-bank-ready]')].map(x=>({tag:x.tagName,id:x.id,attrs:[...x.attributes].reduce((o,a)=>(o[a.name]=a.value,o),{})}));return {readyState:document.readyState,title:document.title,rootChildren:root?.children.length||0,bodyChildren:document.body?.children.length||0,canvas:cs,attrs,bodyText:txt,posts:(window.__spectrBrowserPosts||[]).slice(0,10),htmlBytes:document.documentElement.outerHTML.length}})()`);
+ const info=await evalv(`(()=>{const cs=[...document.querySelectorAll('canvas')].map((c,i)=>({i,width:c.width,height:c.height,css:[c.getBoundingClientRect().width,c.getBoundingClientRect().height]}));const root=document.getElementById('root');const txt=(document.body?.innerText||'').slice(0,2000);const attrs=[...document.querySelectorAll('[data-spectr-menu-root],[data-spectr-menu-trigger],[data-spectr-bank-ready]')].map(x=>({tag:x.tagName,id:x.id,attrs:[...x.attributes].reduce((o,a)=>(o[a.name]=a.value,o),{})}));return {readyState:document.readyState,title:document.title,compatMode:document.compatMode,rootChildren:root?.children.length||0,bodyChildren:document.body?.children.length||0,canvas:cs,attrs,bodyText:txt,posts:(window.__spectrBrowserPosts||[]).slice(0,10),htmlBytes:document.documentElement.outerHTML.length}})()`);
  const canvasInk=await evalv(`(()=>{let pixels=0,ink=0,max=0;for(const canvas of document.querySelectorAll('canvas')){const ctx=canvas.getContext('2d');if(!ctx)continue;let data;try{data=ctx.getImageData(0,0,canvas.width,canvas.height).data}catch{continue}pixels+=data.length/4;for(let i=0;i<data.length;i+=4){const value=data[i]+data[i+1]+data[i+2];if(value>max)max=value;if(data[i+3]>0&&value>18)ink++}}return {pixels,inkPixels:ink,inkFraction:pixels?ink/pixels:0,max}})()`);
  if(strict && (info.rootChildren < 1 || info.canvas.length < 1 || consoleErrors.length || networkFailures.length)) throw Error(`strict render check failed: root=${info.rootChildren} canvas=${info.canvas.length} console=${consoleErrors.length} network=${networkFailures.length}`);
  if(requireCanvasInk && canvasInk.inkPixels < 1) throw Error(`canvas ink check failed: canvases=${info.canvas.length} pixels=${canvasInk.pixels} inkPixels=${canvasInk.inkPixels}`);
