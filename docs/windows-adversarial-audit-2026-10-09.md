@@ -12,7 +12,7 @@ intentionally not a product acceptance claim.
 | No macOS CI runner consumption | launcher is local QEMU; no TartCI registration or runner labels | PASS |
 | ARM64EC/ARM64X artifact shape | `dumpbin /headers`: `8664 machine (x64) (ARM64X)`; hashes in `docs/windows-receipts-2026-10-09/` | PASS |
 | Focused Windows DSP test on this ARM64EC tree | `Spectr-test.exe "Spectr processes audio" --reporter compact` | PASS; 2 assertions in 1 test case |
-| REAPER plugin instance | Fresh 2026-10-10 authenticated RDP session: cache cleared, full VST rescan completed, and REAPER lists `Spectr.vst3` under “Plug-ins that failed to scan” | FAIL / open |
+| REAPER plugin instance | Fresh 2026-10-10 authenticated RDP session: cache cleared, full VST rescan completed, and REAPER lists `Spectr.vst3` under “Plug-ins that failed to scan”; an ARM64 no-GPU binary also failed the same scan | FAIL / open |
 | REAPER screenshot | no authenticated observed plugin window | FAIL / open |
 | Real REAPER render/audio | no host render receipt | FAIL / open |
 | Windows audio harness / Quality Lab | not run against the current ARM64EC artifact | FAIL / open |
