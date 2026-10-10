@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-10-10T22:40:00Z",
-  "source_sha": "308a1f5ae27ffbecca929984d0d3310eb15e5a29",
+  "generated_at_utc": "2026-10-10T23:00:00Z",
+  "source_sha": "7f7c5b133041090eba9c069957b356d5a832b3cb",
   "sdk": {
     "source_sha": "68a48f899164056ac25691668138ec95cee86af9",
     "provenance_kind": "release",
@@ -17,11 +17,11 @@
   },
   "package": {
     "path": "/Users/danielraffel/Code/spectr-artifacts-20261010/Spectr-1.0.7.pkg",
-    "bytes": 75252657,
-    "sha256": "67c57870767f8ba1c4ea67c13c009dc2d74dd02ad3c0b39b253241898bbc1d6e",
+    "bytes": 75252717,
+    "sha256": "8ce46e0fe2928a4a194ee6d126f49554706f4bc68445e8929b1ce09e7f23e631",
     "product_version": "1.0.7",
     "installer_identity": "Developer ID Installer: Daniel Raffel (95CX6P84C4)",
-    "notarization_submission_id": "6429fc66-3e27-4b54-86fc-bae16b0f4f5f",
+    "notarization_submission_id": "616488a0-acf4-4493-970a-62d7687d8023",
     "notarization_status": "Accepted",
     "stapler_validate": "PASS",
     "spctl_install": "PASS: source=Notarized Developer ID",
@@ -33,11 +33,11 @@
     "release_build": "PASS",
     "no_test_seams": "PASS",
     "installer_gatekeeper_acceptance": "PASS",
-    "package_wrapper_exit": "FAIL_FALSE_NEGATIVE",
-    "package_wrapper_failure_detail": "The wrapper's final Sparkle check runs spctl --assess --type execute on the app extracted from the notarized package. Apple accepted and stapled the installer, but the extracted app has no standalone execution ticket and is reported as Unnotarized Developer ID. Validate the distributable package with spctl --type install and stapler validate."
+    "package_wrapper_exit": "PASS",
+    "package_wrapper_failure_detail": null
   },
   "notes": [
     "The .pkg is the shareable artifact and passes installer-level Gatekeeper validation.",
-    "The package wrapper should be hardened later to distinguish package notarization from standalone app notarization instead of treating this as a package failure."
+    "The wrapper skips standalone app execution assessment only for the app extracted from this notarized package; codesign, Sparkle, stapler, and installer-level spctl checks remain mandatory."
   ]
 }
