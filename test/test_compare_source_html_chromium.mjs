@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {stateDigest} from '../tools/parity_state_canonical.mjs';
 
 const [comparatorPath, chromePath] = process.argv.slice(2);
 assert(comparatorPath && chromePath,
@@ -36,10 +37,7 @@ try {
     const state = {schema: 'spectr-parity-state-v1', version: 1,
       source: {sha256: crypto.createHash('sha256').update(testCase.source).digest('hex')},
       viewport: {width: 1320, height: 860, deviceScaleFactor: 1}};
-    const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
-      : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`
-      : JSON.stringify(value);
-    state.stateSha256 = crypto.createHash('sha256').update(canonical(state)).digest('hex');
+    state.stateSha256 = stateDigest(state);
     fs.writeFileSync(statePath, JSON.stringify(state));
     const run = spawnSync(process.execPath, [
       comparatorPath,
