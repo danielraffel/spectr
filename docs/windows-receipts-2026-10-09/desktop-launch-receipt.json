@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T07:10:00Z",
+  "transport": {
+    "host": "M5S macOS host",
+    "guest": "Windows ARM64 native QEMU",
+    "rdp": "127.0.0.1:53389",
+    "authentication": "PULP-WIN\\spectr authenticated RDP session",
+    "desktop_observed": true,
+    "reaper_observed": true
+  },
+  "standalone": {
+    "artifact": "C:\\builds\\spectr-arm64-gpu\\Spectr.exe",
+    "audio_mode": "PULP_AUDIO_DEVICE=null",
+    "result": "blocked",
+    "failure": "WindowHost::create() failed",
+    "negative_proof": "The process starts and reaches the null-audio runtime, but no Spectr editor window is created in the ARM64 QEMU/RDP session."
+  },
+  "acceptance": "DESKTOP_TRANSPORT_PROVEN_RENDERS_BLOCKED"
+}
