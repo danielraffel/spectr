@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-10-10T17:21:46Z",
+  "generated_at_utc": "2026-10-10T18:20:00Z",
   "utm": {
     "version": "5.0.6",
     "vm_uuid": "36132D8D-99F7-4916-A6D8-935A6F4AF55F",
@@ -8,13 +8,20 @@
     "start_result": "started",
     "ui_resume_attempted": true,
     "forwarded_ssh": "127.0.0.1:50376 -> 10.0.2.15:22",
-    "stop_result": "stopped"
+    "stop_result": "stopped",
+    "forwarded_rdp": "127.0.0.1:53390 -> 10.0.2.15:3389",
+    "firmware_vars_repaired_from": "/Volumes/Atelier/VMs/bench/qemu-windows-gui-vars-20261007.fd",
+    "credential_account": "pulp-win\\admin",
+    "credential_backup": "local 0600 file; 1Password CLI unavailable on this Mac"
   },
   "health": {
     "tcp_listener": true,
-    "ssh_banner": false,
-    "result": "FAIL",
-    "observed_error": "Connection timed out during banner exchange after bounded 90 second wait"
+    "ssh_probes": "5/5 passed on 127.0.0.1:50376",
+    "rdp_authentication": "passed via Jump Desktop on 127.0.0.1:53390",
+    "desktop_visible": true,
+    "reaper_arm64_installed": true,
+    "reaper_arm64_launch": "FAIL: reaper.exe crashed in ucrtbase.dll (0xc0000005) during first launch",
+    "result": "PARTIAL"
   },
-  "disposition": "UTM remains optional and is not a build authority; direct QEMU remains the validated native-ARM path."
+  "disposition": "UTM networking, SSH, RDP, Windows login, and desktop access are working. REAPER x64 installation and Spectr-in-REAPER validation remain open; native ARM64 REAPER crashes before its UI."
 }
