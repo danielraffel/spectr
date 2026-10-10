@@ -22,6 +22,9 @@ const REPO = path.resolve(ROOT, '..');
 const SCHEMA = 'spectr-authored-reimport-full-app-materialized-browser-v1';
 const CHROME_DEFAULT = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const TSC = path.join(REPO, 'tools', 'wp1-parser', 'node_modules', 'typescript');
+const CHROME_WINDOW_SIZE = process.env.SPECTR_BROWSER_WINDOW_SIZE || '1320,860';
+const EXPECTED_CANVAS_WIDTH = Number(process.env.SPECTR_EXPECTED_CANVAS_WIDTH || 1320);
+const EXPECTED_CANVAS_HEIGHT = Number(process.env.SPECTR_EXPECTED_CANVAS_HEIGHT || 773);
 let ts;
 try { ts = createRequire(import.meta.url)(TSC); }
 catch (error) { fail(`pinned TypeScript is missing at ${TSC}; run npm ci --ignore-scripts --prefix tools/wp1-parser (${error.message})`); }
@@ -31,6 +34,15 @@ function assert(value, message) { if (!value) fail(message); }
 function read(file) { try { return fs.readFileSync(file); } catch (error) { fail(`cannot read ${file}: ${error.message}`); } }
 function write(file, value) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); }
 function sha256(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
+function classifyChromeStderr(stderr) {
+  const lines = stderr.split('\n').map(line => line.trim()).filter(Boolean);
+  const known = lines.filter(line => line.includes('CVDisplayLinkCreateWithCGDisplay failed')
+    || line.includes('Trying to load the allocator multiple times'));
+  const unclassified = lines.filter(line => !line.includes('DevTools listening on ')
+    && !line.includes('CVDisplayLinkCreateWithCGDisplay failed')
+    && !line.includes('Trying to load the allocator multiple times'));
+  return { lines, known_nonfatal: known, unclassified };
+}
 function prepareOutputDirectory(outDir) {
   const markerPath = path.join(outDir, '.harness-schema');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
@@ -174,7 +186,7 @@ async function browser(files, chrome, outDir, assets = new Map()) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const debugPort = await reservePort(); const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-authored-full-app-materialized-chrome-')); let child; let socket; let nextId = 1; let stderr = ''; const pending = new Map(); const errors = [];
   try {
-    child = spawn(path.resolve(chrome), ['--headless=new', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`, '--window-size=1320,860', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] }); child.stderr.on('data', c => { stderr += c; });
+    child = spawn(path.resolve(chrome), ['--headless=new', '--disable-gpu', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check', '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`, `--window-size=${CHROME_WINDOW_SIZE}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] }); child.stderr.on('data', c => { stderr += c; });
     let ws; const deadline = Date.now() + 15000; while (!ws && Date.now() < deadline) { try { ws = (await (await fetch(`http://127.0.0.1:${debugPort}/json`)).json()).find(p => p.type === 'page')?.webSocketDebuggerUrl; } catch {} if (!ws) await new Promise(r => setTimeout(r, 50)); } assert(ws, `Chrome did not start: ${stderr}`);
     const networkFailures = [];
     const requestUrls = new Map();
@@ -261,16 +273,28 @@ async function browser(files, chrome, outDir, assets = new Map()) {
       assert(name === 'baseline' ? summary.authoredAppInvocations === 0 : summary.authoredAppInvocations > 0,
         `${name} authored App invocation count was ${summary.authoredAppInvocations}`);
       assert(summary.canvases === 3, `${name} rendered ${summary.canvases} canvas layers; expected 3`);
-      assert(Array.isArray(canvasBefore) && canvasBefore[0]?.ink > 0,
-        `${name} first analyzer frame central canvas ink is missing: ${JSON.stringify(canvasBefore)}`);
-      assert(Array.isArray(canvasAfter) && canvasAfter[0]?.ink > 0,
-        `${name} settled central canvas ink is missing: ${JSON.stringify(canvasAfter)}`);
+      const assertCanvasLayers = (layers, phase) => {
+        assert(Array.isArray(layers) && layers.length === 3,
+          `${name} ${phase} canvas layer summary is incomplete: ${JSON.stringify(layers)}`);
+        for (const [index, layer] of layers.entries()) {
+          assert(layer.width === EXPECTED_CANVAS_WIDTH && layer.height === EXPECTED_CANVAS_HEIGHT,
+            `${name} ${phase} canvas ${index} dimensions were ${layer.width}x${layer.height}; expected 1320x860`);
+          assert(layer.ink > 0,
+            `${name} ${phase} canvas ${index} has no painted pixels: ${JSON.stringify(layer)}`);
+        }
+      };
+      assertCanvasLayers(canvasBefore, 'first-frame');
+      assertCanvasLayers(canvasAfter, 'settled');
       assert(analyzerTrace.first_sha256 !== analyzerTrace.second_sha256,
         `${name} analyzer trace did not change between deterministic frames`);
       assert(analyzerTrace.second_sequence >= 2,
         `${name} analyzer snapshot did not retain sequence >= 2: ${JSON.stringify(analyzerTrace)}`);
     }
-    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases === 3 && results.reimported.canvases === 3, 'App did not render exactly three canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.networkFailures.length === 0 && results.reimported.networkFailures.length === 0, `network failures: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); assert(results.baseline.screenshot.sha256 === results.reimported.screenshot.sha256, `settled screenshots differ: ${results.baseline.screenshot.sha256} vs ${results.reimported.screenshot.sha256}`); return { results, transport: 'cdp-http-loopback', stderr: stderr.trim() };
+    assert(results.baseline.root === results.reimported.root, 'baseline and authored App DOM differ'); assert(results.baseline.canvases === 3 && results.reimported.canvases === 3, 'App did not render exactly three canvas layers'); assert(results.baseline.browser_errors.length === 0 && results.reimported.browser_errors.length === 0, `browser errors: ${JSON.stringify(results)}`); assert(results.baseline.networkFailures.length === 0 && results.reimported.networkFailures.length === 0, `network failures: ${JSON.stringify(results)}`); assert(results.baseline.analyzer >= 2 && results.reimported.analyzer >= 2, `analyzer frames were not observed: ${JSON.stringify(Object.fromEntries(Object.entries(results).map(([name, value]) => [name, { analyzer: value.analyzer, runtime: value.errors, canvases: value.canvases }])))} `); assert(results.baseline.screenshot.sha256 === results.reimported.screenshot.sha256, `settled screenshots differ: ${results.baseline.screenshot.sha256} vs ${results.reimported.screenshot.sha256}`);
+    const stderrDisposition = classifyChromeStderr(stderr.trim());
+    assert(stderrDisposition.unclassified.length === 0,
+      `Chrome emitted unclassified stderr diagnostics: ${JSON.stringify(stderrDisposition.unclassified)}`);
+    return { results, transport: 'cdp-http-loopback', stderr: stderr.trim(), stderrDisposition };
   } finally { try { socket?.close(); } catch {} if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); await new Promise(r => setTimeout(r, 250)); if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); if (server.closeAllConnections) server.closeAllConnections(); await new Promise(r => server.close(() => r())); fs.rmSync(profile, { recursive: true, force: true }); }
 }
 async function main(argv) {
@@ -281,6 +305,9 @@ async function main(argv) {
   }
   for (const key of ['artifact', 'out']) assert(args[key], `--${key} is required`);
   const artifact = path.resolve(args.artifact);
+  const editorHtml = path.join(REPO, 'resources', 'editor.html');
+  const artifactBefore = sha256(read(artifact));
+  const editorBefore = sha256(read(editorHtml));
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
   assert(fs.existsSync(chrome), `Chrome executable is missing: ${chrome}`);
@@ -322,12 +349,16 @@ async function main(argv) {
     const appManifest = JSON.parse(read(path.join(staged.emission, 'authored-modules.manifest.json')));
     const appModule = appManifest.modules.find(item => item.name === 'App');
     assert(appModule, 'emitted closure manifest has no App module');
+    const artifactAfter = sha256(read(artifact));
+    const editorAfter = sha256(read(editorHtml));
+    assert(artifactAfter === artifactBefore, `materialized artifact changed during harness run: ${artifactBefore} -> ${artifactAfter}`);
+    assert(editorAfter === editorBefore, `editor.html changed during harness run: ${editorBefore} -> ${editorAfter}`);
     const receipt = {
       schema: SCHEMA,
       version: 1,
       source: {
         artifact: path.basename(artifact),
-        artifact_sha256: sha256(read(artifact)),
+        artifact_sha256: artifactBefore,
         app_source_sha256: authored.source_sha256,
         app_emitted_sha256: appModule.output_sha256,
       },
@@ -341,6 +372,9 @@ async function main(argv) {
         canvas_layers: true,
         analyzer_frames: true,
         console_network_clean: true,
+        chrome_stderr_classified: true,
+        editor_html_unchanged: editorBefore === editorAfter,
+        runtime_artifact_unchanged: artifactBefore === artifactAfter,
         settled_screenshot_parity: true,
         negative_control: {
           status: negative.status,
@@ -351,8 +385,12 @@ async function main(argv) {
       browser: run,
       scope: {
         materialized_runtime_baseline: true,
-        editor_html_unchanged: true,
-        runtime_artifact_changed: false,
+        editor_html_sha256_before: editorBefore,
+        editor_html_sha256_after: editorAfter,
+        runtime_artifact_sha256_before: artifactBefore,
+        runtime_artifact_sha256_after: artifactAfter,
+        editor_html_unchanged: editorBefore === editorAfter,
+        runtime_artifact_changed: artifactBefore !== artifactAfter,
         full_native_parity: false,
         production_cutover: false,
       },
