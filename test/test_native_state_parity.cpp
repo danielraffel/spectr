@@ -1268,7 +1268,7 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
           clientX: x, clientY: y, pointerId, button: 0, buttons
         })) throw new Error('minimap perf activation failed: ' + type);
       };
-      const gesture = (hit, delta, pointerId) => {
+      globalThis.__spectrRunMinimapGesture__ = (hit, delta, pointerId) => {
         const before = hooks.renderState();
         const fullMin = Math.log10(20);
         const fullSpan = Math.log10(20000) - fullMin;
@@ -1285,31 +1285,60 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
           entry => entry.type === 'processing_state_set').length;
         fire('pointerdown', x, y, pointerId, 1);
         fire('pointermove', x + delta, y, pointerId, 1);
-        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
-          globalThis.__pulpRuntimeSettle__(2);
-        const during = hooks.renderState();
-        if (during.view.lmin === before.view.lmin
-            && during.view.lmax === before.view.lmax)
-          throw new Error(hit + ' did not update the live viewport');
-        if (during.reactView.lmin !== before.reactView.lmin
-            || during.reactView.lmax !== before.reactView.lmax)
-          throw new Error(hit + ' reconciled React before release');
-        if (globalThis.__spectrNativeDispatchTrace.filter(
-              entry => entry.type === 'processing_state_set').length <= postCount)
-          throw new Error(hit + ' did not publish native viewport state');
-        fire('pointerup', x + delta, y, pointerId, 0);
-        if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
-          globalThis.__pulpRuntimeSettle__(4);
-        const released = hooks.renderState();
-        if (Math.abs(released.reactView.lmin - released.view.lmin) > 1e-9
-            || Math.abs(released.reactView.lmax - released.view.lmax) > 1e-9)
-          throw new Error(hit + ' release lost the final React viewport');
+        globalThis.__spectrMinimapPending__ = { hit, x, y, delta, pointerId,
+          before, postCount };
       };
-      gesture('left', 40, 74);
-      gesture('right', -40, 75);
-      gesture('window', 35, 76);
     })();)js", "spectr-native-minimap-react-budget");
-    settle(rig.clock, 4);
+    const auto check_minimap_gesture = [&rig](std::string_view hit) {
+        const auto check_script = std::string{R"js((() => {
+          const pending = globalThis.__spectrMinimapPending__;
+          if (!pending || pending.hit !== )js" + js_string(hit) + R"js()
+              throw new Error('minimap gesture state missing');
+          const during = globalThis.__spectrTestHooks.renderState();
+          if (during.view.lmin === pending.before.view.lmin
+              && during.view.lmax === pending.before.view.lmax)
+            throw new Error(pending.hit + ' did not update the live viewport');
+          if (during.reactView.lmin !== pending.before.reactView.lmin
+              || during.reactView.lmax !== pending.before.reactView.lmax)
+            throw new Error(pending.hit + ' reconciled React before release');
+          if (globalThis.__spectrNativeDispatchTrace.filter(
+                entry => entry.type === 'processing_state_set').length
+                <= pending.postCount)
+            throw new Error(pending.hit + ' did not publish native viewport state');
+          const selector = '[data-spectr-filter-surface]';
+          if (!globalThis.__pulpActivateMaterializedElement__(selector, 'pointerup', {
+                clientX: pending.x + pending.delta, clientY: pending.y,
+                pointerId: pending.pointerId, button: 0, buttons: 0
+              })) throw new Error('minimap release activation failed');
+          globalThis.__spectrMinimapReleased__ = pending.hit;
+        })();)js"};
+        rig.bridge().load_script(check_script, "spectr-native-minimap-react-budget-check");
+    };
+    const auto assert_minimap_release = [&rig](std::string_view hit) {
+        const auto release_script = std::string{R"js((() => {
+          if (globalThis.__spectrMinimapReleased__ !== )js" + js_string(hit) + R"js()
+              throw new Error('minimap release state missing');
+          const released = globalThis.__spectrTestHooks.renderState();
+          if (Math.abs(released.reactView.lmin - released.view.lmin) > 1e-9
+              || Math.abs(released.reactView.lmax - released.view.lmax) > 1e-9)
+            throw new Error(globalThis.__spectrMinimapReleased__
+              + ' release lost the final React viewport');
+        })();)js"};
+        rig.bridge().load_script(release_script, "spectr-native-minimap-react-budget-release");
+    };
+    for (const auto& gesture : std::array<std::tuple<std::string_view, int, int>, 3>{
+             {{"left", 40, 74}, {"right", -40, 75}, {"window", 35, 76}}}) {
+        const auto [hit, delta, pointer_id] = gesture;
+        rig.bridge().load_script(
+            std::string{"globalThis.__spectrRunMinimapGesture__("} +
+                js_string(hit) + "," + std::to_string(delta) + "," +
+                std::to_string(pointer_id) + ");",
+            "spectr-native-minimap-react-budget-run");
+        settle(rig.clock, 4);
+        check_minimap_gesture(hit);
+        settle(rig.clock, 4);
+        assert_minimap_release(hit);
+    }
 
     // Pointer dragging the minimap window uses the same rigid endpoint clamp
     // as horizontal trackpad panning. Repeated motion beyond an endpoint must

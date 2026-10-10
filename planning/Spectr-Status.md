@@ -142,7 +142,7 @@ Run-5 receipt and screenshots are retained at
 The exact source identities are:
 
 - materialized artifact SHA-256
-  `05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c`;
+  `0870ac61281344425c75b66bdc312d9b4d11741fcdafcf4b934cf8695118ec8b`;
 - generated authored `FilterBank.tsx` SHA-256
   `3f5ef95e055ce64c3259433c16cc89a5788ffee739c9e84aeb16cba6d1f5568f`;
 - editor template SHA-256
