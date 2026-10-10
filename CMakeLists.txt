@@ -1373,6 +1373,26 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Canvas ownership is a distinct contract from the general native capture and
+# from the hit-target detector.  The ownership probe is nested under
+# SPECTR_HIT_PROBE, so keep both switches in this dedicated CTest invocation;
+# setting only SPECTR_CANVAS_OWNERSHIP_PROBE would silently skip the probe.
+# This test is selected by the M5 acceptance pattern list, making the
+# owner-map/hidden-relay/native-dispatch checks a required gate rather than an
+# opt-in instrument somebody has to remember to run by hand.
+add_test(NAME Spectr-native-canvas-ownership
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_HIT_PROBE=1
+        SPECTR_CANVAS_OWNERSHIP_PROBE=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-canvas-ownership
+        --backend=skia)
+set_tests_properties(Spectr-native-canvas-ownership PROPERTIES
+    TIMEOUT 300
+    # This row is required by M5 acceptance, so an unmeasured/unsupported
+    # result must fail CTest instead of being normalized to "Not Run".
+    RESOURCE_LOCK spectr_native_materialized_editor)
 # The CPU/GPU chip through the host hit test: in Tracking a press shows the
 # "Mixing only" notice and changes nothing in the processor (no renderer
 # built, mode, GPU choice and latency unchanged, Settings' GPU choice inert);
