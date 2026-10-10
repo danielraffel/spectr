@@ -38,6 +38,11 @@ try {
         $source = Join-Path $BuildDir $runtime
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
+            # The VST3 loader resolves its sidecar runtime beside the
+            # architecture-specific binary. Keep the root copy for existing
+            # handoffs, but also package the runtime inside the bundle so the
+            # installer cannot silently omit it.
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Architecture\$runtime")
         }
     }
     # Carry the verified installer beside the artifacts so a handoff ZIP is
