@@ -1,0 +1,166 @@
+{
+  "schema": "spectr-authored-reimport-pattern-detail-v1",
+  "version": 1,
+  "base": {
+    "artifact_path": "native-ui/materialized/materialized-document.runtime.json",
+    "artifact_bytes": 1152151,
+    "artifact_sha256": "05e56e1f56baf6f8324f88083db2816fcf482fe0d0c7e363991499428ea20c8c",
+    "manifest_path": "experiment/pattern-detail.manifest.json",
+    "manifest_sha256": "6685479399d34fe1890db88d202e987c945bd377f5a30058ef1b434a6a915d17",
+    "source_commit": "f9a68a2eda200321ed71faad4064c283f2bf5646",
+    "editor_html": {
+      "path": "resources/editor.html",
+      "bytes": 2064405,
+      "sha256": "402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f"
+    },
+    "patch_script_count": 143
+  },
+  "selected_components": [
+    {
+      "name": "MBtn",
+      "source_bytes": 682,
+      "source_sha256": "4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+      "tsx_bytes": 674,
+      "tsx_sha256": "5c06841db68a19e1ab3f2de0934ba92e27fa292de61f744943d5d346edc83c71",
+      "direct_bytes": 780,
+      "direct_sha256": "a6742fc8fa1f13350cf53cc37938c34e7aa3f80d2cc8a7eeb6a0af7cb5076958",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "React"
+      ]
+    },
+    {
+      "name": "MiniPreview",
+      "source_bytes": 940,
+      "source_sha256": "2cdf7aef62cb46218a715e0258921417075c76ebbe7ca3a17338a301c8791651",
+      "tsx_bytes": 758,
+      "tsx_sha256": "4296cd2b4783712b07486afe6b5f02d3760d69f3a082a9528e64ea2e69144b13",
+      "direct_bytes": 934,
+      "direct_sha256": "54d29e9e7de228fac08c81304ab9a94c5c518afd6de612edc23b2228d9307ffc",
+      "dependencies": [],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "Infinity",
+        "Math",
+        "React"
+      ]
+    },
+    {
+      "name": "PatternDetail",
+      "source_bytes": 4808,
+      "source_sha256": "cbff1d2d3900898084d3aa849766bdb491ae7566ecf4ed9f8bb9601a4828fde0",
+      "tsx_bytes": 3954,
+      "tsx_sha256": "6ab728a66dd75251dc625e1291830bd96b58f6e3dfa1296a448957151de1462e",
+      "direct_bytes": 5424,
+      "direct_sha256": "0cbfd9789a4e015c76ab2edfacc8613e9ca0e4751e18456c07db922b7df8b1a4",
+      "dependencies": [
+        "component:MBtn:4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968",
+        "component:MiniPreview:2cdf7aef62cb46218a715e0258921417075c76ebbe7ca3a17338a301c8791651"
+      ],
+      "captures": [],
+      "unresolved": [],
+      "external_bindings": [
+        "iconBtn",
+        "React",
+        "spectrInputValue",
+        "String",
+        "useMemoPM",
+        "usePE",
+        "usePM",
+        "window"
+      ]
+    }
+  ],
+  "modules": {
+    "MBtn": {
+      "bytes": 878,
+      "sha256": "acc3670b07c92c2ec3424eb07ef11b83aef4ad20522f79da89f608dcfd2805e8",
+      "imports": [],
+      "exports": [
+        "MBtn"
+      ]
+    },
+    "MiniPreview": {
+      "bytes": 1046,
+      "sha256": "1da7c445fab341a2c7ddca2eaf2c4d94cff6eb21956d8a570cd7318bf0b7ebc9",
+      "imports": [],
+      "exports": [
+        "MiniPreview"
+      ]
+    },
+    "PatternDetail": {
+      "bytes": 5733,
+      "sha256": "b5106246835c00a4897f966cf7779429c1b00e781d041bcd977c78078eb24ebb",
+      "imports": [
+        "./MBtn.cjs",
+        "./MiniPreview.cjs"
+      ],
+      "exports": [
+        "PatternDetail"
+      ]
+    }
+  },
+  "output": {
+    "artifact_path": "experiment/pattern-detail-output/reimported.runtime.json",
+    "artifact_bytes": 1152869,
+    "artifact_sha256": "9663af4c4aa8a9f24314226450418823ebed9cc9b8f028cc9af7d022de8818cd",
+    "fixture_path": "experiment/pattern-detail-output/browser-fixture.html",
+    "fixture_sha256": "f0af4d61215452ed7afbc5c44e1cba9bbac3919d4455472355bc8f09c174b66e",
+    "full_runtime_path": "experiment/pattern-detail-output/full-patched-runtime.html",
+    "full_runtime_sha256": "154ecc2569d468c98015af20da5e300b5c39ebbe8b71148fa2286ba545a80fd2"
+  },
+  "checks": {
+    "explicit_import_export": true,
+    "imported_identity": true,
+    "vdom_svg_callbacks": true,
+    "action_callbacks": true,
+    "rename_callbacks": true,
+    "patched_artifact_scripts_parsed": true,
+    "patched_runtime_component_script_executed": true,
+    "patched_component_declarations_executed_in_browser": true,
+    "browser": true,
+    "patched_component_in_artifact_browser": true,
+    "browser_transport": {
+      "fixture": "cdp-http-loopback",
+      "patched_component": "cdp-http-loopback"
+    },
+    "negative_controls": [
+      {
+        "name": "MBtn",
+        "mutation": "height: 26 -> height: 27",
+        "detected": true
+      },
+      {
+        "name": "MiniPreview",
+        "mutation": "strokeWidth: 0.5 -> strokeWidth: 1",
+        "detected": true
+      }
+    ]
+  },
+  "scope": {
+    "editor_html": {
+      "before_sha256": "402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f",
+      "after_sha256": "402ee225bdab0983863fd0e526cc2f760d84c34fa58aeb67f9462e143eb2a42f",
+      "unchanged": true
+    },
+    "vellum": {
+      "status": "not_applicable",
+      "reason": "this runner has no Vellum path or process"
+    },
+    "patch_scripts_retired": false,
+    "full_editor_parity": false,
+    "native_parity": false,
+    "artifact_browser": "selected patched component executed in the full artifact script context; App mount is intentionally not asserted because the materialized artifact does not bundle ReactDOM"
+  },
+  "kill_criteria": [
+    "Any dependency edge is unresolved or imported through a hidden global.",
+    "A module identity edge changes during compilation or loading.",
+    "Nested VDOM, SVG, state, or callback behavior diverges.",
+    "Either planted MBtn or MiniPreview mutation is not detected.",
+    "Chromium does not match DOM structure and marker.",
+    "The real importer needs editor.html or Vellum changes before this boundary is reproducible."
+  ]
+}
