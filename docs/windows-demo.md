@@ -283,3 +283,18 @@ for Proxmox. The interactive account is stored locally in
 `0600`. A direct SDL FreeRDP session was authenticated on 2026-10-10. This
 keeps interactive validation independent of the UTM port and does not reserve a
 macOS CI runner.
+
+## Proxmox x64 REAPER evidence (2026-10-10)
+
+The direct Proxmox session at `192.168.86.21:3389` now has a second host proof:
+REAPER 7.82 scanned `Spectr.vst3`, the FX browser listed `VST3: Spectr (Pulp)`,
+and the plug-in was added to Track 1. The screenshot is
+[`.local-evidence/proxmox/reaper-x64-spectr-instantiated.png`](../.local-evidence/proxmox/reaper-x64-spectr-instantiated.png)
+(SHA-256 `58fda441c4586f4bb126ca5da86b05b7e623310ed909881e405c8aebccf4635a`).
+The exact receipt is
+[`docs/windows-receipts-2026-10-10/proxmox-reaper-x64-receipt.json`](windows-receipts-2026-10-10/proxmox-reaper-x64-receipt.json).
+
+This is x64 scan and instantiation proof. The editor surface remained blank
+white on this guest and REAPER had no selected audio device, so this receipt
+does not claim x64 UI rendering or audio acceptance. The UTM ARM64 receipt
+remains the stronger UI and audio proof.

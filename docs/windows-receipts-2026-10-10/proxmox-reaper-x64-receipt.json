@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T22:11:00Z",
+  "host": {
+    "provider": "Proxmox",
+    "vmid": 300,
+    "guest": "pulp-win-ci",
+    "address": "192.168.86.21",
+    "architecture": "x64"
+  },
+  "reaper": {
+    "version": "7.82",
+    "host_architecture": "win64",
+    "plugin_scan": "PASS: startup scan visibly reported Spectr.vst3",
+    "plugin_browser": "PASS: Add FX browser listed VST3: Spectr (Pulp)",
+    "plugin_instance": "PASS: VST3: Spectr (Pulp) was added to Track 1",
+    "editor_surface": "LIMITATION: instantiated editor remained blank white on this x64 guest",
+    "audio_device": "CLOSED: REAPER ran without a selected audio device",
+    "screenshot": ".local-evidence/proxmox/reaper-x64-spectr-instantiated.png",
+    "screenshot_sha256": "58fda441c4586f4bb126ca5da86b05b7e623310ed909881e405c8aebccf4635a"
+  },
+  "disposition": "The x64 Windows VST3 builds, scans, and instantiates in REAPER. The x64 editor-rendering path and audio render remain open; the ARM64 UTM path has the stronger UI and audio proof."
+}
