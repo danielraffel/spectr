@@ -307,7 +307,9 @@ and the plug-in was added to Track 1. The screenshot is
 The exact receipt is
 [`docs/windows-receipts-2026-10-10/proxmox-reaper-x64-receipt.json`](windows-receipts-2026-10-10/proxmox-reaper-x64-receipt.json).
 
-This is x64 scan and instantiation proof. The editor surface remained blank
-white on this guest and REAPER had no selected audio device, so this receipt
-does not claim x64 UI rendering or audio acceptance. The UTM ARM64 receipt
-remains the stronger UI and audio proof.
+This receipt is the historical first scan/instantiation session. A follow-up
+session selected REAPER's Dummy Audio device and restarted REAPER; the Spectr
+editor then rendered its parameter controls and produced a three-second,
+stereo 44.1 kHz 24-bit WAV. Pulp Audio Doctor and the reference-free Audio
+Quality Lab both analyzed that render. The current proof is recorded in
+[`proxmox-x64-reaper-render-receipt.json`](windows-receipts-2026-10-10/proxmox-x64-reaper-render-receipt.json), with the WAV and analyzer JSON beside it.
