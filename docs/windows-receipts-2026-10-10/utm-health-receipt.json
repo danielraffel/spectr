@@ -39,7 +39,16 @@
       "guest_path": "C:\\Users\\admin\\Downloads\\spectr-reaper-input.wav",
       "sha256": "53fb159bc3b4513ea0ea044b42b7ca389c0bab2c9c73bbb8a28cb8a0504ffddc",
       "format": "stereo 48 kHz PCM, 5 seconds"
+    },
+    "ableton_trial": {
+      "package_version": "12.4.6",
+      "package_sha256": "172e5c6da112cc6ac28b042435cc922d57a38df87dcd2dc4dcdec1bcf006f94e",
+      "installer_log": ".local-evidence/ableton/ableton-install.log",
+      "installer_log_sha256": "c5910ecdcf2a84645d3c3ed7c710e3a03116fc9e8a981b022beb8d2d5d52355a",
+      "result": "BLOCKED_PREREQUISITE",
+      "evidence": "Installer reported Arm64 guest with OSXSAVE=false and AVX=false; Ableton aborted before installation",
+      "next_validation_host": "x64 Windows Proxmox guest or another AVX-capable x64 Windows host"
     }
   },
-  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, live instantiation, and a non-silent 5-second REAPER render are proven. Ableton remains a separate follow-up."
+  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, live instantiation, and a non-silent 5-second REAPER render are proven. Ableton installation is blocked on this ARM UTM guest by its missing AVX/OSXSAVE capability and remains an x64-host follow-up."
 }

@@ -190,6 +190,27 @@ a track, and rendered a non-silent five-second WAV. Exact hashes and render
 statistics are in `docs/windows-receipts-2026-10-10/utm-health-receipt.json`.
 Ableton remains a separate installation and acceptance step.
 
+## Ableton trial check on the ARM64 UTM guest
+
+The official Ableton Live 12.4.6 Windows trial package was copied to the UTM
+guest and verified before launch:
+
+```text
+SHA-256: 172e5c6da112cc6ac28b042435cc922d57a38df87dcd2dc4dcdec1bcf006f94e
+```
+
+The installer reached its prerequisite check but stopped before installation.
+Its log reports `Windows architecture: Arm64`, then `Avx2 Detected = false`
+and `OSXSAVE: false, AVX: false`; Ableton rejected the virtual CPU as below
+the minimum requirement. The preserved log is
+`.local-evidence/ableton/ableton-install.log` (SHA-256
+`c5910ecdcf2a84645d3c3ed7c710e3a03116fc9e8a981b022beb8d2d5d52355a`).
+
+This is an ARM UTM CPU capability limitation. It does not invalidate the
+working REAPER/Spectr proof. Ableton validation belongs on the x64 Proxmox
+guest (or another x64 Windows host) after that guest has an interactive
+desktop and AVX-capable virtual CPU; no Ableton success is claimed for UTM.
+
 The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
 the warmed ARM64 build tree.
