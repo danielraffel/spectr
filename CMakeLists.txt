@@ -3564,6 +3564,12 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    add_test(NAME Spectr-browser-source-doctype
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_source_html_chromium.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/compare_source_html_chromium.mjs
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-source-doctype PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
