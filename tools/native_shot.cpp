@@ -482,6 +482,33 @@ struct Rig {
         bridge().load_script(script, name);
     }
 
+    // Inject the same deterministic analyzer fixture used by the browser
+    // materialized-runtime harness. This is deliberately test-only: it uses
+    // the shipping runtime's existing native-message seam and never changes
+    // the production materialized artifact or runtime behavior.
+    void inject_deterministic_analyzer_frames() {
+        eval(R"JS((() => {
+  if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
+    throw new Error('deterministic analyzer seam is unavailable');
+  const frame = (sequence, phase) => {
+    const trace = count => Array.from({ length: count }, (_, i) =>
+      -92 + 78 * Math.exp(-Math.pow((i / (count - 1)
+        - (0.25 + phase * 0.1)) / 0.06, 2)));
+    return { schema_version: 1, epoch: 1, sequence_number: sequence,
+      dropped_frames: 0, source_channels: 2, fft_size: 1024,
+      sample_rate: 48000, floor_db: -96, ceiling_db: 0,
+      visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) },
+      overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) } };
+  };
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(1, 0));
+  if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+    globalThis.__pulpRuntimeSettle__(8);
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(2, 1));
+})(); )JS", "spectr-native-shot-deterministic-analyzer");
+        settle(clock, 16);
+        service_runtime();
+    }
+
     // Service the runtime the way a host's message loop does between frames:
     // drain Promise jobs and React commits, then run the frames that deliver
     // what those commits scheduled (a publication rides requestAnimationFrame).
@@ -1673,6 +1700,11 @@ int main(int argc, char** argv) {
     try {
         Rig rig;
         rig.resize(kDesignWidth, kDesignHeight);
+        if (std::getenv("SPECTR_DETERMINISTIC_ANALYZER") != nullptr) {
+            rig.inject_deterministic_analyzer_frames();
+            capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
+            return 0;
+        }
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
