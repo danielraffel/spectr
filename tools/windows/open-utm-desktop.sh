@@ -28,6 +28,8 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
   SPECTR_WINDOWS_RDP_PORT="$rdp_port" \
   "$repo_root/tools/windows/ensure-rdp-over-ssh.sh"
 
+SPECTR_WINDOWS_SSH_PORT="$ssh_port" "$repo_root/tools/windows/utm-daw-status.sh"
+
 open -a "Jump Desktop"
 cat <<EOF
 UTM desktop ready.
@@ -35,6 +37,7 @@ Jump Desktop: open the saved pulp-win-ci connection.
 SSH: 127.0.0.1:${ssh_port}
 RDP: 127.0.0.1:${rdp_port}
 Windows guest: PULP-WIN-CI / ci
-REAPER: use the desktop's REAPER (ARM64) shortcut.
-Ableton Live: unavailable in this ARM64 guest because its installer requires AVX2.
+REAPER and Ableton Live 10 Trial: use the desktop shortcuts.
+The helper verified both applications and shortcuts before opening the desktop.
+DAW launchability does not claim Spectr host acceptance.
 EOF

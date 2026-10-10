@@ -35,10 +35,12 @@ tools/windows/open-utm-desktop.sh
 It starts the retained VM if needed, waits for SSH, repairs RDP, and opens Jump
 Desktop. The saved `pulp-win-ci` connection now matches the guest hostname
 `PULP-WIN-CI` and local `ci` account, so there is no per-run domain mismatch.
-The guest desktop has a `REAPER (ARM64)` shortcut pointing at the installed
-ARM64 binary. Ableton Live is not installed in this ARM64 guest: its current
-installer rejects the virtual CPU because AVX/AVX2 are unavailable. Use the
-Windows x64 Proxmox session for Ableton Live validation.
+The guest desktop has `REAPER (ARM64)` and `Ableton Live 10 Trial` shortcuts.
+The retained image contains REAPER ARM64 and Ableton Live 10.1.43 Trial. The
+current Live 12 installer rejects this ARM64 guest because AVX/AVX2 are
+unavailable, so the installed Live 10 trial is the compatible sequencer here.
+Run `tools/windows/utm-daw-status.sh` to verify both paths before opening
+Jump Desktop.
 
 UTM 5.0.6 is registered as the persistent interactive Windows VM. Its network
 mode is **Emulated** with two forwarding rules:
@@ -205,7 +207,7 @@ a track, and rendered a non-silent five-second WAV. Exact hashes and render
 statistics are in `docs/windows-receipts-2026-10-10/utm-health-receipt.json`.
 Ableton remains a separate installation and acceptance step.
 
-## Ableton trial check on the ARM64 UTM guest
+## Ableton Live 12 versus the installed Live 10 trial
 
 The official Ableton Live 12.4.6 Windows trial package was copied to the UTM
 guest and verified before launch:
@@ -221,14 +223,16 @@ the minimum requirement. The preserved log is
 `.local-evidence/ableton/ableton-install.log` (SHA-256
 `c5910ecdcf2a84645d3c3ed7c710e3a03116fc9e8a981b022beb8d2d5d52355a`).
 
-This is an ARM UTM CPU capability limitation. It does not invalidate the
-working REAPER/Spectr proof. The x64 Proxmox guest was checked as the next
-candidate and also failed the same prerequisite: its 2013 Xeon E5-1650 v2
-reports `Avx2 Detected = false` (it has AVX but not AVX2). That log is
+This is an ARM UTM CPU capability limitation for Live 12. The guest already
+contains the older Live 10.1.43 Trial, which launches from its desktop
+shortcut. The x64 Proxmox guest was checked as the next candidate and also
+failed the Live 12 prerequisite: its 2013 Xeon E5-1650 v2 reports
+`Avx2 Detected = false` (it has AVX but not AVX2). That log is
 `.local-evidence/ableton/ableton-install-proxmox.log` (SHA-256
-`ea704344e28b3ee60b2cc6db080755f82bd21b34f335f13363d6a4f6b728b683`). Ableton
-validation therefore requires a newer AVX2-capable x64 Windows host; no
-Ableton success is claimed for either current VM.
+`ea704344e28b3ee60b2cc6db080755f82bd21b34f335f13363d6a4f6b728b683`). Live
+10 desktop launch is proven; Spectr-in-Live and audio acceptance remain
+separate validation gates. Live 12 validation requires a newer AVX2-capable
+x64 Windows host.
 
 The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
