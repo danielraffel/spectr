@@ -1369,7 +1369,12 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-parity-receipt-comparator
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
+    add_test(NAME Spectr-native-parity-receipt-harness
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_run_native_parity_capture.py)
     set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
         TIMEOUT 30 SKIP_RETURN_CODE 77)
 endif()
 

@@ -31,6 +31,8 @@ if(statePath){
  delete parityState.stateSha256;
  const computed=sha(canonical(parityState));
  if(declared!==computed) throw new Error(`parity state digest mismatch: ${declared} != ${computed}`);
+ const sourceStateSha=parityState.source?.sha256;
+ if(sourceStateSha && sourceStateSha!==sha(bytes)) throw new Error(`parity state source mismatch: ${sourceStateSha} != ${sha(bytes)}`);
  parityState.stateSha256=declared;
 }
 // A bridge script must not precede a source document's doctype.  Chromium
