@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T17:17:22Z",
+  "guest": {
+    "provider": "direct QEMU",
+    "host": "M5/M5S macOS",
+    "ssh": "127.0.0.1:50375",
+    "user": "admin",
+    "architecture": "arm64-win"
+  },
+  "package": {
+    "path": "C:\\Users\\admin\\Spectr-arm64ec-headless-installer.zip",
+    "sha256": "F956296EE83D81708E5C8FF7449ABCC4E0533AD4FEFE0E94CB349476BD1A0785"
+  },
+  "installer": {
+    "script": "Install-Spectr.ps1",
+    "result": "PASS",
+    "exit": 0,
+    "manifest_hash_validation": "PASS"
+  },
+  "installed": {
+    "vst3": {
+      "path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+      "bytes": 10090496,
+      "sha256": "6032DFD8ECA9A8BD13BB73769650561F1FA6028DDC8741FB7205C2A2CE48E64F"
+    },
+    "clap": {
+      "path": "C:\\Program Files\\Common Files\\CLAP\\Spectr.clap",
+      "bytes": 9985024,
+      "sha256": "3119F85218497326A4973A0BE3F3440544B3119D5203426B97FB4E3CEB0FD425"
+    },
+    "standalone": {
+      "path": "C:\\Program Files\\Spectr\\Spectr.exe",
+      "bytes": 10693120,
+      "sha256": "21D1A44D446A27E3F5D7FF6DE6233DFF8374C1BF8A5A7A3C9C27E7C4B681A914"
+    }
+  },
+  "limitation": "This proves Windows package verification and file installation only; it does not prove REAPER or Ableton loading."
+}
