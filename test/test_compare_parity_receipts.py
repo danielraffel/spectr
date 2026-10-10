@@ -31,6 +31,10 @@ def main():
         import hashlib
         state_hash = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         state["stateSha256"] = state_hash
+        native_receipt = {"schema": "spectr-native-shot-receipt-v1",
+                          "stateSha256": state_hash, "sourceSha256": source_sha,
+                          "pngSha256": hashlib.sha256(native_png.read_bytes()).hexdigest(),
+                          "dimensions": {"width": 4, "height": 3}}
         receipt = {
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
@@ -40,17 +44,21 @@ def main():
         }
         receipt_path = out / "browser-receipt.json"
         state_path = out / "state.json"
+        native_receipt_path = out / "native-receipt.json"
         receipt_path.write_text(json.dumps(receipt))
         state_path.write_text(json.dumps(state))
+        native_receipt_path.write_text(json.dumps(native_receipt))
         report = out / "report.json"
         run = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
                               "--native-png", str(native_png), "--state", str(state_path),
+                              "--native-receipt", str(native_receipt_path),
                               "--output", str(report)], capture_output=True, text=True)
         assert run.returncode == 0, run.stderr
         assert json.loads(report.read_text())["comparison"]["exact"]
 
         negative = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
                                    "--native-png", str(native_png), "--state", str(state_path),
+                                   "--native-receipt", str(native_receipt_path),
                                    "--output", str(out / "negative.json"), "--plant-negative"],
                                   capture_output=True, text=True)
         assert negative.returncode == 0, negative.stderr

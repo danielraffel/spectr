@@ -39,6 +39,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser-receipt", required=True)
     parser.add_argument("--native-png", required=True)
+    parser.add_argument("--native-receipt", required=True)
     parser.add_argument("--state", required=True,
                         help="JSON state manifest shared by both captures")
     parser.add_argument("--output", required=True)
@@ -48,15 +49,19 @@ def main():
 
     browser_path = Path(args.browser_receipt)
     native_path = Path(args.native_png)
+    native_receipt_path = Path(args.native_receipt)
     state_path = Path(args.state)
-    for path in (browser_path, native_path, state_path):
+    for path in (browser_path, native_path, native_receipt_path, state_path):
         if not path.exists():
             fail(f"missing input: {path}")
 
     browser = json.loads(browser_path.read_text())
+    native = json.loads(native_receipt_path.read_text())
     state = json.loads(state_path.read_text())
     if browser.get("schema") != "spectr-html-cdp-comparison-v1":
         fail("unsupported browser receipt schema")
+    if native.get("schema") != "spectr-native-shot-receipt-v1":
+        fail("unsupported native receipt schema")
     if state.get("schema") != "spectr-parity-state-v1":
         fail("unsupported state schema")
 
@@ -67,6 +72,8 @@ def main():
     native_bytes = native_path.read_bytes()
     if digest(browser_bytes) != browser["positive"]["before"]["sha256"]:
         fail("browser PNG hash does not match its receipt")
+    if native.get("pngSha256") != digest(native_bytes):
+        fail("native PNG hash does not match its receipt")
 
     browser_image = Image.open(browser_source).convert("RGBA")
     native_image = Image.open(native_path).convert("RGBA")
@@ -87,6 +94,10 @@ def main():
         fail("state manifest contains an invalid state digest")
     if receipt_state != expected_state:
         fail("state digest does not match browser receipt")
+    if native.get("stateSha256") != expected_state:
+        fail("state digest does not match native receipt")
+    if native.get("sourceSha256") != expected_artifact:
+        fail("source SHA does not match native receipt")
     expected_size = state.get("viewport", {}).get("png")
     if not expected_size and state.get("viewport", {}).get("width"):
         expected_size = {"width": state["viewport"]["width"] * state["viewport"].get("deviceScaleFactor", 1),
@@ -95,6 +106,8 @@ def main():
         expected_dimensions = (expected_size["width"], expected_size["height"])
         if browser_image.size != expected_dimensions:
             fail(f"browser dimensions {browser_image.size} do not match state {expected_dimensions}")
+    if native.get("dimensions") != {"width": native_image.width, "height": native_image.height}:
+        fail("native receipt dimensions do not match native PNG")
 
     left = browser_image
     right = native_image
