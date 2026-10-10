@@ -75,13 +75,17 @@ def main():
 
     browser_artifact = browser.get("sourceSha256")
     expected_artifact = state.get("source", {}).get("sha256")
+    if not expected_artifact:
+        fail("state manifest is missing source.sha256")
     if expected_artifact and browser_artifact != expected_artifact:
         fail("state source SHA does not match browser receipt")
     expected_state = state.get("stateSha256")
     receipt_state = browser.get("stateSha256")
-    if expected_state and expected_state != state_digest(state):
+    if not expected_state or not receipt_state:
+        fail("state digest is required in both manifest and browser receipt")
+    if expected_state != state_digest(state):
         fail("state manifest contains an invalid state digest")
-    if expected_state and receipt_state != expected_state:
+    if receipt_state != expected_state:
         fail("state digest does not match browser receipt")
     expected_size = state.get("viewport", {}).get("png")
     if not expected_size and state.get("viewport", {}).get("width"):
