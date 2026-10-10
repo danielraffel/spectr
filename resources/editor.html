@@ -181,6 +181,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // viewport into one atomic EditorBridge publication per animation frame.
     const spectrStateNeedle = '  // ---- public methods (via sharedState ref) ----\n  useEffect(() => {';
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
+  const spectrPublicationProvenance = () => ({
+    lmin: viewRef.current.lmin,
+    lmax: viewRef.current.lmax,
+    drawn: nativeAppliedRevisionRef.current
+  });
   useEffect(() => {
     if (!nativeHydrated) return;
     if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
@@ -197,8 +202,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (Number.isFinite(mutedGainDbRef.current[i])
             ? mutedGainDbRef.current[i] : 0)
         : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+      const live = {
+        lmin: viewRef.current.lmin,
+        lmax: viewRef.current.lmax,
+        drawn: nativeAppliedRevisionRef.current,
+      };
       const publicationSignature = JSON.stringify([
-        N, gainDb, muted, view.lmin, view.lmax,
+        N, gainDb, muted, live.lmin, live.lmax,
       ]);
       // Direct pointer handlers have already published this exact state. A
       // signature is deliberately used instead of an effect-ordering flag:
@@ -213,8 +223,9 @@ document.addEventListener('DOMContentLoaded', async function() {
           n_visible: N,
           gain_db: gainDb,
           muted,
-          min_hz: Math.pow(10, view.lmin),
-          max_hz: Math.pow(10, view.lmax),
+          min_hz: Math.pow(10, live.lmin),
+          max_hz: Math.pow(10, live.lmax),
+          drawn_revision: live.drawn,
         }, 'spectr-processing-state');
       } catch (error) {
         console.error('[Spectr] native processing-state publication failed', error);
@@ -734,11 +745,17 @@ window.FilterBank = FilterBank;`,
     nativePendingPublicationRef.current = null;
     if (publication) sendNativeProcessingStatePublication(publication);
   };
+  const spectrPublicationProvenance = () => ({
+    lmin: viewRef.current.lmin,
+    lmax: viewRef.current.lmax,
+    drawn: nativeAppliedRevisionRef.current,
+  });
   const queueNativeProcessingStatePublication = () => {
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.
     if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
     const current = targetGainsRef.current;
+    const live = spectrPublicationProvenance();
     const muted = current.map(value => isMuted(value));
     const gainDb = current.map((value, i) => isMuted(value)
       ? (Number.isFinite(mutedGainDbRef.current[i])
@@ -751,12 +768,13 @@ window.FilterBank = FilterBank;`,
     // duplicate while the coalesced frame is waiting. The payload is copied
     // now; a later host projection cannot replace the user's latest edit.
     nativeDirectPublicationSignatureRef.current = JSON.stringify([
-      N, gainDb, muted, view.lmin, view.lmax,
+      N, gainDb, muted, live.lmin, live.lmax,
     ]);
     nativePendingPublicationRef.current = {
       n_visible: N, gain_db: gainDb, muted,
-      min_hz: Math.pow(10, view.lmin),
-      max_hz: Math.pow(10, view.lmax),
+      min_hz: Math.pow(10, live.lmin),
+      max_hz: Math.pow(10, live.lmax),
+      drawn_revision: live.drawn,
     };
     if (!nativePublicationFrameRef.current)
       nativePublicationFrameRef.current = requestAnimationFrame(() => {
