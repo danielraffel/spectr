@@ -21,7 +21,13 @@
     "desktop_visible": true,
     "reaper_arm64_installed": true,
     "reaper_arm64_launch": "FAIL: reaper.exe crashed in ucrtbase.dll (0xc0000005) during first launch",
-    "result": "PARTIAL"
+    "result": "PARTIAL",
+    "reaper_launch": "PASS: REAPER 7.82 ARM64EC window launched after first-run setup",
+    "reaper_plugin_scan": "PASS: startup visibly reported Scanning CLAP 1/1 [+0 cached]: Spectr.clap",
+    "reaper_plugin_browser": "PASS: Add FX browser visibly listed CLAP: Spectr (Pulp)",
+    "reaper_plugin_instance": "PASS: CLAP: Spectr (Pulp) instantiated on Track 1; controls rendered and enabled",
+    "screenshot_captured": "PASS: Jump Desktop capture showed REAPER plugin browser and instantiated Spectr UI",
+    "audio_render": "OPEN: no rendered WAV receipt yet"
   },
-  "disposition": "UTM networking, SSH, RDP, Windows login, and desktop access are working. REAPER x64 installation and Spectr-in-REAPER validation remain open; native ARM64 REAPER crashes before its UI."
+  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, and live instantiation are proven. Audio render and Ableton remain separate follow-up evidence."
 }
