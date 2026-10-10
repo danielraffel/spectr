@@ -20,4 +20,17 @@ foreach ($app in $apps) {
 print('powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + base64.b64encode(script.encode('utf-16le')).decode())
 PY
 )"
-SPECTR_WINDOWS_SSH_PORT="$port" tools/windows/ssh-qemu.sh "$command_text"
+output="$(SPECTR_WINDOWS_SSH_PORT="$port" tools/windows/ssh-qemu.sh "$command_text" 2>&1)"
+
+# Windows OpenSSH may serialize PowerShell progress records as CLIXML on the
+# same channel. Keep the operator-facing result readable while requiring both
+# readiness markers, so startup chatter can never turn a partial check into a
+# false pass.
+markers="$(printf '%s\n' "$output" | awk '/^(DAW_READY|DAW_PATH|DAW_SHORTCUT)=/')"
+ready_count="$(printf '%s\n' "$markers" | awk '/^DAW_READY=/{count++} END{print count+0}')"
+if [[ "$ready_count" -ne 2 ]]; then
+  printf '%s\n' "$output" >&2
+  echo "DAW readiness check failed: expected 2 applications, found $ready_count" >&2
+  exit 1
+fi
+printf '%s\n' "$markers"
