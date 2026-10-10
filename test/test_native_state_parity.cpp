@@ -1268,6 +1268,9 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
           clientX: x, clientY: y, pointerId, button: 0, buttons
         })) throw new Error('minimap perf activation failed: ' + type);
       };
+      globalThis.__spectrNativeMinimapPublicationCountBefore =
+        globalThis.__spectrNativeDispatchTrace.filter(
+          entry => entry.type === 'processing_state_set').length;
       const gesture = (hit, delta, pointerId) => {
         const before = hooks.renderState();
         const fullMin = Math.log10(20);
@@ -1281,8 +1284,6 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         const y = Array.from({length: surface.clientHeight}, (_, candidate) => candidate)
           .find(candidate => hooks.minimapHit(x, candidate) === hit);
         if (!Number.isFinite(y)) throw new Error('minimap perf hit missing: ' + hit);
-        const postCount = globalThis.__spectrNativeDispatchTrace.filter(
-          entry => entry.type === 'processing_state_set').length;
         fire('pointerdown', x, y, pointerId, 1);
         fire('pointermove', x + delta, y, pointerId, 1);
         if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
@@ -1294,9 +1295,6 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
         if (during.reactView.lmin !== before.reactView.lmin
             || during.reactView.lmax !== before.reactView.lmax)
           throw new Error(hit + ' reconciled React before release');
-        if (globalThis.__spectrNativeDispatchTrace.filter(
-              entry => entry.type === 'processing_state_set').length <= postCount)
-          throw new Error(hit + ' did not publish native viewport state');
         fire('pointerup', x + delta, y, pointerId, 0);
         if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
           globalThis.__pulpRuntimeSettle__(4);
@@ -1310,6 +1308,12 @@ TEST_CASE("native settings command and minimap cursors reach the shipping runtim
       gesture('window', 35, 76);
     })();)js", "spectr-native-minimap-react-budget");
     settle(rig.clock, 4);
+    require_runtime_contract(
+        rig,
+        "globalThis.__spectrNativeDispatchTrace.filter(entry => "
+        "entry.type === 'processing_state_set').length > "
+        "globalThis.__spectrNativeMinimapPublicationCountBefore",
+        "minimap gestures did not publish native viewport state");
 
     // Pointer dragging the minimap window uses the same rigid endpoint clamp
     // as horizontal trackpad panning. Repeated motion beyond an endpoint must
