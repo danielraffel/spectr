@@ -27,7 +27,7 @@ def canonical(value):
 
 def canonical_json(value):
     if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value)) + "}"
+        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value, key=lambda item: item.encode('utf-16-be', 'surrogatepass'))) + "}"
     if isinstance(value, list):
         return "[" + ",".join(canonical_json(item) for item in value) + "]"
     if isinstance(value, bool) or value is None or isinstance(value, str):

@@ -21,7 +21,7 @@ def main():
     expected = fixture.pop("stateSha256")
     def encode(value):
         if isinstance(value, dict):
-            return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + encode(value[k]) for k in sorted(value)) + "}"
+            return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + encode(value[k]) for k in sorted(value, key=lambda item: item.encode('utf-16-be', 'surrogatepass'))) + "}"
         if isinstance(value, list):
             return "[" + ",".join(encode(item) for item in value) + "]"
         if isinstance(value, bool) or value is None or isinstance(value, str):

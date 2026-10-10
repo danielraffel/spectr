@@ -28,13 +28,13 @@ def main():
                         "p=pathlib.Path(sys.argv[1].split(\"=\",1)[1]); p.mkdir(parents=True,exist_ok=True); "
                         "Image.new(\"RGBA\",(4,3),(20,40,60,255)).save(p/\"parity-deterministic-analyzer.png\"); print(\"OK  parity-deterministic-analyzer\")' \"$1\"\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-        binary = out / "binary"
-        binary.write_bytes(b"fixture")
+        binary = fake
+        binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
         source_sha = "a" * 64
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha},
                  "viewport": {"width": 4, "height": 3, "png": {"width": 4, "height": 3}},
-                 "native": {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}}
+                 "native": {"binarySha256": binary_sha}}
         state["stateSha256"] = hashlib.sha256(json.dumps(state, sort_keys=True,
                                                            separators=(",", ":")).encode()).hexdigest()
         state_path = out / "state.json"

@@ -26,7 +26,7 @@ def canonical(value):
 
 def canonical_json(value):
     if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value)) + "}"
+        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value, key=lambda item: item.encode('utf-16-be', 'surrogatepass'))) + "}"
     if isinstance(value, list):
         return "[" + ",".join(canonical_json(item) for item in value) + "]"
     if isinstance(value, bool) or value is None or isinstance(value, str):
@@ -59,6 +59,8 @@ def main():
     output = Path(args.output).resolve()
     if not shot.exists() or not binary.exists() or not state_path.exists():
         fail("native shot, binary, and state manifest must exist")
+    if shot != binary:
+        fail("--binary must identify the executable invoked by --native-shot")
     state = json.loads(state_path.read_text())
     if state.get("schema") != "spectr-parity-state-v1":
         fail("unsupported parity state schema")
