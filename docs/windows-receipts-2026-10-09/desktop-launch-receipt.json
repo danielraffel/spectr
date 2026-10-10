@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generated_at_utc": "2026-10-10T07:10:00Z",
+  "generated_at_utc": "2026-10-10T00:12:30Z",
   "transport": {
     "host": "M5S macOS host",
     "guest": "Windows ARM64 native QEMU",
