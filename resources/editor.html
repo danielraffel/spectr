@@ -672,13 +672,6 @@ window.FilterBank = FilterBank;`,
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativePublicationFrameRef = useRef(0);\n  const nativePendingPublicationRef = useRef(null);\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
     replaceSpectrSource(
-      String.raw`  const onPointerUp = (e) => {
-    const p = pointerRef.current;`,
-      String.raw`  const onPointerUp = (e) => {
-    flushNativeProcessingStatePublication();
-    const p = pointerRef.current;`,
-      'flush coalesced publication on pointer release');
-    replaceSpectrSource(
       'onPointerUp={onPointerUp}',
       'onPointerUp={event => { onPointerUp(event); flushNativeProcessingStatePublication(); }}',
       'flush final publication after pointer release');

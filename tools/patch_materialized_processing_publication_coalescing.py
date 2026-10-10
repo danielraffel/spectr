@@ -114,16 +114,29 @@ NEW_QUEUE = '''  const sendNativeProcessingStatePublication = (publication) => {
   }, []);
 '''
 
-OLD_POINTER = '''  const onPointerUp = (e) => {
-    const p = pointerRef.current;'''
-NEW_POINTER = '''  const onPointerUp = (e) => {
+OLD_POINTER_WITH_PREFLUSH = '''  const onPointerUp = (e) => {
     flushNativeProcessingStatePublication();
     const p = pointerRef.current;'''
+POINTER_WITHOUT_PREFLUSH = '''  const onPointerUp = (e) => {
+    const p = pointerRef.current;'''
+
 
 OLD_SURFACE = '''      onPointerUp,
       onPointerLeave:'''
 NEW_SURFACE = '''      onPointerUp: (event) => { onPointerUp(event); flushNativeProcessingStatePublication(); },
       onPointerLeave:'''
+
+
+def remove_pointer_preflush(html: str) -> tuple[str, str]:
+    # A release handler must compute its final edit before the wrapper flushes.
+    # Accept both the pre-coalescing source (no-op) and the earlier coalescing
+    # patch (remove only its unsafe leading flush) so the recipe is replayable
+    # against either materialized artifact.
+    if html.count(OLD_POINTER_WITH_PREFLUSH) == 1:
+        return html.replace(OLD_POINTER_WITH_PREFLUSH, POINTER_WITHOUT_PREFLUSH, 1), 'removed pointer preflush'
+    if html.count(POINTER_WITHOUT_PREFLUSH) == 1:
+        return html, 'pointer preflush already absent'
+    raise SystemExit('FAIL pointer release order: expected exactly one old or new handler')
 
 
 def apply_one(html: str, label: str, old: str, new: str) -> tuple[str, str]:
@@ -146,10 +159,11 @@ def main() -> int:
     if not isinstance(html, str) or not html:
         raise SystemExit(f"FAIL {path}: no usable html field")
     messages = []
+    html, message = remove_pointer_preflush(html)
+    messages.append(message)
     for label, old, new in (
         ("publication refs", OLD_REFS, NEW_REFS),
         ("coalesced publication queue", OLD_QUEUE, NEW_QUEUE),
-        ("pointer release flush", OLD_POINTER, NEW_POINTER),
         ("surface release flush", OLD_SURFACE, NEW_SURFACE),
     ):
         html, message = apply_one(html, label, old, new)

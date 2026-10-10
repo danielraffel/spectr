@@ -439,6 +439,19 @@ const baseGlobals = {
     const releasePublishes = posted.filter((p) => p.type === "processing_state_set");
     if (releasePublishes.length !== 1)
       fail(`pointer release published ${releasePublishes.length} states after the frame flush; expected 1`);
+
+    // A release can arrive before the scheduled frame. The release handler
+    // must apply its final edit first, then the surface wrapper flushes the
+    // latest complete state. Flushing at handler entry would publish the
+    // previous move and then publish the release as a second state.
+    posted.length = 0;
+    surface.props.onPointerDown(pointer(centre(25), PLOT_Y));
+    for (let i = 1; i <= 5; i++)
+      surface.props.onPointerMove(pointer(centre(25) + i * 2, PLOT_Y));
+    surface.props.onPointerUp(pointer(centre(25) + 12, PLOT_Y));
+    const sameFrameReleasePublishes = posted.filter((p) => p.type === 'processing_state_set');
+    if (sameFrameReleasePublishes.length !== 1)
+      fail(`same-frame pointer release published ${sameFrameReleasePublishes.length} states; expected 1`);
   }
 }
 
