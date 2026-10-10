@@ -151,7 +151,8 @@ def main():
     current_count = html.count(STATIC_CANVAS_NEW)
     filter_old_count = html.count(FILTER_CANVAS_OLD)
     overlay_old_count = html.count(OVERLAY_CANVAS_OLD)
-    if (current_count == 1 or old_count == 1) and filter_old_count == 1 and overlay_old_count == 1:
+    if (current_count + old_count == 1 and
+            filter_old_count == 1 and overlay_old_count == 1):
         html = html.replace(STATIC_CANVAS_OLD, STATIC_CANVAS_NEW, 1)
         html = html.replace(FILTER_CANVAS_OLD, FILTER_CANVAS_NEW, 1)
         html = html.replace(OVERLAY_CANVAS_OLD, OVERLAY_CANVAS_NEW, 1)

@@ -49,6 +49,22 @@ def main() -> int:
             text=True, capture_output=True)
     assert control.returncode != 0, control.stdout + control.stderr
     assert 'FAIL' in control.stderr, control.stdout + control.stderr
+
+    duplicate = json.loads(ARTIFACT.read_text())
+    static = 'data-spectr-static-canvas'
+    duplicate['html'] = duplicate['html'].replace(
+        static, static + ' ' + static, 1)
+    with tempfile.NamedTemporaryFile('w', suffix='.json') as handle:
+        json.dump(duplicate, handle, separators=(',', ':'))
+        handle.flush()
+        duplicate_control = subprocess.run(
+            ['python3', str(PATCH)], cwd=REPO,
+            env={**os.environ, 'SPECTR_MATERIALIZED_ARTIFACT': handle.name},
+            text=True, capture_output=True)
+    assert duplicate_control.returncode != 0, (
+        duplicate_control.stdout + duplicate_control.stderr)
+    assert 'FAIL' in duplicate_control.stderr, (
+        duplicate_control.stdout + duplicate_control.stderr)
     print('PASS: materialized static grid z-index is browser-visible and patch is idempotent')
     return 0
 
