@@ -40,6 +40,14 @@ try {
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
         }
     }
+    # Carry the verified installer beside the artifacts so a handoff ZIP is
+    # directly usable on a clean Windows machine.  The installer validates the
+    # manifest before it writes any plugin files.
+    $installerSource = Join-Path $PSScriptRoot 'install-package.ps1'
+    if (-not (Test-Path -LiteralPath $installerSource -PathType Leaf)) {
+        throw "Installer script is missing: $installerSource"
+    }
+    Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
         schema = 1
