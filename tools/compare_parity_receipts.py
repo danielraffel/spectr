@@ -11,39 +11,14 @@ import argparse
 import hashlib
 import json
 import sys
-from decimal import Decimal
 from pathlib import Path
+from parity_state_canonical import state_digest
 
 from PIL import Image, ImageChops, ImageStat
 
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
-
-
-def canonical(value):
-    return canonical_json(value).encode()
-
-
-def canonical_json(value):
-    if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value, key=lambda item: item.encode('utf-16-be', 'surrogatepass'))) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(canonical_json(item) for item in value) + "]"
-    if isinstance(value, bool) or value is None or isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        text = format(Decimal(repr(value)), "f").rstrip("0").rstrip(".")
-        return "0" if text in ("", "-0") else text
-    raise TypeError(f"unsupported canonical value: {type(value)!r}")
-
-
-def state_digest(state):
-    payload = dict(state)
-    payload.pop("stateSha256", None)
-    return digest(canonical(payload))
 
 
 def fail(message):
@@ -97,8 +72,14 @@ def main():
         fail("browser receipt has no rendered root/canvas")
     if browser_positive.get("consoleErrors") or browser_positive.get("networkFailures"):
         fail("browser receipt contains console or network errors")
-    if state.get("schema") != "spectr-parity-state-v1":
+    if state.get("schema") != "spectr-parity-state-v1" or state.get("version") != 1:
         fail("unsupported state schema")
+    viewport = state.get("viewport", {})
+    width, height, scale = viewport.get("width"), viewport.get("height"), viewport.get("deviceScaleFactor")
+    if not isinstance(width, int) or width <= 0 or not isinstance(height, int) or height <= 0:
+        fail("viewport width and height must be positive integers")
+    if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:
+        fail("viewport deviceScaleFactor must be positive")
 
     browser_source = Path(browser["positive"]["before"]["path"]).resolve()
     if browser_source != browser_png_path:
@@ -127,7 +108,11 @@ def main():
     receipt_state = browser.get("stateSha256")
     if not expected_state or not receipt_state:
         fail("state digest is required in both manifest and browser receipt")
-    if expected_state != state_digest(state):
+    try:
+        computed_state = state_digest(state)
+    except (TypeError, ValueError) as error:
+        fail(f"invalid canonical parity state: {error}")
+    if expected_state != computed_state:
         fail("state manifest contains an invalid state digest")
     if receipt_state != expected_state:
         fail("state digest does not match browser receipt")
@@ -176,7 +161,7 @@ def main():
         "schema": "spectr-browser-native-parity-v1",
         "version": 1,
         "state": state,
-        "stateSha256": state_digest(state),
+        "stateSha256": computed_state,
         "browser": {
             "receipt": str(browser_path.resolve()),
             "png": str(browser_png_path),

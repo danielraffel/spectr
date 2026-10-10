@@ -6,6 +6,7 @@ import os from 'node:os';
 import {spawn, spawnSync} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {pathToFileURL} from 'node:url';
+import {stateDigest} from './parity_state_canonical.mjs';
 const args=process.argv.slice(2); const val=k=>{const i=args.indexOf(k); return i<0?undefined:args[i+1]};
 const source=val('--source'), out=path.resolve(val('--output')), chrome=val('--chrome');
 const importerCapture=val('--importer-capture');
@@ -18,30 +19,13 @@ if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --c
 if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-importer-canvas-ink requires --importer-capture DIR');
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
-const numberText=value=>{
- const text=String(value);
- if(!/[eE]/.test(text)) return text;
- const [coefficient, exponentText]=text.toLowerCase().split('e');
- const exponent=Number(exponentText); const sign=coefficient.startsWith('-')?'-':'';
- const digits=coefficient.replace(/^[-+]/,'').replace('.','');
- const decimal=(coefficient.replace(/^[-+]/,'').indexOf('.')<0?digits.length:coefficient.replace(/^[-+]/,'').indexOf('.'))+exponent;
- if(decimal<=0) return `${sign}0.${'0'.repeat(-decimal)}${digits}`;
- if(decimal>=digits.length) return `${sign}${digits}${'0'.repeat(decimal-digits.length)}`;
- return `${sign}${digits.slice(0,decimal)}.${digits.slice(decimal)}`;
-};
-const canonical=value=>{
- if(Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
- if(value&&typeof value==='object') return `{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
- if(typeof value==='number') return numberText(value);
- return JSON.stringify(value);
-};
 let parityState=null;
 if(statePath){
  parityState=JSON.parse(fs.readFileSync(statePath,'utf8'));
- if(parityState.schema!=='spectr-parity-state-v1') throw new Error('unsupported parity state schema');
+ if(parityState.schema!=='spectr-parity-state-v1'||parityState.version!==1) throw new Error('unsupported parity state schema/version');
  const declared=parityState.stateSha256;
  delete parityState.stateSha256;
- const computed=sha(canonical(parityState));
+ const computed=stateDigest(parityState);
  if(declared!==computed) throw new Error(`parity state digest mismatch: ${declared} != ${computed}`);
  const sourceStateSha=parityState.source?.sha256;
  if(sourceStateSha && sourceStateSha!==sha(bytes)) throw new Error(`parity state source mismatch: ${sourceStateSha} != ${sha(bytes)}`);

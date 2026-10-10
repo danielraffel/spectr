@@ -5,6 +5,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from parity_state_canonical import state_digest
+
 try:
     from PIL import Image
 except ModuleNotFoundError as error:
@@ -32,9 +35,9 @@ def main():
         native_binary = out / "native-binary"
         native_binary.write_bytes(b"fixture")
         state = {"schema": "spectr-parity-state-v1", "version": 1,
-                 "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3}}
+                 "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3, "deviceScaleFactor": 1}}
         state["native"] = {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}
-        state_hash = hashlib.sha256(json.dumps(state, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        state_hash = state_digest(state)
         state["stateSha256"] = state_hash
         native_receipt = {"schema": "spectr-native-shot-receipt-v1",
                           "stateSha256": state_hash, "sourceSha256": source_sha,
@@ -93,6 +96,18 @@ def main():
                                    "--native-binary", str(native_binary),
                                    "--output", str(out / "rejected.json")], capture_output=True, text=True)
         assert rejected.returncode != 0, rejected.stdout
+        unsupported = dict(state)
+        unsupported["version"] = 2
+        unsupported_path = out / "unsupported-state.json"
+        unsupported_path.write_text(json.dumps(unsupported))
+        version_rejected = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                                           "--browser-png", str(browser_png),
+                                           "--native-png", str(native_png), "--state", str(unsupported_path),
+                                           "--native-receipt", str(native_receipt_path),
+                                           "--source-artifact", str(source_artifact),
+                                           "--native-binary", str(native_binary),
+                                           "--output", str(out / "unsupported.json")], capture_output=True, text=True)
+        assert version_rejected.returncode != 0, version_rejected.stdout
     print("PASS: parity receipt exact match and planted negative")
 
 

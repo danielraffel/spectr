@@ -8,6 +8,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from parity_state_canonical import state_digest
+
 try:
     from PIL import Image
 except ModuleNotFoundError as error:
@@ -33,10 +36,9 @@ def main():
         source_sha = "a" * 64
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha},
-                 "viewport": {"width": 4, "height": 3, "png": {"width": 4, "height": 3}},
+                 "viewport": {"width": 4, "height": 3, "deviceScaleFactor": 1, "png": {"width": 4, "height": 3}},
                  "native": {"binarySha256": binary_sha}}
-        state["stateSha256"] = hashlib.sha256(json.dumps(state, sort_keys=True,
-                                                           separators=(",", ":")).encode()).hexdigest()
+        state["stateSha256"] = state_digest(state)
         state_path = out / "state.json"
         state_path.write_text(json.dumps(state))
         result = subprocess.run([sys.executable, str(tool), "--native-shot", str(fake),

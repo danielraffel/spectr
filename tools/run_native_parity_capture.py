@@ -6,8 +6,8 @@ import hashlib
 import json
 import subprocess
 import sys
-from decimal import Decimal
 from pathlib import Path
+from parity_state_canonical import state_digest
 
 from PIL import Image
 
@@ -18,25 +18,6 @@ def sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def canonical(value):
-    return canonical_json(value).encode()
-
-
-def canonical_json(value):
-    if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value, key=lambda item: item.encode('utf-16-be', 'surrogatepass'))) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(canonical_json(item) for item in value) + "]"
-    if isinstance(value, bool) or value is None or isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        text = format(Decimal(repr(value)), "f").rstrip("0").rstrip(".")
-        return "0" if text in ("", "-0") else text
-    raise TypeError(f"unsupported canonical value: {type(value)!r}")
 
 
 def fail(message):
@@ -62,13 +43,25 @@ def main():
     if shot != binary:
         fail("--binary must identify the executable invoked by --native-shot")
     state = json.loads(state_path.read_text())
-    if state.get("schema") != "spectr-parity-state-v1":
+    if state.get("schema") != "spectr-parity-state-v1" or state.get("version") != 1:
         fail("unsupported parity state schema")
+    viewport = state.get("viewport", {})
+    if not isinstance(viewport.get("width"), int) or viewport["width"] <= 0 or not isinstance(viewport.get("height"), int) or viewport["height"] <= 0:
+        fail("viewport width and height must be positive integers")
+    scale = viewport.get("deviceScaleFactor")
+    if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:
+        fail("viewport deviceScaleFactor must be positive")
     declared_state = state.get("stateSha256")
-    unsigned_state = dict(state)
-    unsigned_state.pop("stateSha256", None)
-    if not declared_state or declared_state != hashlib.sha256(canonical(unsigned_state)).hexdigest():
+    try:
+        computed_state = state_digest(state)
+    except (TypeError, ValueError) as error:
+        fail(f"invalid canonical parity state: {error}")
+    if not declared_state or declared_state != computed_state:
         fail("invalid parity state digest")
+    binary_digest = sha256(binary)
+    expected_binary = state.get("native", {}).get("binarySha256")
+    if not expected_binary or expected_binary != binary_digest:
+        fail("native binary SHA does not match parity state before launch")
 
     output.mkdir(parents=True, exist_ok=True)
     png = output / "parity-deterministic-analyzer.png"
@@ -102,7 +95,7 @@ def main():
         "stateSha256": declared_state,
         "sourceSha256": state.get("source", {}).get("sha256"),
         "pngSha256": sha256(png),
-        "binarySha256": sha256(binary),
+        "binarySha256": binary_digest,
         "dimensions": {"width": width, "height": height},
         "backend": args.backend,
         "png": str(png),
