@@ -82,6 +82,17 @@ def main():
         fail("unsupported browser receipt schema")
     if native.get("schema") != "spectr-native-shot-receipt-v1":
         fail("unsupported native receipt schema")
+    browser_positive = browser.get("positive", {})
+    browser_ready = browser_positive.get("ready", {})
+    browser_info = browser_positive.get("info", {})
+    if not browser.get("checks", {}).get("strict"):
+        fail("browser receipt was not captured in strict mode")
+    if browser_ready.get("ready") != "complete":
+        fail("browser receipt is not ready")
+    if browser_info.get("rootChildren", 0) < 1 or browser_info.get("canvas", 0) < 1:
+        fail("browser receipt has no rendered root/canvas")
+    if browser_positive.get("consoleErrors") or browser_positive.get("networkFailures"):
+        fail("browser receipt contains console or network errors")
     if state.get("schema") != "spectr-parity-state-v1":
         fail("unsupported state schema")
 

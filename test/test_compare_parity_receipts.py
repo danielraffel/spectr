@@ -45,7 +45,11 @@ def main():
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
             "stateSha256": state_hash,
-            "positive": {"before": {"path": str(browser_png),
+            "checks": {"strict": True},
+            "positive": {"ready": {"ready": "complete"},
+                         "info": {"rootChildren": 1, "canvas": 1},
+                         "consoleErrors": [], "networkFailures": [],
+                         "before": {"path": str(browser_png),
                                       "sha256": __import__("hashlib").sha256(browser_png.read_bytes()).hexdigest()}},
         }
         receipt_path = out / "browser-receipt.json"
