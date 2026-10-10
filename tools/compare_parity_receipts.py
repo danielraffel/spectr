@@ -22,12 +22,22 @@ def digest(value):
 
 def canonical(value):
     if isinstance(value, dict):
-        value = {key: value[key] for key in sorted(value)}
+        value = {key: canonical_value(value[key]) for key in sorted(value)}
     elif isinstance(value, list):
-        value = [value_item for value_item in value]
+        value = [canonical_value(value_item) for value_item in value]
     elif isinstance(value, float) and value.is_integer():
         value = int(value)
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+def canonical_value(value):
+    if isinstance(value, dict):
+        return {key: canonical_value(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [canonical_value(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
 
 
 def state_digest(state):
