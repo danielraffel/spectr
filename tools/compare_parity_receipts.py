@@ -66,6 +66,11 @@ def main():
         fail("browser receipt was not captured in strict mode")
     if browser_ready.get("ready") != "complete":
         fail("browser receipt is not ready")
+    if browser_ready.get("sourceEditorReady") is not True:
+        fail("browser receipt lacks source editor readiness")
+    parity_ready = browser_ready.get("parityReady", {})
+    if parity_ready.get("contract") != "spectr-parity-v1" or parity_ready.get("analyzerSequence") != 2:
+        fail("browser receipt lacks deterministic parity readiness")
     canvas_info = browser_info.get("canvas", [])
     canvas_count = len(canvas_info) if isinstance(canvas_info, list) else canvas_info
     if browser_info.get("rootChildren", 0) < 1 or canvas_count < 1:
