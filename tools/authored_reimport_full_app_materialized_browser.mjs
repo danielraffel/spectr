@@ -140,8 +140,14 @@ function mutatePatchedApp(html) {
   return html.replace(token,
     "const rendered = module.exports.App.apply(this, arguments); return React.createElement(React.Fragment, null, rendered, React.createElement('div', { 'data-spectr-negative-app': 'true', style: { display: 'none' } }));");
 }
-function state(n = 64) {
-  return { revision: 0, n_visible: n, gain_db: Array.from({ length: n }, (_, i) => [12, 6, 0, -6][i % 4]), muted: Array(n).fill(false), min_hz: 20, max_hz: 20000, motion_mode: 0, analyzer_mode: 2, edit_mode: 0, visualization_mode: 2, snapshots: { A: { populated: false, gain_db: [], muted: [] }, B: { populated: false, gain_db: [], muted: [] } }, patterns_json: JSON.stringify({ format: 'spectr.patterns', version: 1, default_id: 'factory:flat', patterns: [] }) };
+function state(n = process.env.SPECTR_BROWSER_NATIVE_DEFAULTS === '1' ? 32 : 64) {
+  const nativeDefaults = process.env.SPECTR_BROWSER_NATIVE_DEFAULTS === '1';
+  return { revision: 0, n_visible: n,
+    gain_db: nativeDefaults ? Array(n).fill(0) : Array.from({ length: n }, (_, i) => [12, 6, 0, -6][i % 4]),
+    muted: Array(n).fill(false), min_hz: 20, max_hz: 20000, motion_mode: 0,
+    analyzer_mode: nativeDefaults ? 0 : 2, edit_mode: 0, visualization_mode: 2,
+    snapshots: { A: { populated: false, gain_db: [], muted: [] }, B: { populated: false, gain_db: [], muted: [] } },
+    patterns_json: JSON.stringify({ format: 'spectr.patterns', version: 1, default_id: 'factory:flat', patterns: [] }) };
 }
 function bridgeScript() {
   const native = state();
