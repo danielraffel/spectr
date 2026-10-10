@@ -26,10 +26,11 @@ five bounded probes. It fails closed when the guest, key, or port is wrong.
 ## Optional UTM interactive path
 
 UTM 5.0.6 is registered as the persistent interactive Windows VM. Its network
-mode is **Emulated VLAN** with one forwarding rule:
+mode is **Emulated** with two forwarding rules:
 
 ```text
 TCP 127.0.0.1:50376 -> 10.0.2.15:22
+TCP 127.0.0.1:53390 -> 10.0.2.15:3389
 ```
 
 Start it with:
@@ -46,23 +47,17 @@ open the VM window in UTM and press **Start/Resume** once. UTM 5.0.6 can leave
 the QEMU process paused after a CLI start; the health guard will then wait and
 fail closed instead of treating the listener as a booted guest.
 
-An earlier live 2026-10-08 check passed five probes and returned hostname
-`pulp-win`. That is historical evidence for this UTM configuration. The final
-post-conversion restart did not reproduce the SSH banner, so UTM is currently
-stopped and needs its boot/firmware state repaired before it can be used as the
-user-facing DAW image. The warmed Spectr build cache and disposable linked
-clones remain on the direct QEMU golden image, so UTM does not consume another
-golden or a macOS CI runner.
+The interactive image was repaired by replacing its undersized EFI variable
+store with the known-good 64 MiB template, then restarting UTM. Current
+verification is live: five SSH probes pass, RDP authentication succeeds, and
+Jump Desktop reaches the Windows desktop at `127.0.0.1:53390`. The account is
+`pulp-win\\admin`; its generated password is kept only in the local `0600`
+file `/Users/danielraffel/.config/pulp/secrets/spectr-windows-utm-admin`.
+1Password CLI is not connected on this Mac, so no vault backup was created.
 
-An attempted compressed conversion of the warmed direct-QEMU disk was checked
-with `qemu-img check` but did not boot under the current UTM firmware/device
-configuration (`Guest has not initialized the display (yet.)` and no SSH
-banner). That image was removed and the known-good interactive disk and EFI
-vars were restored. UTM was also retuned to match the direct ARM machine
-(`-cpu host`, `gic-version=3`) and explicitly resumed from its paused state;
-the restored disk still did not reach a display or SSH banner. Direct QEMU
-remains the warmed build authority; UTM remains stopped until its firmware or
-import configuration is repaired.
+The warmed Spectr build cache and disposable linked clones remain on the direct
+QEMU golden image. UTM uses one retained interactive image and does not consume
+a TartCI runner or create another golden image.
 
 ## Enable RDP for this overlay
 
@@ -75,11 +70,9 @@ reported `Microsoft Basic Display Adapter` with `ConfigManagerErrorCode=10`.
 This is a Windows ARM64 guest display-driver/device mismatch. It is not a
 build failure and does not justify cloning or rebuilding the 75 GB base image.
 
-RDP is the supported interactive transport for this image. After the SSH
-repair below, Jump Desktop connected to `127.0.0.1:53392` and reached the
-Windows credential prompt. That proves the RDP listener and session transport;
-plugin UI and audio acceptance still require authenticated desktop credentials
-and an observed REAPER receipt.
+RDP is the supported interactive transport for this image. Jump Desktop now
+connects to `127.0.0.1:53390`; plugin UI and audio acceptance are recorded in
+`docs/windows-receipts-2026-10-10/utm-health-receipt.json`.
 
 The base image keeps desktop access off. Repair the interactive desktop through
 the authenticated SSH path before opening Jump Desktop:
@@ -100,8 +93,9 @@ PowerShell session.
 Fresh-clone verification on 2026-10-09 returned
 `fDenyTSConnections=0`, `term_service=Running`, and `rdp_listener=true`.
 
-Add a Jump Desktop RDP connection to `127.0.0.1:53389`, accept the local
-self-signed certificate when prompted, and enter the Windows credentials.
+Add a Jump Desktop RDP connection to `127.0.0.1:53390`, accept the local
+self-signed certificate when prompted, and enter `pulp-win\\admin` plus the
+password from the local credential file.
 
 ## Verify REAPER discovery
 
@@ -190,10 +184,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\windows\install-package.ps1 `
 
 The installer verifies every manifest hash before copying the standalone,
 VST3, and CLAP artifacts. It is a development installer script, not a signed
-MSI. After installation, use the REAPER demo helper and capture the real
-Windows desktop/DAW receipt; a successful copy or scan alone is not plugin
-instantiation or audio proof. Ableton should be attempted only after REAPER
-has passed.
+MSI. The current REAPER acceptance is stronger than discovery-only: the live
+UTM session showed `CLAP: Spectr (Pulp)` in the FX browser, instantiated it on
+a track, and rendered a non-silent five-second WAV. Exact hashes and render
+statistics are in `docs/windows-receipts-2026-10-10/utm-health-receipt.json`.
+Ableton remains a separate installation and acceptance step.
 
 The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
