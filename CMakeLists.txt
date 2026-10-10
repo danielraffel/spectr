@@ -1276,10 +1276,6 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
-    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import PIL"
-        RESULT_VARIABLE _spectr_pillow_status OUTPUT_QUIET ERROR_QUIET)
-endif()
-if(Python3_Interpreter_FOUND AND _spectr_pillow_status EQUAL 0)
     add_test(NAME Spectr-level-help-pins
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py)
     add_test(NAME Spectr-level-help-pins-negative-control
@@ -1370,6 +1366,10 @@ spectr_configure_native_target(Spectr-native-shot)
 # capture and reject a one-pixel planted mutation before any production
 # browser/native verdict is trusted.
 if(Python3_Interpreter_FOUND)
+    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import PIL"
+        RESULT_VARIABLE _spectr_pillow_status OUTPUT_QUIET ERROR_QUIET)
+endif()
+if(Python3_Interpreter_FOUND AND _spectr_pillow_status EQUAL 0)
     add_test(NAME Spectr-parity-receipt-comparator
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
