@@ -47,8 +47,15 @@
       "installer_log_sha256": "c5910ecdcf2a84645d3c3ed7c710e3a03116fc9e8a981b022beb8d2d5d52355a",
       "result": "BLOCKED_PREREQUISITE",
       "evidence": "Installer reported Arm64 guest with OSXSAVE=false and AVX=false; Ableton aborted before installation",
-      "next_validation_host": "x64 Windows Proxmox guest or another AVX-capable x64 Windows host"
+      "next_validation_host": "newer AVX2-capable x64 Windows host",
+      "proxmox_x64_check": {
+        "result": "BLOCKED_PREREQUISITE",
+        "guest_cpu": "Intel Xeon E5-1650 v2 @ 3.50GHz",
+        "installer_log": ".local-evidence/ableton/ableton-install-proxmox.log",
+        "installer_log_sha256": "ea704344e28b3ee60b2cc6db080755f82bd21b34f335f13363d6a4f6b728b683",
+        "evidence": "Installer reported x64 guest with Avx2 Detected=false and aborted before installation"
+      }
     }
   },
-  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, live instantiation, and a non-silent 5-second REAPER render are proven. Ableton installation is blocked on this ARM UTM guest by its missing AVX/OSXSAVE capability and remains an x64-host follow-up."
+  "disposition": "UTM is usable for interactive Windows plugin testing: authenticated RDP desktop, REAPER ARM64EC, Spectr CLAP discovery, live instantiation, and a non-silent 5-second REAPER render are proven. Ableton installation is blocked on both current guests: ARM UTM lacks AVX/OSXSAVE and the 2013 x64 Proxmox Xeon lacks AVX2. Ableton remains a newer-AVX2-host follow-up."
 }

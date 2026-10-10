@@ -207,9 +207,13 @@ the minimum requirement. The preserved log is
 `c5910ecdcf2a84645d3c3ed7c710e3a03116fc9e8a981b022beb8d2d5d52355a`).
 
 This is an ARM UTM CPU capability limitation. It does not invalidate the
-working REAPER/Spectr proof. Ableton validation belongs on the x64 Proxmox
-guest (or another x64 Windows host) after that guest has an interactive
-desktop and AVX-capable virtual CPU; no Ableton success is claimed for UTM.
+working REAPER/Spectr proof. The x64 Proxmox guest was checked as the next
+candidate and also failed the same prerequisite: its 2013 Xeon E5-1650 v2
+reports `Avx2 Detected = false` (it has AVX but not AVX2). That log is
+`.local-evidence/ableton/ableton-install-proxmox.log` (SHA-256
+`ea704344e28b3ee60b2cc6db080755f82bd21b34f335f13363d6a4f6b728b683`). Ableton
+validation therefore requires a newer AVX2-capable x64 Windows host; no
+Ableton success is claimed for either current VM.
 
 The lower-level `package-vst3.ps1` helper also derives its destination and
 receipt paths after binding `BuildDir`; its default invocation now succeeds on
