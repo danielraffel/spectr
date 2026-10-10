@@ -258,3 +258,13 @@ in Ableton: the Live 10 trial welcome dialog remained open and no plugin or
 audio acceptance was recorded. Live 12 remains blocked by the AVX/AVX2
 preflight on both current guests; a newer AVX2-capable x64 Windows host is
 required for current Ableton validation.
+
+## Proxmox direct RDP path
+
+The Proxmox x64 guest is reached directly at `192.168.86.21:3389`; the local
+forward `127.0.0.1:53390` belongs to the ARM64 UTM guest and must not be used
+for Proxmox. The interactive account is stored locally in
+`/Users/danielraffel/.config/pulp/secrets/spectr-windows-proxmox-rdp` with mode
+`0600`. A direct SDL FreeRDP session was authenticated on 2026-10-10. This
+keeps interactive validation independent of the UTM port and does not reserve a
+macOS CI runner.
