@@ -26,7 +26,7 @@ def main():
         fake.write_text("#!/bin/sh\n"
                         f"{sys.executable} -c 'from PIL import Image; import sys, pathlib; "
                         "p=pathlib.Path(sys.argv[1].split(\"=\",1)[1]); p.mkdir(parents=True,exist_ok=True); "
-                        "Image.new(\"RGBA\",(4,3),(20,40,60,255)).save(p/\"parity-deterministic-analyzer.png\")' \"$1\"\n")
+                        "Image.new(\"RGBA\",(4,3),(20,40,60,255)).save(p/\"parity-deterministic-analyzer.png\"); print(\"OK  parity-deterministic-analyzer\")' \"$1\"\n")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         binary = out / "binary"
         binary.write_bytes(b"fixture")

@@ -20,7 +20,13 @@ def sha256(path):
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    if isinstance(value, dict):
+        value = {key: value[key] for key in sorted(value)}
+    elif isinstance(value, list):
+        value = [value_item for value_item in value]
+    elif isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
 def fail(message):
@@ -68,6 +74,8 @@ def main():
         raise SystemExit(77)
     if run.returncode != 0:
         fail(f"native shot exited {run.returncode}")
+    if "OK  parity-deterministic-analyzer" not in run.stdout:
+        fail("native shot did not report a successful deterministic capture")
 
     if not png.exists():
         fail(f"native shot did not produce {png}")

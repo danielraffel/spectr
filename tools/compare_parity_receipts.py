@@ -21,7 +21,13 @@ def digest(value):
 
 
 def canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    if isinstance(value, dict):
+        value = {key: value[key] for key in sorted(value)}
+    elif isinstance(value, list):
+        value = [value_item for value_item in value]
+    elif isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
 def state_digest(state):
