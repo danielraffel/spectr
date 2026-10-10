@@ -5,7 +5,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+except ModuleNotFoundError as error:
+    if error.name != "PIL":
+        raise
+    print("SKIP: Pillow is required for parity receipt image checks")
+    raise SystemExit(77)
 
 
 def main():

@@ -1366,14 +1366,11 @@ spectr_configure_native_target(Spectr-native-shot)
 # capture and reject a one-pixel planted mutation before any production
 # browser/native verdict is trusted.
 if(Python3_Interpreter_FOUND)
-    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import PIL"
-        RESULT_VARIABLE _spectr_pillow_status OUTPUT_QUIET ERROR_QUIET)
-endif()
-if(Python3_Interpreter_FOUND AND _spectr_pillow_status EQUAL 0)
     add_test(NAME Spectr-parity-receipt-comparator
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
-    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
 endif()
 
 # Registered so the shipping native surface is actually captured by CI, not
