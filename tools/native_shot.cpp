@@ -1700,7 +1700,10 @@ int main(int argc, char** argv) {
     try {
         Rig rig;
         rig.resize(kDesignWidth, kDesignHeight);
-        if (std::getenv("SPECTR_DETERMINISTIC_ANALYZER") != nullptr) {
+        const char* deterministic_analyzer =
+            std::getenv("SPECTR_DETERMINISTIC_ANALYZER");
+        if (deterministic_analyzer != nullptr
+            && std::string_view(deterministic_analyzer) == "1") {
             rig.inject_deterministic_analyzer_frames();
             capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
             return 0;
