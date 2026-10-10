@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T22:30:44Z",
+  "provider": "Proxmox",
+  "vmid": 300,
+  "guest": "pulp-win-ci",
+  "guest_address": "192.168.86.21",
+  "architecture": "x86_64-win",
+  "transport": "authenticated Windows OpenSSH",
+  "command": "C:\\spectr-win-proof\\build-win\\Spectr-test.exe \"Spectr processes audio\" --reporter compact",
+  "result": {
+    "exit_code": 0,
+    "summary": "All tests passed (2 assertions in 1 test case)"
+  },
+  "hashes": {
+    "test_exe": {
+      "path": "C:\\spectr-win-proof\\build-win\\Spectr-test.exe",
+      "sha256": "136facd102f18389e63a8e54fe070b43f4cddb835a56dd3e56b6f3cd173de9c7"
+    },
+    "vst3": {
+      "path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\x86_64-win\\Spectr.vst3",
+      "sha256": "329d2fbf55d1cb5b47b7fb6dd150e94308233b77a60635dcbb776c125471c8620"
+    },
+    "reaper": {
+      "path": "C:\\Program Files\\REAPER (x64)\\reaper.exe",
+      "sha256": "ea910af76b1160411f54dea978084d054bb8e397a391e7e84de91088904c7f26"
+    }
+  },
+  "scope": {
+    "status": "focused_x64_dsp_pass",
+    "reaper_instantiation": "proven separately by proxmox-reaper-x64-receipt.json",
+    "x64_editor": "open; guest exposes Microsoft Basic Display Adapter with AdapterRAM 0",
+    "x64_host_render": "open; no configured render receipt"
+  }
+}
