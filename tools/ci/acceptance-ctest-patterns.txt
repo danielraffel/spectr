@@ -66,6 +66,9 @@ Spectr editor
 # like an editor that got faster.
 ^Spectr-materialized-marquee-render-cost
 
+# Static grid canvas stacking and idempotent materialized patch control.
+^Spectr-materialized-static-grid-zindex$
+
 # The idle draw loop and its fourteen plants. Same reason: `materialized`
 # matches them but can never report their absence -- and this whole suite
 # measures frames on which NOTHING changed, which no capture, layout

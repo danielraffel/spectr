@@ -246,7 +246,7 @@ async function browser(files, chrome, outDir, assets = new Map()) {
       await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 300))))');
       const second = await evaluate('window.SpectrAnalyzer.debugSnapshot()');
       const canvasAfter = await evaluate('window.__spectrCanvasSummary()');
-      const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, ready: document.querySelector("#root")?.children.length > 0, analyzer: window.__spectrAnalyzerEmissions, authoredAppInvocations: window.__spectrAuthoredAppInvocations || 0, errors: window.__spectrRuntimeErrors || [] })');
+      const summary = await evaluate('({ root: document.querySelector("#root")?.outerHTML || "", canvases: document.querySelectorAll("canvas").length, canvasStacking: Array.from(document.querySelectorAll("canvas")).map(canvas => ({ static: canvas.dataset.spectrStaticCanvas === "true", filter: canvas.dataset.spectrFilterCanvas === "true", zIndex: getComputedStyle(canvas).zIndex, pointerEvents: getComputedStyle(canvas).pointerEvents })), ready: document.querySelector("#root")?.children.length > 0, analyzer: window.__spectrAnalyzerEmissions, authoredAppInvocations: window.__spectrAuthoredAppInvocations || 0, errors: window.__spectrRuntimeErrors || [] })');
       const shot = await command('Page.captureScreenshot', { format: 'png' });
       const bytes = Buffer.from(shot.data, 'base64');
       const screenshotPath = path.join(outDir, `${name}.png`);
@@ -279,6 +279,11 @@ async function browser(files, chrome, outDir, assets = new Map()) {
       assert(name === 'baseline' ? summary.authoredAppInvocations === 0 : summary.authoredAppInvocations > 0,
         `${name} authored App invocation count was ${summary.authoredAppInvocations}`);
       assert(summary.canvases === 3, `${name} rendered ${summary.canvases} canvas layers; expected 3`);
+      assert(JSON.stringify(summary.canvasStacking) === JSON.stringify([
+        { static: false, filter: true, zIndex: "1", pointerEvents: "auto" },
+        { static: false, filter: false, zIndex: "2", pointerEvents: "none" },
+        { static: true, filter: false, zIndex: "0", pointerEvents: "none" },
+      ]), `${name} canvas stacking contract changed: ${JSON.stringify(summary.canvasStacking)}`);
       const assertCanvasLayers = (layers, phase) => {
         assert(Array.isArray(layers) && layers.length === 3,
           `${name} ${phase} canvas layer summary is incomplete: ${JSON.stringify(layers)}`);
