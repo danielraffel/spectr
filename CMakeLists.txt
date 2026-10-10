@@ -1361,6 +1361,17 @@ target_link_libraries(Spectr-native-shot PRIVATE
 )
 spectr_configure_native_target(Spectr-native-shot)
 
+# The joined parity receipt is intentionally a small, dependency-light
+# contract test. It proves the comparator can accept an exact same-state
+# capture and reject a one-pixel planted mutation before any production
+# browser/native verdict is trusted.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-parity-receipt-comparator
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
+    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES TIMEOUT 30)
+endif()
+
 # Registered so the shipping native surface is actually captured by CI, not
 # merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
 # path (its default backend), so on a host without GPU capture it MUST

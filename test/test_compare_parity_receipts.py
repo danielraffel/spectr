@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from PIL import Image
+
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    tool = root / "tools" / "compare_parity_receipts.py"
+    with tempfile.TemporaryDirectory(prefix="spectr-parity-") as temp:
+        out = Path(temp)
+        browser_png = out / "browser.png"
+        native_png = out / "native.png"
+        Image.new("RGBA", (4, 3), (20, 40, 60, 255)).save(browser_png)
+        browser_png.replace(out / "before.png")
+        browser_png = out / "before.png"
+        native_png.write_bytes(browser_png.read_bytes())
+        source_sha = "a" * 64
+        receipt = {
+            "schema": "spectr-html-cdp-comparison-v1",
+            "sourceSha256": source_sha,
+            "positive": {"before": {"path": str(browser_png),
+                                      "sha256": __import__("hashlib").sha256(browser_png.read_bytes()).hexdigest()}},
+        }
+        state = {"schema": "spectr-parity-state-v1", "version": 1,
+                 "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3}}
+        receipt_path = out / "browser-receipt.json"
+        state_path = out / "state.json"
+        receipt_path.write_text(json.dumps(receipt))
+        state_path.write_text(json.dumps(state))
+        report = out / "report.json"
+        run = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                              "--native-png", str(native_png), "--state", str(state_path),
+                              "--output", str(report)], capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert json.loads(report.read_text())["comparison"]["exact"]
+
+        negative = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                                   "--native-png", str(native_png), "--state", str(state_path),
+                                   "--output", str(out / "negative.json"), "--plant-negative"],
+                                  capture_output=True, text=True)
+        assert negative.returncode == 0, negative.stderr
+        assert json.loads((out / "negative.json").read_text())["comparison"]["differingPixels"] > 0
+    print("PASS: parity receipt exact match and planted negative")
+
+
+if __name__ == "__main__":
+    main()
