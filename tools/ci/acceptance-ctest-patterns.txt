@@ -468,3 +468,8 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Full authored App closure mount: deterministic VM execution plus planted
 # identity/allowlist negatives. Browser/native parity remain separate gates.
 ^Spectr-wp1-full-app-import-mount$
+# Native canvas behavior ownership: the dedicated CTest row sets both
+# SPECTR_HIT_PROBE and SPECTR_CANVAS_OWNERSHIP_PROBE, then requires the
+# materialized owner map, hidden relay programs, native hit owner, handler,
+# dispatch chain, and revision change to agree on the production surface.
+^Spectr-native-canvas-ownership$

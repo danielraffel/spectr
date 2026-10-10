@@ -202,11 +202,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (Number.isFinite(mutedGainDbRef.current[i])
             ? mutedGainDbRef.current[i] : 0)
         : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
-      const live = {
-        lmin: viewRef.current.lmin,
-        lmax: viewRef.current.lmax,
-        drawn: nativeAppliedRevisionRef.current,
-      };
+      const live = spectrPublicationProvenance();
       const publicationSignature = JSON.stringify([
         N, gainDb, muted, live.lmin, live.lmax,
       ]);
@@ -745,11 +741,6 @@ window.FilterBank = FilterBank;`,
     nativePendingPublicationRef.current = null;
     if (publication) sendNativeProcessingStatePublication(publication);
   };
-  const spectrPublicationProvenance = () => ({
-    lmin: viewRef.current.lmin,
-    lmax: viewRef.current.lmax,
-    drawn: nativeAppliedRevisionRef.current,
-  });
   const queueNativeProcessingStatePublication = () => {
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.
@@ -3624,10 +3615,8 @@ window.PatternManager = PatternManager;`,
       '  const viewRef = useRef({ ...initialView });\n  const wheelCommitRef = useRef(0);\n  const view = viewRef.current;',
       'wheel zoom owns one deferred semantic commit');
     replaceSpectrSource(
-      String.raw`  };
-  const commitGain = (idx, value, deferReact = false) => {`,
-      String.raw`  };
-  const commitLiveViewport = (next) => {
+      String.raw`  const commitGain = (idx, value, deferReact = false) => {`,
+      String.raw`  const commitLiveViewport = (next) => {
     viewRef.current.lmin = next.lmin;
     viewRef.current.lmax = next.lmax;
     queueNativeProcessingStatePublication();

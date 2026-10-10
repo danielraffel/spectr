@@ -107,6 +107,36 @@ std::string js_string(std::string_view value) {
     return result;
 }
 
+// CanvasWidget relays are expected to share the complete retained program,
+// rather than merely producing the same number of draw calls. Keep this
+// comparison local to the probe so it can catch a truncated or substituted
+// command without making the production CanvasWidget API more complicated.
+bool same_canvas_command(const pulp::view::CanvasDrawCmd& a,
+                         const pulp::view::CanvasDrawCmd& b) {
+    return a.type == b.type && a.x == b.x && a.y == b.y && a.w == b.w
+        && a.h == b.h && a.x2 == b.x2 && a.y2 == b.y2 && a.x3 == b.x3
+        && a.y3 == b.y3 && a.color.r == b.color.r && a.color.g == b.color.g
+        && a.color.b == b.color.b && a.color.a == b.color.a
+        && a.extra == b.extra && a.text == b.text && a.int_val == b.int_val
+        && a.gradient_colors.size() == b.gradient_colors.size()
+        && std::equal(a.gradient_colors.begin(), a.gradient_colors.end(),
+                      b.gradient_colors.begin(), [](const auto& lhs, const auto& rhs) {
+                          return lhs.r == rhs.r && lhs.g == rhs.g
+                              && lhs.b == rhs.b && lhs.a == rhs.a;
+                      })
+        && a.gradient_positions == b.gradient_positions
+        && a.use_active_style == b.use_active_style
+        && a.has_source_rect == b.has_source_rect;
+}
+
+bool same_canvas_program(const pulp::view::CanvasWidget& a,
+                         const pulp::view::CanvasWidget& b) {
+    const auto& lhs = a.commands();
+    const auto& rhs = b.commands();
+    return lhs.size() == rhs.size()
+        && std::equal(lhs.begin(), lhs.end(), rhs.begin(), same_canvas_command);
+}
+
 const pulp::view::Label* find_label(const pulp::view::View& view,
                                     std::string_view text) {
     if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
@@ -6651,6 +6681,7 @@ int main(int argc, char** argv) {
                     "canvas_ownership_map");
                 const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22"};
                 std::array<std::size_t, 2> anchor_commands{};
+                std::array<pulp::view::CanvasWidget*, 2> anchor_canvases{};
                 std::vector<pulp::view::CanvasWidget*> all_canvases;
                 std::function<void(pulp::view::View&)> collect_canvases =
                     [&](pulp::view::View& node) {
@@ -6693,6 +6724,7 @@ int main(int argc, char** argv) {
                     print_chain(root, x + b.width / 2.0f,
                                 y + b.height / 2.0f);
                     anchor_commands[canvas_index] = canvas->command_count();
+                    anchor_canvases[canvas_index] = canvas;
                     if (canvas->command_count() == 0)
                         canvas_probe_ok = false;
                     if (hit == nullptr || hit->id().empty() ||
@@ -6709,12 +6741,12 @@ int main(int argc, char** argv) {
                             "canvas_ownership_owner_match");
                     }
                     if ((std::string_view{id}.find("Browser_canvas_") == 0) &&
-                        (view->opacity() < 0.99f ||
+                        (!view->visible() || view->opacity() < 0.99f ||
                          view->pointer_events() == pulp::view::View::PointerEvents::none ||
                          hit == nullptr || hit->id().empty()))
                         canvas_probe_ok = false;
                 }
-                pulp::view::CanvasWidget* behavior = nullptr;
+                pulp::view::CanvasWidget* first_hidden_relay = nullptr;
                 int hidden_sources = 0;
                 std::array<bool, 2> relay_program_match{};
                 for (auto* canvas : all_canvases) {
@@ -6726,40 +6758,82 @@ int main(int argc, char** argv) {
                                     canvas->id().empty() ? "(anon)" : canvas->id().c_str(),
                                     canvas->opacity(), canvas->command_count());
                         for (std::size_t i = 0; i < anchor_commands.size(); ++i)
-                            if (anchor_commands[i] != 0 &&
-                                canvas->command_count() == anchor_commands[i])
+                            if (anchor_canvases[i] != nullptr &&
+                                anchor_commands[i] != 0 &&
+                                same_canvas_program(*canvas, *anchor_canvases[i]))
                                 relay_program_match[i] = true;
-                        if (behavior == nullptr && canvas->command_count() > 0)
-                            behavior = canvas;
+                        if (first_hidden_relay == nullptr && canvas->command_count() > 0)
+                            first_hidden_relay = canvas;
                     }
                 }
                 std::printf("[canvas] discovered=%zu hidden_relay_sources=%d\n",
                             all_canvases.size(), hidden_sources);
-                if (hidden_sources < 2 || behavior == nullptr ||
+                if (hidden_sources != 2 || first_hidden_relay == nullptr ||
                     !relay_program_match[0] || !relay_program_match[1])
                     canvas_probe_ok = false;
-                if (behavior != nullptr) {
+                // Exercise every mapped owner independently.  Clicking only
+                // the first hidden relay would let a second canvas regress
+                // while the owner map and paint census still looked healthy.
+                const auto read_runtime_string = [&](const std::string& expr) {
+                    try {
+                        rig.eval("(() => { throw new Error('PULPVALUE:' + (" + expr + ") + ':END'); })();",
+                                 "canvas-owner-read");
+                    } catch (const std::exception& error) {
+                        const std::string message = error.what();
+                        const auto begin = message.find("PULPVALUE:");
+                        const auto end = message.find(":END", begin == std::string::npos ? 0 : begin);
+                        if (begin != std::string::npos && end != std::string::npos && end > begin)
+                            return message.substr(begin + 10, end - begin - 10);
+                    }
+                    return std::string{};
+                };
+                std::array<std::string, 2> mapped_owners{};
+                for (std::size_t canvas_index = 0; canvas_index < 2; ++canvas_index) {
+                    mapped_owners[canvas_index] = read_runtime_string(
+                        "globalThis.__pulpMaterializedCanvasBehaviorOwners__[" +
+                        std::to_string(canvas_index) + "]");
+                    if (mapped_owners[canvas_index].empty())
+                        canvas_probe_ok = false;
+                }
+                for (std::size_t canvas_index = 0; canvas_index < 2; ++canvas_index) {
+                    const char* anchor_id = ids[canvas_index];
+                    const auto& owner_id = mapped_owners[canvas_index];
+                    if (owner_id.empty()) {
+                        std::printf("[canvas] anchor=%s owner map read failed\n", anchor_id);
+                        canvas_probe_ok = false;
+                        continue;
+                    }
+                    auto* owner = find_by_id(root, owner_id.c_str());
+                    if (owner == nullptr) {
+                        std::printf("[canvas] anchor=%s owner=%s missing\n",
+                                    anchor_id, owner_id.c_str());
+                        canvas_probe_ok = false;
+                        continue;
+                    }
                     float x = 0.0f;
                     float y = 0.0f;
-                    root_origin(*behavior, x, y);
-                    const auto b = behavior->bounds();
+                    root_origin(*owner, x, y);
+                    const auto b = owner->bounds();
                     const auto before = rig.processor.editor_authority().revision();
-                    root.simulate_click(pulp::view::Point{x + b.width * 0.5f,
-                                                          y + b.height * 0.5f});
+                    const pulp::view::Point centre{x + b.width * 0.5f,
+                                                   y + b.height * 0.5f};
+                    root.simulate_click(centre);
                     settle(rig.clock, 24);
+                    root.layout_children();
+                    settle(rig.clock, 8);
                     const auto after = rig.processor.editor_authority().revision();
-                    auto* dispatch = root.hit_test(
-                        pulp::view::Point{x + b.width * 0.5f,
-                                          y + b.height * 0.5f});
-                    std::printf("[canvas] behavior_click dispatch_owner=%s "
+                    auto* dispatch = root.hit_test(centre);
+                    std::printf("[canvas] anchor=%s owner=%s dispatch_owner=%s "
                                 "revision_before=%llu revision_after=%llu delta=%lld\n",
-                                owner_at(root, x + b.width * 0.5f,
-                                         y + b.height * 0.5f).c_str(),
+                                anchor_id, owner_id.c_str(),
+                                owner_at(root, centre.x, centre.y).c_str(),
                                 static_cast<unsigned long long>(before),
                                 static_cast<unsigned long long>(after),
                                 static_cast<long long>(after) -
                                     static_cast<long long>(before));
-                    if (after <= before || dispatch == behavior)
+                    if (after <= before || dispatch != owner ||
+                        !owner->on_dom_pointer_event ||
+                        owner->pointer_events() == pulp::view::View::PointerEvents::none)
                         canvas_probe_ok = false;
                 }
                 std::printf("[canvas] ownership_verdict=%s\n",
