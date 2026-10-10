@@ -12,8 +12,8 @@
   "source": {
     "kind": "artifact",
     "path": "materialized-document.runtime.json",
-    "sha256": "47a997d08e9fdaf9b2f654f850f0ef9299c6f013373235f19f1e36f743519cab",
-    "bytes": 1154505
+    "sha256": "d3d39680d276f1fcc69150159ec49336e9aadd0ab34b4cfb425e411e265d824e",
+    "bytes": 1154153
   },
   "roots": [
     "component:MBtn:4885f2c95b91023d26fa9fb1e92cd28c41086648b229b39667e26d0c7d593968"

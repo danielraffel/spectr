@@ -141,6 +141,15 @@ def escaped(value):
     return json.dumps(value)[1:-1]
 
 
+def write_atomic(path, payload):
+    temporary = path + '.tmp'
+    with open(temporary, 'w', encoding='utf-8', newline='') as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
 def main():
     raw = open(PATH, encoding='utf-8').read()
     document = json.loads(raw)
@@ -157,7 +166,10 @@ def main():
         html = html.replace(FILTER_CANVAS_OLD, FILTER_CANVAS_NEW, 1)
         html = html.replace(OVERLAY_CANVAS_OLD, OVERLAY_CANVAS_NEW, 1)
         document['html'] = html
-        open(PATH, 'w', encoding='utf-8').write(json.dumps(document, separators=(',', ':')))
+        serialized = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        if raw.endswith('\n'):
+            serialized += '\n'
+        write_atomic(PATH, serialized)
         print('migrated        explicit static, dynamic and overlay canvas stacking order')
         return 0
     if current_count == 1 and old_count == 0 and filter_old_count == 0 and overlay_old_count == 0:
@@ -178,7 +190,7 @@ def main():
     document = json.loads(raw)
     if not isinstance(document.get('html'), str):
         sys.exit('FAIL: the patched document no longer carries an html payload')
-    open(PATH, 'w', encoding='utf-8').write(raw)
+    write_atomic(PATH, raw)
     print('written', PATH)
     return 0
 
