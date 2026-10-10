@@ -5,5 +5,5 @@
   "viewport": {"width": 1320, "height": 860, "deviceScaleFactor": 2.0},
   "native": {"binarySha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
   "analyzer": {"sequence": 1.0, "points": [1.0, 2.5], "tiny": 1e-07, "label": "é"},
-  "stateSha256": "b4cf27e82fc139e77a5ed10b9f273d53efcf269968e6b4b893f687bcd7503422"
+  "stateSha256": "fa828ce33692152721c8dadb66e5fd6a4bdacc15dd72bf39a051845a1acde18d"
 }

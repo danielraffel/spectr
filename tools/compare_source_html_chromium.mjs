@@ -18,9 +18,21 @@ if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --c
 if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-importer-canvas-ink requires --importer-capture DIR');
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
+const numberText=value=>{
+ const text=String(value);
+ if(!/[eE]/.test(text)) return text;
+ const [coefficient, exponentText]=text.toLowerCase().split('e');
+ const exponent=Number(exponentText); const sign=coefficient.startsWith('-')?'-':'';
+ const digits=coefficient.replace(/^[-+]/,'').replace('.','');
+ const decimal=(coefficient.replace(/^[-+]/,'').indexOf('.')<0?digits.length:coefficient.replace(/^[-+]/,'').indexOf('.'))+exponent;
+ if(decimal<=0) return `${sign}0.${'0'.repeat(-decimal)}${digits}`;
+ if(decimal>=digits.length) return `${sign}${digits}${'0'.repeat(decimal-digits.length)}`;
+ return `${sign}${digits.slice(0,decimal)}.${digits.slice(decimal)}`;
+};
 const canonical=value=>{
  if(Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
  if(value&&typeof value==='object') return `{${Object.keys(value).sort().map(key=>`${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+ if(typeof value==='number') return numberText(value);
  return JSON.stringify(value);
 };
 let parityState=null;
@@ -35,6 +47,10 @@ if(statePath){
  if(sourceStateSha && sourceStateSha!==sha(bytes)) throw new Error(`parity state source mismatch: ${sourceStateSha} != ${sha(bytes)}`);
  parityState.stateSha256=declared;
 }
+const viewport=parityState?.viewport ?? {width:1320,height:860,deviceScaleFactor:1};
+const viewportWidth=viewport.width;
+const viewportHeight=viewport.height;
+const viewportScale=viewport.deviceScaleFactor ?? 1;
 // A bridge script must not precede a source document's doctype.  Chromium
 // switches to quirks mode when anything (including a script) appears before
 // the doctype token, which can change layout metrics in the comparison page.
@@ -54,7 +70,7 @@ const bridge=`<script>window.__spectrBrowserPosts=[];window.__spectrBrowserListe
 const html=injectBridge(bytes,bridge);
 const temp=path.join(out,'source-with-bridge.html'); fs.writeFileSync(temp,html);
 const profile=fs.mkdtempSync(path.join(out,'chrome-profile-'));
-const proc=spawn(chrome,['--headless=new','--disable-gpu','--disable-background-networking','--disable-component-update','--disable-domain-reliability','--disable-sync','--no-first-run','--no-default-browser-check','--allow-file-access-from-files','--run-all-compositor-stages-before-draw','--window-size=1320,860','--force-device-scale-factor=1','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
+const proc=spawn(chrome,['--headless=new','--disable-gpu','--disable-background-networking','--disable-component-update','--disable-domain-reliability','--disable-sync','--no-first-run','--no-default-browser-check','--allow-file-access-from-files','--run-all-compositor-stages-before-draw',`--window-size=${viewportWidth},${viewportHeight}`,`--force-device-scale-factor=${viewportScale}`,'--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
 let socket;
 try{
  let page; const deadline=Date.now()+15000;
@@ -102,7 +118,7 @@ print(json.dumps({'sourceSha256':actual,'pngSize':{'width':w,'height':h},'region
  }
  const shot=await cmd('Page.captureScreenshot',{format:'png',fromSurface:true}); const png=Buffer.from(shot.data,'base64'); const pngPath=path.join(out,'before.png'); fs.writeFileSync(pngPath,png);
  let menuAction=null; if(info.attrs.some(a=>a.attrs['data-spectr-menu-trigger'])){menuAction=await evalv(`(()=>{const n=document.querySelector('[data-spectr-menu-trigger]');if(!n)return null; n.click(); return {expanded:n.getAttribute('aria-expanded')};})()`);await delay(400);const open=await cmd('Page.captureScreenshot',{format:'png',fromSurface:true});const openBytes=Buffer.from(open.data,'base64');fs.writeFileSync(path.join(out,'menu-open.png'),openBytes);menuAction.openPngSha256=sha(openBytes);}
- const receipt={schema:'spectr-html-cdp-comparison-v1',source:path.resolve(source),sourceSha256:sha(bytes),sourceBytes:bytes.length,stateSha256:parityState?.stateSha256??null,parityState,chrome:spawnSync(chrome,['--version'],{encoding:'utf8'}).stdout.trim(),fixedViewport:{width:1320,height:860,deviceScaleFactor:1},checks:{strict,requireCanvasInk,requireImporterCanvasInk,plantNoInk},positive:{ready,info,canvasInk,importer,consoleErrors,networkFailures,before:{path:pngPath,sha256:sha(png),bytes:png.length},menuAction}};
+ const receipt={schema:'spectr-html-cdp-comparison-v1',source:path.resolve(source),sourceSha256:sha(bytes),sourceBytes:bytes.length,stateSha256:parityState?.stateSha256??null,parityState,chrome:spawnSync(chrome,['--version'],{encoding:'utf8'}).stdout.trim(),fixedViewport:{width:viewportWidth,height:viewportHeight,deviceScaleFactor:viewportScale},checks:{strict,requireCanvasInk,requireImporterCanvasInk,plantNoInk},positive:{ready,info,canvasInk,importer,consoleErrors,networkFailures,before:{path:pngPath,sha256:sha(png),bytes:png.length},menuAction}};
  fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(receipt,null,2)+'\n'); console.log(JSON.stringify(receipt,null,2));
  await cmd('Browser.close').catch(()=>{});
 }catch(e){console.error(e.stack||e);process.exitCode=1}

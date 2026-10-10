@@ -10,8 +10,8 @@ this tool only joins them after checking their provenance and dimensions.
 import argparse
 import hashlib
 import json
-import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
@@ -22,15 +22,7 @@ def digest(value):
 
 
 def canonical(value):
-    if isinstance(value, dict):
-        value = {key: canonical_value(value[key]) for key in sorted(value)}
-    elif isinstance(value, list):
-        value = [canonical_value(value_item) for value_item in value]
-    elif isinstance(value, float) and value.is_integer():
-        value = int(value)
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    encoded = re.sub(r"e([+-])0+(\d+)", r"e\1\2", encoded)
-    return encoded.encode()
+    return canonical_json(value).encode()
 
 
 def canonical_value(value):
@@ -41,6 +33,21 @@ def canonical_value(value):
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return value
+
+
+def canonical_json(value):
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(canonical_json(item) for item in value) + "]"
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        text = format(Decimal(repr(value)), "f").rstrip("0").rstrip(".")
+        return "0" if text in ("", "-0") else text
+    raise TypeError(f"unsupported canonical value: {type(value)!r}")
 
 
 def state_digest(state):
