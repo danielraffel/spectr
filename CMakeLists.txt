@@ -277,6 +277,10 @@ set(SPECTR_NATIVE_ASSET_SOURCES
 # them produces a visually valid home frame that cannot satisfy interaction
 # contracts.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME Spectr-materialized-static-grid-zindex
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
+set_tests_properties(Spectr-materialized-static-grid-zindex PROPERTIES TIMEOUT 30)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py

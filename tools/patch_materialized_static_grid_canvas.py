@@ -41,8 +41,10 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATH = os.path.join(REPO, "native-ui", "materialized",
-                    "materialized-document.runtime.json")
+PATH = os.environ.get(
+    "SPECTR_MATERIALIZED_ARTIFACT",
+    os.path.join(REPO, "native-ui", "materialized",
+                 "materialized-document.runtime.json"))
 
 EDITS = [
     ('the static layer has a ref',
@@ -162,9 +164,9 @@ def main():
         return 0
     if old_count != 0 or current_count != 0:
         sys.exit('FAIL: static canvas z-index patch point is ambiguous')
-    if raw.count(escaped('"data-spectr-static-canvas": true')) == 1:
-        print('already applied  the plot\'s static layer has its own canvas')
-        return 0
+    # A static marker alone is not proof that the complete stacking contract
+    # is present.  Refuse unknown styles so a partial or malformed migration
+    # cannot be reported as successfully applied.
     for label, old, new in EDITS:
         if raw.count(escaped(old)) != 1:
             sys.exit('FAIL %s: patch point occurs %d times, expected 1'

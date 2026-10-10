@@ -2,7 +2,9 @@
 """Regression control for the browser-visible materialized static grid layer."""
 import hashlib
 import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -35,6 +37,18 @@ def main() -> int:
     after = digest(ARTIFACT)
     assert before == after, f'idempotent patch changed artifact: {before} -> {after}'
     assert 'already current' in result.stdout, result.stdout
+
+    malformed = json.loads(ARTIFACT.read_text())
+    malformed['html'] = malformed['html'].replace('zIndex: 0', 'zIndex: 3', 1)
+    with tempfile.NamedTemporaryFile('w', suffix='.json') as handle:
+        json.dump(malformed, handle, separators=(',', ':'))
+        handle.flush()
+        control = subprocess.run(
+            ['python3', str(PATCH)], cwd=REPO,
+            env={**os.environ, 'SPECTR_MATERIALIZED_ARTIFACT': handle.name},
+            text=True, capture_output=True)
+    assert control.returncode != 0, control.stdout + control.stderr
+    assert 'FAIL' in control.stderr, control.stdout + control.stderr
     print('PASS: materialized static grid z-index is browser-visible and patch is idempotent')
     return 0
 
