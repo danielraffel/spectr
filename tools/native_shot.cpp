@@ -46,6 +46,7 @@
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
 #include <pulp/view/frame_cost_probe.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
@@ -6620,6 +6621,68 @@ int main(int argc, char** argv) {
 
         if (std::getenv("SPECTR_HIT_PROBE") != nullptr) {
             auto& root = *rig.root;
+
+            // Canvas ownership is a separate contract from semantic
+            // activation. Imported Browser_canvas siblings retain paint but
+            // are hidden from pointer dispatch; the behavior canvas owns the
+            // live interaction. Resolve both through the native tree and
+            // hit-test their painted centres.
+            if (std::getenv("SPECTR_CANVAS_OWNERSHIP_PROBE") != nullptr) {
+                std::printf("--- canvas ownership ---\n");
+                rig.eval(
+                    "(() => { const owners = globalThis.__pulpMaterializedCanvasBehaviorOwners__;"
+                    " console.log('[canvas-map] ' + JSON.stringify(owners || null)); })();",
+                    "canvas_ownership_map");
+                const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22",
+                                     "__behavior_pr_1", "__behavior_pr_2"};
+                for (const char* id : ids) {
+                    auto* view = find_by_id(root, id);
+                    auto* canvas = view == nullptr
+                        ? nullptr
+                        : dynamic_cast<pulp::view::CanvasWidget*>(view);
+                    if (view == nullptr || canvas == nullptr) {
+                        std::printf("[canvas] id=%s missing_or_not_canvas\n", id);
+                        continue;
+                    }
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    root_origin(*view, x, y);
+                    const auto b = view->bounds();
+                    auto* hit = root.hit_test(
+                        pulp::view::Point{x + b.width / 2.0f,
+                                          y + b.height / 2.0f});
+                    const auto hb = view->hit_bounds();
+                    std::printf(
+                        "[canvas] id=%s visible=%s opacity=%.3f pointer_events=%s "
+                        "hit_testable=%s painted=(%.1f,%.1f %.1fx%.1f) "
+                        "hit=(%.1f,%.1f %.1fx%.1f) commands=%zu centre_owner=%s\n",
+                        id, view->visible() ? "yes" : "no", view->opacity(),
+                        view->pointer_events() == pulp::view::View::PointerEvents::none
+                            ? "none" : "enabled",
+                        view->hit_testable() ? "yes" : "no", x, y, b.width,
+                        b.height, hb.x, hb.y, hb.width, hb.height,
+                        canvas->command_count(), hit == nullptr || hit->id().empty()
+                            ? "(none)" : hit->id().c_str());
+                }
+                auto* behavior = find_by_id(root, "__behavior_pr_1");
+                if (behavior != nullptr) {
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    root_origin(*behavior, x, y);
+                    const auto b = behavior->bounds();
+                    const auto before = rig.processor.editor_authority().revision();
+                    root.simulate_click(pulp::view::Point{x + b.width * 0.5f,
+                                                          y + b.height * 0.5f});
+                    settle(rig.clock, 24);
+                    const auto after = rig.processor.editor_authority().revision();
+                    std::printf("[canvas] behavior_click revision_before=%llu "
+                                "revision_after=%llu delta=%lld\n",
+                                static_cast<unsigned long long>(before),
+                                static_cast<unsigned long long>(after),
+                                static_cast<long long>(after) -
+                                    static_cast<long long>(before));
+                }
+            }
 
             auto report = [&root](const char* label, const char* id) {
                 const auto r = measure_hit(root, id);
