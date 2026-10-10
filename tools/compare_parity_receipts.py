@@ -25,16 +25,6 @@ def canonical(value):
     return canonical_json(value).encode()
 
 
-def canonical_value(value):
-    if isinstance(value, dict):
-        return {key: canonical_value(value[key]) for key in sorted(value)}
-    if isinstance(value, list):
-        return [canonical_value(item) for item in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
 def canonical_json(value):
     if isinstance(value, dict):
         return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value)) + "}"
@@ -64,6 +54,7 @@ def fail(message):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser-receipt", required=True)
+    parser.add_argument("--browser-png", required=True)
     parser.add_argument("--native-png", required=True)
     parser.add_argument("--native-receipt", required=True)
     parser.add_argument("--source-artifact", required=True)
@@ -76,6 +67,7 @@ def main():
     args = parser.parse_args()
 
     browser_path = Path(args.browser_receipt)
+    browser_png_path = Path(args.browser_png).resolve()
     native_path = Path(args.native_png)
     native_receipt_path = Path(args.native_receipt)
     source_artifact = Path(args.source_artifact)
@@ -108,17 +100,19 @@ def main():
     if state.get("schema") != "spectr-parity-state-v1":
         fail("unsupported state schema")
 
-    browser_source = Path(browser["positive"]["before"]["path"])
-    if not browser_source.exists():
-        fail(f"browser PNG missing: {browser_source}")
-    browser_bytes = browser_source.read_bytes()
+    browser_source = Path(browser["positive"]["before"]["path"]).resolve()
+    if browser_source != browser_png_path:
+        fail("browser receipt PNG path does not match explicit browser PNG")
+    if not browser_png_path.exists():
+        fail(f"browser PNG missing: {browser_png_path}")
+    browser_bytes = browser_png_path.read_bytes()
     native_bytes = native_path.read_bytes()
     if digest(browser_bytes) != browser["positive"]["before"]["sha256"]:
         fail("browser PNG hash does not match its receipt")
     if native.get("pngSha256") != digest(native_bytes):
         fail("native PNG hash does not match its receipt")
 
-    browser_image = Image.open(browser_source).convert("RGBA")
+    browser_image = Image.open(browser_png_path).convert("RGBA")
     native_image = Image.open(native_path).convert("RGBA")
     if browser_image.size != native_image.size:
         fail(f"dimension mismatch: browser={browser_image.size} native={native_image.size}")
@@ -185,7 +179,7 @@ def main():
         "stateSha256": state_digest(state),
         "browser": {
             "receipt": str(browser_path.resolve()),
-            "png": str(browser_source.resolve()),
+            "png": str(browser_png_path),
             "sha256": digest(browser_bytes),
         },
         "native": {

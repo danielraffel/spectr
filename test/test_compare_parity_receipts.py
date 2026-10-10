@@ -60,6 +60,7 @@ def main():
         native_receipt_path.write_text(json.dumps(native_receipt))
         report = out / "report.json"
         run = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                              "--browser-png", str(browser_png),
                               "--native-png", str(native_png), "--state", str(state_path),
                               "--native-receipt", str(native_receipt_path),
                               "--source-artifact", str(source_artifact),
@@ -69,6 +70,7 @@ def main():
         assert json.loads(report.read_text())["comparison"]["exact"]
 
         negative = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                                   "--browser-png", str(browser_png),
                                    "--native-png", str(native_png), "--state", str(state_path),
                                    "--native-receipt", str(native_receipt_path),
                                    "--source-artifact", str(source_artifact),
@@ -84,6 +86,7 @@ def main():
         mismatch_receipt_path = out / "mismatch-receipt.json"
         mismatch_receipt_path.write_text(json.dumps(mismatch_receipt))
         rejected = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
+                                   "--browser-png", str(browser_png),
                                    "--native-png", str(mismatch), "--state", str(state_path),
                                    "--native-receipt", str(mismatch_receipt_path),
                                    "--source-artifact", str(source_artifact),

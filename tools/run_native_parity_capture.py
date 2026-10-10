@@ -24,16 +24,6 @@ def canonical(value):
     return canonical_json(value).encode()
 
 
-def canonical_value(value):
-    if isinstance(value, dict):
-        return {key: canonical_value(value[key]) for key in sorted(value)}
-    if isinstance(value, list):
-        return [canonical_value(item) for item in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
 def canonical_json(value):
     if isinstance(value, dict):
         return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key]) for key in sorted(value)) + "}"
