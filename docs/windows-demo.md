@@ -42,6 +42,9 @@ unavailable, so the installed Live 10 trial is the compatible sequencer here.
 Run `tools/windows/utm-daw-status.sh` to verify both paths before opening
 Jump Desktop.
 
+The verified application inventory and executable hashes are recorded in
+[`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
+
 UTM 5.0.6 is registered as the persistent interactive Windows VM. Its network
 mode is **Emulated** with two forwarding rules:
 
