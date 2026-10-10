@@ -8,7 +8,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+except ModuleNotFoundError as error:
+    if error.name != "PIL":
+        raise
+    print("SKIP: Pillow is required for native parity receipt checks")
+    raise SystemExit(77)
 
 
 def main():
@@ -27,7 +33,8 @@ def main():
         source_sha = "a" * 64
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha},
-                 "viewport": {"width": 4, "height": 3, "png": {"width": 4, "height": 3}}}
+                 "viewport": {"width": 4, "height": 3, "png": {"width": 4, "height": 3}},
+                 "native": {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}}
         state["stateSha256"] = hashlib.sha256(json.dumps(state, sort_keys=True,
                                                            separators=(",", ":")).encode()).hexdigest()
         state_path = out / "state.json"

@@ -98,6 +98,11 @@ def main():
         fail("state digest does not match native receipt")
     if native.get("sourceSha256") != expected_artifact:
         fail("source SHA does not match native receipt")
+    expected_binary = state.get("native", {}).get("binarySha256")
+    if not expected_binary or not native.get("binarySha256"):
+        fail("native binary SHA is required in state and native receipt")
+    if native["binarySha256"] != expected_binary:
+        fail("native binary SHA does not match parity state")
     expected_size = state.get("viewport", {}).get("png")
     if not expected_size and state.get("viewport", {}).get("width"):
         expected_size = {"width": state["viewport"]["width"] * state["viewport"].get("deviceScaleFactor", 1),
