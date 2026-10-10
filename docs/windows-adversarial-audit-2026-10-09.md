@@ -26,7 +26,11 @@ intentionally not a product acceptance claim.
 
 1. Diagnose the Proxmox x64 blank editor and configure a real/offline audio
    device or render path. The x64 scan and instantiation are proven, but the
-   editor screenshot is blank white and no x64 render receipt exists.
+   editor screenshot is blank white and no x64 render receipt exists. The
+   current guest diagnostic is `Microsoft Basic Display Adapter`, driver
+   `10.0.20348.1`, `AdapterRAM = 0`; VM 300 has no explicit accelerated
+   display device in `qm config`. A display-driver/device change and a reboot
+   are therefore required before treating x64 UI rendering as a plugin bug.
 2. Run the established Windows Quality Lab against the accepted UTM host path
    and capture a Perfetto trace if the Windows instrumentation path supports it.
 3. Validate Ableton only after an AVX2-capable Windows guest and a licensed
