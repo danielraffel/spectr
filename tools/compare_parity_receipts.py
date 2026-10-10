@@ -24,6 +24,12 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def state_digest(state):
+    payload = dict(state)
+    payload.pop("stateSha256", None)
+    return digest(canonical(payload))
+
+
 def fail(message):
     print(f"spectr-parity: FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -73,9 +79,14 @@ def main():
         fail("state source SHA does not match browser receipt")
     expected_state = state.get("stateSha256")
     receipt_state = browser.get("stateSha256")
+    if expected_state and expected_state != state_digest(state):
+        fail("state manifest contains an invalid state digest")
     if expected_state and receipt_state != expected_state:
         fail("state digest does not match browser receipt")
     expected_size = state.get("viewport", {}).get("png")
+    if not expected_size and state.get("viewport", {}).get("width"):
+        expected_size = {"width": state["viewport"]["width"] * state["viewport"].get("deviceScaleFactor", 1),
+                         "height": state["viewport"]["height"] * state["viewport"].get("deviceScaleFactor", 1)}
     if expected_size:
         expected_dimensions = (expected_size["width"], expected_size["height"])
         if browser_image.size != expected_dimensions:
@@ -102,7 +113,7 @@ def main():
         "schema": "spectr-browser-native-parity-v1",
         "version": 1,
         "state": state,
-        "stateSha256": digest(canonical(state)),
+        "stateSha256": state_digest(state),
         "browser": {
             "receipt": str(browser_path.resolve()),
             "png": str(browser_source.resolve()),
