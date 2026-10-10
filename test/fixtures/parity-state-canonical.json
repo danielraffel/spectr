@@ -1,0 +1,9 @@
+{
+  "schema": "spectr-parity-state-v1",
+  "version": 1,
+  "source": {"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "viewport": {"width": 1320, "height": 860, "deviceScaleFactor": 2.0},
+  "native": {"binarySha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+  "analyzer": {"sequence": 1.0, "points": [1.0, 2.5], "label": "é"},
+  "stateSha256": "4d50c80a4cf43b8896954d61dad024e9db837d7d404a59a988db9b7a4492fce4"
+}

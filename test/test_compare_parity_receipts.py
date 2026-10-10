@@ -47,7 +47,7 @@ def main():
             "stateSha256": state_hash,
             "checks": {"strict": True},
             "positive": {"ready": {"ready": "complete"},
-                         "info": {"rootChildren": 1, "canvas": 1},
+                         "info": {"rootChildren": 1, "canvas": [{}]},
                          "consoleErrors": [], "networkFailures": [],
                          "before": {"path": str(browser_png),
                                       "sha256": __import__("hashlib").sha256(browser_png.read_bytes()).hexdigest()}},

@@ -89,7 +89,9 @@ def main():
         fail("browser receipt was not captured in strict mode")
     if browser_ready.get("ready") != "complete":
         fail("browser receipt is not ready")
-    if browser_info.get("rootChildren", 0) < 1 or browser_info.get("canvas", 0) < 1:
+    canvas_info = browser_info.get("canvas", [])
+    canvas_count = len(canvas_info) if isinstance(canvas_info, list) else canvas_info
+    if browser_info.get("rootChildren", 0) < 1 or canvas_count < 1:
         fail("browser receipt has no rendered root/canvas")
     if browser_positive.get("consoleErrors") or browser_positive.get("networkFailures"):
         fail("browser receipt contains console or network errors")
