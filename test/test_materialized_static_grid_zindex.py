@@ -65,6 +65,25 @@ def main() -> int:
         duplicate_control.stdout + duplicate_control.stderr)
     assert 'FAIL' in duplicate_control.stderr, (
         duplicate_control.stdout + duplicate_control.stderr)
+
+    legacy = json.loads(ARTIFACT.read_text())
+    legacy['html'] = (legacy['html']
+        .replace(', zIndex: 1', '', 1)
+        .replace(', zIndex: 2', '', 1)
+        .replace('zIndex: 0', 'zIndex: -1', 1))
+    with tempfile.NamedTemporaryFile('w', suffix='.json') as handle:
+        json.dump(legacy, handle, separators=(',', ':'))
+        handle.flush()
+        migration = subprocess.run(
+            ['python3', str(PATCH)], cwd=REPO,
+            env={**os.environ, 'SPECTR_MATERIALIZED_ARTIFACT': handle.name},
+            text=True, capture_output=True)
+        migrated = json.loads(open(handle.name, encoding='utf-8').read())
+    assert migration.returncode == 0, migration.stdout + migration.stderr
+    assert 'migrated' in migration.stdout, migration.stdout
+    assert 'zIndex: 0' in migrated['html']
+    assert 'zIndex: 1' in migrated['html']
+    assert 'zIndex: 2' in migrated['html']
     print('PASS: materialized static grid z-index is browser-visible and patch is idempotent')
     return 0
 
