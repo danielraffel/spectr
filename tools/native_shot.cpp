@@ -6681,6 +6681,7 @@ int main(int argc, char** argv) {
                     "canvas_ownership_map");
                 const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22"};
                 std::array<std::size_t, 2> anchor_commands{};
+                std::array<pulp::view::CanvasWidget*, 2> anchor_canvases{};
                 std::vector<pulp::view::CanvasWidget*> all_canvases;
                 std::function<void(pulp::view::View&)> collect_canvases =
                     [&](pulp::view::View& node) {
@@ -6723,6 +6724,7 @@ int main(int argc, char** argv) {
                     print_chain(root, x + b.width / 2.0f,
                                 y + b.height / 2.0f);
                     anchor_commands[canvas_index] = canvas->command_count();
+                    anchor_canvases[canvas_index] = canvas;
                     if (canvas->command_count() == 0)
                         canvas_probe_ok = false;
                     if (hit == nullptr || hit->id().empty() ||
@@ -6756,8 +6758,9 @@ int main(int argc, char** argv) {
                                     canvas->id().empty() ? "(anon)" : canvas->id().c_str(),
                                     canvas->opacity(), canvas->command_count());
                         for (std::size_t i = 0; i < anchor_commands.size(); ++i)
-                            if (anchor_commands[i] != 0 &&
-                                canvas->command_count() == anchor_commands[i])
+                            if (anchor_canvases[i] != nullptr &&
+                                anchor_commands[i] != 0 &&
+                                same_canvas_program(*canvas, *anchor_canvases[i]))
                                 relay_program_match[i] = true;
                         if (first_hidden_relay == nullptr && canvas->command_count() > 0)
                             first_hidden_relay = canvas;
