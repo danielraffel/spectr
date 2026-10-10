@@ -53,9 +53,10 @@ def main():
         fail("invalid parity state digest")
 
     output.mkdir(parents=True, exist_ok=True)
+    scale = state.get("viewport", {}).get("deviceScaleFactor", 1)
     run = subprocess.run([
         str(shot), f"--out={output}", f"--backend={args.backend}",
-        "--prefix=parity-",
+        f"--scale={scale}", "--prefix=parity-",
     ], env={**__import__("os").environ, "SPECTR_DETERMINISTIC_ANALYZER": "1"},
         text=True, capture_output=True)
     sys.stdout.write(run.stdout)
