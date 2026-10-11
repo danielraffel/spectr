@@ -11,6 +11,7 @@ const args=process.argv.slice(2); const val=k=>{const i=args.indexOf(k); return 
 const source=val('--source'), out=path.resolve(val('--output')), chrome=val('--chrome');
 const importerCapture=val('--importer-capture');
 const statePath=val('--state');
+const analyzerFixturePath=val('--analyzer-fixture');
 const strict=args.includes('--strict');
 const requireCanvasInk=args.includes('--require-canvas-ink');
 const requireImporterCanvasInk=args.includes('--require-importer-canvas-ink');
@@ -20,6 +21,7 @@ if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-impo
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
 let parityState=null;
+let analyzerFixture={schema:'spectr-parity-analyzer-v1',version:1,epoch:1,sequences:[1,2],fftSize:1024,sampleRate:48000,floorDb:-96,ceilingDb:0,sourceChannels:2,visibleSamples:321,overviewSamples:121,minHz:20,maxHz:20000,trace:{baseDb:-92,peakDb:78,centre:0.25,phaseStep:0.1,width:0.06}};
 if(statePath){
  parityState=JSON.parse(fs.readFileSync(statePath,'utf8'));
  if(parityState.schema!=='spectr-parity-state-v1'||parityState.version!==1) throw new Error('unsupported parity state schema/version');
@@ -30,6 +32,15 @@ if(statePath){
  const sourceStateSha=parityState.source?.sha256;
  if(sourceStateSha && sourceStateSha!==sha(bytes)) throw new Error(`parity state source mismatch: ${sourceStateSha} != ${sha(bytes)}`);
  parityState.stateSha256=declared;
+ if(parityState.analyzer?.fixtureSha256) {
+  if(!analyzerFixturePath) throw new Error('--state with analyzer fixture requires --analyzer-fixture');
+  analyzerFixture=JSON.parse(fs.readFileSync(analyzerFixturePath,'utf8'));
+  if(analyzerFixture.schema!=='spectr-parity-analyzer-v1'||analyzerFixture.version!==1)
+   throw new Error('unsupported analyzer fixture schema/version');
+  const fixtureSha=sha(fs.readFileSync(analyzerFixturePath));
+  if(parityState.analyzer.fixtureSha256!==fixtureSha)
+   throw new Error(`analyzer fixture mismatch: ${parityState.analyzer.fixtureSha256} != ${fixtureSha}`);
+ }
 }
 const viewport=parityState?.viewport ?? {width:1320,height:860,deviceScaleFactor:1};
 const viewportWidth=viewport.width;
@@ -50,7 +61,7 @@ const injectBridge=(sourceBytes,bridgeSource)=>{
  const doctypeEnd=Buffer.byteLength(match[0],'utf8');
  return Buffer.concat([sourceBytes.subarray(0,doctypeEnd),bridgeBytes,sourceBytes.subarray(doctypeEnd)]);
 };
-const bridge=`<script>window.__spectrBrowserPosts=[];window.__spectrBrowserListeners=Object.create(null);window.pulp={on(type,cb){(window.__spectrBrowserListeners[type]??=new Set()).add(cb);return()=>window.__spectrBrowserListeners[type].delete(cb)},postMessage(type,payload){window.__spectrBrowserPosts.push({type,payload});for(const cb of window.__spectrBrowserListeners[type]||[])try{cb({type,payload})}catch(e){};if(type==='editor_ready'){queueMicrotask(()=>{const n=32;const trace=(count,phase=0)=>Array.from({length:count},(_,i)=>{const x=i/Math.max(1,count-1);return -92+78*Math.exp(-Math.pow((x-(0.25+phase*0.1))/.06,2))});const state={n_visible:n,gain_db:new Array(n).fill(0),muted:new Array(n).fill(false),min_hz:20,max_hz:20000,motion_mode:0,analyzer_mode:0,edit_mode:0,visualization_mode:2,revision:1,snapshots:{A:{populated:false},B:{populated:false}},patterns_json:JSON.stringify({format:'spectr.patterns',version:1,default_id:'factory:flat',patterns:[]})};for(const cb of window.__spectrBrowserListeners.processing_state_hydrate||[])try{cb({type:'processing_state_hydrate',payload:state})}catch(e){};const frame=(sequence,phase)=>({schema_version:1,epoch:1,sequence_number:sequence,dropped_frames:0,source_channels:2,fft_size:1024,sample_rate:48000,floor_db:-96,ceiling_db:0,visible:{min_hz:20,max_hz:20000,magnitude_db:trace(321,phase)},overview:{min_hz:20,max_hz:20000,magnitude_db:trace(121,phase)}});for(const analyzer of [frame(1,0),frame(2,1)])for(const cb of window.__spectrBrowserListeners.analyzer_frame||[])try{cb({type:'analyzer_frame',payload:analyzer})}catch(e){};window.__spectrParityReady__={contract:'spectr-parity-v1',analyzerSequence:2}})}return Promise.resolve({ok:true,payload:{ok:true}})}};window.confirm=()=>true;</script>`;
+const bridge=`<script>window.__spectrPostsFixture=${JSON.stringify(analyzerFixture)};window.__spectrBrowserPosts=[];window.__spectrBrowserListeners=Object.create(null);window.pulp={on(type,cb){(window.__spectrBrowserListeners[type]??=new Set()).add(cb);return()=>window.__spectrBrowserListeners[type].delete(cb)},postMessage(type,payload){window.__spectrBrowserPosts.push({type,payload});for(const cb of window.__spectrBrowserListeners[type]||[])try{cb({type,payload})}catch(e){};if(type==='editor_ready'){queueMicrotask(()=>{const f=window.__spectrPostsFixture;const n=32;const trace=(count,phase=0)=>Array.from({length:count},(_,i)=>{const x=i/Math.max(1,count-1);return f.trace.baseDb+f.trace.peakDb*Math.exp(-Math.pow((x-(f.trace.centre+phase*f.trace.phaseStep))/f.trace.width,2))});const state={n_visible:n,gain_db:new Array(n).fill(0),muted:new Array(n).fill(false),min_hz:f.minHz,max_hz:f.maxHz,motion_mode:0,analyzer_mode:0,edit_mode:0,visualization_mode:2,revision:1,snapshots:{A:{populated:false},B:{populated:false}},patterns_json:JSON.stringify({format:'spectr.patterns',version:1,default_id:'factory:flat',patterns:[]})};for(const cb of window.__spectrBrowserListeners.processing_state_hydrate||[])try{cb({type:'processing_state_hydrate',payload:state})}catch(e){};const frame=(sequence,phase)=>({schema_version:1,epoch:f.epoch,sequence_number:sequence,dropped_frames:0,source_channels:f.sourceChannels,fft_size:f.fftSize,sample_rate:f.sampleRate,floor_db:f.floorDb,ceiling_db:f.ceilingDb,visible:{min_hz:f.minHz,max_hz:f.maxHz,magnitude_db:trace(f.visibleSamples,phase)},overview:{min_hz:f.minHz,max_hz:f.maxHz,magnitude_db:trace(f.overviewSamples,phase)}});for(const sequence of f.sequences)for(const cb of window.__spectrBrowserListeners.analyzer_frame||[])try{cb({type:'analyzer_frame',payload:frame(sequence,sequence-1)})}catch(e){};window.__spectrParityReady__={contract:'spectr-parity-v1',analyzerSequence:f.sequences[1]}})}return Promise.resolve({ok:true,payload:{ok:true}})}};window.confirm=()=>true;</script>`;
 const html=injectBridge(bytes,bridge);
 const temp=path.join(out,'source-with-bridge.html'); fs.writeFileSync(temp,html);
 const profile=fs.mkdtempSync(path.join(out,'chrome-profile-'));

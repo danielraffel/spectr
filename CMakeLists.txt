@@ -1417,7 +1417,8 @@ add_test(NAME Spectr-native-parity-deterministic
 set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
     TIMEOUT 180
     SKIP_RETURN_CODE 77
-    ENVIRONMENT "SPECTR_DETERMINISTIC_ANALYZER=1"
+    ENVIRONMENT
+        "SPECTR_DETERMINISTIC_ANALYZER=1;SPECTR_ANALYZER_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json"
     RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Canvas ownership is a distinct contract from the general native capture and

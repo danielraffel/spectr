@@ -487,23 +487,35 @@ struct Rig {
     // the shipping runtime's existing native-message seam and never changes
     // the production materialized artifact or runtime behavior.
     void inject_deterministic_analyzer_frames() {
-        eval(R"JS((() => {
+        const char* fixture_path = std::getenv("SPECTR_ANALYZER_FIXTURE");
+        if (fixture_path == nullptr || *fixture_path == '\0')
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is required");
+        std::ifstream fixture_stream(fixture_path, std::ios::binary);
+        if (!fixture_stream)
+            throw std::runtime_error("cannot open SPECTR_ANALYZER_FIXTURE");
+        const std::string fixture((std::istreambuf_iterator<char>(fixture_stream)),
+                                  std::istreambuf_iterator<char>());
+        eval("(() => {\nconst spec = " + fixture + R"JS(;
   if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
     throw new Error('deterministic analyzer seam is unavailable');
+  if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
+      || spec.epoch !== 1 || spec.sequences.length !== 2
+      || spec.sequences[0] !== 1 || spec.sequences[1] !== 2)
+    throw new Error('unsupported deterministic analyzer fixture');
   const frame = (sequence, phase) => {
     const trace = count => Array.from({ length: count }, (_, i) =>
-      -92 + 78 * Math.exp(-Math.pow((i / (count - 1)
-        - (0.25 + phase * 0.1)) / 0.06, 2)));
-    return { schema_version: 1, epoch: 1, sequence_number: sequence,
-      dropped_frames: 0, source_channels: 2, fft_size: 1024,
-      sample_rate: 48000, floor_db: -96, ceiling_db: 0,
-      visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) },
-      overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) } };
+      spec.trace.baseDb + spec.trace.peakDb * Math.exp(-Math.pow((i / (count - 1)
+        - (spec.trace.centre + phase * spec.trace.phaseStep)) / spec.trace.width, 2)));
+    return { schema_version: 1, epoch: spec.epoch, sequence_number: sequence,
+      dropped_frames: 0, source_channels: spec.sourceChannels, fft_size: spec.fftSize,
+      sample_rate: spec.sampleRate, floor_db: spec.floorDb, ceiling_db: spec.ceilingDb,
+      visible: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.visibleSamples) },
+      overview: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.overviewSamples) } };
   };
-  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(1, 0));
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[0], 0));
   if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
     globalThis.__pulpRuntimeSettle__(8);
-  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(2, 1));
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[1], 1));
   const accepted = globalThis.SpectrAnalyzer
     && globalThis.SpectrAnalyzer.debugSnapshot
     && globalThis.SpectrAnalyzer.debugSnapshot();

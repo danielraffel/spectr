@@ -36,12 +36,14 @@ def main():
     parser.add_argument("--state", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--backend", default="skia")
+    parser.add_argument("--analyzer-fixture")
     args = parser.parse_args()
 
     shot = Path(args.native_shot).resolve()
     binary = Path(args.binary).resolve()
     state_path = Path(args.state).resolve()
     output = Path(args.output).resolve()
+    fixture = Path(args.analyzer_fixture).resolve() if args.analyzer_fixture else None
     if not shot.exists() or not binary.exists() or not state_path.exists():
         fail("native shot, binary, and state manifest must exist")
     if shot != binary:
@@ -66,6 +68,14 @@ def main():
     expected_binary = state.get("native", {}).get("binarySha256")
     if not expected_binary or expected_binary != binary_digest:
         fail("native binary SHA does not match parity state before launch")
+    expected_fixture = state.get("analyzer", {}).get("fixtureSha256")
+    fixture_digest = None
+    if expected_fixture:
+        if fixture is None or not fixture.exists():
+            fail("state requires an analyzer fixture")
+        fixture_digest = sha256(fixture)
+        if expected_fixture != fixture_digest:
+            fail("analyzer fixture SHA does not match parity state before launch")
 
     output.mkdir(parents=True, exist_ok=True)
     png = output / "parity-deterministic-analyzer.png"
@@ -75,7 +85,8 @@ def main():
     run = subprocess.run([
         str(shot), f"--out={output}", f"--backend={args.backend}",
         f"--scale={scale}", "--prefix=parity-",
-    ], env={**__import__("os").environ, "SPECTR_DETERMINISTIC_ANALYZER": "1"},
+    ], env={**__import__("os").environ, "SPECTR_DETERMINISTIC_ANALYZER": "1",
+            **({"SPECTR_ANALYZER_FIXTURE": str(fixture)} if fixture else {})},
         text=True, capture_output=True)
     sys.stdout.write(run.stdout)
     sys.stderr.write(run.stderr)
@@ -100,6 +111,7 @@ def main():
         "version": 1,
         "stateSha256": declared_state,
         "sourceSha256": state.get("source", {}).get("sha256"),
+        **({"analyzerFixtureSha256": fixture_digest} if fixture_digest else {}),
         "pngSha256": sha256(png),
         "binarySha256": binary_digest,
         "dimensions": {"width": width, "height": height},
