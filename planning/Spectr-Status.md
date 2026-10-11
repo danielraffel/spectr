@@ -556,3 +556,20 @@ are complete; the authority-aligned Chromium oracle, same-artifact join,
 renderer repair (if still needed), and merge proof remain open. Kill criteria:
 do not add a generalized frontend graph or rewrite the materialized runtime if
 the oracle cannot establish a measurable reduction in ambiguity or diff size.
+
+## 2026-10-11 authority guard implementation
+
+Commit `680ebd5dec46dc59f18071f4343ba5774a4819cd` adds the explicit authority
+declaration to `native-ui/capture-states/manifest.json` and registers a
+positive CTest contract plus a planted missing-authority negative control.
+The direct positive and negative checks pass. This prevents the current
+cross-artifact comparison from being described as importer pixel parity, but
+it does not claim that the same-runtime Chromium oracle exists yet.
+
+The existing authored full-App/materialized browser harness is the scaffold
+for that oracle. It now runs after `npm ci --ignore-scripts --prefix
+tools/wp1-parser`; its current mock state is intentionally insufficient for
+parity because it omits mature native fields. The next implementation must
+serve the materialized envelope assets, inject React vendors without replacing
+the retained native services, and derive the bridge payload from
+`make_editor_state_payload` before comparing screenshots.
