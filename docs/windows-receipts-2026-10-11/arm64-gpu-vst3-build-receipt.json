@@ -71,7 +71,8 @@
   },
   "standalone": {
     "status": "BLOCKED",
-    "result": "The installed ARM64 executable opened WASAPI successfully but failed WindowHost::create() in the UTM RDP session (exit code 1). This prevents a GPU editor screenshot and is evidence against claiming Skia/Dawn runtime success in this UTM guest.",
+    "result": "The installed ARM64 executable opened WASAPI successfully but failed WindowHost::create() in the UTM RDP session (exit code 1). A reversible probe of UTM virtio-ramfb-gl and virtio-gpu-gl-pci display hardware produced the same failure; the retained VM was restored to ramfb for reliability. This prevents a GPU editor screenshot and is evidence against claiming Skia/Dawn runtime success in this UTM guest.",
+    "display_probe": ["virtio-ramfb-gl: WindowHost::create failed", "virtio-gpu-gl-pci: WindowHost::create failed", "restored: ramfb"],
     "log": ".local-evidence/windows-gpu-5487/standalone-windowhost-failure-20261011.log"
   },
   "limitations": [
