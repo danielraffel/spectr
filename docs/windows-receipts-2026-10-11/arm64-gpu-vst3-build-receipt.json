@@ -58,7 +58,16 @@
   },
   "reaper": {
     "status": "UNVERIFIED",
-    "reason": "The retained UTM session has an active desktop transport, but no current REAPER cache or observed Spectr instance receipt exists for these hashes. Existing screen evidence is an older non-Spectr plugin and is not acceptance."
+    "reason": "The retained UTM session has an active desktop transport and a current ARM64 VST3 cache entry, but REAPER reports the CLAP project entry unavailable and the audio device dialog remains open. No current Spectr editor instance or audio receipt was observed, so this is not acceptance.",
+    "observed": {
+      "reaper_version": "7.82 ARM64",
+      "vst_cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-vstplugins64arwmin.ini",
+      "vst_cache_entry": "Spectr.vst3=216CEC616159DD01",
+      "clap_cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-clap-winarm64.ini",
+      "clap_cache_entry": "[Spectr.clap]",
+      "audio_dialog": "Error opening devices",
+      "project_result": "CLAP: Spectr (Pulp) reported unavailable by REAPER despite the installed CLAP cache entry"
+    }
   },
   "limitations": [
     "Headless build and focused DSP test prove compilation and audio path only.",
