@@ -54,9 +54,8 @@ try {
     const receipt = JSON.parse(fs.readFileSync(path.join(outputPath, 'receipt.json'), 'utf8'));
     assert.equal(receipt.positive.info.compatMode, testCase.expectedCompatMode,
       `${testCase.name} compatMode`);
-    assert.deepEqual(receipt.positive.ready.parityReady,
-      {contract: 'spectr-parity-v1', analyzerSequence: 2},
-      `${testCase.name} parity readiness`);
+    assert.equal(receipt.positive.ready.parityReady, null,
+      `${testCase.name} optional parity readiness`);
     assert.equal(receipt.positive.ready.sourceEditorReady, true,
       `${testCase.name} source editor readiness`);
     assert.equal(receipt.stateSha256, state.stateSha256, `${testCase.name} state digest`);
