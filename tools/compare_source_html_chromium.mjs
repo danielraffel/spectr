@@ -17,6 +17,7 @@ const requireCanvasInk=args.includes('--require-canvas-ink');
 const requireImporterCanvasInk=args.includes('--require-importer-canvas-ink');
 const plantNoInk=args.includes('--plant-no-ink');
 if(!source||!out||!chrome) throw new Error('usage --source FILE --output DIR --chrome PATH [--state JSON] [--strict] [--require-canvas-ink] [--importer-capture DIR] [--require-importer-canvas-ink] [--plant-no-ink]');
+if(analyzerFixturePath && !statePath) throw new Error('--analyzer-fixture requires --state');
 if(requireImporterCanvasInk && !importerCapture) throw new Error('--require-importer-canvas-ink requires --importer-capture DIR');
 fs.mkdirSync(out,{recursive:true});
 const bytes=fs.readFileSync(source); const sha=x=>crypto.createHash('sha256').update(x).digest('hex');

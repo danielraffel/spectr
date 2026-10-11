@@ -137,6 +137,14 @@ def main():
         fail("state digest does not match native receipt")
     if native.get("sourceSha256") != expected_artifact:
         fail("source SHA does not match native receipt")
+    expected_fixture = state.get("analyzer", {}).get("fixtureSha256")
+    if expected_fixture:
+        browser_fixture = (browser.get("parityState", {}).get("analyzer", {})
+                           .get("fixtureSha256"))
+        if browser_fixture != expected_fixture:
+            fail("analyzer fixture SHA does not match browser receipt")
+        if native.get("analyzerFixtureSha256") != expected_fixture:
+            fail("analyzer fixture SHA does not match native receipt")
     if digest(source_artifact.read_bytes()) != expected_artifact:
         fail("source artifact SHA does not match parity state")
     expected_binary = state.get("native", {}).get("binarySha256")
