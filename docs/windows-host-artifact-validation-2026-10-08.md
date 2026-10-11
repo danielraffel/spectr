@@ -1,4 +1,9 @@
-# Windows ARM64 host artifact validation — 2026-10-08
+# Windows ARM64 host artifact validation — historical 2026-10-08 evidence
+
+This is a historical headless artifact receipt. It predates the authenticated
+ARM64EC REAPER/CLAP proof recorded in
+`docs/windows-receipts-2026-10-10/utm-health-receipt.json`; it must not be read
+as evidence that REAPER loading remains unverified.
 
 This receipt records the first headless Windows ARM64 host test of the built
 Spectr VST3 artifact on the M5S QEMU guest. It is separate from REAPER and
@@ -51,8 +56,10 @@ All tests passed (1499 assertions in 1 test case)
 Headless mode skips only the editor assertion. The normal test path still
 requires `slot.has_editor()`, so this does not weaken desktop acceptance.
 
-## Remaining desktop gate
+## Historical desktop gate
 
-REAPER instantiation, runtime audio, screenshots, and Ableton validation still
-require an authenticated Windows desktop session. The existing REAPER scan
-receipt proves discovery only.
+At the time of this receipt, REAPER instantiation, runtime audio, screenshots,
+and Ableton validation still required an authenticated Windows desktop
+session. The later UTM receipt supersedes the REAPER portion with observed
+CLAP instantiation and audio render. Ableton remains open pending an
+AVX2-capable licensed guest.
