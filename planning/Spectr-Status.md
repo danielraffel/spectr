@@ -522,3 +522,37 @@ materialized-runtime Chromium oracle with the same host bridge and state
 contract. The current strict `editor.html` versus native-materialized join is
 retained as a diagnostic and is not treated as evidence that the importer
 itself can reach pixel parity.
+
+## 2026-10-11 Ultra plan: same-artifact parity and remaining opens
+
+Ultra reviewed the current receipts, native source path, materialized runtime,
+and comparator. The next wave is deliberately phased:
+
+1. **Authority contract.** Record browser and native artifact identities in
+   every parity state. The existing `editor.html` versus materialized-runtime
+   join remains a diagnostic and must be labeled as an authority mismatch.
+   Comparators must fail closed when a receipt claims strict parity without
+   matching authority identities.
+2. **Same-runtime browser oracle.** Serve the checked-in
+   `materialized-document.runtime.json` through Chromium with the same
+   `pulp.on` and `pulp.postMessage` host contract used by native capture.
+   Inject the shared analyzer/state fixture, prove readiness and canvas
+   ownership, exercise one interaction, and require two byte-stable settled
+   captures with zero console/network failures.
+3. **Measured join.** Compare that browser capture with CPU Skia and GPU
+   Dawn/Metal using existing strict thresholds and provenance receipts. Keep
+   plot, chrome, and footer regions separate so a renderer defect is
+   attributable instead of hidden by a whole-frame score.
+4. **Renderer repair only after authority alignment.** If the same-runtime
+   join still differs, use regional diffs and interaction traces to fix the
+   smallest shared Pulp/runtime cause. Preserve mature Spectr controls and do
+   not replace native materialized authority with the older Claude source.
+5. **Closeout.** Re-run adversarial review, thermonuclear autoreview, governed
+   native CPU/GPU captures, Chromium repeatability, and Shipyard/required CI;
+   merge only after exact-head and ancestry proof.
+
+Current status: contract hardening and deterministic native/browser receipts
+are complete; the authority-aligned Chromium oracle, same-artifact join,
+renderer repair (if still needed), and merge proof remain open. Kill criteria:
+do not add a generalized frontend graph or rewrite the materialized runtime if
+the oracle cannot establish a measurable reduction in ambiguity or diff size.

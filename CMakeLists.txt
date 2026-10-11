@@ -1390,6 +1390,9 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-parity-state-canonical
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.py)
+    add_test(NAME Spectr-parity-authority-manifest
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py)
     add_test(NAME Spectr-analyzer-fixture-conformance
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_analyzer_fixture_conformance.py)
@@ -1398,6 +1401,13 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
         TIMEOUT 30 SKIP_RETURN_CODE 77)
     set_tests_properties(Spectr-parity-state-canonical PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-parity-authority-manifest-negative-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py
+            --plant-missing-authority)
+    set_tests_properties(Spectr-parity-authority-manifest PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-parity-authority-manifest-negative-control
+        PROPERTIES TIMEOUT 30 WILL_FAIL TRUE)
     set_tests_properties(Spectr-analyzer-fixture-conformance PROPERTIES
         TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
