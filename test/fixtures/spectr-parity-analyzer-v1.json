@@ -1,0 +1,22 @@
+{
+  "schema": "spectr-parity-analyzer-v1",
+  "version": 1,
+  "epoch": 1,
+  "sequences": [1, 2],
+  "fftSize": 1024,
+  "sampleRate": 48000,
+  "floorDb": -96,
+  "ceilingDb": 0,
+  "sourceChannels": 2,
+  "visibleSamples": 321,
+  "overviewSamples": 121,
+  "minHz": 20,
+  "maxHz": 20000,
+  "trace": {
+    "baseDb": -92,
+    "peakDb": 78,
+    "centre": 0.25,
+    "phaseStep": 0.1,
+    "width": 0.06
+  }
+}

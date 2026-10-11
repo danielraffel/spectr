@@ -487,23 +487,61 @@ struct Rig {
     // the shipping runtime's existing native-message seam and never changes
     // the production materialized artifact or runtime behavior.
     void inject_deterministic_analyzer_frames() {
-        eval(R"JS((() => {
+        const char* fixture_path = std::getenv("SPECTR_ANALYZER_FIXTURE");
+        if (fixture_path == nullptr || *fixture_path == '\0')
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is required");
+        std::ifstream fixture_stream(fixture_path, std::ios::binary);
+        if (!fixture_stream)
+            throw std::runtime_error("cannot open SPECTR_ANALYZER_FIXTURE");
+        const std::string fixture((std::istreambuf_iterator<char>(fixture_stream)),
+                                  std::istreambuf_iterator<char>());
+        choc::value::Value parsed_fixture;
+        try {
+            parsed_fixture = choc::json::parse(fixture);
+        } catch (...) {
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is not valid JSON");
+        }
+        const auto safe_fixture = choc::json::toString(parsed_fixture, false);
+        eval("(() => {\nconst spec = " + safe_fixture + R"JS(;
   if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
     throw new Error('deterministic analyzer seam is unavailable');
+  if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
+      || spec.epoch !== 1 || spec.sequences.length !== 2
+      || spec.sequences[0] !== 1 || spec.sequences[1] !== 2
+      || !Number.isFinite(spec.fftSize) || spec.fftSize <= 0
+      || !Number.isFinite(spec.sampleRate) || spec.sampleRate <= 0
+      || !Number.isFinite(spec.sourceChannels) || spec.sourceChannels <= 0
+      || !Number.isFinite(spec.floorDb) || !Number.isFinite(spec.ceilingDb)
+      || spec.ceilingDb <= spec.floorDb
+      || !Number.isSafeInteger(spec.visibleSamples) || spec.visibleSamples < 2
+      || !Number.isSafeInteger(spec.overviewSamples) || spec.overviewSamples < 2
+      || !Number.isFinite(spec.minHz) || !Number.isFinite(spec.maxHz)
+      || spec.maxHz <= spec.minHz || !spec.trace
+      || !Number.isFinite(spec.trace.baseDb) || !Number.isFinite(spec.trace.peakDb)
+      || !Number.isFinite(spec.trace.centre) || !Number.isFinite(spec.trace.phaseStep)
+      || !Number.isFinite(spec.trace.width) || spec.trace.width <= 0)
+    throw new Error('unsupported deterministic analyzer fixture');
   const frame = (sequence, phase) => {
     const trace = count => Array.from({ length: count }, (_, i) =>
-      -92 + 78 * Math.exp(-Math.pow((i / (count - 1)
-        - (0.25 + phase * 0.1)) / 0.06, 2)));
-    return { schema_version: 1, epoch: 1, sequence_number: sequence,
-      dropped_frames: 0, source_channels: 2, fft_size: 1024,
-      sample_rate: 48000, floor_db: -96, ceiling_db: 0,
-      visible: { min_hz: 20, max_hz: 20000, magnitude_db: trace(321) },
-      overview: { min_hz: 20, max_hz: 20000, magnitude_db: trace(121) } };
+      spec.trace.baseDb + spec.trace.peakDb * Math.exp(-Math.pow((i / (count - 1)
+        - (spec.trace.centre + phase * spec.trace.phaseStep)) / spec.trace.width, 2)));
+    return { schema_version: 1, epoch: spec.epoch, sequence_number: sequence,
+      dropped_frames: 0, source_channels: spec.sourceChannels, fft_size: spec.fftSize,
+      sample_rate: spec.sampleRate, floor_db: spec.floorDb, ceiling_db: spec.ceilingDb,
+      visible: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.visibleSamples) },
+      overview: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.overviewSamples) } };
   };
-  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(1, 0));
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[0], 0));
   if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
     globalThis.__pulpRuntimeSettle__(8);
-  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(2, 1));
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[1], 1));
+  const accepted = globalThis.SpectrAnalyzer
+    && globalThis.SpectrAnalyzer.debugSnapshot
+    && globalThis.SpectrAnalyzer.debugSnapshot();
+  if (!accepted || accepted.epoch !== 1 || accepted.sequence_number !== 2
+      || !accepted.visible || accepted.visible.magnitude_db.length !== spec.visibleSamples
+      || !accepted.visible.magnitude_db.some(value => value > spec.floorDb + 1))
+    throw new Error('deterministic analyzer response was not accepted by the shipping runtime');
 })(); )JS", "spectr-native-shot-deterministic-analyzer");
         settle(clock, 16);
         service_runtime();
@@ -1051,6 +1089,35 @@ void capture(Rig& rig,
     capture_view_tree(*rig.root, static_cast<std::uint32_t>(kDesignWidth),
                       static_cast<std::uint32_t>(kDesignHeight), dir, name,
                       backend, scale, true);
+}
+
+// The whole-frame content floor can be satisfied by the editor chrome alone.
+// The deterministic analyzer contract therefore also floors the plot region
+// that must contain the injected analyzer response.
+bool deterministic_analyzer_region(Rig& rig,
+                                   pulp::view::ScreenshotBackend backend,
+                                   float scale) {
+    const auto png = pulp::view::render_to_png(
+        *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+        static_cast<std::uint32_t>(kDesignHeight), scale, backend);
+    const auto crop = pulp::view::crop_png(
+        png, 0, static_cast<std::uint32_t>(std::lround(44.0f * scale)),
+        static_cast<std::uint32_t>(std::lround(kDesignWidth * scale)),
+        static_cast<std::uint32_t>(std::lround(700.0f * scale)));
+    if (crop.empty()) {
+        std::fprintf(stderr, "FAIL parity-analyzer-region: empty plot crop\n");
+        ++g_failures;
+        return false;
+    }
+    const auto stats = pulp::view::analyze_screenshot_content(crop);
+    const bool ok = stats.passes_content_floor()
+        && stats.unique_colors > 100
+        && stats.luminance_stddev > 1.0;
+    std::printf("%s parity-analyzer-region colors=%u lum_sd=%.2f nonbg=%.3f\n",
+                ok ? "OK  " : "FAIL", stats.unique_colors,
+                stats.luminance_stddev, stats.non_background_coverage);
+    if (!ok) ++g_failures;
+    return ok;
 }
 
 // Address one shipping control by its authored HTML `id`. The materialized
@@ -1706,6 +1773,13 @@ int main(int argc, char** argv) {
             && std::string_view(deterministic_analyzer) == "1") {
             rig.inject_deterministic_analyzer_frames();
             capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
+            deterministic_analyzer_region(rig, backend, scale);
+            if (g_failures != 0) {
+                std::fprintf(stderr,
+                             "FAIL: parity-deterministic-analyzer content floor\n");
+                return 1;
+            }
+            std::printf("OK  parity-deterministic-analyzer-ready contract=spectr-parity-v1 sequence=2\n");
             return 0;
         }
         rig.feed_tone(96);

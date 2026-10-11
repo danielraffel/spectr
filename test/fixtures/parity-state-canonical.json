@@ -1,0 +1,29 @@
+{
+  "schema": "spectr-parity-state-v1",
+  "version": 1,
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "viewport": {
+    "width": 1320,
+    "height": 860,
+    "deviceScaleFactor": 2.0
+  },
+  "native": {
+    "binarySha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "analyzer": {
+    "sequence": 1.0,
+    "points": [
+      1.0,
+      2.5
+    ],
+    "tiny": 1e-07,
+    "label": "é"
+  },
+  "unicodeKeys": {
+    "": 1,
+    "𐀀": 2
+  },
+  "stateSha256": "82649474c228172d8d4973778c46541aed871db0251907070800eb165be1c6e6"
+}

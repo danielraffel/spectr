@@ -421,3 +421,41 @@ suite now registers `Spectr-runtime-client-inline-sync`, and the contract suite
 includes a planted mismatch that changes embedded `ab_toggle` to `ab_togglx`.
 The clean copy passes while the planted copy exits nonzero with the stale-facade
 diagnostic. All seven contract tests and the direct inline sync check pass.
+
+## 2026-10-10 parity closeout fixture wave
+
+The parity closeout implementation is pushed at
+https://github.com/Generous-Corp/spectr/commit/24d97a8. The current work proves
+shared deterministic analyzer fixture provenance across Chromium, native CPU
+Skia, and native GPU Dawn/Metal. The fixture is
+`test/fixtures/spectr-parity-analyzer-v1.json`; its SHA is
+`68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8`.
+
+Completed evidence:
+
+- production `Spectr-native-parity-deterministic` CTest passes;
+- exact-head native CPU and GPU captures pass analyzer response and plot-region
+  gates, with Dawn/Metal initialized on Apple M3 Ultra;
+- strict Chromium capture proves source readiness, fixture acceptance, two
+  canvases, exact 1320x860 logical / 2640x1720 device dimensions, and zero
+  console/network errors;
+- three deterministic browser captures and repeated native CPU/GPU captures
+  are byte-identical;
+- malformed fixture, stale fixture hash, planted image mutation, and optional
+  generic HTML compatibility controls fail or pass through their intended
+  paths;
+- autoreview and adversarial review have been run repeatedly during the wave.
+
+Current honest result:
+
+- strict browser/native pixel parity remains open. The latest CPU join has
+  4,331,167 differing pixels and the GPU join has 4,366,704. Mean errors are
+  2.604556 and 2.608550. These are renderer/layout composition differences,
+  not stale state or fixture drift.
+- generic live Claude standalone HTML renders successfully in Chromium but is
+  intentionally not treated as deterministic parity evidence because its live
+  analyzer changes between captures;
+- CTest receipt-wrapper rows may skip when the configured Python lacks Pillow;
+  direct `/usr/local/bin/python3` harness runs are the authoritative local
+  receipts until hosted CI supplies the dependency;
+- Shipyard/PR merge proof and final thermonuclear review remain open.

@@ -1282,6 +1282,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
     set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
 endif()
+find_program(SPECTR_NODE_EXECUTABLE node)
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-parity-state-canonical-node
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.mjs)
+    set_tests_properties(Spectr-parity-state-canonical-node PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -1361,6 +1368,27 @@ target_link_libraries(Spectr-native-shot PRIVATE
 )
 spectr_configure_native_target(Spectr-native-shot)
 
+# The joined parity receipt is intentionally a small, dependency-light
+# contract test. It proves the comparator can accept an exact same-state
+# capture and reject a one-pixel planted mutation before any production
+# browser/native verdict is trusted.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-parity-receipt-comparator
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
+    add_test(NAME Spectr-native-parity-receipt-harness
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_run_native_parity_capture.py)
+    add_test(NAME Spectr-parity-state-canonical
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.py)
+    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-parity-state-canonical PROPERTIES TIMEOUT 30)
+endif()
+
 # Registered so the shipping native surface is actually captured by CI, not
 # merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
 # path (its default backend), so on a host without GPU capture it MUST
@@ -1376,6 +1404,21 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     SKIP_RETURN_CODE 77
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Exercise the same shipping binary through its deterministic analyzer seam so
+# CI proves response acceptance and rendered plot content on the production
+# Skia/Dawn path.  The Python receipt wrapper adds provenance and cross-render
+# scoring; this row ensures the native semantic gate itself cannot silently
+# disappear from the configured test graph.
+add_test(NAME Spectr-native-parity-deterministic
+    COMMAND $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
+set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+        "SPECTR_DETERMINISTIC_ANALYZER=1;SPECTR_ANALYZER_FIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json"
     RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Canvas ownership is a distinct contract from the general native capture and
