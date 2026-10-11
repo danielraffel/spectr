@@ -165,8 +165,13 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
         fail(f"browser embedded viewport {embedded_viewport} does not match state {expected_viewport}")
     if embedded_dimensions != expected_dimensions:
         fail("browser embedded PNG dimensions do not match state manifest")
+    expected_authority = state.get("authority")
+    if not isinstance(expected_authority, dict) or not expected_authority:
+        fail("shared parity state lacks an authority manifest")
     if embedded.get("authority") != browser.get("authority"):
         fail("browser embedded authority does not match its receipt")
+    if browser.get("authority") != expected_authority:
+        fail("browser authority does not match the shared parity state")
     vendors = embedded.get("environment", {}).get("reactVendorScripts")
     if not isinstance(vendors, list) or len(vendors) != 2:
         fail("browser state lacks the two authenticated React vendor scripts")
@@ -306,6 +311,11 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("native receipt dimensions do not match state manifest")
 
     authority = browser.get("authority", {})
+    expected_authority = state.get("authority")
+    if not isinstance(expected_authority, dict) or not expected_authority:
+        fail("shared parity state lacks an authority manifest")
+    if authority != expected_authority:
+        fail("browser authority does not match the shared parity state")
     if authority.get("browserArtifact") != authority.get("nativeArtifact"):
         fail("browser/native authority identities differ")
 

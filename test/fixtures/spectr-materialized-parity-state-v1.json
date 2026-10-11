@@ -1,0 +1,65 @@
+{
+  "schema": "spectr-parity-state-v1",
+  "version": 1,
+  "source": {
+    "sha256": "00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212",
+    "bytes": 1154110
+  },
+  "viewport": {
+    "width": 1320,
+    "height": 860,
+    "deviceScaleFactor": 2,
+    "png": {
+      "width": 2640,
+      "height": 1720
+    }
+  },
+  "native": {
+    "binarySha256": "13a80285b327137a1e5a5e89bcf4f73da35f8276019a71c3b9bc4d546cf34517"
+  },
+  "analyzer": {
+    "contract": "spectr-parity-v1",
+    "epoch": 1,
+    "sequences": [
+      1,
+      2
+    ],
+    "fftSize": 1024,
+    "floorDb": -96,
+    "ceilingDb": 0,
+    "fixtureSha256": "68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8"
+  },
+  "settleFrames": 16,
+  "parityRegions": [
+    {
+      "id": "header",
+      "x": 0,
+      "y": 0,
+      "width": 2640,
+      "height": 150,
+      "errorThreshold": 10
+    },
+    {
+      "id": "plot",
+      "x": 0,
+      "y": 150,
+      "width": 2640,
+      "height": 1300,
+      "errorThreshold": 10
+    },
+    {
+      "id": "footer",
+      "x": 0,
+      "y": 1450,
+      "width": 2640,
+      "height": 270,
+      "errorThreshold": 10
+    }
+  ],
+  "stateSha256": "e8b52253bf26f187573c9af186ee886a8b044c5ae852e0312310df83e2a9df93",
+  "authority": {
+    "browserArtifact": "native-ui/materialized/materialized-document.runtime.json",
+    "nativeArtifact": "native-ui/materialized/materialized-document.runtime.json",
+    "joinMode": "same-materialized-runtime-diagnostic"
+  }
+}

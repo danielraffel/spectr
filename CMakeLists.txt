@@ -3815,6 +3815,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle
             --dpr 2)
@@ -3827,6 +3828,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle-negative
             --dpr 2

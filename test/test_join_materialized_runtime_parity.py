@@ -80,11 +80,22 @@ def main() -> None:
         "source": {"htmlSha256": "html"},
         "authority": authority,
     }
-    validate_browser_state(browser, {}, "artifact", "fixture",
+    shared_state = {"authority": authority, "stateSha256": "shared"}
+    browser["sharedStateSha256"] = "shared"
+    validate_browser_state(browser, shared_state, "artifact", "fixture",
                            expected_viewport, expected_dimensions)
+    browser["authority"] = {**authority, "joinMode": "wrong-authority"}
+    try:
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
+                               expected_viewport, expected_dimensions)
+    except SystemExit as error:
+        assert "authority" in str(error)
+    else:
+        raise AssertionError("browser authority mismatch was accepted")
+    browser["authority"] = authority
     browser["stateSha256"] = "stale-state"
     try:
-        validate_browser_state(browser, {}, "artifact", "fixture",
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
                                expected_viewport, expected_dimensions)
     except SystemExit as error:
         assert "state digest" in str(error)
