@@ -763,3 +763,11 @@ opens; its dependency-free boundary test remains usable without Pillow.
 The review also confirmed the browser oracle's manually mirrored editor state
 is an intentional staging limitation, documented as such rather than treated
 as native production proof; production cutover remains false.
+
+The native-shot build rule now declares `Spectr-native-shot.sha256` as a CMake
+BYPRODUCTS output, so deleting the digest no longer leaves an up-to-date binary
+with an undeclared missing receipt. Governed rebuilding regenerated the target;
+`Spectr-native-parity-deterministic`, the authority oracle pair, and the join
+boundary all pass afterward. The build emitted one pre-existing
+`src/spectr.cpp` dangling-GSL warning; it is outside this parity tooling diff
+and did not fail the target.

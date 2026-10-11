@@ -1373,6 +1373,7 @@ if(Python3_Interpreter_FOUND)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/write_binary_digest.py
             --binary=$<TARGET_FILE:Spectr-native-shot>
             --output=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
         VERBATIM)
 endif()
 
