@@ -246,11 +246,16 @@ powershell -ExecutionPolicy Bypass -File .\tools\windows\install-package.ps1 `
 
 The installer verifies every manifest hash before copying the standalone,
 VST3, and CLAP artifacts. It is a development installer script, not a signed
-MSI. The current REAPER acceptance is stronger than discovery-only: the live
-UTM session showed `CLAP: Spectr (Pulp)` in the FX browser, instantiated it on
-a track, and rendered a non-silent five-second WAV. Exact hashes and render
-statistics are in `docs/windows-receipts-2026-10-10/utm-health-receipt.json`.
-Ableton remains a separate installation and acceptance step.
+MSI. An earlier UTM session accepted a different CLAP artifact; its exact
+hashes and render statistics remain in
+`docs/windows-receipts-2026-10-10/utm-health-receipt.json`. That historical
+receipt must not be applied to the current ARM64 GPU VST3 artifact. The
+current exact-artifact observation is recorded in
+`docs/windows-receipts-2026-10-11/arm64-reaper-runtime-receipt.json`: Dummy
+Audio is healthy and the VST3 is discovered, but REAPER reports the exact
+plugin unavailable during project load. Current ARM64 plugin acceptance is
+therefore still open. Ableton remains a separate installation and acceptance
+step.
 
 ## Ableton Live 12 versus the installed Live 10 trial
 
