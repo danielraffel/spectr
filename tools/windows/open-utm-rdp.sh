@@ -10,6 +10,7 @@ utmctl="/Applications/UTM.app/Contents/MacOS/utmctl"
 utm_uuid="${SPECTR_WINDOWS_UTM_UUID:-36132D8D-99F7-4916-A6D8-935A6F4AF55F}"
 ssh_port="${SPECTR_WINDOWS_SSH_PORT:-50376}"
 rdp_port="${SPECTR_WINDOWS_RDP_PORT:-53390}"
+rdp_domain="${SPECTR_WINDOWS_RDP_DOMAIN:-PULP-WIN-CI}"
 secret_file="${SPECTR_WINDOWS_UTM_SECRET:-$HOME/.config/pulp/secrets/spectr-windows-utm-admin}"
 
 [[ -x "$utmctl" ]] || { echo "UTM is not installed at $utmctl" >&2; exit 1; }
@@ -38,8 +39,15 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
 
 echo "Windows RDP: 127.0.0.1:$rdp_port"
 echo "Windows user: $username"
-exec sdl-freerdp \
+sdl-freerdp \
   /v:"127.0.0.1:$rdp_port" \
-  /u:"$username" /p:"$password" /cert:ignore \
+  /u:"$username" /d:"$rdp_domain" /p:"$password" /cert:ignore \
   /size:"${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
-  +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution
+  +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution &
+rdp_pid=$!
+# UTM may retain focus after starting the guest. Bring the visible RDP window
+# forward when macOS accessibility automation is available; failure is
+# harmless because Command-Tab still reaches the window.
+sleep 1
+osascript -e 'tell application "System Events" to set frontmost of process "sdl-freerdp" to true' >/dev/null 2>&1 || true
+wait "$rdp_pid"
