@@ -483,9 +483,9 @@ remain separate, testable gates:
 
 Current exact-head evidence after the P2 fixes:
 
-- branch head remains `92c79f2` before the new fixes; the working tree adds the
-  explicit plot bounds and authenticated CTest wrapper and must be committed
-  before final PR evidence;
+- branch head is now `7c555ea`; the explicit plot bounds, authenticated CTest
+  wrapper, and browser/native-equivalent fixture validation are committed and
+  pushed;
 - CPU Skia and GPU Dawn/Metal deterministic captures pass response readiness;
 - the direct authenticated CTest wrapper passes and a planted fixture mutation
   fails on SHA mismatch;
@@ -493,6 +493,11 @@ Current exact-head evidence after the P2 fixes:
   4,366,704 GPU pixels / MAE 2.608550, preserving the renderer/layout gap;
 - Chromium remains settled with two canvases, accepted analyzer sequence 2,
   zero console/network errors, and byte-identical repeated screenshots.
+
+The final exact-head state manifest is `state-v12` with state SHA
+`065afa1bc753c17899b7e633cbaa2d9a868280d992ab96480297291968a20d41`; the
+rebuilt native binary SHA is
+`9ee49779cd2ab9916b61dab82268241cfb9ec453b9d517a236c5dc9da40103d9`.
 
 The next action is to commit this hardening, rerun both independent reviews,
 refresh the exact-head receipts, and then drive PR
