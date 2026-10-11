@@ -538,6 +538,16 @@ async function main(argv) {
     assert(sharedState.captureKind === undefined || sharedState.captureKind === 'shared'
       || sharedState.captureKind === 'browser-only',
     'shared parity state has an unsupported capture kind');
+    assert(sharedState.authority && typeof sharedState.authority === 'object'
+      && typeof sharedState.authority.browserArtifact === 'string'
+      && typeof sharedState.authority.nativeArtifact === 'string'
+      && typeof sharedState.authority.joinMode === 'string',
+    'shared parity state lacks an authority manifest');
+    if (sharedState.captureKind !== 'browser-only') {
+      assert(sharedState.native && typeof sharedState.native.binarySha256 === 'string'
+        && /^[0-9a-f]{64}$/.test(sharedState.native.binarySha256),
+      'shared parity state lacks a native binary digest');
+    }
   }
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
