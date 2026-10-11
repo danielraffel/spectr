@@ -40,6 +40,22 @@ if(statePath){
   analyzerFixture=JSON.parse(fs.readFileSync(analyzerFixturePath,'utf8'));
   if(analyzerFixture.schema!=='spectr-parity-analyzer-v1'||analyzerFixture.version!==1)
    throw new Error('unsupported analyzer fixture schema/version');
+  const integer=v=>Number.isSafeInteger(v);
+  const finitePositive=v=>Number.isFinite(v)&&v>0;
+  const t=analyzerFixture.trace;
+  if(!integer(analyzerFixture.epoch)||analyzerFixture.epoch<0
+     ||!Array.isArray(analyzerFixture.sequences)||analyzerFixture.sequences.length!==2
+     ||!analyzerFixture.sequences.every(v=>integer(v)&&v>=0)
+     ||!finitePositive(analyzerFixture.fftSize)||!finitePositive(analyzerFixture.sampleRate)
+     ||!Number.isFinite(analyzerFixture.floorDb)||!Number.isFinite(analyzerFixture.ceilingDb)
+     ||analyzerFixture.ceilingDb<=analyzerFixture.floorDb
+     ||!integer(analyzerFixture.visibleSamples)||analyzerFixture.visibleSamples<2
+     ||!integer(analyzerFixture.overviewSamples)||analyzerFixture.overviewSamples<2
+     ||!finitePositive(analyzerFixture.minHz)||!finitePositive(analyzerFixture.maxHz)
+     ||analyzerFixture.maxHz<=analyzerFixture.minHz
+     ||!t||!Number.isFinite(t.baseDb)||!Number.isFinite(t.peakDb)
+     ||!Number.isFinite(t.centre)||!Number.isFinite(t.phaseStep)||!finitePositive(t.width))
+   throw new Error('invalid deterministic analyzer fixture values');
   const fixtureSha=sha(fs.readFileSync(analyzerFixturePath));
   if(parityState.analyzer.fixtureSha256!==fixtureSha)
    throw new Error(`analyzer fixture mismatch: ${parityState.analyzer.fixtureSha256} != ${fixtureSha}`);

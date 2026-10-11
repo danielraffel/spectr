@@ -69,6 +69,33 @@ try {
         'a source without a doctype keeps the bridge at the document start');
     }
   }
+  const malformedSource = path.join(temp, 'malformed.html');
+  const malformedOutput = path.join(temp, 'malformed');
+  const malformedFixture = path.join(temp, 'malformed-fixture.json');
+  const malformedState = path.join(temp, 'malformed-state.json');
+  fs.writeFileSync(malformedSource,
+    '<!doctype html><html><body><div id="root"><canvas width="8" height="8"></canvas></div></body></html>');
+  const fixture = {
+    schema: 'spectr-parity-analyzer-v1', version: 1, epoch: 1, sequences: [1, 2],
+    fftSize: 1024, sampleRate: 48000, floorDb: -96, ceilingDb: 0,
+    sourceChannels: 2, visibleSamples: 0, overviewSamples: 121,
+    minHz: 20, maxHz: 20000,
+    trace: {baseDb: -92, peakDb: 78, centre: 0.25, phaseStep: 0.1, width: 0},
+  };
+  fs.writeFileSync(malformedFixture, JSON.stringify(fixture));
+  const malformedStateValue = {
+    schema: 'spectr-parity-state-v1', version: 1,
+    source: {sha256: crypto.createHash('sha256').update(fs.readFileSync(malformedSource)).digest('hex')},
+    viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+    analyzer: {fixtureSha256: crypto.createHash('sha256').update(fs.readFileSync(malformedFixture)).digest('hex')},
+  };
+  malformedStateValue.stateSha256 = stateDigest(malformedStateValue);
+  fs.writeFileSync(malformedState, JSON.stringify(malformedStateValue));
+  const malformedRun = spawnSync(process.execPath, [comparatorPath,
+    '--source', malformedSource, '--output', malformedOutput, '--chrome', chromePath,
+    '--state', malformedState, '--analyzer-fixture', malformedFixture, '--strict'],
+    {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.notEqual(malformedRun.status, 0, 'malformed analyzer fixture must fail closed');
 } finally {
   fs.rmSync(temp, {recursive: true, force: true});
 }

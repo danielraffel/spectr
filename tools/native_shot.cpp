@@ -500,7 +500,14 @@ struct Rig {
     throw new Error('deterministic analyzer seam is unavailable');
   if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
       || spec.epoch !== 1 || spec.sequences.length !== 2
-      || spec.sequences[0] !== 1 || spec.sequences[1] !== 2)
+      || spec.sequences[0] !== 1 || spec.sequences[1] !== 2
+      || !Number.isSafeInteger(spec.visibleSamples) || spec.visibleSamples < 2
+      || !Number.isSafeInteger(spec.overviewSamples) || spec.overviewSamples < 2
+      || !Number.isFinite(spec.minHz) || !Number.isFinite(spec.maxHz)
+      || spec.maxHz <= spec.minHz || !spec.trace
+      || !Number.isFinite(spec.trace.baseDb) || !Number.isFinite(spec.trace.peakDb)
+      || !Number.isFinite(spec.trace.centre) || !Number.isFinite(spec.trace.phaseStep)
+      || !Number.isFinite(spec.trace.width) || spec.trace.width <= 0)
     throw new Error('unsupported deterministic analyzer fixture');
   const frame = (sequence, phase) => {
     const trace = count => Array.from({ length: count }, (_, i) =>
