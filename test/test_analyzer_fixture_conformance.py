@@ -18,11 +18,12 @@ def main():
     binary = root / "build-native" / "Spectr-native-shot"
     chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
     source = root / "resources/editor.html"
-    fixture = json.loads((root / "test/fixtures/spectr-parity-analyzer-v1.json").read_text())
-    base_state = json.loads((root / "artifacts/parity-current/state-v12.json").read_text())
-    if not binary.exists() or not chrome.exists() or not source.exists():
+    state_manifest = root / "artifacts/parity-current/state-v12.json"
+    if not binary.exists() or not chrome.exists() or not source.exists() or not state_manifest.exists():
         print("SKIP: conformance prerequisites are unavailable")
         return 77
+    fixture = json.loads((root / "test/fixtures/spectr-parity-analyzer-v1.json").read_text())
+    base_state = json.loads(state_manifest.read_text())
     mutations = [{"sequences": "not-an-array"}, {"minHz": 0}]
     with tempfile.TemporaryDirectory(prefix="spectr-fixture-conformance-") as temp:
         out = Path(temp)
