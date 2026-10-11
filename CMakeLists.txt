@@ -1390,11 +1390,16 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-parity-state-canonical
         COMMAND ${Python3_EXECUTABLE} -B
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.py)
+    add_test(NAME Spectr-analyzer-fixture-conformance
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_analyzer_fixture_conformance.py)
     set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
         TIMEOUT 30 SKIP_RETURN_CODE 77)
     set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
         TIMEOUT 30 SKIP_RETURN_CODE 77)
     set_tests_properties(Spectr-parity-state-canonical PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-analyzer-fixture-conformance PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 77)
 endif()
 
 # Registered so the shipping native surface is actually captured by CI, not

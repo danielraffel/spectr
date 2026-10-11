@@ -45,7 +45,9 @@ def main():
                  "--output", str(out / f"browser-{index}"), "--chrome", str(chrome), "--state", str(state_path),
                  "--analyzer-fixture", str(bad_path)], capture_output=True, text=True)
             assert native.returncode != 0, native.stdout + native.stderr
+            assert "unsupported deterministic analyzer fixture" in (native.stdout + native.stderr)
             assert browser.returncode != 0, browser.stdout + browser.stderr
+            assert "invalid deterministic analyzer fixture" in (browser.stdout + browser.stderr)
     print("PASS: browser and native reject the same malformed analyzer fixtures")
     return 0
 
