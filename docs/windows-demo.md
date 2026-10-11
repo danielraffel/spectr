@@ -181,7 +181,9 @@ does not set both `plugin_instance_observed=true` and
 current files.
 
 The scan helper reads the cache with a bounded raw read and regex so it remains
-reliable through Windows OpenSSH. Fresh-clone verification returned:
+reliable through Windows OpenSSH. When `-CachePath` is omitted it selects
+`reaper-vstplugins64arwmin.ini` for the native ARM64 build and
+`reaper-vstplugins64.ini` for x64. Fresh-clone verification returned:
 
 - REAPER ARM64 SHA-256: `95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8`
 - Spectr VST3 SHA-256: `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`
