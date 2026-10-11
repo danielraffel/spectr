@@ -271,12 +271,27 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
     if not isinstance(browser_evidence.get("networkFailures"), list) \
             or browser_evidence.get("networkFailures"):
         fail("browser receipt contains network failures")
+    interaction = browser_evidence.get("interaction")
+    if not isinstance(interaction, dict) \
+            or interaction.get("closedWithTriggerToggle") is not True:
+        fail("browser receipt lacks structured interaction completion evidence")
+    interaction_screenshot = interaction.get("menuScreenshot")
+    if not isinstance(interaction_screenshot, dict):
+        fail("browser receipt lacks interaction screenshot evidence")
+    interaction_path = interaction_screenshot.get("path")
+    if not interaction_path:
+        fail("browser interaction screenshot path is missing")
+    interaction_path = Path(interaction_path).resolve()
+    require_file(interaction_path, "browser interaction screenshot")
+    if interaction_screenshot.get("sha256") != sha256(interaction_path):
+        fail("browser interaction screenshot SHA does not match receipt")
     if state.get("schema") != "spectr-parity-state-v1" \
             or not integer(state.get("version")) \
             or state.get("version") != 1:
         fail("unsupported parity state manifest")
-    if state.get("captureKind") == "browser-only":
-        fail("browser-only parity state cannot authorize a native join")
+    capture_kind = state.get("captureKind")
+    if capture_kind not in (None, "shared"):
+        fail("unsupported parity state capture kind for a native join")
     try:
         computed_state = state_digest(state)
     except (TypeError, ValueError) as error:
@@ -364,6 +379,8 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("browser repeated settled PNG SHA does not match receipt")
     if repeat_evidence.get("sha256") != settled_evidence.get("sha256"):
         fail("browser settled screenshots are not byte-identical")
+    if repeat_path.resolve() == browser_png.resolve():
+        fail("browser repeated settled screenshot is not a distinct capture")
     with Image.open(browser_png) as image:
         browser_image = image.convert("RGBA")
     with Image.open(native_png) as image:
