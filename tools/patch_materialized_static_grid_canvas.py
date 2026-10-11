@@ -9,7 +9,7 @@ drawn.
 
 They now live on a separate canvas behind the band canvas. It is appended as
 the LAST child of the plot surface, so no captured sibling path moves, and
-drawn behind it with a negative z-index. renderAll repaints it only when its
+drawn in an explicit stacking order: static grid/background at 0, dynamic bands at 1, and interaction overlay at 2. renderAll repaints it only when its
 inputs change (compared as one key string), and clears the band canvas to
 transparent instead of painting the background into it. The resize handler
 sizes the new canvas with the other two.
@@ -41,8 +41,10 @@ import os
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATH = os.path.join(REPO, "native-ui", "materialized",
-                    "materialized-document.runtime.json")
+PATH = os.environ.get(
+    "SPECTR_MATERIALIZED_ARTIFACT",
+    os.path.join(REPO, "native-ui", "materialized",
+                 "materialized-document.runtime.json"))
 
 EDITS = [
     ('the static layer has a ref',
@@ -109,22 +111,75 @@ EDITS = [
      '    ctx.clearRect(0, 0, w, h);\n'
      '    drawSpectrum(ctx, g);\n'),
 
+    ('the dynamic canvas has an explicit middle stacking layer',
+     '    /* @__PURE__ */ React.createElement("canvas", { "data-spectr-filter-canvas": true, ref: canvasRef, style: { position: "absolute", inset: 0 } }),\n',
+     '    /* @__PURE__ */ React.createElement("canvas", { "data-spectr-filter-canvas": true, ref: canvasRef, style: { position: "absolute", inset: 0, zIndex: 1 } }),\n'),
+
     ('the static canvas is the plot surface\'s last child, drawn behind',
      '    /* @__PURE__ */ React.createElement("canvas", { ref: overlayRef, style: { position: "absolute", inset: 0, pointerEvents: "none" } }),\n',
-     '    /* @__PURE__ */ React.createElement("canvas", { ref: overlayRef, style: { position: "absolute", inset: 0, pointerEvents: "none" } }),\n'
-     '    staticMounted && /* @__PURE__ */ React.createElement("canvas", { "data-spectr-static-canvas": true, ref: staticRef, style: { position: "absolute", inset: 0, pointerEvents: "none", zIndex: -1 } }),\n'),
+     '    /* @__PURE__ */ React.createElement("canvas", { ref: overlayRef, style: { position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2 } }),\n'
+     '    staticMounted && /* @__PURE__ */ React.createElement("canvas", { "data-spectr-static-canvas": true, ref: staticRef, style: { position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 } }),\n'),
 ]
 
+
+FILTER_CANVAS_OLD = ('/* @__PURE__ */ React.createElement("canvas", '
+                     '{ "data-spectr-filter-canvas": true, ref: canvasRef, style: '
+                     '{ position: "absolute", inset: 0 } })')
+FILTER_CANVAS_NEW = FILTER_CANVAS_OLD.replace('inset: 0 }', 'inset: 0, zIndex: 1 }')
+OVERLAY_CANVAS_OLD = ('/* @__PURE__ */ React.createElement("canvas", '
+                      '{ ref: overlayRef, style: '
+                      '{ position: "absolute", inset: 0, pointerEvents: "none" } })')
+OVERLAY_CANVAS_NEW = OVERLAY_CANVAS_OLD.replace('pointerEvents: "none" }',
+                                                  'pointerEvents: "none", zIndex: 2 }')
+STATIC_CANVAS_OLD = ('staticMounted && /* @__PURE__ */ React.createElement("canvas", '
+                     '{ "data-spectr-static-canvas": true, ref: staticRef, style: '
+                     '{ position: "absolute", inset: 0, pointerEvents: "none", '
+                     'zIndex: -1 } })')
+STATIC_CANVAS_NEW = STATIC_CANVAS_OLD.replace('zIndex: -1', 'zIndex: 0')
 
 def escaped(value):
     return json.dumps(value)[1:-1]
 
 
+def write_atomic(path, payload):
+    temporary = path + '.tmp'
+    with open(temporary, 'w', encoding='utf-8', newline='') as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
 def main():
     raw = open(PATH, encoding='utf-8').read()
-    if raw.count(escaped('"data-spectr-static-canvas": true')) == 1:
-        print('already applied  the plot\'s static layer has its own canvas')
+    document = json.loads(raw)
+    html = document.get('html')
+    if not isinstance(html, str):
+        sys.exit('FAIL: the document has no html payload')
+    old_count = html.count(STATIC_CANVAS_OLD)
+    current_count = html.count(STATIC_CANVAS_NEW)
+    filter_old_count = html.count(FILTER_CANVAS_OLD)
+    overlay_old_count = html.count(OVERLAY_CANVAS_OLD)
+    if (current_count + old_count == 1 and
+            filter_old_count == 1 and overlay_old_count == 1):
+        html = html.replace(STATIC_CANVAS_OLD, STATIC_CANVAS_NEW, 1)
+        html = html.replace(FILTER_CANVAS_OLD, FILTER_CANVAS_NEW, 1)
+        html = html.replace(OVERLAY_CANVAS_OLD, OVERLAY_CANVAS_NEW, 1)
+        document['html'] = html
+        serialized = json.dumps(document, ensure_ascii=False, separators=(',', ':'))
+        if raw.endswith('\n'):
+            serialized += '\n'
+        write_atomic(PATH, serialized)
+        print('migrated        explicit static, dynamic and overlay canvas stacking order')
         return 0
+    if current_count == 1 and old_count == 0 and filter_old_count == 0 and overlay_old_count == 0:
+        print('already current  explicit canvas stacking order is present')
+        return 0
+    if old_count != 0 or current_count != 0:
+        sys.exit('FAIL: static canvas z-index patch point is ambiguous')
+    # A static marker alone is not proof that the complete stacking contract
+    # is present.  Refuse unknown styles so a partial or malformed migration
+    # cannot be reported as successfully applied.
     for label, old, new in EDITS:
         if raw.count(escaped(old)) != 1:
             sys.exit('FAIL %s: patch point occurs %d times, expected 1'
@@ -135,7 +190,7 @@ def main():
     document = json.loads(raw)
     if not isinstance(document.get('html'), str):
         sys.exit('FAIL: the patched document no longer carries an html payload')
-    open(PATH, 'w', encoding='utf-8').write(raw)
+    write_atomic(PATH, raw)
     print('written', PATH)
     return 0
 

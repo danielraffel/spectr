@@ -46,6 +46,7 @@
 #include <choc/text/choc_JSON.h>
 #include "spectr/editor_bridge.hpp"
 #include <pulp/view/frame_cost_probe.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/svg_path_widget.hpp>
 #include <pulp/view/widgets.hpp>
 
@@ -104,6 +105,36 @@ std::string js_string(std::string_view value) {
     }
     result.push_back('"');
     return result;
+}
+
+// CanvasWidget relays are expected to share the complete retained program,
+// rather than merely producing the same number of draw calls. Keep this
+// comparison local to the probe so it can catch a truncated or substituted
+// command without making the production CanvasWidget API more complicated.
+bool same_canvas_command(const pulp::view::CanvasDrawCmd& a,
+                         const pulp::view::CanvasDrawCmd& b) {
+    return a.type == b.type && a.x == b.x && a.y == b.y && a.w == b.w
+        && a.h == b.h && a.x2 == b.x2 && a.y2 == b.y2 && a.x3 == b.x3
+        && a.y3 == b.y3 && a.color.r == b.color.r && a.color.g == b.color.g
+        && a.color.b == b.color.b && a.color.a == b.color.a
+        && a.extra == b.extra && a.text == b.text && a.int_val == b.int_val
+        && a.gradient_colors.size() == b.gradient_colors.size()
+        && std::equal(a.gradient_colors.begin(), a.gradient_colors.end(),
+                      b.gradient_colors.begin(), [](const auto& lhs, const auto& rhs) {
+                          return lhs.r == rhs.r && lhs.g == rhs.g
+                              && lhs.b == rhs.b && lhs.a == rhs.a;
+                      })
+        && a.gradient_positions == b.gradient_positions
+        && a.use_active_style == b.use_active_style
+        && a.has_source_rect == b.has_source_rect;
+}
+
+bool same_canvas_program(const pulp::view::CanvasWidget& a,
+                         const pulp::view::CanvasWidget& b) {
+    const auto& lhs = a.commands();
+    const auto& rhs = b.commands();
+    return lhs.size() == rhs.size()
+        && std::equal(lhs.begin(), lhs.end(), rhs.begin(), same_canvas_command);
 }
 
 const pulp::view::Label* find_label(const pulp::view::View& view,
@@ -449,6 +480,73 @@ struct Rig {
     // Run JS in the shipping runtime. Throws with the runtime's own message.
     void eval(const std::string& script, const char* name) {
         bridge().load_script(script, name);
+    }
+
+    // Inject the same deterministic analyzer fixture used by the browser
+    // materialized-runtime harness. This is deliberately test-only: it uses
+    // the shipping runtime's existing native-message seam and never changes
+    // the production materialized artifact or runtime behavior.
+    void inject_deterministic_analyzer_frames() {
+        const char* fixture_path = std::getenv("SPECTR_ANALYZER_FIXTURE");
+        if (fixture_path == nullptr || *fixture_path == '\0')
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is required");
+        std::ifstream fixture_stream(fixture_path, std::ios::binary);
+        if (!fixture_stream)
+            throw std::runtime_error("cannot open SPECTR_ANALYZER_FIXTURE");
+        const std::string fixture((std::istreambuf_iterator<char>(fixture_stream)),
+                                  std::istreambuf_iterator<char>());
+        choc::value::Value parsed_fixture;
+        try {
+            parsed_fixture = choc::json::parse(fixture);
+        } catch (...) {
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is not valid JSON");
+        }
+        const auto safe_fixture = choc::json::toString(parsed_fixture, false);
+        eval("(() => {\nconst spec = " + safe_fixture + R"JS(;
+  if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
+    throw new Error('deterministic analyzer seam is unavailable');
+  if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
+      || spec.epoch !== 1 || !Array.isArray(spec.sequences)
+      || spec.sequences.length !== 2
+      || spec.sequences[0] !== 1 || spec.sequences[1] !== 2
+      || !Number.isFinite(spec.fftSize) || spec.fftSize <= 0
+      || !Number.isFinite(spec.sampleRate) || spec.sampleRate <= 0
+      || !Number.isFinite(spec.sourceChannels) || spec.sourceChannels <= 0
+      || !Number.isFinite(spec.floorDb) || !Number.isFinite(spec.ceilingDb)
+      || spec.ceilingDb <= spec.floorDb
+      || !Number.isSafeInteger(spec.visibleSamples) || spec.visibleSamples < 2
+      || !Number.isSafeInteger(spec.overviewSamples) || spec.overviewSamples < 2
+      || !Number.isFinite(spec.minHz) || spec.minHz <= 0
+      || !Number.isFinite(spec.maxHz) || spec.maxHz <= 0
+      || spec.maxHz <= spec.minHz || !spec.trace
+      || !Number.isFinite(spec.trace.baseDb) || !Number.isFinite(spec.trace.peakDb)
+      || !Number.isFinite(spec.trace.centre) || !Number.isFinite(spec.trace.phaseStep)
+      || !Number.isFinite(spec.trace.width) || spec.trace.width <= 0)
+    throw new Error('unsupported deterministic analyzer fixture');
+  const frame = (sequence, phase) => {
+    const trace = count => Array.from({ length: count }, (_, i) =>
+      spec.trace.baseDb + spec.trace.peakDb * Math.exp(-Math.pow((i / (count - 1)
+        - (spec.trace.centre + phase * spec.trace.phaseStep)) / spec.trace.width, 2)));
+    return { schema_version: 1, epoch: spec.epoch, sequence_number: sequence,
+      dropped_frames: 0, source_channels: spec.sourceChannels, fft_size: spec.fftSize,
+      sample_rate: spec.sampleRate, floor_db: spec.floorDb, ceiling_db: spec.ceilingDb,
+      visible: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.visibleSamples) },
+      overview: { min_hz: spec.minHz, max_hz: spec.maxHz, magnitude_db: trace(spec.overviewSamples) } };
+  };
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[0], 0));
+  if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
+    globalThis.__pulpRuntimeSettle__(8);
+  globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(spec.sequences[1], 1));
+  const accepted = globalThis.SpectrAnalyzer
+    && globalThis.SpectrAnalyzer.debugSnapshot
+    && globalThis.SpectrAnalyzer.debugSnapshot();
+  if (!accepted || accepted.epoch !== 1 || accepted.sequence_number !== 2
+      || !accepted.visible || accepted.visible.magnitude_db.length !== spec.visibleSamples
+      || !accepted.visible.magnitude_db.some(value => value > spec.floorDb + 1))
+    throw new Error('deterministic analyzer response was not accepted by the shipping runtime');
+})(); )JS", "spectr-native-shot-deterministic-analyzer");
+        settle(clock, 16);
+        service_runtime();
     }
 
     // Service the runtime the way a host's message loop does between frames:
@@ -993,6 +1091,46 @@ void capture(Rig& rig,
     capture_view_tree(*rig.root, static_cast<std::uint32_t>(kDesignWidth),
                       static_cast<std::uint32_t>(kDesignHeight), dir, name,
                       backend, scale, true);
+}
+
+// The whole-frame content floor can be satisfied by the editor chrome alone.
+// The deterministic analyzer contract therefore also floors the plot region
+// that must contain the injected analyzer response.
+bool deterministic_analyzer_region(Rig& rig,
+                                   pulp::view::ScreenshotBackend backend,
+                                   float scale) {
+    // These bounds are the authored analyzer plot, measured in design-space
+    // coordinates from the materialized editor: the top ruler and header end
+    // at y=84, the plot ends before the viewport minimap at y=558, and the
+    // plot's interactive surface is inset by the 56px side margins. Keeping
+    // this contract explicit prevents editor chrome from satisfying the
+    // analyzer content floor.
+    constexpr float kPlotX = 56.0f;
+    constexpr float kPlotY = 84.0f;
+    constexpr float kPlotWidth = 1208.0f;
+    constexpr float kPlotHeight = 474.0f;
+    const auto png = pulp::view::render_to_png(
+        *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+        static_cast<std::uint32_t>(kDesignHeight), scale, backend);
+    const auto crop = pulp::view::crop_png(
+        png, static_cast<std::uint32_t>(std::lround(kPlotX * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotY * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotWidth * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotHeight * scale)));
+    if (crop.empty()) {
+        std::fprintf(stderr, "FAIL parity-analyzer-region: empty plot crop\n");
+        ++g_failures;
+        return false;
+    }
+    const auto stats = pulp::view::analyze_screenshot_content(crop);
+    const bool ok = stats.passes_content_floor()
+        && stats.unique_colors > 100
+        && stats.luminance_stddev > 1.0;
+    std::printf("%s parity-analyzer-region colors=%u lum_sd=%.2f nonbg=%.3f\n",
+                ok ? "OK  " : "FAIL", stats.unique_colors,
+                stats.luminance_stddev, stats.non_background_coverage);
+    if (!ok) ++g_failures;
+    return ok;
 }
 
 // Address one shipping control by its authored HTML `id`. The materialized
@@ -1642,6 +1780,21 @@ int main(int argc, char** argv) {
     try {
         Rig rig;
         rig.resize(kDesignWidth, kDesignHeight);
+        const char* deterministic_analyzer =
+            std::getenv("SPECTR_DETERMINISTIC_ANALYZER");
+        if (deterministic_analyzer != nullptr
+            && std::string_view(deterministic_analyzer) == "1") {
+            rig.inject_deterministic_analyzer_frames();
+            capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
+            deterministic_analyzer_region(rig, backend, scale);
+            if (g_failures != 0) {
+                std::fprintf(stderr,
+                             "FAIL: parity-deterministic-analyzer content floor\n");
+                return 1;
+            }
+            std::printf("OK  parity-deterministic-analyzer-ready contract=spectr-parity-v1 sequence=2\n");
+            return 0;
+        }
         rig.feed_tone(96);
         settle(rig.clock, 24);
 
@@ -6629,6 +6782,187 @@ int main(int argc, char** argv) {
 
         if (std::getenv("SPECTR_HIT_PROBE") != nullptr) {
             auto& root = *rig.root;
+
+            // Canvas ownership is a separate contract from semantic
+            // activation. Imported Browser_canvas anchors retain paint and
+            // pointer eligibility; a generated behavior relay wrapper owns
+            // the pointer channel while the source CanvasWidgets are hidden
+            // from dispatch. Resolve both through the native tree and
+            // hit-test their painted centres.
+            if (std::getenv("SPECTR_CANVAS_OWNERSHIP_PROBE") != nullptr) {
+                std::printf("--- canvas ownership ---\n");
+                bool canvas_probe_ok = true;
+                rig.eval(
+                    "(() => { const owners = globalThis.__pulpMaterializedCanvasBehaviorOwners__;"
+                    " if (!Array.isArray(owners) || owners.length !== 2 ||"
+                    " owners.some((owner) => typeof owner !== 'string' || !owner))"
+                    " throw new Error('materialized canvas owner map is missing or invalid');"
+                    " if (owners.some((owner) => !document.getElementById(owner)))"
+                    " throw new Error('materialized canvas owner is not mounted');"
+                    " console.log('[canvas-map] ' + JSON.stringify(owners)); })();",
+                    "canvas_ownership_map");
+                const char* ids[] = {"Browser_canvas_11", "Browser_canvas_22"};
+                std::array<std::size_t, 2> anchor_commands{};
+                std::array<pulp::view::CanvasWidget*, 2> anchor_canvases{};
+                std::vector<pulp::view::CanvasWidget*> all_canvases;
+                std::function<void(pulp::view::View&)> collect_canvases =
+                    [&](pulp::view::View& node) {
+                        if (auto* canvas = dynamic_cast<pulp::view::CanvasWidget*>(&node))
+                            all_canvases.push_back(canvas);
+                        for (std::size_t i = 0; i < node.child_count(); ++i)
+                            collect_canvases(*node.child_at(i));
+                    };
+                collect_canvases(root);
+                for (std::size_t canvas_index = 0; canvas_index < 2; ++canvas_index) {
+                    const char* id = ids[canvas_index];
+                    auto* view = find_by_id(root, id);
+                    auto* canvas = view == nullptr
+                        ? nullptr
+                        : dynamic_cast<pulp::view::CanvasWidget*>(view);
+                    if (view == nullptr || canvas == nullptr) {
+                        std::printf("[canvas] id=%s missing_or_not_canvas\n", id);
+                        canvas_probe_ok = false;
+                        continue;
+                    }
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    root_origin(*view, x, y);
+                    const auto b = view->bounds();
+                    auto* hit = root.hit_test(
+                        pulp::view::Point{x + b.width / 2.0f,
+                                          y + b.height / 2.0f});
+                    const auto hb = view->hit_bounds();
+                    std::printf(
+                        "[canvas] id=%s visible=%s opacity=%.3f pointer_events=%s "
+                        "hit_testable=%s painted=(%.1f,%.1f %.1fx%.1f) "
+                        "hit=(%.1f,%.1f %.1fx%.1f) commands=%zu centre_owner=%s\n",
+                        id, view->visible() ? "yes" : "no", view->opacity(),
+                        view->pointer_events() == pulp::view::View::PointerEvents::none
+                            ? "none" : "enabled",
+                        view->hit_testable() ? "yes" : "no", x, y, b.width,
+                        b.height, hb.x, hb.y, hb.width, hb.height,
+                        canvas->command_count(), hit == nullptr || hit->id().empty()
+                            ? "(none)" : hit->id().c_str());
+                    print_chain(root, x + b.width / 2.0f,
+                                y + b.height / 2.0f);
+                    anchor_commands[canvas_index] = canvas->command_count();
+                    anchor_canvases[canvas_index] = canvas;
+                    if (canvas->command_count() == 0)
+                        canvas_probe_ok = false;
+                    if (hit == nullptr || hit->id().empty() ||
+                        !hit->on_dom_pointer_event ||
+                        hit->pointer_events() == pulp::view::View::PointerEvents::none) {
+                        canvas_probe_ok = false;
+                    } else {
+                        const auto actual_owner = hit->id();
+                        rig.eval(
+                            "(() => { const owners = globalThis.__pulpMaterializedCanvasBehaviorOwners__;"
+                            " if (owners[" + std::to_string(canvas_index) + "] !== " +
+                                js_string(actual_owner) + ")"
+                            " throw new Error('native canvas owner disagrees with runtime owner map'); })();",
+                            "canvas_ownership_owner_match");
+                    }
+                    if ((std::string_view{id}.find("Browser_canvas_") == 0) &&
+                        (!view->visible() || view->opacity() < 0.99f ||
+                         view->pointer_events() == pulp::view::View::PointerEvents::none ||
+                         hit == nullptr || hit->id().empty()))
+                        canvas_probe_ok = false;
+                }
+                pulp::view::CanvasWidget* first_hidden_relay = nullptr;
+                int hidden_sources = 0;
+                std::array<bool, 2> relay_program_match{};
+                for (auto* canvas : all_canvases) {
+                    if (canvas->opacity() <= 0.01f &&
+                        canvas->pointer_events() == pulp::view::View::PointerEvents::none) {
+                        ++hidden_sources;
+                        std::printf("[canvas-relay] id=%s opacity=%.3f pointer_events=none "
+                                    "commands=%zu\n",
+                                    canvas->id().empty() ? "(anon)" : canvas->id().c_str(),
+                                    canvas->opacity(), canvas->command_count());
+                        for (std::size_t i = 0; i < anchor_commands.size(); ++i)
+                            if (anchor_canvases[i] != nullptr &&
+                                anchor_commands[i] != 0 &&
+                                same_canvas_program(*canvas, *anchor_canvases[i]))
+                                relay_program_match[i] = true;
+                        if (first_hidden_relay == nullptr && canvas->command_count() > 0)
+                            first_hidden_relay = canvas;
+                    }
+                }
+                std::printf("[canvas] discovered=%zu hidden_relay_sources=%d\n",
+                            all_canvases.size(), hidden_sources);
+                if (hidden_sources != 2 || first_hidden_relay == nullptr ||
+                    !relay_program_match[0] || !relay_program_match[1])
+                    canvas_probe_ok = false;
+                // Exercise every mapped owner independently.  Clicking only
+                // the first hidden relay would let a second canvas regress
+                // while the owner map and paint census still looked healthy.
+                const auto read_runtime_string = [&](const std::string& expr) {
+                    try {
+                        rig.eval("(() => { throw new Error('PULPVALUE:' + (" + expr + ") + ':END'); })();",
+                                 "canvas-owner-read");
+                    } catch (const std::exception& error) {
+                        const std::string message = error.what();
+                        const auto begin = message.find("PULPVALUE:");
+                        const auto end = message.find(":END", begin == std::string::npos ? 0 : begin);
+                        if (begin != std::string::npos && end != std::string::npos && end > begin)
+                            return message.substr(begin + 10, end - begin - 10);
+                    }
+                    return std::string{};
+                };
+                std::array<std::string, 2> mapped_owners{};
+                for (std::size_t canvas_index = 0; canvas_index < 2; ++canvas_index) {
+                    mapped_owners[canvas_index] = read_runtime_string(
+                        "globalThis.__pulpMaterializedCanvasBehaviorOwners__[" +
+                        std::to_string(canvas_index) + "]");
+                    if (mapped_owners[canvas_index].empty())
+                        canvas_probe_ok = false;
+                }
+                for (std::size_t canvas_index = 0; canvas_index < 2; ++canvas_index) {
+                    const char* anchor_id = ids[canvas_index];
+                    const auto& owner_id = mapped_owners[canvas_index];
+                    if (owner_id.empty()) {
+                        std::printf("[canvas] anchor=%s owner map read failed\n", anchor_id);
+                        canvas_probe_ok = false;
+                        continue;
+                    }
+                    auto* owner = find_by_id(root, owner_id.c_str());
+                    if (owner == nullptr) {
+                        std::printf("[canvas] anchor=%s owner=%s missing\n",
+                                    anchor_id, owner_id.c_str());
+                        canvas_probe_ok = false;
+                        continue;
+                    }
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    root_origin(*owner, x, y);
+                    const auto b = owner->bounds();
+                    const auto before = rig.processor.editor_authority().revision();
+                    const pulp::view::Point centre{x + b.width * 0.5f,
+                                                   y + b.height * 0.5f};
+                    root.simulate_click(centre);
+                    settle(rig.clock, 24);
+                    root.layout_children();
+                    settle(rig.clock, 8);
+                    const auto after = rig.processor.editor_authority().revision();
+                    auto* dispatch = root.hit_test(centre);
+                    std::printf("[canvas] anchor=%s owner=%s dispatch_owner=%s "
+                                "revision_before=%llu revision_after=%llu delta=%lld\n",
+                                anchor_id, owner_id.c_str(),
+                                owner_at(root, centre.x, centre.y).c_str(),
+                                static_cast<unsigned long long>(before),
+                                static_cast<unsigned long long>(after),
+                                static_cast<long long>(after) -
+                                    static_cast<long long>(before));
+                    if (after <= before || dispatch != owner ||
+                        !owner->on_dom_pointer_event ||
+                        owner->pointer_events() == pulp::view::View::PointerEvents::none)
+                        canvas_probe_ok = false;
+                }
+                std::printf("[canvas] ownership_verdict=%s\n",
+                            canvas_probe_ok ? "PASS" : "FAIL");
+                if (!canvas_probe_ok)
+                    return 1;
+            }
 
             auto report = [&root](const char* label, const char* id) {
                 const auto r = measure_hit(root, id);

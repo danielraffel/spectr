@@ -277,6 +277,10 @@ set(SPECTR_NATIVE_ASSET_SOURCES
 # them produces a visually valid home frame that cannot satisfy interaction
 # contracts.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME Spectr-materialized-static-grid-zindex
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
+set_tests_properties(Spectr-materialized-static-grid-zindex PROPERTIES TIMEOUT 30)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
@@ -1288,6 +1292,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
     set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
 endif()
+find_program(SPECTR_NODE_EXECUTABLE node)
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-parity-state-canonical-node
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.mjs)
+    set_tests_properties(Spectr-parity-state-canonical-node PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -1366,6 +1377,56 @@ target_link_libraries(Spectr-native-shot PRIVATE
     ${SPECTR_NATIVE_CORE_TARGET}
 )
 spectr_configure_native_target(Spectr-native-shot)
+if(Python3_Interpreter_FOUND)
+    add_custom_command(TARGET Spectr-native-shot POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/write_binary_digest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --output=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        VERBATIM)
+endif()
+
+# The joined parity receipt is intentionally a small, dependency-light
+# contract test. It proves the comparator can accept an exact same-state
+# capture and reject a one-pixel planted mutation before any production
+# browser/native verdict is trusted.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-parity-receipt-comparator
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
+    add_test(NAME Spectr-materialized-parity-join-boundary
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_join_materialized_runtime_parity.py)
+    add_test(NAME Spectr-native-parity-receipt-harness
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_run_native_parity_capture.py)
+    add_test(NAME Spectr-parity-state-canonical
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.py)
+    add_test(NAME Spectr-parity-authority-manifest
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py)
+    add_test(NAME Spectr-analyzer-fixture-conformance
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_analyzer_fixture_conformance.py)
+    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-materialized-parity-join-boundary PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-parity-state-canonical PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-parity-authority-manifest-negative-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py
+            --expect-missing-authority)
+    set_tests_properties(Spectr-parity-authority-manifest PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-parity-authority-manifest-negative-control
+        PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-analyzer-fixture-conformance PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
 
 # Registered so the shipping native surface is actually captured by CI, not
 # merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
@@ -1382,6 +1443,46 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     SKIP_RETURN_CODE 77
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Exercise the same shipping binary through its deterministic analyzer seam so
+# CI proves response acceptance and rendered plot content on the production
+# Skia/Dawn path. The Python receipt wrapper adds provenance and a stable CTest
+# receipt; this row ensures the native semantic gate itself cannot silently
+# disappear from the configured test graph.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-native-parity-deterministic
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_native_parity_ctest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
+            --binary-sha256-file=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+            --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
+    set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
+        TIMEOUT 180
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# Canvas ownership is a distinct contract from the general native capture and
+# from the hit-target detector.  The ownership probe is nested under
+# SPECTR_HIT_PROBE, so keep both switches in this dedicated CTest invocation;
+# setting only SPECTR_CANVAS_OWNERSHIP_PROBE would silently skip the probe.
+# This test is selected by the M5 acceptance pattern list, making the
+# owner-map/hidden-relay/native-dispatch checks a required gate rather than an
+# opt-in instrument somebody has to remember to run by hand.
+add_test(NAME Spectr-native-canvas-ownership
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_HIT_PROBE=1
+        SPECTR_CANVAS_OWNERSHIP_PROBE=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-canvas-ownership
+        --backend=skia)
+set_tests_properties(Spectr-native-canvas-ownership PROPERTIES
+    TIMEOUT 300
+    # This row is required by M5 acceptance, so an unmeasured/unsupported
+    # result must fail CTest instead of being normalized to "Not Run".
     RESOURCE_LOCK spectr_native_materialized_editor)
 # The CPU/GPU chip through the host hit test: in Tracking a press shows the
 # "Mixing only" notice and changes nothing in the processor (no renderer
@@ -3574,6 +3675,12 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    add_test(NAME Spectr-browser-source-doctype
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_source_html_chromium.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/compare_source_html_chromium.mjs
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-source-doctype PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
@@ -3705,6 +3812,36 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/authored-full-app-materialized-reimport)
     set_tests_properties(Spectr-browser-authored-full-app-materialized-reimport PROPERTIES TIMEOUT 180)
+    # Authority-aligned browser oracle for the shipping materialized runtime.
+    # Unlike the older source comparator, this serves the runtime JSON's
+    # embedded fonts/assets over HTTP, injects the shared deterministic
+    # analyzer fixture, captures at the native 1320x860/DPR2 viewport, and
+    # proves a real dropdown interaction plus byte-stable settled frames.
+    # Its receipt is browser evidence for a later native join; it does not
+    # silently relabel the existing editor.html/materialized cross-artifact
+    # comparison as pixel parity.
+    add_test(NAME Spectr-browser-materialized-runtime-authority-oracle
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle
+            --dpr 2)
+    set_tests_properties(Spectr-browser-materialized-runtime-authority-oracle PROPERTIES TIMEOUT 180)
+    # Planted negative: remove the visible latin font from the HTTP envelope.
+    # The test script accepts the run only when the strict network-failure
+    # assertion rejects the capture for the intended reason.
+    add_test(NAME Spectr-browser-materialized-runtime-authority-oracle-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle-negative
+            --dpr 2
+            --plant-missing-asset)
+    set_tests_properties(Spectr-browser-materialized-runtime-authority-oracle-negative-control PROPERTIES TIMEOUT 180)
 endif()
 
 # These need node only -- NOT chrome. Registered under the browser

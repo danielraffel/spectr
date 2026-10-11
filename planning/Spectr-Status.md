@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-09. This is the concise state-of-the-world for
+_Last updated: 2026-10-10. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Release 1 product state
@@ -421,3 +421,429 @@ suite now registers `Spectr-runtime-client-inline-sync`, and the contract suite
 includes a planted mismatch that changes embedded `ab_toggle` to `ab_togglx`.
 The clean copy passes while the planted copy exits nonzero with the stale-facade
 diagnostic. All seven contract tests and the direct inline sync check pass.
+
+## 2026-10-10 parity closeout fixture wave
+
+The parity closeout implementation is pushed at
+https://github.com/Generous-Corp/spectr/commit/24d97a8. The current work proves
+shared deterministic analyzer fixture provenance across Chromium, native CPU
+Skia, and native GPU Dawn/Metal. The fixture is
+`test/fixtures/spectr-parity-analyzer-v1.json`; its SHA is
+`68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8`.
+
+Completed evidence:
+
+- production `Spectr-native-parity-deterministic` CTest passes;
+- exact-head native CPU and GPU captures pass analyzer response and plot-region
+  gates, with Dawn/Metal initialized on Apple M3 Ultra;
+- strict Chromium capture proves source readiness, fixture acceptance, two
+  canvases, exact 1320x860 logical / 2640x1720 device dimensions, and zero
+  console/network errors;
+- three deterministic browser captures and repeated native CPU/GPU captures
+  are byte-identical;
+- malformed fixture, stale fixture hash, planted image mutation, and optional
+  generic HTML compatibility controls fail or pass through their intended
+  paths;
+- autoreview and adversarial review have been run repeatedly during the wave.
+
+Current honest result:
+
+- strict browser/native pixel parity remains open. The latest CPU join has
+  4,331,167 differing pixels and the GPU join has 4,366,704. Mean errors are
+  2.604556 and 2.608550. These are renderer/layout composition differences,
+  not stale state or fixture drift.
+- generic live Claude standalone HTML renders successfully in Chromium but is
+  intentionally not treated as deterministic parity evidence because its live
+  analyzer changes between captures;
+- CTest receipt-wrapper rows may skip when the configured Python lacks Pillow;
+  direct `/usr/local/bin/python3` harness runs are the authoritative local
+  receipts until hosted CI supplies the dependency;
+- Shipyard/PR merge proof and final thermonuclear review remain open.
+
+## 2026-10-10 exact-head parity closeout plan and review update
+
+The closeout plan is now explicitly staged so pixel parity and release work
+remain separate, testable gates:
+
+1. **Contract hardening:** keep one checked-in analyzer fixture and state
+   manifest; authenticate source, fixture, native binary, readiness, and
+   screenshot provenance in every browser/native receipt.
+2. **Production capture:** rebuild the native shot from the exact branch head,
+   exercise CPU Skia and GPU Dawn/Metal, run the settled Chromium capture, and
+   repeat each deterministic lane for byte identity.
+3. **Parity verdict:** run strict CPU and GPU joins without weakening thresholds.
+   A failed join stays open and is reported as renderer/layout composition work
+   until a measured implementation change improves it.
+4. **Adversarial closure:** require the plot-region content floor to inspect the
+   authored plot bounds, and require the CTest row to pin the fixture SHA before
+   accepting a native semantic pass.
+5. **Landing:** refresh the durable Pulp planning ledger, rerun autoreview and
+   thermonuclear review on the final exact head, then use Shipyard/required CI
+   and verify the merged SHA and ancestry before closing the goal.
+
+Current exact-head evidence after the P2 fixes:
+
+- branch head is now `66cb13c`; the explicit plot bounds, authenticated CTest
+  wrapper, browser/native-equivalent fixture validation, and receipt-embedded
+  state/binary authentication are committed and
+  pushed;
+- CPU Skia and GPU Dawn/Metal deterministic captures pass response readiness;
+- the direct authenticated CTest wrapper passes and a planted fixture mutation
+  fails on SHA mismatch;
+- strict joins still honestly fail at 4,331,167 CPU pixels / MAE 2.604556 and
+  4,366,704 GPU pixels / MAE 2.608550, preserving the renderer/layout gap;
+- Chromium remains settled with two canvases, accepted analyzer sequence 2,
+  zero console/network errors, and byte-identical repeated screenshots.
+
+The final exact-head state manifest is `state-v12` with state SHA
+`065afa1bc753c17899b7e633cbaa2d9a868280d992ab96480297291968a20d41`; the
+rebuilt native binary SHA is
+`9ee49779cd2ab9916b61dab82268241cfb9ec453b9d517a236c5dc9da40103d9`.
+
+The next action is to commit this hardening, rerun both independent reviews,
+refresh the exact-head receipts, and then drive PR
+<https://github.com/Generous-Corp/spectr/pull/270> through merge proof.
+
+## 2026-10-11 artifact-authority parity finding
+
+Ultra’s source audit found that `resources/editor.html` and the shipping
+`native-ui/materialized/materialized-document.runtime.json` are intentionally
+different artifacts. The native surface contains mature LENGTH, MIX, INTENSITY,
+OUTPUT, AUTO, PEAK, and tracking controls that the browser source does not.
+Replacing the materialized artifact with `editor.html` would discard existing
+product behavior, so it is not an acceptable pixel-parity fix.
+
+The same-artifact experiment extracted both materialized document forms for
+Chromium. The plain document references external materialized assets and fails
+with file-not-found loads. The runtime document is self-contained enough to
+load, but still requires the native host bridge and does not mount under the
+generic browser oracle. This proves the next parity slice must build a
+materialized-runtime Chromium oracle with the same host bridge and state
+contract. The current strict `editor.html` versus native-materialized join is
+retained as a diagnostic and is not treated as evidence that the importer
+itself can reach pixel parity.
+
+## 2026-10-11 Ultra plan: same-artifact parity and remaining opens
+
+Ultra reviewed the current receipts, native source path, materialized runtime,
+and comparator. The next wave is deliberately phased:
+
+1. **Authority contract.** Record browser and native artifact identities in
+   every parity state. The existing `editor.html` versus materialized-runtime
+   join remains a diagnostic and must be labeled as an authority mismatch.
+   Comparators must fail closed when a receipt claims strict parity without
+   matching authority identities.
+2. **Same-runtime browser oracle.** Serve the checked-in
+   `materialized-document.runtime.json` through Chromium with the same
+   `pulp.on` and `pulp.postMessage` host contract used by native capture.
+   Inject the shared analyzer/state fixture, prove readiness and canvas
+   ownership, exercise one interaction, and require two byte-stable settled
+   captures with zero console/network failures.
+3. **Measured join.** Compare that browser capture with CPU Skia and GPU
+   Dawn/Metal using existing strict thresholds and provenance receipts. Keep
+   plot, chrome, and footer regions separate so a renderer defect is
+   attributable instead of hidden by a whole-frame score.
+4. **Renderer repair only after authority alignment.** If the same-runtime
+   join still differs, use regional diffs and interaction traces to fix the
+   smallest shared Pulp/runtime cause. Preserve mature Spectr controls and do
+   not replace native materialized authority with the older Claude source.
+5. **Closeout.** Re-run adversarial review, thermonuclear autoreview, governed
+   native CPU/GPU captures, Chromium repeatability, and Shipyard/required CI;
+   merge only after exact-head and ancestry proof.
+
+Current status: contract hardening and deterministic native/browser receipts
+are complete; the authority-aligned Chromium oracle, same-artifact join,
+renderer repair (if still needed), and merge proof remain open. Kill criteria:
+do not add a generalized frontend graph or rewrite the materialized runtime if
+the oracle cannot establish a measurable reduction in ambiguity or diff size.
+
+## 2026-10-11 authority guard implementation
+
+Commit `680ebd5dec46dc59f18071f4343ba5774a4819cd` adds the explicit authority
+declaration to `native-ui/capture-states/manifest.json` and registers a
+positive CTest contract plus a planted missing-authority negative control.
+The direct positive and negative checks pass. This prevents the current
+cross-artifact comparison from being described as importer pixel parity, but
+it does not claim that the same-runtime Chromium oracle exists yet.
+
+The existing authored full-App/materialized browser harness is the scaffold
+for that oracle. It now runs after `npm ci --ignore-scripts --prefix
+tools/wp1-parser`; its current mock state is intentionally insufficient for
+parity because it omits mature native fields. The next implementation must
+serve the materialized envelope assets, inject React vendors without replacing
+the retained native services, and derive the bridge payload from
+`make_editor_state_payload` before comparing screenshots.
+
+## 2026-10-11 authority-aligned Chromium oracle implementation
+
+`tools/materialized_runtime_chromium_oracle.mjs` now provides the first
+repeatable browser capture of the shipping materialized runtime itself. It
+serves the runtime HTML and all 13 embedded assets over HTTP, injects the
+shared deterministic analyzer fixture through the retained native-message
+seam, uses the native 1320x860 / DPR 2 viewport, waits for fonts and analyzer
+sequence 2, and requires three canvas layers, zero application console or
+network failures, a real band-dropdown interaction, and byte-identical
+settled screenshots. The runtime and source editor remain unchanged.
+
+CTest registers the positive lane as
+`Spectr-browser-materialized-runtime-authority-oracle` and a self-validating
+missing-font negative control as
+`Spectr-browser-materialized-runtime-authority-oracle-negative-control`. Both
+focused tests pass on the M5 checkout. The receipt schema records the runtime
+artifact SHA, HTML SHA, analyzer fixture SHA, canonical state digest, viewport,
+asset count, interaction evidence, and the explicit
+`same-materialized-runtime-diagnostic` authority mode.
+
+This closes the browser evidence gap but does not claim native pixel parity or
+production cutover. A same-authority native join still reports a large measured
+renderer/composition difference and remains the next repair gate; the existing
+`editor.html` versus materialized-runtime comparison remains diagnostic only.
+
+## 2026-10-10 corrected state hydration and authenticated same-artifact join
+
+The authority-aligned browser bridge now mirrors the native
+`make_editor_state_payload` contract for the mature controls that were missing
+from the first oracle pass: nested freeze state and canonical length values,
+standalone keyboard policy, Tracking latency (`64` samples / `1.333` ms with
+the `10240`-sample mixing option), default modulation routes and depth, native
+level fields, synchronous `output_levels_get`, and the initial output-meter
+publication. The source remains
+`/Volumes/Workshop/Code/spectr-parity-closeout-20261010/tools/materialized_runtime_chromium_oracle.mjs`;
+`node --check` passes.
+
+The corrected Chromium receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-oracle-state-corrected-20261010-r2/receipt.json`
+(SHA-256 `ba9ded8c21268a2a0f9f9932efceafa21e6a074cd7d474d0cfc02901b3007263`).
+It proves three canvas layers, analyzer sequences 1 and 2, a real dropdown
+interaction, zero application console/network errors, and byte-identical
+settled captures at 2640x1720. The settled image is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-oracle-state-corrected-20261010-r2/settled.png`
+(SHA-256 `ffe13738d0a2db300cb9dfb10377699f23351b7aa5424ee5f9de377d956f4335`).
+
+`tools/join_materialized_runtime_parity.py` now authenticates both receipts,
+the shared materialized artifact, analyzer fixture, native binary, viewport,
+and PNG dimensions. It normalizes the browser receipt's `dpr` spelling to the
+state manifest's `deviceScaleFactor` and rejects conflicting aliases. The
+focused boundary test is registered as
+`Spectr-materialized-parity-join-boundary` and passes; the one-pixel planted
+negative also passes.
+
+The authenticated diagnostic join is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-parity-join-20261010.json`
+(SHA-256 `38eb365bd76a2afefe138bbf06375c12493f514f82c848d2bc10e6c1daf326c5`).
+It reports `4,328,800 / 4,540,800` differing pixels and MAE
+`2.5303022595` against the CPU Skia capture, a small improvement over the
+synthetic bridge but still far from parity. The negative-control receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-parity-negative-20261010.json`
+(SHA-256 `17c83d18a665dd1dbd55f971546aad3806fb5785720ce5740e250020a4e5ea55`).
+The remaining gap is therefore renderer/layout composition and text fitting,
+including the visible `AUTO` and Tracking footer clipping; no threshold was
+weakened and native parity remains open.
+
+## 2026-10-10 adversarial old/new source regression rerun
+
+The old Claude Design source and the current `resources/editor.html` were
+captured again in the same Chrome 155 process with the strict root/canvas,
+canvas-ink, and zero console/network-error checks. Both mounted one root and
+two canvases at 1320x860 / DPR 1. The old source is
+`/Users/danielraffel/Downloads/Claude/Spectr/Spectr (standalone).html` with
+SHA-256 `7ae6f1d807f2f356b8473d9e672a95535adbe7affea58af360f9ac5c211daf9e`;
+the current editor is `resources/editor.html` with SHA-256
+`5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558`.
+
+The old source is animated and is not screenshot-byte-stable: three clean
+runs produced screenshot hashes `db710f0a8965a08cad8becf4599fd569afdbce00e601a79ac0be11678e448b54`,
+`f938ec5a5d42e386a6b91e8d209dd3b85c7f2b651ee004cefd2d4ecfc67b7e7b`, and
+`7ffdf17dfbf0b661a9039441b24c92d4320143ba3f2b9ec6e8cd12a1bdc0cb7d`.
+The new editor is stable across reruns at screenshot SHA-256
+`f95b6dc204a847f54996c47144bcb3100715988ff4d5e78a43940beae949ec0e`.
+The old/new image difference is therefore diagnostic rather than an exact
+parity verdict; it also includes intentional state differences (old IIR/FFT/
+HYBRID and 64 bands versus new BARS/RESPONSE/BOTH, 32 bands, and CPU
+disclosure). The planted no-ink mutation still fails the old-source gate, so
+the regression harness detects a completely blank render while preserving
+this animation caveat.
+
+The comparator now records per-canvas ink and supports
+`--require-primary-canvas-ink`. An adversarial copy with all drawing methods
+disabled on the first canvas still passed the aggregate ink check through the
+overlay canvas; the new primary-layer check rejects that mutation. The
+standards/quirks fixture suite and fresh old/new captures pass with the
+primary-layer check enabled.
+
+The captured receipts and screenshots are retained under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/old-claude/`,
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/new-editor/`,
+and the primary-layer rerun under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/primary-rerun/`.
+
+## 2026-10-11 oracle hardening and fresh native join
+
+The authority-aligned Chromium oracle now authenticates the selected React and
+ReactDOM vendor IDs and SHA-256 values, classifies only the known Chrome GCM
+authentication diagnostics as non-fatal, and keeps the missing-asset control
+as a normal expected-failure assertion. The authority manifest negative control
+now mutates a copy and proves the validator rejects the missing field; it no
+longer relies on CTest `WILL_FAIL`.
+
+The materialized runtime's focused typography migration was applied through
+`tools/patch_materialized_editor.py --readable-typography-only` to remove the
+viewport-wide font-size override that clipped `AUTO` and the Tracking footer.
+The checked-in artifact provenance manifest was refreshed and its four focused
+source/artifact tests pass.
+
+The native target was rebuilt through the governed build wrapper. The current
+binary SHA is `76c76e84681305781e2a5ba0da127cb0eb9bd4496e7a60a8854e38ecd2db146e`;
+the materialized runtime SHA is
+`00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212`.
+The fresh browser oracle and native CPU Skia capture share the same artifact,
+fixture, viewport, state digest, and binary identity. The authenticated join
+passes all provenance checks and remains a measured diagnostic failure:
+`4,327,187 / 4,540,800` differing pixels, MAE `2.4101314746`. No parity
+threshold was weakened; the remaining work is renderer/composition repair.
+
+The current-head receipts supersede earlier pre-typography-refresh artifacts.
+They are retained in
+`/Volumes/Workshop/Code/spectr-parity-closeout-20261010/build-native/materialized-runtime-parity/`;
+the matching GPU join reports `4,361,926` differing pixels with MAE
+`2.4109404180`. The older receipts must not be used for closeout claims.
+
+## 2026-10-11 final receipt-boundary hardening
+
+Commit `828c368` binds an explicit native PNG path to the image whose SHA-256
+is recorded in the native receipt. A receipt that names a different PNG now
+fails authentication, closing the remaining stale-image substitution gap. The
+focused Python tests and the five-test CTest authority/oracle/join boundary
+slice pass after this change. The exact-head parity joins remain diagnostic
+failures with the measured CPU/GPU differences recorded above; this work does
+not claim pixel parity or production cutover.
+
+## 2026-10-10 exact-head old/new regression rerun
+
+The old Claude Design source and the current `resources/editor.html` were
+captured again from this exact worktree with Chrome 155 at 1320x860 / DPR 1.
+Both strict captures passed with one React root, two canvases, CSS standards
+mode, nonempty primary and overlay canvas layers, and zero console or network
+failures. The old source is
+`/Users/danielraffel/Downloads/Claude/Spectr/Spectr (standalone).html` with
+SHA-256 `7ae6f1d807f2f356b8473d9e672a95535adbe7affea58af360f9ac5c211daf9`;
+the current editor is `resources/editor.html` with SHA-256
+`5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558`.
+
+The primary canvas contained 481,863 ink pixels in the old capture and
+463,379 in the new capture; the overlay contained 29,749 in both. Repeated
+old captures intentionally differ (`6d026931b260be1bcda3a3e1495a813e1f2c9903d9e85a923e6c979bc6a43c71`
+then `d969515ede47d01677b720aa6c10b036a4fb073e38ee064197ad14e8b79d22e8`),
+while repeated new captures are byte-identical at
+`f95b6dc204a847f54996c47144bcb3100715988ff4d5e78a43940beae949ec0`.
+This makes the image difference diagnostic rather than a strict parity verdict:
+the old source animates and also intentionally starts in IIR/FFT/HYBRID with
+64 bands, while the new editor starts in BARS/RESPONSE/BOTH with 32 bands and
+CPU disclosure.
+
+The comparator's standards/quirks, malformed-fixture, aggregate-ink, and
+primary-layer negative controls pass in the same rerun. Receipts and PNGs are
+retained under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010-rerun/`.
+This is render-health regression evidence only; it does not establish native
+Skia/Dawn parity or production cutover.
+
+The final review also tightened the oracle negative control: it now removes the
+most-referenced non-script asset (with deterministic tie-breaking), so a future
+asset-order change cannot turn the planted missing-asset check into an unused
+asset deletion. The CMake description now accurately states that the native
+wrapper emits a provenance receipt; it does not claim cross-render scoring.
+Both authority-oracle CTest cases pass after this repair.
+
+Thermonuclear review follow-through closed two boundary issues. The focused
+materialized-editor migration now refreshes the artifact SHA/byte count in its
+provenance receipt whenever it writes the generated runtime. The parity join
+now fails with a clear Pillow dependency diagnostic before attempting image
+opens; its dependency-free boundary test remains usable without Pillow.
+The review also confirmed the browser oracle's manually mirrored editor state
+is an intentional staging limitation, documented as such rather than treated
+as native production proof; production cutover remains false.
+
+The native-shot build rule now declares `Spectr-native-shot.sha256` as a CMake
+BYPRODUCTS output, so deleting the digest no longer leaves an up-to-date binary
+with an undeclared missing receipt. Governed rebuilding regenerated the target;
+`Spectr-native-parity-deterministic`, the authority oracle pair, and the join
+boundary all pass afterward. The build emitted one pre-existing
+`src/spectr.cpp` dangling-GSL warning; it is outside this parity tooling diff
+and did not fail the target.
+
+Final closeout reviews at commit `2abf5c6`:
+
+- structured autoreview (Codex, branch vs `origin/main`) reported no
+  accepted/actionable findings and marked the patch correct;
+- the independent thermonuclear review reported zero must-fix findings and
+  passed the closeout. Its two should-fix refactors are deferred to the next
+  importer wave: share/reformat the dense Node fixture/state helpers and
+  consolidate overlapping receipt authentication between the legacy comparator
+  and the materialized joiner;
+- accepted limits remain explicit: the browser state is a staging mirror, the
+  CPU/GPU same-artifact joins are diagnostic failures, and production cutover
+  is false.
+
+## 2026-10-11 CI follow-up: refresh WP-1 runtime allowlist
+
+The first M5 product-acceptance run for PR 270 found a stale WP-1 runtime-surface
+allowlist pin: it still referenced the pre-typography runtime
+(`d3d39680…`, 1,154,153 bytes), while the authenticated checked-in artifact is
+`00a8ca66…`, 1,154,110 bytes. The allowlist now records the current artifact
+SHA and byte count. The eight runtime-surface tests and seven full-App import
+mount tests pass, including their tamper and negative controls. This is a
+Spectr fixture refresh only; no Pulp/Vellum source path is involved.
+
+## 2026-10-09 authored full-App import mount (staging; adopted from PR 258)
+
+PR <https://github.com/danielraffel/spectr/pull/257> adds the bounded import gate
+at commit <https://github.com/danielraffel/spectr/commit/0ed69d879e49cf0569a357550e56d6bf5b9d72d2>.
+It validates the artifact, App dependency manifest, emitted module closure,
+runtime-surface contract, and every emitted module hash before assembling and
+executing all 59 authored modules in a deterministic VM. The allowlist is
+required and fails closed when omitted. This remains staging evidence; browser
+behavior, Chromium parity, native Skia/Dawn parity, and production replacement
+of `resources/editor.html` remain open.
+
+## 2026-10-11 verified merge closeout
+
+PR <https://github.com/danielraffel/spectr/pull/270> merged at commit
+<https://github.com/danielraffel/spectr/commit/bfac6b0c91639bfe636bf6eff96041542628fe03>
+from exact head `51baae0b22a93c14be67322aa43034adf841715e`. The M5 product
+acceptance gate passed at
+<https://github.com/danielraffel/spectr/actions/runs/38113931934/job/114394945212>`,
+including the refreshed WP-1 runtime allowlist and adopted staging documentation.
+The merged status remains honest: same-materialized-artifact CPU/GPU joins are
+still diagnostic failures, the browser state is staging evidence, and native
+pixel parity/production cutover remain open follow-up work.
+
+## 2026-10-11 measured parity cause: dropped authored radial glow
+
+A controlled same-materialized-runtime experiment isolated a concrete importer
+fidelity defect. The browser oracle and native Skia capture already share the
+runtime artifact, fixture, state digest, viewport, and binary receipt. With the
+normal browser capture, the CPU join reports whole-frame MAE `2.4101314746` and
+plot MAE `1.8900684732`. In a temporary browser-only diagnostic capture that
+disables the authored `body::before` radial-glow layer, those values fall to
+whole-frame MAE `1.52351` and plot MAE `0.90401`; disabling `body::after` alone
+has no material effect. Native CPU/GPU agreement remains close, so this is not
+a Skia-versus-Dawn divergence.
+
+The source audit found the generic importer drops `body::before` and
+`body::after`: `core/view/src/design_import.cpp` skips selectors containing `:`
+(and the materialized-runtime transform has no pseudo-element extraction).
+The current native DesignIR therefore omits an authored browser paint layer.
+This is a generic Pulp importer/materializer defect, not a Spectr-specific
+renderer workaround. The experiment is diagnostic evidence only; the temporary
+CSS override was not committed and is not a parity fix.
+
+The next implementation must be routed through the Vellum integration owner
+before editing `core/view/src/design_import.cpp`,
+`tools/import-design/jsx-runtime/materialized-runtime-transform.mjs`, or any
+other exported importer/materializer surface. The routed change should add a
+minimal deterministic pseudo-element paint representation (or an explicit
+fail-closed unsupported-paint receipt), then rebuild the same Spectr artifact
+and require a lower plot MAE without increasing native CPU/GPU divergence.
+Kill the experiment if it only changes the browser oracle or if the measured
+improvement does not reproduce from a fresh import.

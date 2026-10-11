@@ -2,6 +2,13 @@
   "schema": "spectr-native-parity-matrix-v1",
   "version": 1,
   "source": "../../resources/editor.html",
+  "authority": {
+    "browserArtifact": "resources/editor.html",
+    "browserArtifactSha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
+    "nativeArtifact": "native-ui/materialized/materialized-document.runtime.json",
+    "nativeArtifactSha256": "00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212",
+    "joinMode": "diagnostic-authority-mismatch"
+  },
   "states": [
     {
       "id": "main",
