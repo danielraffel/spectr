@@ -147,6 +147,9 @@ def main():
     if digest(native_binary.read_bytes()) != expected_binary:
         fail("native binary SHA does not match parity state")
     expected_size = state.get("viewport", {}).get("png")
+    if expected_size is not None:
+        if not isinstance(expected_size, dict) or not integer(expected_size.get("width")) or expected_size["width"] <= 0 or not integer(expected_size.get("height")) or expected_size["height"] <= 0:
+            fail("viewport png dimensions must be positive integers")
     if not expected_size and state.get("viewport", {}).get("width"):
         expected_size = {"width": state["viewport"]["width"] * state["viewport"].get("deviceScaleFactor", 1),
                          "height": state["viewport"]["height"] * state["viewport"].get("deviceScaleFactor", 1)}
@@ -174,8 +177,11 @@ def main():
     if args.plant_negative and exact:
         fail("planted negative did not change the comparison")
 
+    regions = state.get("parityRegions", [])
+    if not isinstance(regions, list):
+        fail("parityRegions must be an array")
     region_reports = []
-    for region in state.get("parityRegions", []):
+    for region in regions:
         region_id = region.get("id")
         box = tuple(region.get(key) for key in ("x", "y", "width", "height"))
         if not region_id or any(isinstance(value, bool) or not isinstance(value, int) for value in box):
