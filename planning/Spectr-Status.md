@@ -424,8 +424,8 @@ diagnostic. All seven contract tests and the direct inline sync check pass.
 
 ## 2026-10-10 parity closeout fixture wave
 
-The parity closeout branch is pushed at
-https://github.com/Generous-Corp/spectr/commit/2bd0351. The current work proves
+The parity closeout implementation is pushed at
+https://github.com/Generous-Corp/spectr/commit/24d97a8. The current work proves
 shared deterministic analyzer fixture provenance across Chromium, native CPU
 Skia, and native GPU Dawn/Metal. The fixture is
 `test/fixtures/spectr-parity-analyzer-v1.json`; its SHA is
