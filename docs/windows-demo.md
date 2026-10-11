@@ -47,6 +47,19 @@ unavailable, so the installed Live 10 trial is the compatible sequencer here.
 Run `tools/windows/utm-daw-status.sh` to verify both paths before opening
 Jump Desktop.
 
+If the UTM window itself is black, use the native RDP launcher instead:
+
+```bash
+tools/windows/open-utm-rdp.sh
+```
+
+This opens a visible `sdl-freerdp` window at the forwarded guest desktop. The
+black UTM canvas is expected for this image: Windows reports no usable display
+driver for the emulated framebuffer, while the authenticated RDP desktop is
+working. From the RDP window, open the `REAPER (ARM64)` shortcut or the `Live
+10 Trial` shortcut. The launcher reads the local 0600 credential file and never
+prints the password.
+
 The verified application inventory and executable hashes are recorded in
 [`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
 
