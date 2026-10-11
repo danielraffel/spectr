@@ -25,6 +25,10 @@ def fail(message):
     raise SystemExit(1)
 
 
+def integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--native-shot", required=True)
@@ -43,10 +47,10 @@ def main():
     if shot != binary:
         fail("--binary must identify the executable invoked by --native-shot")
     state = json.loads(state_path.read_text())
-    if state.get("schema") != "spectr-parity-state-v1" or state.get("version") != 1:
+    if state.get("schema") != "spectr-parity-state-v1" or not integer(state.get("version")) or state.get("version") != 1:
         fail("unsupported parity state schema")
     viewport = state.get("viewport", {})
-    if not isinstance(viewport.get("width"), int) or viewport["width"] <= 0 or not isinstance(viewport.get("height"), int) or viewport["height"] <= 0:
+    if not integer(viewport.get("width")) or viewport["width"] <= 0 or not integer(viewport.get("height")) or viewport["height"] <= 0:
         fail("viewport width and height must be positive integers")
     scale = viewport.get("deviceScaleFactor")
     if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:

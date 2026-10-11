@@ -26,6 +26,10 @@ def fail(message):
     raise SystemExit(1)
 
 
+def integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser-receipt", required=True)
@@ -82,11 +86,11 @@ def main():
         fail("browser receipt has no rendered root/canvas")
     if browser_positive.get("consoleErrors") or browser_positive.get("networkFailures"):
         fail("browser receipt contains console or network errors")
-    if state.get("schema") != "spectr-parity-state-v1" or state.get("version") != 1:
+    if state.get("schema") != "spectr-parity-state-v1" or not integer(state.get("version")) or state.get("version") != 1:
         fail("unsupported state schema")
     viewport = state.get("viewport", {})
     width, height, scale = viewport.get("width"), viewport.get("height"), viewport.get("deviceScaleFactor")
-    if not isinstance(width, int) or width <= 0 or not isinstance(height, int) or height <= 0:
+    if not integer(width) or width <= 0 or not integer(height) or height <= 0:
         fail("viewport width and height must be positive integers")
     if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:
         fail("viewport deviceScaleFactor must be positive")
