@@ -69,6 +69,11 @@
       "project_result": "CLAP: Spectr (Pulp) reported unavailable by REAPER despite the installed CLAP cache entry"
     }
   },
+  "standalone": {
+    "status": "BLOCKED",
+    "result": "The installed ARM64 executable opened WASAPI successfully but failed WindowHost::create() in the UTM RDP session (exit code 1). This prevents a GPU editor screenshot and is evidence against claiming Skia/Dawn runtime success in this UTM guest.",
+    "log": ".local-evidence/windows-gpu-5487/standalone-windowhost-failure-20261011.log"
+  },
   "limitations": [
     "Headless build and focused DSP test prove compilation and audio path only.",
     "GPU Skia/Dawn runtime editor and REAPER/Ableton instance/audio/screenshot acceptance remain open."
