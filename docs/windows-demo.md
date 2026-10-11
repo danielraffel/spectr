@@ -290,6 +290,12 @@ It starts VM 300 only when stopped, waits for the guest agent, runs the exact
 invocation started it. A live run passed with exit code `0` and two assertions;
 the VM was confirmed `stopped` afterward.
 
+If the Windows QEMU Guest Agent service is running but the Proxmox virtio
+channel is unavailable, the validator emits a warning and runs the same test
+through one bounded Windows OpenSSH session (`pulp-rdp@192.168.86.21` by
+default). Override that target with `SPECTR_PROXMOX_GUEST_SSH_TARGET`; the
+fallback keeps the headless check usable without opening a connection burst.
+
 ## Cleanup
 
 Stop the launcher with `Ctrl-C`. The linked QCOW2 overlay and copied firmware
