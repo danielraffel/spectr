@@ -624,10 +624,14 @@ include(Catch)
 # — which build from SPECTR_NATIVE_SOURCES — stay green, so the breakage looks like
 # a product failure when it is only the legacy test graph.
 set(SPECTR_SDK_HAS_WEBVIEW OFF)
+set(SPECTR_SDK_HAS_DESIGN_IMPORT OFF)
 if(TARGET Pulp::view)
     get_target_property(_spectr_pulp_view_defs Pulp::view INTERFACE_COMPILE_DEFINITIONS)
     if(_spectr_pulp_view_defs MATCHES "PULP_BUILD_WEBVIEW=1")
         set(SPECTR_SDK_HAS_WEBVIEW ON)
+    endif()
+    if(_spectr_pulp_view_defs MATCHES "PULP_HAS_DESIGN_IMPORT=1")
+        set(SPECTR_SDK_HAS_DESIGN_IMPORT ON)
     endif()
     unset(_spectr_pulp_view_defs)
 endif()
@@ -667,7 +671,6 @@ add_executable(Spectr-test
     test/test_editor_resize.cpp
     test/test_pattern.cpp
     ${SPECTR_TEST_WEBVIEW_CASES}
-    test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_param_surface.cpp
@@ -687,6 +690,13 @@ add_executable(Spectr-test
     test/test_auto_gain_v2_transients.cpp
     ${SPECTR_TEST_SOURCES}
 )
+if(SPECTR_SDK_HAS_DESIGN_IMPORT)
+    # Import-fidelity exercises pulp::view::parse_claude_bundle, which is
+    # intentionally absent from the normal browser-free SDK. Keep the cases
+    # in the design-import lane instead of allowing an SDK capability mismatch
+    # to make every Windows audio build fail at link time.
+    target_sources(Spectr-test PRIVATE test/test_import_fidelity.cpp)
+endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
@@ -4585,9 +4595,18 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_CLAP_TARGET})
     endif()
     if(TARGET ${SPECTR_NATIVE_VST3_TARGET})
+        # Windows emits the VST3 entry as a DLL. The other platforms emit a
+        # bundle directory, so point the cross-platform host test at the
+        # platform's actual loadable artifact.
+        set(SPECTR_TEST_VST3_PATH
+            "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
+        if(WIN32)
+            set(SPECTR_TEST_VST3_PATH
+                "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.dll")
+        endif()
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_VST3=1
-            SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
+            SPECTR_TEST_VST3_PATH="${SPECTR_TEST_VST3_PATH}")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_VST3_TARGET})
     endif()
     if(TARGET ${SPECTR_NATIVE_AU_TARGET} AND APPLE)

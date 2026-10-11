@@ -1,0 +1,20 @@
+{
+    "schema":  2,
+    "generated_at_utc":  "2026-10-10T15:23:22.0179295Z",
+    "reaper":  "C:\\Program Files\\REAPER (arm64)\\reaper.exe",
+    "reaper_sha256":  "95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8",
+    "architecture":  "arm64-win",
+    "plugin_path":  "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+    "plugin_sha256":  "6032DFD8ECA9A8BD13BB73769650561F1FA6028DDC8741FB7205C2A2CE48E64F",
+    "cache_path":  "C:\\Users\\spectr\\AppData\\Roaming\\REAPER\\reaper-vstplugins64.ini",
+    "scan_entry":  "Spectr.vst3=9E6BDC999058DD01,800463036{E0A3644343D1A08EC73C7FDCC7E5D370,Spectr (Pulp)\r",
+    "scan_entry_present":  true,
+    "discovery_status":  "discovered",
+    "acceptance_status":  "blocked",
+    "failed_scan_evidence_path":  null,
+    "failed_scan_evidence_supplied":  false,
+    "failed_scan_plugin_present":  null,
+    "failed_scan_list_empty":  null,
+    "plugin_instance_observed":  false,
+    "limitation":  "The cache entry proves discovery only. REAPER load acceptance requires supplied failed-scan evidence showing Spectr absent and a matching observed host-instance receipt."
+}

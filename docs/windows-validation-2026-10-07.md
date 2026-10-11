@@ -43,9 +43,17 @@ binary is absent. It writes a JSON receipt with the exact artifact hashes.
 
 ## Still required
 
-The ARM64 UTM lane must link against the MSVC-compatible Skia archive before
-it can produce an ARM64 Spectr artifact. After that, REAPER must scan and load
-the plugin with runtime logs and a screenshot; Ableton follows the REAPER pass.
+The direct-QEMU ARM64 lane below has produced a GPU/Skia Spectr artifact.
+REAPER must still load the plugin with runtime logs and a screenshot; Ableton
+follows the REAPER pass.
+
+The registered UTM 5.0.6 package still holds a separate 27 GB older disk copy,
+while the productive direct-QEMU base is a 58 GB disk under `/Volumes/Atelier`.
+`utmctl start` reports started for the registered package, but `utmctl status`
+returns OSStatus -2700 and `utmctl ip-address` reports no guest agent. Its
+captured display says `Guest has not initialized the display (yet).` That UTM
+package is not a validated desktop or build lane. It was stopped after the
+bounded probe. The working linked-clone receipt below belongs to direct QEMU.
 
 ## Headless ARM64 evidence
 
@@ -72,3 +80,136 @@ the plugin with runtime logs and a screenshot; Ableton follows the REAPER pass.
 This is build and focused audio-test proof. It does not yet prove REAPER or
 Ableton loading. The UTM desktop clone is being repaired separately from this
 headless lane.
+
+## Native ARM64 GPU/Skia proof (M5 Ultra QEMU guest)
+
+The direct QEMU ARM64 guest is the productive headless path. UTM 5.0.6 still
+returns to UEFI and does not provide a usable guest-agent/network state for this
+image; this does not block the headless lane.
+
+- Guest: Windows 11 ARM64, SSH `admin@127.0.0.1:50375`; disposable candidate
+  `/Volumes/Atelier/VMs/bench/pulp-windows-build-24h2-arm64-utm-fresh-20261007.qcow2`.
+- Pulp GPU build: MSVC 19.51.36260 / toolset 14.51.36231, `PULP_ENABLE_GPU=ON`,
+  Skia/Dawn archive SHA-256
+  `c494cc3fc51b344b35ce776b77e6a70f1cb123b645f216aca07f7be4a281d9cc`.
+- Pulp CLI: `C:\builds\pulp-915-gpu-ninja18\tools\cli\pulp-cpp.exe`,
+  27,180,032 bytes, SHA-256
+  `151AC8F1BEBDD04DD8CE8A9F4757C90743A869C5AA937F2AFFCD19BA328DAA44`.
+- SDK staging: `C:\pulp-gpu-sdk` completed with
+  `cmake --install C:\builds\pulp-915-gpu-ninja18 --prefix C:\pulp-gpu-sdk --config Release`
+  exit `0`; `PulpConfig.cmake` and 54 Pulp libraries are present.
+- Spectr source: `2bef773265c0f3196db8fc77f761307cbbde9de6`.
+- Spectr configure: `Pulp_DIR=C:\pulp-gpu-sdk\lib\cmake\Pulp`, Skia from the
+  staged SDK; configure completed with MSVC ARM64.
+- GPU build: `ninja Spectr_Standalone Spectr_VST3 Spectr_CLAP Spectr-test -j4`,
+  186/186 steps succeeded.
+- Focused test: `Spectr-test.exe "Spectr processes audio" --reporter compact`,
+  exit `0`; 2 assertions in 1 test case.
+- ARM64 artifacts:
+  - `C:\builds\spectr-arm64-gpu\Spectr.exe`, 23,944,704 bytes, SHA-256
+    `48faba70e4dda89653c8859a0a44470c551ed607f249bf0951eb667fc5f18999`.
+  - `C:\builds\spectr-arm64-gpu\VST3\Spectr.dll`, 23,444,992 bytes, SHA-256
+    `a0611bc25bb3f31af440c43e4ef82e684c88e9dff861e55d1ead19de9e1a92a3`.
+  - `C:\builds\spectr-arm64-gpu\CLAP\Spectr.clap`, 23,331,328 bytes, SHA-256
+    `59f7b1d6cc67e42230fed10fe1a9835c6d06807ad22a330ab3c19fca50498aac`.
+
+### Negative host evidence
+
+- `Spectr.exe` reaches `WindowHost::create()` with `PULP_AUDIO_DEVICE=null` but
+  cannot open a GUI from the SSH-only QEMU session. Without the null device,
+  Windows reports no WASAPI default output.
+- `Spectr-artifact-test.exe` initialized the built CLAP (`CLAP: initialized
+  'Spectr'`) but did not terminate in the headless session; it was stopped after
+  the live process check.
+- REAPER 7.82 x64 is installed at `C:\Program Files\REAPER (x64)\reaper.exe`,
+  but the staged Spectr binary is pure ARM64. The x64 REAPER process therefore
+  cannot provide ARM64 plugin ABI proof. A headless launch reached VST/CLAP scan
+  initialization but did not terminate cleanly over SSH; it was stopped.
+- Ableton is not installed, so there is no Ableton scan/load claim or screenshot.
+
+The GPU/GUI build is therefore proven at compile and focused audio-test level.
+REAPER scan/load remains the next acceptance gate, followed by Ableton.
+
+## Repeatable ARM64 packaging and REAPER discovery
+
+The productive M5 Ultra lane now has a reusable packaging check:
+
+```powershell
+.\tools\windows\package-vst3.ps1 -BuildDir C:\builds\spectr-arm64-gpu -Architecture arm64-win
+.\tools\windows\reaper-scan.ps1 -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win'
+```
+
+`package-vst3.ps1` creates the Windows VST3 layout
+`Spectr.vst3\Contents\arm64-win\Spectr.vst3` and carries the ICU/WebGPU runtime
+files beside the plugin. The live guest package was rebuilt and its plugin hash
+is `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`.
+
+The scan helper accepts both host architectures. For the installed ARM64 REAPER
+host, use:
+
+```powershell
+.\tools\windows\reaper-scan.ps1 `
+  -Architecture arm64-win `
+  -Vst3Root 'C:\Program Files\Common Files\VST3\Spectr.vst3\Contents\arm64-win'
+```
+
+This records the ARM64 host hash and any cache entry while retaining the
+discovery-only status described above. A cache entry is not a load result: the
+receipt now records `acceptance_status=blocked` unless failed-scan evidence and
+a matching observed host-instance receipt are supplied. The current guest has
+Spectr in REAPER's failed-scan list, so it must remain blocked.
+
+REAPER ARM64EC beta was installed from
+https://www.reaper.fm/files/7.x/reaper782_win11_arm64ec_beta-install.exe.
+The installer hash is
+`CA562D2ABB6A8C7C9A3675CF70C4F1C3DA643338C9531DA5F0BF61B6EBEC36EB` and the
+installed host hash is
+`EA910AF76B1160411F54DEA978084D054BB8E397A391E7E84DE91088904C7F26`.
+REAPER's cache contains `Spectr.dll=3B5E20C3E956DD01`, proving discovery by the
+ARM64EC host. This is not yet load/audio proof; a desktop-capable session and a
+screenshot are still required.
+
+For a bounded interactive session on macOS, use
+`tools/windows/launch-arm64-qemu.sh --display=cocoa`. It keeps one base image,
+creates one linked overlay and firmware-vars copy, and removes both on exit.
+Use `--display=none` for headless SSH work. This path is separate from TartCI
+and does not consume a macOS runner slot.
+
+To enable RDP inside a disposable overlay, copy and run
+`tools/windows/enable-rdp.ps1` as Administrator. It enables the Windows RDP
+listener and firewall rules but never creates or stores a password. RDP still
+requires a Windows password; SSH key authentication alone is intentionally not
+treated as desktop authentication.
+
+### QEMU SSH liveness guard
+
+The intermittent SSH failures observed on the M5S were host-side channel
+handling failures, not guest boot failures. The old invocation inherited the
+caller's stdin and allowed the ssh-agent to try unrelated keys; commands that
+read stdin could therefore leave a healthy guest looking hung. The canonical
+wrapper in `tools/windows/ssh-qemu.sh` now uses `ssh -n`, `BatchMode`,
+`IdentitiesOnly`, the explicit guest key, and a bounded connect timeout.
+
+Before starting a build, run the bounded five-probe guard against the session's
+forwarded port:
+
+```bash
+SPECTR_WINDOWS_SSH_PORT=50492 tools/windows/ssh-qemu-health.sh
+```
+
+The guard first waits up to 120 seconds for OpenSSH to become ready, absorbing
+the connection resets that are normal during Windows boot, and then runs the
+five probes. Each probe must print `status=ok`; a missing guest, wrong key,
+inherited stdin, or unexpected response fails the command. On 2026-10-08, five
+fresh probes against a new disposable clone passed in 140--190 ms each after
+readiness. The guard is local QEMU-only and does not reserve or consume a
+TartCI/macOS runner.
+
+## Toolchain provenance follow-up
+
+The ARM64 Skia/Dawn producer now publishes `msvc-toolchain.json` provenance in
+https://github.com/danielraffel/skia-builder/pull/29. The validated archive was
+built with VS 18 / MSVC 14.51.36231, Windows SDK 10.0.26100.0, ARM64 COFF and
+static `/MT`. Future Windows GPU rebuilds should retain that producer/consumer
+match; the older MSVC 14.44 experiment failed in Dawn's ARM64 resource compiler
+step and was not used for the accepted artifact.

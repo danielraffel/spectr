@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T17:15:00Z",
+  "package": {
+    "local_path": "/Users/danielraffel/Spectr-arm64ec-headless-installer.zip",
+    "bytes": 9769538,
+    "sha256": "f956296ee83d81708e5c8ff7449abcc4e0533ad4fefe0e94cb349476bd1a0785",
+    "architecture": "arm64-win",
+    "artifacts": [
+      "CLAP/Spectr.clap",
+      "Standalone/Spectr.exe",
+      "VST3/Spectr.vst3/Contents/arm64-win/Spectr.vst3"
+    ],
+    "installer": "Install-Spectr.ps1",
+    "manifest_artifacts_verified": true
+  },
+  "installation": {
+    "script": "Install-Spectr.ps1",
+    "verification": "SHA-256 checks in manifest.json are validated before copying",
+    "destinations": [
+      "%CommonProgramFiles%\\VST3\\Spectr.vst3",
+      "%CommonProgramFiles%\\CLAP\\Spectr.clap",
+      "%ProgramFiles%\\Spectr\\Spectr.exe"
+    ]
+  },
+  "limitation": "This package is a portable PowerShell installer handoff, not a signed MSI or EXE installer."
+}

@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T22:52:00Z",
+  "source_sha": "b6aa8161d063f91315ff55c75195259d0eabcde4",
+  "build_dir": "/Users/danielraffel/Code/spectr-mac-arm64-build-20261010",
+  "sdk_dir": "/Users/danielraffel/.pulp/sdk-dev/forge-v1/darwin-arm64/b83e3ad11c16e5160733f454cc94bad2ea4e7525/9260f1b7c248/lib/cmake/Pulp",
+  "host": {
+    "tool": "auval",
+    "command": "auval -v aufx Spec Pulp",
+    "component_type": "aufx",
+    "component_subtype": "Spec",
+    "manufacturer": "Pulp",
+    "result": "PASS",
+    "summary": "AU VALIDATION SUCCEEDED",
+    "checks": [
+      "discovery",
+      "cold_and_warm_open",
+      "Cocoa custom UI",
+      "required_and_recommended_properties",
+      "parameter publication and reset retention",
+      "format and render tests",
+      "MIDI",
+      "parameter setting and scheduling",
+      "host callbacks"
+    ]
+  },
+  "installed_artifact": {
+    "path": "/Users/danielraffel/Library/Audio/Plug-Ins/Components/Spectr.component",
+    "binary": "Contents/MacOS/Spectr",
+    "bytes": 48499688,
+    "sha256": "e8c935782c9bf8cffbd803000f0020f667b5890318e88a373ff90374ca4cace0"
+  },
+  "full_output_sha256": "9930dacdc6eefdd050e4b4ba9ee8a10ab146a83a63d88505c673c922cd8fa76a",
+  "full_output_private_path": "/Users/danielraffel/.spectr-local-evidence-20261010/auval-aufx-spec-pulp-2026-10-10.txt",
+  "notes": [
+    "This receipt proves native AU validation on the current Apple Silicon host.",
+    "It does not prove macOS Intel execution, Windows host acceptance, or installer signing/notarization."
+  ]
+}

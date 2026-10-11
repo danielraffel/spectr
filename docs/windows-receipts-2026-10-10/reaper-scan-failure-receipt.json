@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-10T07:31:00Z",
+  "host": "M5S macOS host, direct QEMU Windows ARM64 guest",
+  "guest": "Windows ARM64, admin@127.0.0.1:50375",
+  "host_app": {
+    "name": "REAPER",
+    "version": "7.02",
+    "binary": "C:\\Program Files\\REAPER (arm64)\\reaper.exe",
+    "audio_device": "WaveOut 44.1 kHz 24 bit, 1024 samples"
+  },
+  "plugin": {
+    "bundle": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3",
+    "binary": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+    "pe_machine": "AA64 machine (ARM64)",
+    "sha256": "A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3"
+  },
+  "procedure": [
+    "Cleared REAPER VST cache and selected Clear cache and re-scan VST paths for all plug-ins",
+    "Confirmed the plugin directory contains Spectr.vst3, icudtl.dat, and wgpu_native.dll",
+    "Opened Add FX and filtered for Spectr",
+    "Opened VST plug-in settings and expanded Plug-ins that failed to scan"
+  ],
+  "result": {
+    "scan": "FAIL",
+    "failed_scan_entries": [
+      "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+      "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\wgpu_native.dll"
+    ],
+    "observed_plugin_instance": false,
+    "rendered_audio": false
+  },
+  "acceptance": "REAPER_SCAN_FAILED; DAW_ACCEPTANCE_REMAINS_OPEN"
+}

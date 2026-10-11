@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T16:18:04Z",
+  "guest": "Windows 11 ARM64EC QEMU overlay on M5 Ultra",
+  "source": "C:\\spectr-source",
+  "binary": "C:\\spectr-arm64ec-headless\\Release\\Spectr-test.exe",
+  "command": "Spectr-test.exe [audio] --reporter compact",
+  "exit_code": 0,
+  "tests": {
+    "cases": 51,
+    "assertions": 213227,
+    "summary": "All tests passed (213227 assertions in 51 test cases)"
+  },
+  "log": {
+    "guest_path": "C:\\Users\\spectr\\audio-suite.log",
+    "host_copy": "/Users/danielraffel/spectr-arm64ec-audio-suite.log",
+    "bytes": 51974,
+    "sha256": "69f4be9b21badecd2b99e5ffce90e16d7e60a84a712a61c253873ab167f68a3e"
+  },
+  "scope": {
+    "status": "headless_audio_suite_pass",
+    "reaper": "discovery only; no observed plugin instance",
+    "ableton": "not attempted",
+    "gpu_ui": "not included; ARM64EC Skia/Dawn artifacts remain unavailable"
+  }
+}

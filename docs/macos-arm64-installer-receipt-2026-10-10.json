@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T23:00:00Z",
+  "source_sha": "7f7c5b133041090eba9c069957b356d5a832b3cb",
+  "sdk": {
+    "source_sha": "68a48f899164056ac25691668138ec95cee86af9",
+    "provenance_kind": "release",
+    "distribution_eligible": true,
+    "cmake_dir": "/Users/danielraffel/Code/pulp-dsp-next-20261001/sdk-v0931.3/pulp-sdk/lib/cmake/Pulp"
+  },
+  "build": {
+    "directory": "/Users/danielraffel/Code/spectr-mac-arm64-release-20261010",
+    "configuration": "Release",
+    "architecture": "arm64",
+    "test_seams": false,
+    "targets": ["Spectr_Standalone", "Spectr_AU", "Spectr_VST3", "Spectr_CLAP"]
+  },
+  "package": {
+    "path": "/Users/danielraffel/Code/spectr-artifacts-20261010/Spectr-1.0.7.pkg",
+    "bytes": 75252717,
+    "sha256": "8ce46e0fe2928a4a194ee6d126f49554706f4bc68445e8929b1ce09e7f23e631",
+    "product_version": "1.0.7",
+    "installer_identity": "Developer ID Installer: Daniel Raffel (95CX6P84C4)",
+    "notarization_submission_id": "616488a0-acf4-4493-970a-62d7687d8023",
+    "notarization_status": "Accepted",
+    "stapler_validate": "PASS",
+    "spctl_install": "PASS: source=Notarized Developer ID",
+    "pkgutil_signature": "PASS: signed by a developer certificate issued by Apple for distribution; notarization trusted"
+  },
+  "checks": {
+    "signing_doctor": "PASS",
+    "notary_credentials_online_check": "PASS",
+    "release_build": "PASS",
+    "no_test_seams": "PASS",
+    "installer_gatekeeper_acceptance": "PASS",
+    "package_wrapper_exit": "PASS",
+    "package_wrapper_failure_detail": null
+  },
+  "notes": [
+    "The .pkg is the shareable artifact and passes installer-level Gatekeeper validation.",
+    "The wrapper skips standalone app execution assessment only for the app extracted from this notarized package; codesign, Sparkle, stapler, and installer-level spctl checks remain mandatory."
+  ]
+}

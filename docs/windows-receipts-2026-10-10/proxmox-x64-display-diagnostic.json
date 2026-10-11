@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T23:20:00Z",
+  "provider": "Proxmox",
+  "vmid": 300,
+  "guest": "pulp-win-ci",
+  "guest_os": "Windows Server 2022 Standard Evaluation 10.0.20348.587",
+  "commands": [
+    "qm config 300",
+    "qm guest exec 300 -- powershell.exe -NoProfile -Command Get-CimInstance Win32_VideoController"
+  ],
+  "display": [
+    {
+      "name": "Microsoft Basic Display Adapter",
+      "driver_version": "10.0.20348.1",
+      "adapter_ram": 0,
+      "status": "OK"
+    },
+    {
+      "name": "Microsoft Remote Display Adapter",
+      "driver_version": "10.0.20348.1",
+      "status": "OK"
+    }
+  ],
+  "vm_config_observation": "qm config 300 has no explicit vga/virtio-gpu/qxl display entry",
+  "interpretation": "The x64 VST3 scans and instantiates, but the blank editor is consistent with the guest's basic display path. A display-device/driver change and reboot are required before assigning ownership to Spectr UI code.",
+  "status": "x64_editor_rendering_open"
+}

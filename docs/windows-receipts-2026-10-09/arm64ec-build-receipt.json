@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-09T17:20:00Z",
+  "host": "M5S macOS host, native QEMU Windows ARM64 guest",
+  "guest": "Windows ARM64, admin@127.0.0.1:50375",
+  "source": {
+    "spectr_checkout": "C:\\spectr-gui",
+    "spectr_build": "C:\\builds\\spectr-arm64ec",
+    "pulp_sdk": "C:\\pulp-arm64ec-sdk",
+    "pulp_followup_pr": "https://github.com/Generous-Corp/pulp/pull/9973"
+  },
+  "configure": {
+    "architecture": "ARM64EC",
+    "compiler_flag": "/arm64EC",
+    "simd_backend": "scalar",
+    "build_type": "Release",
+    "scripted_ui": true,
+    "js_engine": "quickjs"
+  },
+  "build": {
+    "command": "ninja -C C:\\builds\\spectr-arm64ec Spectr_VST3 Spectr_CLAP Spectr-test",
+    "plugin_targets": "PASS",
+    "plugin_steps": 175,
+    "test_target": "PASS",
+    "test_failure": null,
+    "test_failure_is_plugin_link_failure": false,
+    "test_command": "Spectr-test.exe \"Spectr processes audio\" --reporter compact",
+    "test_result": "All tests passed (2 assertions in 1 test case)"
+  },
+  "artifacts": {
+    "vst3": {
+      "path": "C:\\builds\\spectr-arm64ec\\VST3\\Spectr.dll",
+      "bytes": null,
+      "sha256": "6765E79907F2908A5DF736B79B6F32DF0ABE69B88501B756D182AF3E6E518B4F",
+      "pe_machine": "8664 machine (x64) (ARM64X)"
+    },
+    "clap": {
+      "path": "C:\\builds\\spectr-arm64ec\\CLAP\\Spectr.clap",
+      "bytes": null,
+      "sha256": "B1FC43BE4A8F107739559D06240BA164D25A662D29D6EFF00C8AA1D4542B9DD4"
+    },
+    "standalone": {
+      "path": "C:\\builds\\spectr-arm64ec\\Spectr.exe",
+      "bytes": 9345536,
+      "sha256": "CFA42039403F6625CFA0D4E4016E1E8B8E5AD546730755CCD12F3E762C974CF7"
+    }
+  },
+  "runtime": {
+    "loadlibrary_getpluginfactory": "prior native ARM proof; ARM64EC host-instance proof still open",
+    "reaper_arm64": "installed but no observed plugin instance",
+    "ableton": "not installed",
+    "audio_quality_lab": "not run for this ARM64EC artifact",
+    "perfetto": "not captured for this ARM64EC artifact",
+    "standalone": "Release executable linked after replacing stale Debug pulp-standalone-native.lib; interactive desktop screenshot still open"
+  },
+  "acceptance": "BUILD_AND_FOCUSED_AUDIO_PROVEN_DAW_UNVERIFIED"
+}
