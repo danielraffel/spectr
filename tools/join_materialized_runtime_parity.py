@@ -176,6 +176,12 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
                 or len(vendor["sha256"]) != 64):
             fail("browser state contains an invalid React vendor identity")
 
+    # The browser-specific envelope is intentionally different from the
+    # native receipt, but a parity join must still name the exact shared
+    # parity-state-v1 manifest used to configure both captures.
+    if browser.get("sharedStateSha256") != state.get("stateSha256"):
+        fail("browser receipt does not identify the exact shared parity state")
+
 
 def image_metrics(left: Image.Image, right: Image.Image, regions: list[dict]) -> dict:
     if Image is None:
