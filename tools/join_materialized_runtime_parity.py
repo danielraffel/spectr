@@ -381,6 +381,16 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("browser settled screenshots are not byte-identical")
     if repeat_path.resolve() == browser_png.resolve():
         fail("browser repeated settled screenshot is not a distinct capture")
+    if interaction_path.resolve() == browser_png.resolve() \
+            or interaction_screenshot.get("sha256") == settled_evidence.get("sha256"):
+        fail("browser interaction screenshot is not distinct from the settled capture")
+    try:
+        with Image.open(interaction_path) as image:
+            if dimensions(image) != expected_dimensions:
+                fail("browser interaction screenshot dimensions do not match state manifest")
+            image.verify()
+    except (OSError, ValueError):
+        fail("browser interaction screenshot is not a valid image")
     with Image.open(browser_png) as image:
         browser_image = image.convert("RGBA")
     with Image.open(native_png) as image:
