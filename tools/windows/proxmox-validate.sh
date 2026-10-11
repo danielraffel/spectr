@@ -8,6 +8,7 @@ host="${SPECTR_PROXMOX_HOST:-macpro}"
 vmid="${SPECTR_PROXMOX_VMID:-300}"
 build_dir="${SPECTR_PROXMOX_BUILD_DIR:-C:/spectr-win-proof/build-win}"
 test_exe="${SPECTR_PROXMOX_TEST_EXE:-${build_dir}/Spectr-test.exe}"
+guest_ssh_target="${SPECTR_PROXMOX_GUEST_SSH_TARGET:-pulp-rdp@192.168.86.21}"
 started=0
 
 cleanup() {
@@ -32,15 +33,30 @@ for _ in $(seq 1 "${SPECTR_PROXMOX_AGENT_ATTEMPTS:-36}"); do
   fi
   sleep 5
 done
-if (( ! ready )); then
-  echo "Proxmox guest agent did not become ready for VM $vmid" >&2
-  exit 1
+if (( ready )); then
+  result="$(ssh -o ConnectTimeout=8 "$host" "qm guest exec $vmid -- cmd.exe /c $test_exe \"Spectr processes audio\" --reporter compact")"
+  transport="qemu-guest-agent"
+else
+  # Windows OpenSSH is the bounded fallback when QEMU-GA is installed and
+  # running in the guest but the Proxmox virtio channel is unavailable. Keep
+  # this sequential and single-session so it cannot create an SSH burst.
+  echo "WARN: Proxmox guest agent unavailable; using Windows SSH fallback" >&2
+  ps_script="& '$test_exe' 'Spectr processes audio' --reporter compact; exit \$LASTEXITCODE"
+  encoded="$(printf '%s' "$ps_script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  result="$(ssh -o ConnectTimeout=8 "$guest_ssh_target" "powershell -NoProfile -EncodedCommand $encoded")"
+  transport="windows-ssh"
 fi
-
-result="$(ssh -o ConnectTimeout=8 "$host" "qm guest exec $vmid -- cmd.exe /c $test_exe \"Spectr processes audio\" --reporter compact")"
 printf '%s\n' "$result"
 if [[ "$result" != *'"exitcode" : 0'* || "$result" != *'All tests passed (2 assertions in 1 test case)'* ]]; then
-  echo "Proxmox Windows focused check failed" >&2
-  exit 1
+  if [[ "$transport" == windows-ssh && "$result" == *'All tests passed (2 assertions in 1 test case)'* ]]; then
+    : # SSH returns the test's output directly rather than qm guest exec JSON.
+  else
+    echo "Proxmox Windows focused check failed" >&2
+    exit 1
+  fi
 fi
-echo "PASS: Proxmox VM $vmid focused Windows check"
+if [[ "$transport" == windows-ssh ]]; then
+  echo "PASS: Proxmox VM $vmid focused Windows check via Windows SSH fallback"
+else
+  echo "PASS: Proxmox VM $vmid focused Windows check"
+fi
