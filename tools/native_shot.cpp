@@ -504,6 +504,13 @@ struct Rig {
   if (typeof globalThis.__pulpRuntimeSettle__ === 'function')
     globalThis.__pulpRuntimeSettle__(8);
   globalThis.__spectrPublishNativeMessage('analyzer_frame', frame(2, 1));
+  const accepted = globalThis.SpectrAnalyzer
+    && globalThis.SpectrAnalyzer.debugSnapshot
+    && globalThis.SpectrAnalyzer.debugSnapshot();
+  if (!accepted || accepted.epoch !== 1 || accepted.sequence_number !== 2
+      || !accepted.visible || accepted.visible.magnitude_db.length !== 321
+      || !accepted.visible.magnitude_db.some(value => value > -20))
+    throw new Error('deterministic analyzer response was not accepted by the shipping runtime');
 })(); )JS", "spectr-native-shot-deterministic-analyzer");
         settle(clock, 16);
         service_runtime();
