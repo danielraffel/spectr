@@ -43,11 +43,17 @@ function classifyChromeStderr(stderr) {
   const lines = stderr.split('\n').map(line => line.trim()).filter(Boolean);
   const known = lines.filter(line => line.includes('CVDisplayLinkCreateWithCGDisplay failed')
     || line.includes('Trying to load the allocator multiple times')
-    || line.includes('DEPRECATED_ENDPOINT'));
+    || line.includes('DEPRECATED_ENDPOINT')
+    || (line.includes('google_apis/gcm/engine/mcs_client.cc')
+      && (line.includes('Authentication Failed: wrong_secret')
+        || line.includes('Failed to log in to GCM, resetting connection.'))));
   const unclassified = lines.filter(line => !line.includes('DevTools listening on ')
     && !line.includes('CVDisplayLinkCreateWithCGDisplay failed')
     && !line.includes('Trying to load the allocator multiple times')
-    && !line.includes('DEPRECATED_ENDPOINT'));
+    && !line.includes('DEPRECATED_ENDPOINT')
+    && !(line.includes('google_apis/gcm/engine/mcs_client.cc')
+      && (line.includes('Authentication Failed: wrong_secret')
+        || line.includes('Failed to log in to GCM, resetting connection.'))));
   return { lines, known_nonfatal: known, unclassified };
 }
 function parseArgs(argv) {
@@ -107,10 +113,45 @@ function validateFixture(fixture) {
 
 function defaultEditorState() {
   const n = 32;
+  // Keep this fixture structurally aligned with make_editor_state_payload()
+  // in src/editor_bridge.cpp. A simplified payload can hide real
+  // composition differences by omitting controls that native hydration
+  // enables. These are the canonical defaults from freeze_length.hpp,
+  // modulation.hpp, render_mode.hpp, and level_controls.hpp.
+  const freezeFractions = [
+    '0', '1/32', '1/16', '1/12', '1/8', '1/6', '3/16', '1/4',
+    '1/3', '3/8', '1/2', '5/8', '2/3', '3/4', '5/6', '7/8', '15/16',
+  ];
+  const freezePresets = [
+    [0, '1/32'], [0, '1/16'], [0, '1/12'], [0, '1/8'], [0, '1/6'],
+    [0, '3/16'], [0, '1/4'], [0, '1/3'], [0, '3/8'], [0, '1/2'],
+    [0, '5/8'], [0, '2/3'], [0, '3/4'], [0, '5/6'], [0, '7/8'],
+    [0, '15/16'], [1, '0'], [2, '0'], [4, '0'], [8, '0'],
+  ];
+  const freezeLabel = (bars, fraction) => {
+    if (fraction === '0') return `${bars} ${bars === 1 ? 'bar' : 'bars'}`;
+    if (bars === 0) return `${fraction} bar`;
+    return `${bars} ${fraction} bars`;
+  };
+  const freeze = {
+    frozen: false,
+    length: {
+      preset: 16, bars: 1, fraction: '0', label: '1 bar',
+      custom_bars: 1, custom_fraction: '0', seconds: 2,
+      cap_seconds: 60, capped: false, tempo_bpm: 120,
+    },
+    length_presets: freezePresets.map(([bars, fraction]) => ({
+      bars, fraction, label: freezeLabel(bars, fraction),
+    })),
+    length_fractions: freezeFractions,
+    length_max_bars: 128,
+  };
+  const modulationRoute = { mask: 1, amounts: Array(13).fill(0.5) };
   return {
     revision: 0, n_visible: n, gain_db: Array(n).fill(0), muted: Array(n).fill(false),
     min_hz: 20, max_hz: 20000, motion_mode: 0, analyzer_mode: 0, edit_mode: 0,
     visualization_mode: 2,
+    can_undo: false, can_redo: false, undo_depth: 0, redo_depth: 0,
     snapshots: {
       A: { populated: false, gain_db: [], muted: [] },
       B: { populated: false, gain_db: [], muted: [] },
@@ -118,21 +159,30 @@ function defaultEditorState() {
     patterns_json: JSON.stringify({ format: 'spectr.patterns', version: 1,
       default_id: 'factory:flat', patterns: [] }),
     range_db: 24,
-    keyboard: { host_kind: 'unknown', in_daw: false, shortcuts_in_daw: false,
+    keyboard: { host_kind: 'standalone', in_daw: false, shortcuts_in_daw: false,
       show_tooltips: true, ask_before_override: true },
     modulation: {
-      enabled: false, shape: 0, beats_per_cycle: 4, depth: 0, target: 0,
+      enabled: false, shape: 0, beats_per_cycle: 4, depth: 0.5, target: 0,
       lfo2_enabled: false, lfo2_shape: 0, lfo2_beats_per_cycle: 4,
-      lfo2_depth: 0, target_mask: 0, routes: [], freeze_hold_for_length: false,
+      lfo2_depth: 0, target_mask: 1,
+      routes: [modulationRoute, { ...modulationRoute }], freeze_hold_for_length: false,
       morph_applies_viewport: true,
     },
-    freeze: { active: false, has_capture: false, length_preset: 16,
-      length_label: '1 BAR', custom_length: false },
+    freeze,
     latency: {
-      control_label: 'LATENCY', mode: 'zero_latency', samples: 0, ms: 0,
-      options: [], gpu_available: false, gpu_processing: false,
-      mixing_cpu_samples: 0, mixing_gpu_samples: 0, sample_rate: 48000,
+      control_label: 'Latency', mode: 'zero_latency', samples: 64,
+      ms: 64 / 48, options: [
+        { mode: 'linear_phase', label: 'Mixing',
+          description: 'Deepest cuts. Adds latency your DAW lines up automatically. Not for playing through live.',
+          samples: 10240, ms: 10240 / 48 },
+        { mode: 'zero_latency', label: 'Tracking',
+          description: 'Plays in time with you. Very narrow bands cut less deeply.',
+          samples: 64, ms: 64 / 48 },
+      ], gpu_available: false, gpu_processing: false,
+      mixing_cpu_samples: 10240, mixing_gpu_samples: 10240, sample_rate: 48000,
     },
+    intensity_pct: 100, mix_pct: 100, trim_db: 0,
+    auto_gain: true, auto_gain_db: 0,
     macros: [], morph: 0,
   };
 }
@@ -192,6 +242,13 @@ window.pulp = {
   initial(type) {
     if (type === 'processing_state_get') return __spectrClone(__spectrState);
     if (type === 'build_info_get') return __spectrClone(__spectrBuildInfo);
+    if (type === 'output_levels_get') return __spectrClone({
+      trim_db: __spectrState.trim_db,
+      mix_pct: __spectrState.mix_pct,
+      intensity_pct: __spectrState.intensity_pct,
+      auto_gain: __spectrState.auto_gain,
+      auto_gain_db: __spectrState.auto_gain_db,
+    });
     return null;
   },
   on(type, callback) {
@@ -202,6 +259,13 @@ window.pulp = {
     window.__spectrPosts.push({ type, payload, id });
     if (type === 'editor_ready') {
       setTimeout(() => window.__spectrEmit('processing_state_hydrate', __spectrState), 0);
+      setTimeout(() => window.__spectrEmit('output_meter', {
+        schema_version: 1, peak_db: null, over: false,
+        trim_db: __spectrState.trim_db, mix_pct: __spectrState.mix_pct,
+        intensity_pct: __spectrState.intensity_pct,
+        auto_gain: __spectrState.auto_gain,
+        auto_gain_db: __spectrState.auto_gain_db,
+      }), 0);
       setTimeout(() => window.__spectrEmit('analyzer_frame', __spectrFrame(1, 0)), 120);
       setTimeout(() => window.__spectrEmit('analyzer_frame', __spectrFrame(2, 1)), 420);
     }
@@ -230,14 +294,21 @@ function reactVendorScripts() {
   let manifest;
   try { manifest = JSON.parse(match[1]); }
   catch (error) { fail(`editor vendor manifest is invalid: ${error.message}`); }
-  const vendor = Object.values(manifest).filter(entry => entry.mime === 'text/javascript').slice(0, 2);
-  assert(vendor.length === 2, 'editor vendor manifest has no React/ReactDOM pair');
-  return vendor.map(entry => {
-    let bytes = Buffer.from(entry.data, 'base64');
-    if (entry.compressed) bytes = zlib.gunzipSync(bytes);
+  const vendor = Object.entries(manifest).filter(([, entry]) => entry.mime === 'text/javascript')
+    .map(([id, entry]) => {
+      let bytes = Buffer.from(entry.data, 'base64');
+      if (entry.compressed) bytes = zlib.gunzipSync(bytes);
+      return { id, entry, bytes, text: bytes.toString('utf8') };
+    });
+  const react = vendor.filter(item => item.text.includes('react.development.js'));
+  const reactDom = vendor.filter(item => item.text.includes('react-dom.development.js'));
+  assert(react.length === 1 && reactDom.length === 1,
+    'editor vendor manifest lacks uniquely identified React/ReactDOM bytes');
+  const entries = [react[0], reactDom[0]].map(({ id, entry, bytes }) => {
     const source = bytes.toString('utf8').replace(/<(?=\/?script\b)/gi, '\\x3c');
-    return `<script>${source}</script>`;
-  }).join('');
+    return { id, sha256: sha256(bytes), bytes: `<script>${source}</script>` };
+  });
+  return { html: entries.map(entry => entry.bytes).join(''), entries: entries.map(({ id, sha256 }) => ({ id, sha256 })) };
 }
 
 function reservePort() {
@@ -492,7 +563,8 @@ async function main(argv) {
     missingAsset = Array.from(assets.keys()).at(-1);
     assets.delete(missingAsset);
   }
-  const html = injectBridge(document.html, `${reactVendorScripts()}${bridgeScript(fixture)}`);
+  const vendors = reactVendorScripts();
+  const html = injectBridge(document.html, `${vendors.html}${bridgeScript(fixture)}`);
   write(path.join(outDir, 'runtime-with-bridge.html'), html);
   const sourceSha256 = sha256(artifactBytes);
   const fixtureSha256 = sha256(fixtureBytes);
@@ -506,6 +578,7 @@ async function main(argv) {
       sequences: fixture.sequences, visibleSamples: fixture.visibleSamples,
       overviewSamples: fixture.overviewSamples },
     editor: { nVisible: 32, minHz: 20, maxHz: 20000, analyzerMode: 0, visualizationMode: 2 },
+    environment: { reactVendorScripts: vendors.entries },
     authority: { browserArtifact: path.relative(REPO, artifactPath),
       nativeArtifact: path.relative(REPO, artifactPath),
       joinMode: 'same-materialized-runtime-diagnostic' },

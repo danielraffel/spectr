@@ -40,10 +40,14 @@ def main():
         state["native"] = {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}
         fixture_sha = hashlib.sha256(b"fixture-analyzer").hexdigest()
         state["analyzer"] = {"fixtureSha256": fixture_sha}
+        authority = {"browserArtifact": "source.html", "nativeArtifact": "source.html",
+                     "joinMode": "same-artifact"}
+        state["authority"] = authority
         state_hash = state_digest(state)
         state["stateSha256"] = state_hash
         native_receipt = {"schema": "spectr-native-shot-receipt-v1",
                           "stateSha256": state_hash, "sourceSha256": source_sha,
+                          "authority": authority,
                           "binarySha256": state["native"]["binarySha256"],
                           "analyzerFixtureSha256": fixture_sha,
                           "pngSha256": hashlib.sha256(native_png.read_bytes()).hexdigest(),
@@ -53,6 +57,7 @@ def main():
         receipt = {
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
+            "authority": authority,
             "stateSha256": state_hash,
             "parityState": state,
             "fixedViewport": {"width": 4, "height": 3, "deviceScaleFactor": 1},

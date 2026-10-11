@@ -598,3 +598,112 @@ This closes the browser evidence gap but does not claim native pixel parity or
 production cutover. A same-authority native join still reports a large measured
 renderer/composition difference and remains the next repair gate; the existing
 `editor.html` versus materialized-runtime comparison remains diagnostic only.
+
+## 2026-10-10 corrected state hydration and authenticated same-artifact join
+
+The authority-aligned browser bridge now mirrors the native
+`make_editor_state_payload` contract for the mature controls that were missing
+from the first oracle pass: nested freeze state and canonical length values,
+standalone keyboard policy, Tracking latency (`64` samples / `1.333` ms with
+the `10240`-sample mixing option), default modulation routes and depth, native
+level fields, synchronous `output_levels_get`, and the initial output-meter
+publication. The source remains
+`/Volumes/Workshop/Code/spectr-parity-closeout-20261010/tools/materialized_runtime_chromium_oracle.mjs`;
+`node --check` passes.
+
+The corrected Chromium receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-oracle-state-corrected-20261010-r2/receipt.json`
+(SHA-256 `ba9ded8c21268a2a0f9f9932efceafa21e6a074cd7d474d0cfc02901b3007263`).
+It proves three canvas layers, analyzer sequences 1 and 2, a real dropdown
+interaction, zero application console/network errors, and byte-identical
+settled captures at 2640x1720. The settled image is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-oracle-state-corrected-20261010-r2/settled.png`
+(SHA-256 `ffe13738d0a2db300cb9dfb10377699f23351b7aa5424ee5f9de377d956f4335`).
+
+`tools/join_materialized_runtime_parity.py` now authenticates both receipts,
+the shared materialized artifact, analyzer fixture, native binary, viewport,
+and PNG dimensions. It normalizes the browser receipt's `dpr` spelling to the
+state manifest's `deviceScaleFactor` and rejects conflicting aliases. The
+focused boundary test is registered as
+`Spectr-materialized-parity-join-boundary` and passes; the one-pixel planted
+negative also passes.
+
+The authenticated diagnostic join is retained at
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-parity-join-20261010.json`
+(SHA-256 `38eb365bd76a2afefe138bbf06375c12493f514f82c848d2bc10e6c1daf326c5`).
+It reports `4,328,800 / 4,540,800` differing pixels and MAE
+`2.5303022595` against the CPU Skia capture, a small improvement over the
+synthetic bridge but still far from parity. The negative-control receipt is
+`/Volumes/Workshop/Code/agent-artifacts/spectr-materialized-runtime-parity-negative-20261010.json`
+(SHA-256 `17c83d18a665dd1dbd55f971546aad3806fb5785720ce5740e250020a4e5ea55`).
+The remaining gap is therefore renderer/layout composition and text fitting,
+including the visible `AUTO` and Tracking footer clipping; no threshold was
+weakened and native parity remains open.
+
+## 2026-10-10 adversarial old/new source regression rerun
+
+The old Claude Design source and the current `resources/editor.html` were
+captured again in the same Chrome 155 process with the strict root/canvas,
+canvas-ink, and zero console/network-error checks. Both mounted one root and
+two canvases at 1320x860 / DPR 1. The old source is
+`/Users/danielraffel/Downloads/Claude/Spectr/Spectr (standalone).html` with
+SHA-256 `7ae6f1d807f2f356b8473d9e672a95535adbe7affea58af360f9ac5c211daf9e`;
+the current editor is `resources/editor.html` with SHA-256
+`5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558`.
+
+The old source is animated and is not screenshot-byte-stable: three clean
+runs produced screenshot hashes `db710f0a8965a08cad8becf4599fd569afdbce00e601a79ac0be11678e448b54`,
+`f938ec5a5d42e386a6b91e8d209dd3b85c7f2b651ee004cefd2d4ecfc67b7e7b`, and
+`7ffdf17dfbf0b661a9039441b24c92d4320143ba3f2b9ec6e8cd12a1bdc0cb7d`.
+The new editor is stable across reruns at screenshot SHA-256
+`f95b6dc204a847f54996c47144bcb3100715988ff4d5e78a43940beae949ec0e`.
+The old/new image difference is therefore diagnostic rather than an exact
+parity verdict; it also includes intentional state differences (old IIR/FFT/
+HYBRID and 64 bands versus new BARS/RESPONSE/BOTH, 32 bands, and CPU
+disclosure). The planted no-ink mutation still fails the old-source gate, so
+the regression harness detects a completely blank render while preserving
+this animation caveat.
+
+The comparator now records per-canvas ink and supports
+`--require-primary-canvas-ink`. An adversarial copy with all drawing methods
+disabled on the first canvas still passed the aggregate ink check through the
+overlay canvas; the new primary-layer check rejects that mutation. The
+standards/quirks fixture suite and fresh old/new captures pass with the
+primary-layer check enabled.
+
+The captured receipts and screenshots are retained under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/old-claude/`,
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/new-editor/`,
+and the primary-layer rerun under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010/primary-rerun/`.
+
+## 2026-10-11 oracle hardening and fresh native join
+
+The authority-aligned Chromium oracle now authenticates the selected React and
+ReactDOM vendor IDs and SHA-256 values, classifies only the known Chrome GCM
+authentication diagnostics as non-fatal, and keeps the missing-asset control
+as a normal expected-failure assertion. The authority manifest negative control
+now mutates a copy and proves the validator rejects the missing field; it no
+longer relies on CTest `WILL_FAIL`.
+
+The materialized runtime's focused typography migration was applied through
+`tools/patch_materialized_editor.py --readable-typography-only` to remove the
+viewport-wide font-size override that clipped `AUTO` and the Tracking footer.
+The checked-in artifact provenance manifest was refreshed and its four focused
+source/artifact tests pass.
+
+The native target was rebuilt through the governed build wrapper. The current
+binary SHA is `76c76e84681305781e2a5ba0da127cb0eb9bd4496e7a60a8854e38ecd2db146e`;
+the materialized runtime SHA is
+`00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212`.
+The fresh browser oracle and native CPU Skia capture share the same artifact,
+fixture, viewport, state digest, and binary identity. The authenticated join
+passes all provenance checks and remains a measured diagnostic failure:
+`4,327,187 / 4,540,800` differing pixels, MAE `2.4101314746`. No parity
+threshold was weakened; the remaining work is renderer/composition repair.
+
+The current-head receipts supersede earlier pre-typography-refresh artifacts.
+They are retained in
+`/Volumes/Workshop/Code/spectr-parity-closeout-20261010/build-native/materialized-runtime-parity/`;
+the matching GPU join reports `4,361,926` differing pixels with MAE
+`2.4109404180`. The older receipts must not be used for closeout claims.

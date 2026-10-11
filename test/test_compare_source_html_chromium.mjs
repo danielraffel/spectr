@@ -11,6 +11,11 @@ assert(comparatorPath && chromePath,
   'usage: test_compare_source_html_chromium.mjs COMPARATOR CHROME');
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-compare-doctype-'));
+const sameArtifactAuthority = {
+  browserArtifact: 'fixture-source.html',
+  nativeArtifact: 'fixture-source.html',
+  joinMode: 'same-artifact',
+};
 const cases = [
   {
     name: 'doctype',
@@ -36,7 +41,8 @@ try {
     const statePath = path.join(temp, `${testCase.name}-state.json`);
     const state = {schema: 'spectr-parity-state-v1', version: 1,
       source: {sha256: crypto.createHash('sha256').update(testCase.source).digest('hex')},
-      viewport: {width: 1320, height: 860, deviceScaleFactor: 1}};
+      viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+      authority: sameArtifactAuthority};
     state.stateSha256 = stateDigest(state);
     fs.writeFileSync(statePath, JSON.stringify(state));
     const run = spawnSync(process.execPath, [
@@ -69,6 +75,39 @@ try {
         'a source without a doctype keeps the bridge at the document start');
     }
   }
+  const layeredSource = path.join(temp, 'layered.html');
+  const layeredOutput = path.join(temp, 'layered');
+  const layeredPrimaryOutput = path.join(temp, 'layered-primary');
+  const layeredMarkup = '<!doctype html><html><body><div id="root"><span>fixture</span>'
+    + '<canvas width="8" height="8"></canvas><canvas width="8" height="8"></canvas>'
+    + '<script>const canvas=document.querySelectorAll("canvas")[1];'
+    + 'canvas.getContext("2d").fillStyle="rgb(255,0,0)";'
+    + 'canvas.getContext("2d").fillRect(0,0,8,8);'
+    + 'window.pulp.postMessage("editor_ready")</script></div></body></html>';
+  fs.writeFileSync(layeredSource, layeredMarkup);
+  const layeredState = {schema: 'spectr-parity-state-v1', version: 1,
+    source: {sha256: crypto.createHash('sha256').update(layeredMarkup).digest('hex')},
+    viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+    authority: sameArtifactAuthority};
+  layeredState.stateSha256 = stateDigest(layeredState);
+  const layeredStatePath = path.join(temp, 'layered-state.json');
+  fs.writeFileSync(layeredStatePath, JSON.stringify(layeredState));
+  const aggregate = spawnSync(process.execPath, [comparatorPath,
+    '--source', layeredSource, '--output', layeredOutput, '--chrome', chromePath,
+    '--state', layeredStatePath, '--strict', '--require-canvas-ink'],
+  {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.equal(aggregate.error, undefined, aggregate.error && aggregate.error.message);
+  assert.equal(aggregate.status, 0,
+    `aggregate two-canvas ink control failed:\n${aggregate.stdout}\n${aggregate.stderr}`);
+  const primary = spawnSync(process.execPath, [comparatorPath,
+    '--source', layeredSource, '--output', layeredPrimaryOutput, '--chrome', chromePath,
+    '--state', layeredStatePath, '--strict', '--require-canvas-ink',
+    '--require-primary-canvas-ink'],
+  {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.equal(primary.error, undefined, primary.error && primary.error.message);
+  assert.notEqual(primary.status, 0,
+    'primary-canvas ink control must reject a blank first canvas');
+  assert.match(primary.stderr, /primary canvas ink check failed/);
   const malformedSource = path.join(temp, 'malformed.html');
   const malformedOutput = path.join(temp, 'malformed');
   const malformedFixture = path.join(temp, 'malformed-fixture.json');
@@ -87,6 +126,7 @@ try {
     schema: 'spectr-parity-state-v1', version: 1,
     source: {sha256: crypto.createHash('sha256').update(fs.readFileSync(malformedSource)).digest('hex')},
     viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+    authority: sameArtifactAuthority,
     analyzer: {fixtureSha256: crypto.createHash('sha256').update(fs.readFileSync(malformedFixture)).digest('hex')},
   };
   malformedStateValue.stateSha256 = stateDigest(malformedStateValue);

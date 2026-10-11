@@ -92,6 +92,15 @@ def main():
         fail("browser receipt contains console or network errors")
     if state.get("schema") != "spectr-parity-state-v1" or not integer(state.get("version")) or state.get("version") != 1:
         fail("unsupported state schema")
+    authority = state.get("authority")
+    if not isinstance(authority, dict):
+        fail("strict parity state must declare artifact authority")
+    if authority.get("joinMode") == "diagnostic-authority-mismatch":
+        fail("diagnostic authority mismatch cannot produce a strict parity verdict")
+    if authority.get("joinMode") != "same-artifact":
+        fail("strict parity state has no same-artifact authority")
+    if browser.get("authority") != authority or native.get("authority") != authority:
+        fail("browser/native receipts do not carry the shared artifact authority")
     viewport = state.get("viewport", {})
     width, height, scale = viewport.get("width"), viewport.get("height"), viewport.get("deviceScaleFactor")
     if not integer(width) or width <= 0 or not integer(height) or height <= 0:
@@ -236,6 +245,7 @@ def main():
             "png": str(native_path.resolve()),
             "sha256": digest(native_bytes),
         },
+        "authority": authority,
         "dimensions": {"width": browser_image.width, "height": browser_image.height},
         "comparison": {
             "exact": exact,
