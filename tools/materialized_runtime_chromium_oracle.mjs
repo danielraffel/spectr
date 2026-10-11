@@ -535,6 +535,9 @@ async function main(argv) {
     catch (error) { fail(`shared parity state is invalid: ${error.message}`); }
     assert(sharedState.schema === 'spectr-parity-state-v1' && sharedState.version === 1,
       'shared parity state has an unsupported schema');
+    assert(sharedState.captureKind === undefined || sharedState.captureKind === 'shared'
+      || sharedState.captureKind === 'browser-only',
+    'shared parity state has an unsupported capture kind');
   }
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
@@ -629,8 +632,9 @@ async function main(argv) {
     source: { artifact: artifactPath, artifactSha256: sourceSha256,
       htmlSha256: state.source.htmlSha256, fixture: fixturePath, fixtureSha256 },
     state, stateSha256: state.stateSha256,
-    ...(sharedState ? { sharedStateSha256: sharedState.stateSha256,
-      sharedStatePath: path.resolve(args.state) } : {}),
+    ...(sharedState && sharedState.captureKind !== 'browser-only'
+      ? { sharedStateSha256: sharedState.stateSha256,
+          sharedStatePath: path.resolve(args.state) } : {}),
     authority: state.authority,
     checks: { strict: true, readiness: true, analyzerFixture: true,
       embeddedAssetsServed: true, consoleNetworkClean: true,

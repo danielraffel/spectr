@@ -273,6 +273,8 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
             or not integer(state.get("version")) \
             or state.get("version") != 1:
         fail("unsupported parity state manifest")
+    if state.get("captureKind") == "browser-only":
+        fail("browser-only parity state cannot authorize a native join")
     try:
         computed_state = state_digest(state)
     except (TypeError, ValueError) as error:

@@ -1,6 +1,7 @@
 {
   "schema": "spectr-parity-state-v1",
   "version": 1,
+  "captureKind": "browser-only",
   "source": {
     "sha256": "00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212",
     "bytes": 1154110
@@ -56,7 +57,7 @@
       "errorThreshold": 10
     }
   ],
-  "stateSha256": "e8b52253bf26f187573c9af186ee886a8b044c5ae852e0312310df83e2a9df93",
+  "stateSha256": "8bc8b991050693eec2be4c25f73c5b97646bdfc9ec5fc8db9f406bd75ce9427e",
   "authority": {
     "browserArtifact": "native-ui/materialized/materialized-document.runtime.json",
     "nativeArtifact": "native-ui/materialized/materialized-document.runtime.json",
