@@ -495,7 +495,7 @@ struct Rig {
             throw std::runtime_error("cannot open SPECTR_ANALYZER_FIXTURE");
         const std::string fixture((std::istreambuf_iterator<char>(fixture_stream)),
                                   std::istreambuf_iterator<char>());
-        choc::json::Value parsed_fixture;
+        choc::value::Value parsed_fixture;
         try {
             parsed_fixture = choc::json::parse(fixture);
         } catch (...) {
@@ -539,8 +539,8 @@ struct Rig {
     && globalThis.SpectrAnalyzer.debugSnapshot
     && globalThis.SpectrAnalyzer.debugSnapshot();
   if (!accepted || accepted.epoch !== 1 || accepted.sequence_number !== 2
-      || !accepted.visible || accepted.visible.magnitude_db.length !== 321
-      || !accepted.visible.magnitude_db.some(value => value > -20))
+      || !accepted.visible || accepted.visible.magnitude_db.length !== spec.visibleSamples
+      || !accepted.visible.magnitude_db.some(value => value > spec.floorDb + 1))
     throw new Error('deterministic analyzer response was not accepted by the shipping runtime');
 })(); )JS", "spectr-native-shot-deterministic-analyzer");
         settle(clock, 16);

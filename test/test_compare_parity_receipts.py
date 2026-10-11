@@ -38,11 +38,14 @@ def main():
                  "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3, "deviceScaleFactor": 1}}
         state["parityRegions"] = [{"id": "all", "x": 0, "y": 0, "width": 4, "height": 3, "errorThreshold": 0}]
         state["native"] = {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}
+        fixture_sha = hashlib.sha256(b"fixture-analyzer").hexdigest()
+        state["analyzer"] = {"fixtureSha256": fixture_sha}
         state_hash = state_digest(state)
         state["stateSha256"] = state_hash
         native_receipt = {"schema": "spectr-native-shot-receipt-v1",
                           "stateSha256": state_hash, "sourceSha256": source_sha,
                           "binarySha256": state["native"]["binarySha256"],
+                          "analyzerFixtureSha256": fixture_sha,
                           "pngSha256": hashlib.sha256(native_png.read_bytes()).hexdigest(),
                           "dimensions": {"width": 4, "height": 3},
                           "deterministicAnalyzer": True,
@@ -51,6 +54,7 @@ def main():
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
             "stateSha256": state_hash,
+            "parityState": state,
             "fixedViewport": {"width": 4, "height": 3, "deviceScaleFactor": 1},
             "checks": {"strict": True},
             "positive": {"ready": {"ready": "complete", "sourceEditorReady": True,
