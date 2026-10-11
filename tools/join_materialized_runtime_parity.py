@@ -262,6 +262,8 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("browser receipt is not strict and repeatable")
     if browser.get("checks", {}).get("consoleNetworkClean") is not True:
         fail("browser receipt lacks clean console/network proof")
+    if browser.get("checks", {}).get("realInteraction") is not True:
+        fail("browser receipt lacks real interaction proof")
     browser_evidence = browser.get("browser", {})
     if not isinstance(browser_evidence.get("consoleErrors"), list) \
             or browser_evidence.get("consoleErrors"):
@@ -330,6 +332,8 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("shared parity state lacks an authority manifest")
     if authority != expected_authority:
         fail("browser authority does not match the shared parity state")
+    if authority.get("joinMode") != "same-materialized-runtime-diagnostic":
+        fail("shared parity authority has an unsupported join mode")
     if authority.get("browserArtifact") != authority.get("nativeArtifact"):
         fail("browser/native authority identities differ")
 
