@@ -66,6 +66,7 @@ try{
  const cmd=(method,params={})=>new Promise((res,rej)=>{const i=id++,t=setTimeout(()=>{pending.delete(i);rej(Error(`timeout ${method}`))},15000);pending.set(i,{resolve:x=>{clearTimeout(t);res(x)},reject:x=>{clearTimeout(t);rej(x)}});socket.send(JSON.stringify({id:i,method,params}))});
  const evalv=async expression=>{const r=await cmd('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value};
  await cmd('Runtime.enable'); await cmd('Network.enable'); await cmd('Page.enable');
+ await cmd('Emulation.setDeviceMetricsOverride',{width:viewportWidth,height:viewportHeight,deviceScaleFactor:viewportScale,mobile:false,screenWidth:viewportWidth,screenHeight:viewportHeight});
  if(plantNoInk) await cmd('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{const names=['fill','stroke','fillRect','strokeRect','clearRect','fillText','strokeText','drawImage','putImageData'];for(const name of names){const proto=globalThis.CanvasRenderingContext2D?.prototype;if(proto&&typeof proto[name]==='function')proto[name]=()=>{};}})()`});
  await cmd('Page.navigate',{url:pathToFileURL(temp).href});
  const stop=Date.now()+30000; let ready;
