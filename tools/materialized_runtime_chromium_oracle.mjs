@@ -557,10 +557,16 @@ async function main(argv) {
   }
   let missingAsset = null;
   if (args.plantMissingAsset) {
-    // The final (latin JetBrains Mono) face is requested by the visible UI,
-    // so deleting it proves the HTTP asset envelope is actually guarded by
-    // the zero-network-failure assertion rather than by an unused-file check.
-    missingAsset = Array.from(assets.keys()).at(-1);
+    // Pick the most referenced non-script asset so the negative control cannot
+    // become ineffective when materialized asset insertion order changes.
+    missingAsset = Array.from(assets.keys())
+      .filter(key => !key.endsWith('.js'))
+      .sort((left, right) => {
+        const leftCount = document.html.split(left).length - 1;
+        const rightCount = document.html.split(right).length - 1;
+        return rightCount - leftCount || left.localeCompare(right);
+      })[0];
+    assert(missingAsset, 'materialized document has no removable non-script asset');
     assets.delete(missingAsset);
   }
   const vendors = reactVendorScripts();

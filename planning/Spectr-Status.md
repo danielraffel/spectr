@@ -747,3 +747,10 @@ retained under
 `/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010-rerun/`.
 This is render-health regression evidence only; it does not establish native
 Skia/Dawn parity or production cutover.
+
+The final review also tightened the oracle negative control: it now removes the
+most-referenced non-script asset (with deterministic tie-breaking), so a future
+asset-order change cannot turn the planted missing-asset check into an unused
+asset deletion. The CMake description now accurately states that the native
+wrapper emits a provenance receipt; it does not claim cross-render scoring.
+Both authority-oracle CTest cases pass after this repair.

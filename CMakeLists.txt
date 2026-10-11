@@ -1436,8 +1436,8 @@ set_tests_properties(Spectr-native-shot PROPERTIES
 
 # Exercise the same shipping binary through its deterministic analyzer seam so
 # CI proves response acceptance and rendered plot content on the production
-# Skia/Dawn path.  The Python receipt wrapper adds provenance and cross-render
-# scoring; this row ensures the native semantic gate itself cannot silently
+# Skia/Dawn path. The Python receipt wrapper adds provenance and a stable CTest
+# receipt; this row ensures the native semantic gate itself cannot silently
 # disappear from the configured test graph.
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-native-parity-deterministic
