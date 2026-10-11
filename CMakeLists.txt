@@ -408,9 +408,21 @@ set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
 set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless_AAX")
 
+# AAX ships the same native editor as the other desktop formats by default.
+# Keep the processor-only lane available as an explicit escape hatch for
+# diagnosis, but never select it implicitly: a headless artifact opens in Pro
+# Tools with an empty editor container and can be mistaken for a broken GUI.
+option(SPECTR_AAX_HEADLESS
+    "Build a processor-only AAX artifact (no custom EffectGUI)" OFF)
+set(_spectr_native_formats VST3 AU CLAP Standalone)
+if(PULP_ENABLE_AAX AND NOT SPECTR_AAX_HEADLESS)
+    list(APPEND _spectr_native_formats AAX)
+    set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
+endif()
+
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP Standalone
+    FORMATS ${_spectr_native_formats}
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -460,11 +472,28 @@ foreach(_spectr_native_target
     endif()
 endforeach()
 
-# AAX is intentionally a separate processor-only target. Pulp's native UI
-# target links the Metal/WebGPU view stack, which makes Pro Tools load GPU/UI
-# code while it is only parsing the AAX descriptor. Keeping this target free of
-# NATIVE_UI and using PULP_AAX_PLUGIN gives discovery and audio instantiation a
-# stable, headless binary; the AU/VST3/Standalone siblings retain the editor.
+# The generated AAX wrapper is compiled as its own translation unit. Keep the
+# product headers reachable there just as they are for the native core.
+if(TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    target_include_directories(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
+endif()
+
+# The explicit headless lane remains available for isolating processor load
+# problems. Shipping/default AAX is generated above with NATIVE_UI so its entry
+# point can register PULP_AAX_PLUGIN_WITH_GUI and Pro Tools can create the
+# editor. This is deliberately conditional because the headless target must
+# not share the native view stack.
+if(SPECTR_AAX_HEADLESS)
 set(SPECTR_AAX_SOURCES
     src/spectr.cpp
     src/mask_renderer.cpp
@@ -525,6 +554,7 @@ if(TARGET ${SPECTR_AAX_TARGET}_Core)
         SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
         SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
         SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
 endif()
 
 # ── Product icon ───────────────────────────────────────────────────────

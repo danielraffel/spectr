@@ -2684,6 +2684,15 @@ window.PatternManager = PatternManager;`,
       '1': 'sculpt', '2': 'level', '3': 'boost', '4': 'flare', '5': 'glide'
     };
     const onKey = (e) => {
+      // Pro Tools reserves the comma chord at the plug-in window level, so
+      // handle it before the plain-key/overlay guards.  This mirrors the
+      // standalone Settings shortcut without stealing ordinary comma input.
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === ',') {
+        e.preventDefault();
+        setSettingsOpen(open => !open);
+        fireStatus('SETTINGS');
+        return;
+      }
       const t = e.target;
       if ((typeof document.hasFocus === 'function' && !document.hasFocus())
           || e.isComposing || e.keyCode === 229 || e.repeat

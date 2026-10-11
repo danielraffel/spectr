@@ -378,6 +378,13 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #endif
         .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
+        // Pro Tools filters insert choices by the declared AAX stem layout.
+        // Publish both common track widths so Spectr is available on a new
+        // mono track as well as the stereo layout used by saved sessions.
+        .supported_bus_layouts = {
+            {.inputs = {1}, .outputs = {1}, .name = "Mono"},
+            {.inputs = {2}, .outputs = {2}, .name = "Stereo"},
+        },
     };
 }
 
