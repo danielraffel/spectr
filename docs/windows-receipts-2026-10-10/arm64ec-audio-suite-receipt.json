@@ -21,6 +21,6 @@
     "status": "headless_audio_suite_pass",
     "reaper": "discovery only; no observed plugin instance",
     "ableton": "not attempted",
-    "gpu_ui": "not included; ARM64EC Skia/Dawn artifacts remain unavailable"
+    "gpu_ui": "not included; native win-arm64 Skia/Dawn is available, but an ARM64EC-compatible static-library build is still required"
   }
 }

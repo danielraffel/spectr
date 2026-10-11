@@ -40,7 +40,7 @@
   },
   "scope": {
     "status": "headless_audio_build_proven",
-    "gpu_ui": "not_proven; matching ARM64EC Skia/Dawn archives are unavailable",
+    "gpu_ui": "not_proven; the pinned win-arm64 Skia/Dawn archive exists, but no ARM64EC-compatible static-library build was available for this ARM64EC link",
     "reaper": "not_proven; no desktop host-instance receipt",
     "ableton": "not_attempted"
   }
