@@ -34,6 +34,7 @@ import shutil
 import sys
 
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
+PROVENANCE_PATH = 'native-ui/materialized/materialized-document.provenance.json'
 RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 CAPTURE_DOCUMENT_PATHS = [
@@ -5981,6 +5982,16 @@ def migrate_readable_typography_only():
     if changed:
         open(PATH, 'w', encoding='utf-8').write(
             json.dumps(document, ensure_ascii=False, separators=(',', ':')))
+        # Keep the checked-in provenance receipt coupled to the generated
+        # artifact so this supported migration cannot leave a stale digest.
+        provenance = json.loads(open(PROVENANCE_PATH, encoding='utf-8').read())
+        artifact_bytes = open(PATH, 'rb').read()
+        provenance.setdefault('artifact', {})['path'] = PATH
+        provenance['artifact']['sha256'] = __import__('hashlib').sha256(artifact_bytes).hexdigest()
+        provenance['artifact']['bytes'] = len(artifact_bytes)
+        open(PROVENANCE_PATH, 'w', encoding='utf-8').write(
+            json.dumps(provenance, indent=2, ensure_ascii=False) + '\n')
+        print('written', PROVENANCE_PATH)
         print('written', PATH)
     else:
         print('already applied readable typography migration')

@@ -227,6 +227,8 @@ def image_metrics(left: Image.Image, right: Image.Image, regions: list[dict]) ->
 def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
                  binary: Path, fixture: Path, browser_png: Path,
                  native_png: Path) -> dict:
+    if Image is None:
+        fail("Pillow is required for image parity comparison")
     if browser.get("schema") != "spectr-materialized-runtime-browser-receipt-v1":
         fail("unsupported browser receipt schema")
     if native.get("schema") != "spectr-native-shot-receipt-v1":

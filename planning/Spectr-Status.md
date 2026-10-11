@@ -754,3 +754,12 @@ asset-order change cannot turn the planted missing-asset check into an unused
 asset deletion. The CMake description now accurately states that the native
 wrapper emits a provenance receipt; it does not claim cross-render scoring.
 Both authority-oracle CTest cases pass after this repair.
+
+Thermonuclear review follow-through closed two boundary issues. The focused
+materialized-editor migration now refreshes the artifact SHA/byte count in its
+provenance receipt whenever it writes the generated runtime. The parity join
+now fails with a clear Pillow dependency diagnostic before attempting image
+opens; its dependency-free boundary test remains usable without Pillow.
+The review also confirmed the browser oracle's manually mirrored editor state
+is an intentional staging limitation, documented as such rather than treated
+as native production proof; production cutover remains false.
