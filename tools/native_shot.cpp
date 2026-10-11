@@ -1053,6 +1053,35 @@ void capture(Rig& rig,
                       backend, scale, true);
 }
 
+// The whole-frame content floor can be satisfied by the editor chrome alone.
+// The deterministic analyzer contract therefore also floors the plot region
+// that must contain the injected analyzer response.
+bool deterministic_analyzer_region(Rig& rig,
+                                   pulp::view::ScreenshotBackend backend,
+                                   float scale) {
+    const auto png = pulp::view::render_to_png(
+        *rig.root, static_cast<std::uint32_t>(kDesignWidth),
+        static_cast<std::uint32_t>(kDesignHeight), scale, backend);
+    const auto crop = pulp::view::crop_png(
+        png, 0, static_cast<std::uint32_t>(std::lround(44.0f * scale)),
+        static_cast<std::uint32_t>(std::lround(kDesignWidth * scale)),
+        static_cast<std::uint32_t>(std::lround(700.0f * scale)));
+    if (crop.empty()) {
+        std::fprintf(stderr, "FAIL parity-analyzer-region: empty plot crop\n");
+        ++g_failures;
+        return false;
+    }
+    const auto stats = pulp::view::analyze_screenshot_content(crop);
+    const bool ok = stats.passes_content_floor()
+        && stats.unique_colors > 100
+        && stats.luminance_stddev > 1.0;
+    std::printf("%s parity-analyzer-region colors=%u lum_sd=%.2f nonbg=%.3f\n",
+                ok ? "OK  " : "FAIL", stats.unique_colors,
+                stats.luminance_stddev, stats.non_background_coverage);
+    if (!ok) ++g_failures;
+    return ok;
+}
+
 // Address one shipping control by its authored HTML `id`. The materialized
 // runtime carries an element's authored id through as the view id, so
 // `spectr-snapshot-capture-a` reaches the real control rather than one of the
@@ -1706,6 +1735,7 @@ int main(int argc, char** argv) {
             && std::string_view(deterministic_analyzer) == "1") {
             rig.inject_deterministic_analyzer_frames();
             capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
+            deterministic_analyzer_region(rig, backend, scale);
             if (g_failures != 0) {
                 std::fprintf(stderr,
                              "FAIL: parity-deterministic-analyzer content floor\n");
