@@ -93,6 +93,17 @@ def main() -> None:
     else:
         raise AssertionError("browser authority mismatch was accepted")
     browser["authority"] = authority
+    browser["state"]["version"] = True
+    browser["stateSha256"] = state_digest(browser["state"])
+    try:
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
+                               expected_viewport, expected_dimensions)
+    except SystemExit as error:
+        assert "unsupported or missing browser state envelope" in str(error)
+    else:
+        raise AssertionError("boolean browser state version was accepted")
+    browser["state"]["version"] = 1
+    browser["stateSha256"] = state_digest(browser["state"])
     browser["stateSha256"] = "stale-state"
     try:
         validate_browser_state(browser, shared_state, "artifact", "fixture",
