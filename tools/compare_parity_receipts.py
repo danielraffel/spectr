@@ -174,7 +174,7 @@ def main():
     for region in state.get("parityRegions", []):
         region_id = region.get("id")
         box = tuple(region.get(key) for key in ("x", "y", "width", "height"))
-        if not region_id or any(not isinstance(value, int) for value in box):
+        if not region_id or any(isinstance(value, bool) or not isinstance(value, int) for value in box):
             fail("parity region requires id and integer x/y/width/height")
         x, y, width, height = box
         if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > left.width or y + height > left.height:
@@ -184,7 +184,7 @@ def main():
         region_max = max(high for _, high in region_extrema)
         region_pixels = list(region_diff.getdata())
         threshold = region.get("errorThreshold", 0)
-        if not isinstance(threshold, int) or threshold < 0:
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0:
             fail(f"parity region errorThreshold must be a non-negative integer: {region_id}")
         region_reports.append({
             "id": region_id,
