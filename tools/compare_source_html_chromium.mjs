@@ -33,6 +33,8 @@ if(statePath){
  const sourceStateSha=parityState.source?.sha256;
  if(sourceStateSha && sourceStateSha!==sha(bytes)) throw new Error(`parity state source mismatch: ${sourceStateSha} != ${sha(bytes)}`);
  parityState.stateSha256=declared;
+ if(analyzerFixturePath && !parityState.analyzer?.fixtureSha256)
+  throw new Error('--analyzer-fixture requires analyzer.fixtureSha256 in state');
  if(parityState.analyzer?.fixtureSha256) {
   if(!analyzerFixturePath) throw new Error('--state with analyzer fixture requires --analyzer-fixture');
   analyzerFixture=JSON.parse(fs.readFileSync(analyzerFixturePath,'utf8'));
