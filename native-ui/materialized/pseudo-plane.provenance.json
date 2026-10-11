@@ -1,0 +1,36 @@
+{
+  "schema": "spectr-materialized-pseudo-binding-v1",
+  "version": 1,
+  "source": {
+    "path": "resources/editor.html",
+    "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
+    "selector": "body::before",
+    "authored": {
+      "position": "fixed",
+      "inset": "0",
+      "pointer_events": "none",
+      "z_index": 0,
+      "background_layers": [
+        "radial-gradient(ellipse 80% 60% at 50% 20%, var(--glow-1), transparent 60%)",
+        "radial-gradient(ellipse 60% 40% at 20% 80%, var(--glow-2), transparent 60%)",
+        "var(--bg)"
+      ]
+    }
+  },
+  "materialized": {
+    "path": "native-ui/materialized/design.js",
+    "sha256": "e32921a6491078d6b6ad7b2571126b6bd1e17d539b18d6559ef7514a8391d802",
+    "node_id": "Pseudo_body_before",
+    "parent_id": "root",
+    "position": "absolute",
+    "left": 0,
+    "top": 0,
+    "width": 1320,
+    "height": 860,
+    "background": "rgb(5, 7, 10)",
+    "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
+    "opacity": 1,
+    "z_index": 0,
+    "pointer_events": "none"
+  }
+}

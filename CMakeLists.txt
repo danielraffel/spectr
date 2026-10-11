@@ -281,6 +281,10 @@ add_test(NAME Spectr-materialized-static-grid-zindex
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
 set_tests_properties(Spectr-materialized-static-grid-zindex PROPERTIES TIMEOUT 30)
+add_test(NAME Spectr-materialized-pseudo-plane
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_pseudo_plane.py)
+set_tests_properties(Spectr-materialized-pseudo-plane PROPERTIES TIMEOUT 30)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
