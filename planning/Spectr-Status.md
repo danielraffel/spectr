@@ -784,3 +784,13 @@ Final closeout reviews at commit `2abf5c6`:
 - accepted limits remain explicit: the browser state is a staging mirror, the
   CPU/GPU same-artifact joins are diagnostic failures, and production cutover
   is false.
+
+## 2026-10-11 CI follow-up: refresh WP-1 runtime allowlist
+
+The first M5 product-acceptance run for PR 270 found a stale WP-1 runtime-surface
+allowlist pin: it still referenced the pre-typography runtime
+(`d3d39680…`, 1,154,153 bytes), while the authenticated checked-in artifact is
+`00a8ca66…`, 1,154,110 bytes. The allowlist now records the current artifact
+SHA and byte count. The eight runtime-surface tests and seven full-App import
+mount tests pass, including their tamper and negative controls. This is a
+Spectr fixture refresh only; no Pulp/Vellum source path is involved.
