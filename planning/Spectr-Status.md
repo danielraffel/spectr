@@ -817,3 +817,33 @@ including the refreshed WP-1 runtime allowlist and adopted staging documentation
 The merged status remains honest: same-materialized-artifact CPU/GPU joins are
 still diagnostic failures, the browser state is staging evidence, and native
 pixel parity/production cutover remain open follow-up work.
+
+## 2026-10-11 measured parity cause: dropped authored radial glow
+
+A controlled same-materialized-runtime experiment isolated a concrete importer
+fidelity defect. The browser oracle and native Skia capture already share the
+runtime artifact, fixture, state digest, viewport, and binary receipt. With the
+normal browser capture, the CPU join reports whole-frame MAE `2.4101314746` and
+plot MAE `1.8900684732`. In a temporary browser-only diagnostic capture that
+disables the authored `body::before` radial-glow layer, those values fall to
+whole-frame MAE `1.52351` and plot MAE `0.90401`; disabling `body::after` alone
+has no material effect. Native CPU/GPU agreement remains close, so this is not
+a Skia-versus-Dawn divergence.
+
+The source audit found the generic importer drops `body::before` and
+`body::after`: `core/view/src/design_import.cpp` skips selectors containing `:`
+(and the materialized-runtime transform has no pseudo-element extraction).
+The current native DesignIR therefore omits an authored browser paint layer.
+This is a generic Pulp importer/materializer defect, not a Spectr-specific
+renderer workaround. The experiment is diagnostic evidence only; the temporary
+CSS override was not committed and is not a parity fix.
+
+The next implementation must be routed through the Vellum integration owner
+before editing `core/view/src/design_import.cpp`,
+`tools/import-design/jsx-runtime/materialized-runtime-transform.mjs`, or any
+other exported importer/materializer surface. The routed change should add a
+minimal deterministic pseudo-element paint representation (or an explicit
+fail-closed unsupported-paint receipt), then rebuild the same Spectr artifact
+and require a lower plot MAE without increasing native CPU/GPU divergence.
+Kill the experiment if it only changes the browser oracle or if the measured
+improvement does not reproduce from a fresh import.
