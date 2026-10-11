@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-11T06:38:00Z",
+  "source": {
+    "spectr_sha": "2bef773265c0f3196db8fc77f761307cbbde9de6",
+    "pulp_sdk_sha": "d9b218422382d29fafad7d116343b7b422eed44f",
+    "skia_dawn_archive_sha256": "c494cc3fc51b344b35ce776b77e6a70f1cb123b645f216aca07f7be4a281d9cc",
+    "build": "PULP_ENABLE_GPU=ON; MSVC ARM64; 186/186 Spectr steps succeeded"
+  },
+  "artifacts": {
+    "vst3": {
+      "path": "C:\\builds\\spectr-arm64-gpu\\VST3\\Spectr.dll",
+      "bytes": 23444992,
+      "sha256": "a0611bc25bb3f31af440c43e4ef82e684c88e9dff861e55d1ead19de9e1a92a3"
+    },
+    "clap": {
+      "path": "C:\\builds\\spectr-arm64-gpu\\CLAP\\Spectr.clap",
+      "bytes": 23331328,
+      "sha256": "59f7b1d6cc67e42230fed10fe1a9835c6d06807ad22a330ab3c19fca50498aac"
+    },
+    "icudtl": {
+      "path": "C:\\builds\\spectr-arm64-gpu\\icudtl.dat",
+      "bytes": 10876560
+    },
+    "wgpu_native": {
+      "path": "C:\\builds\\spectr-arm64-gpu\\wgpu_native.dll",
+      "bytes": 6620160
+    }
+  },
+  "guests": [
+    {
+      "provider": "direct-qemu-hvf",
+      "guest": "Windows 11 ARM64",
+      "ssh": "127.0.0.1:50375",
+      "install_paths": [
+        "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+        "C:\\Program Files\\Common Files\\CLAP\\Spectr.clap"
+      ],
+      "install_status": "PASS"
+    },
+    {
+      "provider": "UTM 5.0.6",
+      "vm_uuid": "36132D8D-99F7-4916-A6D8-935A6F4AF55F",
+      "guest": "PULP-WIN-CI Windows 11 ARM64",
+      "ssh": "127.0.0.1:50376",
+      "rdp": "127.0.0.1:53390",
+      "install_paths": [
+        "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+        "C:\\Program Files\\Common Files\\CLAP\\Spectr.clap"
+      ],
+      "install_status": "PASS",
+      "guest_agent": "not available; SSH/RDP forwards verified"
+    }
+  ],
+  "verification": {
+    "ssh_banner": "OpenSSH_for_Windows_9.5",
+    "runtime_files_present": true,
+    "reaper_editor_or_instance": "UNVERIFIED",
+    "reason": "The retained UTM Windows console session was already connected; FreeRDP received ERRINFO_RPC_INITIATED_DISCONNECT. No screenshot or instance claim is made.",
+    "next_gate": "Reconnect after the console session is released, rescan REAPER ARM64, capture screenshot and host-instance receipt."
+  },
+  "scope": "development evidence; no TartCI or GitHub runner use"
+}
