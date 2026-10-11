@@ -65,6 +65,7 @@ Spectr editor
 
 # Static grid canvas stacking and idempotent materialized patch control.
 ^Spectr-materialized-static-grid-zindex$
+^Spectr-materialized-pseudo-plane$
 
 # The idle draw loop and its fourteen plants. Same reason: `materialized`
 # matches them but can never report their absence -- and this whole suite

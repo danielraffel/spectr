@@ -12,6 +12,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "native-ui" / "materialized" / "pseudo-plane.provenance.json"
 EXPECTED_SCHEMA = "spectr-materialized-pseudo-binding-v1"
+EXPECTED_AUTHORED_LAYERS = [
+    "radial-gradient(ellipse 80% 60% at 50% 20%, var(--glow-1), transparent 60%)",
+    "radial-gradient(ellipse 60% 40% at 20% 80%, var(--glow-2), transparent 60%)",
+    "var(--bg)",
+]
+EXPECTED_MATERIALIZED = {
+    "node_id": "Pseudo_body_before",
+    "parent_id": "root",
+    "position": "absolute",
+    "left": 0,
+    "top": 0,
+    "width": 1320,
+    "height": 860,
+    "background": "rgb(5, 7, 10)",
+    "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
+    "opacity": 1,
+    "z_index": 0,
+    "pointer_events": "none",
+}
 
 
 def sha256(path: Path) -> str:
@@ -63,11 +82,14 @@ def validate(manifest_path: Path, *, source_path: Path | None = None,
         fail("authored pseudo geometry drifted")
     if authored.get("pointer_events") != "none" or authored.get("z_index") != 0:
         fail("authored pseudo interaction or paint order drifted")
-    if len(authored.get("background_layers", [])) != 3:
-        fail("authored pseudo background layer count drifted")
+    if authored.get("background_layers") != EXPECTED_AUTHORED_LAYERS:
+        fail("authored pseudo background layers drifted")
 
     if materialized.get("path") != "native-ui/materialized/design.js":
         fail("materialized pseudo path drifted")
+    for key, expected in EXPECTED_MATERIALIZED.items():
+        if materialized.get(key) != expected:
+            fail(f"materialized pseudo {key} drifted")
     if verify_design_hash and sha256(design_path) != materialized.get("sha256"):
         fail("design.js does not match the pseudo binding provenance")
     design_text = design_path.read_text(encoding="utf-8")
@@ -121,6 +143,12 @@ def main() -> int:
                                 "createCol('Pseudo_body_before', 'root');\n  createCol('Pseudo_body_before', 'root');", 1),
             encoding="utf-8")
         expect_rejected(MANIFEST, design_path=duplicate_design)
+
+        mutated_manifest = temp_path / "manifest-mutated.json"
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        manifest["materialized"]["z_index"] = 2
+        mutated_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        expect_rejected(mutated_manifest)
     print("PASS: body::before pseudo plane provenance and negative controls")
     return 0
 
