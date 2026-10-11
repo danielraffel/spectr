@@ -67,6 +67,13 @@ REAPER x64 proof is recorded in
 It proves visible Spectr controls and non-silent audio through REAPER using
 Dummy Audio. No signed x64 installer artifact is currently available.
 
+The development-only Perfetto trace proof is recorded in
+`docs/windows-receipts-2026-10-10/proxmox-x64-perfetto-trace-receipt.json`.
+The hidden Windows trace test passed 14 assertions and produced seven
+nonzero `.pftrace` files. The receipt includes the Pulp, Perfetto, and Spectr
+hashes plus trace-processor query results. These traces are for engineering
+analysis; they are not shipping artifacts or Ableton acceptance.
+
 ## Known limits
 
 - The current Pulp SDK has arm64-only Pulp runtime archives, so an Intel macOS
