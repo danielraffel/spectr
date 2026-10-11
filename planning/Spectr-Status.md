@@ -771,3 +771,16 @@ with an undeclared missing receipt. Governed rebuilding regenerated the target;
 boundary all pass afterward. The build emitted one pre-existing
 `src/spectr.cpp` dangling-GSL warning; it is outside this parity tooling diff
 and did not fail the target.
+
+Final closeout reviews at commit `2abf5c6`:
+
+- structured autoreview (Codex, branch vs `origin/main`) reported no
+  accepted/actionable findings and marked the patch correct;
+- the independent thermonuclear review reported zero must-fix findings and
+  passed the closeout. Its two should-fix refactors are deferred to the next
+  importer wave: share/reformat the dense Node fixture/state helpers and
+  consolidate overlapping receipt authentication between the legacy comparator
+  and the materialized joiner;
+- accepted limits remain explicit: the browser state is a staging mirror, the
+  CPU/GPU same-artifact joins are diagnostic failures, and production cutover
+  is false.
