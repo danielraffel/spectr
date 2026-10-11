@@ -303,6 +303,9 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
 
     if native.get("pngSha256") != sha256(native_png):
         fail("native PNG SHA does not match receipt")
+    declared_native_png = receipt_path(native, "png")
+    if declared_native_png is not None and declared_native_png != native_png:
+        fail("explicit native PNG is not the image in its receipt")
     settled = receipt_path(browser, "browser", "screenshots", "settled", "path")
     if settled is not None and settled != browser_png:
         fail("explicit browser PNG is not the settled image in its receipt")

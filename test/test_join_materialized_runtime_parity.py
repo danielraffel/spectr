@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the browser/native join's receipt-boundary normalization."""
 
+import os
 import sys
 import tempfile
-import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
