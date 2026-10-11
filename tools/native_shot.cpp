@@ -1706,6 +1706,11 @@ int main(int argc, char** argv) {
             && std::string_view(deterministic_analyzer) == "1") {
             rig.inject_deterministic_analyzer_frames();
             capture(rig, dir, prefix + "deterministic-analyzer", backend, scale);
+            if (g_failures != 0) {
+                std::fprintf(stderr,
+                             "FAIL: parity-deterministic-analyzer content floor\n");
+                return 1;
+            }
             std::printf("OK  parity-deterministic-analyzer-ready contract=spectr-parity-v1 sequence=2\n");
             return 0;
         }
