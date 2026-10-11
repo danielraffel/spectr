@@ -3,6 +3,7 @@
 
 import sys
 import tempfile
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 try:
     from join_materialized_runtime_parity import (normalize_viewport,
                                                   require_embedded_artifact,
+                                                  require_native_executable,
                                                   state_digest,
                                                   validate_browser_state)
 except ModuleNotFoundError as error:
@@ -103,6 +105,13 @@ def main() -> None:
             assert "does not embed the exact source artifact bytes" in str(error)
         else:
             raise AssertionError("stale binary embedding was accepted")
+        os.chmod(binary, 0o755)
+        try:
+            require_native_executable(binary, {"binary": str(binary)})
+        except SystemExit as error:
+            assert "Mach-O" in str(error)
+        else:
+            raise AssertionError("non-Mach-O fake binary was accepted")
 
     print("PASS: materialized parity viewport aliases normalize safely")
 

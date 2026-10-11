@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -58,6 +59,23 @@ def require_embedded_artifact(binary: Path, artifact: Path) -> None:
     image = binary.read_bytes()
     if source not in image:
         fail("native binary does not embed the exact source artifact bytes")
+
+
+def require_native_executable(binary: Path, native: dict) -> None:
+    """Reject a receipt paired with a non-native or different executable."""
+    if not os.access(binary, os.X_OK):
+        fail("native binary is not executable")
+    # arm64/x86_64 thin Mach-O and universal Mach-O headers.  Spectr-native-shot
+    # is a macOS production executable; accepting an arbitrary data file here
+    # would let a fabricated receipt satisfy the outer SHA checks.
+    if binary.read_bytes()[:4] not in {
+        b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
+        b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+    }:
+        fail("native binary is not a Mach-O executable")
+    declared = native.get("binary")
+    if not isinstance(declared, str) or Path(declared).resolve() != binary:
+        fail("native receipt binary path does not match the supplied executable")
 
 
 def require_file(path: Path, label: str) -> None:
@@ -213,6 +231,7 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("unsupported browser receipt schema")
     if native.get("schema") != "spectr-native-shot-receipt-v1":
         fail("unsupported native receipt schema")
+    require_native_executable(binary, native)
     if native.get("deterministicAnalyzer") is not True:
         fail("native receipt lacks deterministic analyzer proof")
     if native.get("stateSha256") != state.get("stateSha256"):
