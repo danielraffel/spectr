@@ -42,6 +42,7 @@ echo "Windows user: $username"
 sdl-freerdp \
   /v:"127.0.0.1:$rdp_port" \
   /u:"$username" /d:"$rdp_domain" /p:"$password" /cert:ignore \
+  /admin \
   /size:"${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
   +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution &
 rdp_pid=$!
