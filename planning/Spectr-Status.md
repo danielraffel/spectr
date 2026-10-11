@@ -503,3 +503,22 @@ rebuilt native binary SHA is
 The next action is to commit this hardening, rerun both independent reviews,
 refresh the exact-head receipts, and then drive PR
 <https://github.com/Generous-Corp/spectr/pull/270> through merge proof.
+
+## 2026-10-11 artifact-authority parity finding
+
+Ultra’s source audit found that `resources/editor.html` and the shipping
+`native-ui/materialized/materialized-document.runtime.json` are intentionally
+different artifacts. The native surface contains mature LENGTH, MIX, INTENSITY,
+OUTPUT, AUTO, PEAK, and tracking controls that the browser source does not.
+Replacing the materialized artifact with `editor.html` would discard existing
+product behavior, so it is not an acceptable pixel-parity fix.
+
+The same-artifact experiment extracted both materialized document forms for
+Chromium. The plain document references external materialized assets and fails
+with file-not-found loads. The runtime document is self-contained enough to
+load, but still requires the native host bridge and does not mount under the
+generic browser oracle. This proves the next parity slice must build a
+materialized-runtime Chromium oracle with the same host bridge and state
+contract. The current strict `editor.html` versus native-materialized join is
+retained as a diagnostic and is not treated as evidence that the importer
+itself can reach pixel parity.
