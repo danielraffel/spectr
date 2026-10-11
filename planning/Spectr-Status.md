@@ -805,3 +805,15 @@ executing all 59 authored modules in a deterministic VM. The allowlist is
 required and fails closed when omitted. This remains staging evidence; browser
 behavior, Chromium parity, native Skia/Dawn parity, and production replacement
 of `resources/editor.html` remain open.
+
+## 2026-10-11 verified merge closeout
+
+PR <https://github.com/danielraffel/spectr/pull/270> merged at commit
+<https://github.com/danielraffel/spectr/commit/bfac6b0c91639bfe636bf6eff96041542628fe03>
+from exact head `51baae0b22a93c14be67322aa43034adf841715e`. The M5 product
+acceptance gate passed at
+<https://github.com/danielraffel/spectr/actions/runs/38113931934/job/114394945212>`,
+including the refreshed WP-1 runtime allowlist and adopted staging documentation.
+The merged status remains honest: same-materialized-artifact CPU/GPU joins are
+still diagnostic failures, the browser state is staging evidence, and native
+pixel parity/production cutover remain open follow-up work.
