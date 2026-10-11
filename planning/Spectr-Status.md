@@ -483,8 +483,9 @@ remain separate, testable gates:
 
 Current exact-head evidence after the P2 fixes:
 
-- branch head is now `7c555ea`; the explicit plot bounds, authenticated CTest
-  wrapper, and browser/native-equivalent fixture validation are committed and
+- branch head is now `976895f`; the explicit plot bounds, authenticated CTest
+  wrapper, browser/native-equivalent fixture validation, and receipt-embedded
+  state/binary authentication are committed and
   pushed;
 - CPU Skia and GPU Dawn/Metal deterministic captures pass response readiness;
 - the direct authenticated CTest wrapper passes and a planted fixture mutation
