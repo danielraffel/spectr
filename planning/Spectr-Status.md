@@ -717,3 +717,33 @@ focused Python tests and the five-test CTest authority/oracle/join boundary
 slice pass after this change. The exact-head parity joins remain diagnostic
 failures with the measured CPU/GPU differences recorded above; this work does
 not claim pixel parity or production cutover.
+
+## 2026-10-10 exact-head old/new regression rerun
+
+The old Claude Design source and the current `resources/editor.html` were
+captured again from this exact worktree with Chrome 155 at 1320x860 / DPR 1.
+Both strict captures passed with one React root, two canvases, CSS standards
+mode, nonempty primary and overlay canvas layers, and zero console or network
+failures. The old source is
+`/Users/danielraffel/Downloads/Claude/Spectr/Spectr (standalone).html` with
+SHA-256 `7ae6f1d807f2f356b8473d9e672a95535adbe7affea58af360f9ac5c211daf9`;
+the current editor is `resources/editor.html` with SHA-256
+`5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558`.
+
+The primary canvas contained 481,863 ink pixels in the old capture and
+463,379 in the new capture; the overlay contained 29,749 in both. Repeated
+old captures intentionally differ (`6d026931b260be1bcda3a3e1495a813e1f2c9903d9e85a923e6c979bc6a43c71`
+then `d969515ede47d01677b720aa6c10b036a4fb073e38ee064197ad14e8b79d22e8`),
+while repeated new captures are byte-identical at
+`f95b6dc204a847f54996c47144bcb3100715988ff4d5e78a43940beae949ec0`.
+This makes the image difference diagnostic rather than a strict parity verdict:
+the old source animates and also intentionally starts in IIR/FFT/HYBRID with
+64 bands, while the new editor starts in BARS/RESPONSE/BOTH with 32 bands and
+CPU disclosure.
+
+The comparator's standards/quirks, malformed-fixture, aggregate-ink, and
+primary-layer negative controls pass in the same rerun. Receipts and PNGs are
+retained under
+`/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261010-rerun/`.
+This is render-health regression evidence only; it does not establish native
+Skia/Dawn parity or production cutover.
