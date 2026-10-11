@@ -37,10 +37,24 @@ try {
     Copy-Item -LiteralPath $vst3Source -Destination $vst3Dest -Recurse
     Copy-Item -LiteralPath $clapSource -Destination $clapDest -Force
     Copy-Item -LiteralPath $standaloneSource -Destination $standaloneDest -Force
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcutPaths = @(
+        (Join-Path $env:PUBLIC 'Desktop\Spectr.lnk'),
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Spectr.lnk')
+    )
+    foreach ($shortcutPath in $shortcutPaths) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $shortcutPath -Parent) | Out-Null
+        $shortcut = $shell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $standaloneDest
+        $shortcut.WorkingDirectory = $StandaloneRoot
+        $shortcut.IconLocation = "$standaloneDest,0"
+        $shortcut.Save()
+    }
     Write-Output "PASS: installed Spectr $($manifest.architecture)"
     Write-Output "VST3: $vst3Dest"
     Write-Output "CLAP: $clapDest"
     Write-Output "Standalone: $standaloneDest"
+    Write-Output "Shortcut: $($shortcutPaths[0])"
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }
