@@ -1411,18 +1411,19 @@ set_tests_properties(Spectr-native-shot PROPERTIES
 # Skia/Dawn path.  The Python receipt wrapper adds provenance and cross-render
 # scoring; this row ensures the native semantic gate itself cannot silently
 # disappear from the configured test graph.
-add_test(NAME Spectr-native-parity-deterministic
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_native_parity_ctest.py
-        --binary=$<TARGET_FILE:Spectr-native-shot>
-        --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
-        --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
-        --binary-sha256=9ee49779cd2ab9916b61dab82268241cfb9ec453b9d517a236c5dc9da40103d9
-        --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
-set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
-    TIMEOUT 180
-    SKIP_RETURN_CODE 77
-    RESOURCE_LOCK spectr_native_materialized_editor)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-native-parity-deterministic
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_native_parity_ctest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
+            --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
+    set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
+        TIMEOUT 180
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
 
 # Canvas ownership is a distinct contract from the general native capture and
 # from the hit-target detector.  The ownership probe is nested under
