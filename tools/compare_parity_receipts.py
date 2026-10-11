@@ -77,8 +77,12 @@ def main():
         fail("browser receipt is not ready")
     if browser_ready.get("sourceEditorReady") is not True:
         fail("browser receipt lacks source editor readiness")
-    parity_ready = browser_ready.get("parityReady", {})
-    if parity_ready.get("contract") != "spectr-parity-v1" or parity_ready.get("analyzerSequence") != 2:
+    parity_ready = browser_ready.get("parityReady") or {}
+    if not isinstance(parity_ready, dict):
+        fail("browser receipt has invalid parity readiness")
+    if (parity_ready.get("contract") != "spectr-parity-v1"
+            or parity_ready.get("analyzerSequence") != 2
+            or parity_ready.get("analyzerAccepted") is not True):
         fail("browser receipt lacks deterministic parity readiness")
     canvas_info = browser_info.get("canvas", [])
     canvas_count = len(canvas_info) if isinstance(canvas_info, list) else canvas_info

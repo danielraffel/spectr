@@ -495,7 +495,14 @@ struct Rig {
             throw std::runtime_error("cannot open SPECTR_ANALYZER_FIXTURE");
         const std::string fixture((std::istreambuf_iterator<char>(fixture_stream)),
                                   std::istreambuf_iterator<char>());
-        eval("(() => {\nconst spec = " + fixture + R"JS(;
+        choc::json::Value parsed_fixture;
+        try {
+            parsed_fixture = choc::json::parse(fixture);
+        } catch (...) {
+            throw std::runtime_error("SPECTR_ANALYZER_FIXTURE is not valid JSON");
+        }
+        const auto safe_fixture = choc::json::toString(parsed_fixture, false);
+        eval("(() => {\nconst spec = " + safe_fixture + R"JS(;
   if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
     throw new Error('deterministic analyzer seam is unavailable');
   if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
