@@ -37,6 +37,21 @@ setOverflow('root', 'hidden');
 setFlex('root', 'height', 860);
 setFlex('root', 'width', 1320);
 
+  // Generated from the exact Chromium materialized pseudo binding for body::before.
+  // This bounded plane preserves the authored radial glow while remaining behind
+  // the existing product controls and canvas layers.
+  createCol('Pseudo_body_before', 'root');
+  setPosition('Pseudo_body_before', 'absolute');
+  setLeft('Pseudo_body_before', 0);
+  setTop('Pseudo_body_before', 0);
+  setFlex('Pseudo_body_before', 'width', 1320);
+  setFlex('Pseudo_body_before', 'height', 860);
+  setBackground('Pseudo_body_before', 'rgb(5, 7, 10)');
+  setBackgroundGradient('Pseudo_body_before', 'radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none');
+  setOpacity('Pseudo_body_before', 1);
+  setZIndex('Pseudo_body_before', 0);
+  setPointerEvents('Pseudo_body_before', 'none');
+
   // @pulp-anchor browser:paint-authority
   // Accepted Chromium chrome
   createImage('Accepted_Chromium_chrome0', 'root');
