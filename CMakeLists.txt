@@ -1406,6 +1406,20 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
 
+# Exercise the same shipping binary through its deterministic analyzer seam so
+# CI proves response acceptance and rendered plot content on the production
+# Skia/Dawn path.  The Python receipt wrapper adds provenance and cross-render
+# scoring; this row ensures the native semantic gate itself cannot silently
+# disappear from the configured test graph.
+add_test(NAME Spectr-native-parity-deterministic
+    COMMAND $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
+set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "SPECTR_DETERMINISTIC_ANALYZER=1"
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Canvas ownership is a distinct contract from the general native capture and
 # from the hit-target detector.  The ownership probe is nested under
 # SPECTR_HIT_PROBE, so keep both switches in this dedicated CTest invocation;
