@@ -707,3 +707,13 @@ They are retained in
 `/Volumes/Workshop/Code/spectr-parity-closeout-20261010/build-native/materialized-runtime-parity/`;
 the matching GPU join reports `4,361,926` differing pixels with MAE
 `2.4109404180`. The older receipts must not be used for closeout claims.
+
+## 2026-10-11 final receipt-boundary hardening
+
+Commit `828c368` binds an explicit native PNG path to the image whose SHA-256
+is recorded in the native receipt. A receipt that names a different PNG now
+fails authentication, closing the remaining stale-image substitution gap. The
+focused Python tests and the five-test CTest authority/oracle/join boundary
+slice pass after this change. The exact-head parity joins remain diagnostic
+failures with the measured CPU/GPU differences recorded above; this work does
+not claim pixel parity or production cutover.
