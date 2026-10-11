@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$Vst3Root,
     [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'x86_64-win',
     [string]$ReaperExe = '',
-    [string]$CachePath = (Join-Path $env:APPDATA 'REAPER\reaper-vstplugins64.ini'),
+    [string]$CachePath = '',
     [string]$Receipt = '',
     [string]$FailedScanEvidence = '',
     [string]$ObservedAcceptanceReceipt = '',
@@ -14,6 +14,17 @@ $ErrorActionPreference = 'Stop'
 $Vst3Root = (Resolve-Path -LiteralPath $Vst3Root).Path
 if ([string]::IsNullOrWhiteSpace($Receipt)) {
     $Receipt = Join-Path (Split-Path $Vst3Root -Parent) 'reaper-scan-receipt.json'
+}
+if ([string]::IsNullOrWhiteSpace($CachePath)) {
+    # REAPER uses a distinct cache filename for the native ARM64 build. Keep
+    # the override for custom installs, but select the architecture-specific
+    # default so a valid ARM64 discovery cannot be mistaken for a missing scan.
+    $cacheName = if ($Architecture -eq 'arm64-win') {
+        'reaper-vstplugins64arwmin.ini'
+    } else {
+        'reaper-vstplugins64.ini'
+    }
+    $CachePath = Join-Path $env:APPDATA (Join-Path 'REAPER' $cacheName)
 }
 if ([string]::IsNullOrWhiteSpace($ReaperExe)) {
     $reaperDirectory = if ($Architecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
