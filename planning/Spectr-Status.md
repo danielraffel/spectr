@@ -573,3 +573,28 @@ parity because it omits mature native fields. The next implementation must
 serve the materialized envelope assets, inject React vendors without replacing
 the retained native services, and derive the bridge payload from
 `make_editor_state_payload` before comparing screenshots.
+
+## 2026-10-11 authority-aligned Chromium oracle implementation
+
+`tools/materialized_runtime_chromium_oracle.mjs` now provides the first
+repeatable browser capture of the shipping materialized runtime itself. It
+serves the runtime HTML and all 13 embedded assets over HTTP, injects the
+shared deterministic analyzer fixture through the retained native-message
+seam, uses the native 1320x860 / DPR 2 viewport, waits for fonts and analyzer
+sequence 2, and requires three canvas layers, zero application console or
+network failures, a real band-dropdown interaction, and byte-identical
+settled screenshots. The runtime and source editor remain unchanged.
+
+CTest registers the positive lane as
+`Spectr-browser-materialized-runtime-authority-oracle` and a self-validating
+missing-font negative control as
+`Spectr-browser-materialized-runtime-authority-oracle-negative-control`. Both
+focused tests pass on the M5 checkout. The receipt schema records the runtime
+artifact SHA, HTML SHA, analyzer fixture SHA, canonical state digest, viewport,
+asset count, interaction evidence, and the explicit
+`same-materialized-runtime-diagnostic` authority mode.
+
+This closes the browser evidence gap but does not claim native pixel parity or
+production cutover. A same-authority native join still reports a large measured
+renderer/composition difference and remains the next repair gate; the existing
+`editor.html` versus materialized-runtime comparison remains diagnostic only.
