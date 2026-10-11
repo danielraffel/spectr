@@ -122,6 +122,12 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
         fail("unsupported or missing browser state envelope")
     if browser.get("stateSha256") != embedded.get("stateSha256"):
         fail("browser receipt state digest does not match its embedded state")
+    try:
+        embedded_digest = state_digest(embedded)
+    except (TypeError, ValueError) as error:
+        fail(f"invalid browser state digest: {error}")
+    if embedded.get("stateSha256") != embedded_digest:
+        fail("browser embedded state digest is invalid")
     embedded_source = embedded.get("source", {})
     if embedded_source.get("artifactSha256") != source_sha:
         fail("browser embedded state artifact SHA does not match state manifest")

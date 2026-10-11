@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 try:
     from join_materialized_runtime_parity import (normalize_viewport,
                                                   require_embedded_artifact,
+                                                  state_digest,
                                                   validate_browser_state)
 except ModuleNotFoundError as error:
     if error.name != "PIL":
@@ -68,11 +69,12 @@ def main() -> None:
             {"id": "react-dom", "sha256": "b" * 64},
         ]},
         "authority": authority,
-        "stateSha256": "browser-state",
+        "stateSha256": "placeholder",
     }
+    embedded["stateSha256"] = state_digest(embedded)
     browser = {
         "state": embedded,
-        "stateSha256": "browser-state",
+        "stateSha256": embedded["stateSha256"],
         "source": {"htmlSha256": "html"},
         "authority": authority,
     }
