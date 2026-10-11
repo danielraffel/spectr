@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "analyzer": "thd",
+  "scenario": "docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.wav",
+  "stimulus": "sine",
+  "window": "hann",
+  "fft_length": 16384,
+  "analysis_offset": 0,
+  "sample_rate": 44100,
+  "bin_hz": 2.691650390625,
+  "fundamental_hz": 439.9999939520072,
+  "coherent": false,
+  "num_harmonics": 8,
+  "thd": 0.000025130990165761279,
+  "thd_db": -91.99580799571339,
+  "thd_percent": 0.0025130990165761278,
+  "thd_plus_n": 0.9995057998075804,
+  "thd_plus_n_db": -0.0042936293741079579,
+  "harmonics": [
+    {
+      "index": 1,
+      "hz": 439.9999939520072,
+      "magnitude": 2598.585693359375,
+      "db_below_fundamental": 0.0
+    },
+    {
+      "index": 2,
+      "hz": 879.9999879040144,
+      "magnitude": 0.005384822841733694,
+      "db_below_fundamental": -113.67131246631998
+    },
+    {
+      "index": 3,
+      "hz": 1319.9999818560216,
+      "magnitude": 0.04628495126962662,
+      "db_below_fundamental": -94.98594464530078
+    },
+    {
+      "index": 4,
+      "hz": 1759.9999758080288,
+      "magnitude": 0.0010822275653481484,
+      "db_below_fundamental": -127.60836902933048
+    },
+    {
+      "index": 5,
+      "hz": 2199.999969760036,
+      "magnitude": 0.034697119146585467,
+      "db_below_fundamental": -97.48887251335957
+    },
+    {
+      "index": 6,
+      "hz": 2639.999963712043,
+      "magnitude": 0.001134473248384893,
+      "db_below_fundamental": -127.19885567388926
+    },
+    {
+      "index": 7,
+      "hz": 3079.9999576640504,
+      "magnitude": 0.02122112549841404,
+      "db_below_fundamental": -101.75937258738665
+    },
+    {
+      "index": 8,
+      "hz": 3519.9999516160576,
+      "magnitude": 0.0025432107504457237,
+      "db_below_fundamental": -120.18709384734003
+    },
+    {
+      "index": 9,
+      "hz": 3959.9999455680647,
+      "magnitude": 0.02074371464550495,
+      "db_below_fundamental": -101.95701027051791
+    }
+  ]
+}

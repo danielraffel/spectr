@@ -2,6 +2,7 @@
 param(
     [string]$BuildDir = (Join-Path $PSScriptRoot '..\..\build-win'),
     [string]$Receipt = (Join-Path $BuildDir 'windows-validation-receipt.json'),
+    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64-win' } else { 'x86_64-win' }),
     [switch]$Build
 )
 
@@ -35,9 +36,10 @@ if ($Build) {
 $testExe = Require-File (Join-Path $BuildDir 'Spectr-test.exe') 'Spectr test executable'
 $clap = Require-File (Join-Path $BuildDir 'CLAP\Spectr.clap') 'Spectr CLAP artifact'
 $vst3Binary = Require-FirstFile @(
+    (Join-Path $BuildDir ("VST3\Spectr.vst3\Contents\$Architecture\Spectr.vst3")),
+    (Join-Path $BuildDir 'VST3\Spectr.dll'),
     (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\x86_64-win\Spectr.vst3'),
-    (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3'),
-    (Join-Path $BuildDir 'VST3\Spectr.dll')
+    (Join-Path $BuildDir 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3')
 ) 'Spectr VST3 binary'
 $standalone = Require-File (Join-Path $BuildDir 'Spectr.exe') 'Spectr standalone executable'
 
@@ -53,14 +55,18 @@ if ($testExit -ne 0) {
 
 $gitSha = $null
 if (Get-Command git -ErrorAction SilentlyContinue) {
+    $savedGitErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     $gitSha = (git -C (Split-Path $BuildDir -Parent) rev-parse HEAD 2>$null)
-    if ($LASTEXITCODE -ne 0) { $gitSha = $null }
+    $gitExit = $LASTEXITCODE
+    $ErrorActionPreference = $savedGitErrorActionPreference
+    if ($gitExit -ne 0) { $gitSha = $null }
 }
 
 $receiptObject = [ordered]@{
     schema = 1
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
-    architecture = $env:PROCESSOR_ARCHITECTURE
+    architecture = $Architecture
     git_sha = $gitSha
     focused_test = 'Spectr processes audio'
     focused_test_exit = $testExit

@@ -354,7 +354,11 @@ void check_loaded_artifact_surface(pulp::host::PluginSlot& slot,
         CHECK(slot.get_parameter(parameter.id)
               == Catch::Approx(parameter.default_value));
     }
-    CHECK(slot.has_editor());
+    // Headless Windows validation can prove loading and audio without a
+    // desktop editor session. Keep the editor requirement for ordinary
+    // acceptance runs, but make the explicit headless mode honest and useful.
+    if (std::getenv("PULP_DISABLE_PLUGIN_EDITOR") == nullptr)
+        CHECK(slot.has_editor());
 
     INFO("artifact profile: fft=" << SPECTR_FFT_SIZE
          << ", latency=" << SPECTR_EXPECTED_LATENCY

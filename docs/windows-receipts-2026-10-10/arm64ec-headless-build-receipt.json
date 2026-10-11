@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T15:17:14Z",
+  "guest": {
+    "source": "C:\\spectr-source",
+    "build": "C:\\spectr-arm64ec-headless",
+    "pulp_sdk": "C:\\pulp-sdk-arm64ec",
+    "architecture": "ARM64EC",
+    "pulp_sha": "f8f4abe1d13e54a6689b8cb22145def75232d888",
+    "spectr_sha": "e7ed072be031713a223be3cde389e0a6d4167721"
+  },
+  "commands": {
+    "pulp_build": "cmake --build C:/pulp-arm64ec-headless --config Release --target ALL_BUILD --parallel 4",
+    "pulp_install": "cmake --install C:/pulp-arm64ec-headless --config Release --prefix C:/pulp-sdk-arm64ec",
+    "spectr_build": "cmake --build C:/spectr-arm64ec-headless --config Release --target Spectr_VST3 Spectr_CLAP Spectr_Standalone Spectr-test --parallel 4",
+    "focused_test": "Spectr-test.exe \"Spectr processes audio\" --reporter compact"
+  },
+  "results": {
+    "pulp_all_build_exit": 0,
+    "pulp_install_exit": 0,
+    "spectr_configure": "PASS (headless, GPU disabled)",
+    "spectr_build_exit": 0,
+    "focused_test_exit": 0,
+    "focused_test": "All tests passed (2 assertions in 1 test case)",
+    "vst3_machine": "8664 (x64) (ARM64X)"
+  },
+  "artifacts": {
+    "standalone": {
+      "path": "C:\\spectr-arm64ec-headless\\Release\\Spectr.exe",
+      "sha256": "21D1A44D446A27E3F5D7FF6DE6233DFF8374C1BF8A5A7A3C9C27E7C4B681A914"
+    },
+    "vst3": {
+      "path": "C:\\spectr-arm64ec-headless\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+      "sha256": "6032DFD8ECA9A8BD13BB73769650561F1FA6028DDC8741FB7205C2A2CE48E64F"
+    },
+    "clap": {
+      "path": "C:\\spectr-arm64ec-headless\\CLAP\\Release\\Spectr.clap",
+      "sha256": "3119F85218497326A4973A0BE3F3440544B3119D5203426B97FB4E3CEB0FD425"
+    }
+  },
+  "scope": {
+    "status": "headless_audio_build_proven",
+    "gpu_ui": "not_proven; matching ARM64EC Skia/Dawn archives are unavailable",
+    "reaper": "not_proven; no desktop host-instance receipt",
+    "ableton": "not_attempted"
+  }
+}

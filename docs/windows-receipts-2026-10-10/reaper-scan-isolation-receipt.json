@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "observed_at_utc": "2026-10-10T07:43:00Z",
+  "purpose": "Separate GPU runtime failure from host/plugin scan failure",
+  "procedure": [
+    "Backed up the installed GPU ARM64 VST3 binary",
+    "Installed the existing ARM64 no-GPU Release binary from C:\\builds\\spectr-arm64-nogpu\\VST3\\Release\\Spectr.dll",
+    "Cleared REAPER's VST cache and completed a full VST rescan",
+    "Filtered Add FX for Spectr"
+  ],
+  "no_gpu_binary": {
+    "pe_machine": "AA64 machine (ARM64)",
+    "sha256": "1D90619BB79A19AABB11C60F3A57B7A110D8D9080753858C08156B362EECB336"
+  },
+  "result": {
+    "spectr_visible_in_add_fx": false,
+    "scan_acceptance": "FAIL",
+    "interpretation": "The rejection is not caused solely by wgpu_native.dll or the GPU build; the ARM64 host/plugin scan path remains unresolved."
+  },
+  "cleanup": "Restored the GPU ARM64 binary; restored hash A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3"
+}
