@@ -170,6 +170,33 @@ def main():
     if args.plant_negative and exact:
         fail("planted negative did not change the comparison")
 
+    region_reports = []
+    for region in state.get("parityRegions", []):
+        region_id = region.get("id")
+        box = tuple(region.get(key) for key in ("x", "y", "width", "height"))
+        if not region_id or any(not isinstance(value, int) for value in box):
+            fail("parity region requires id and integer x/y/width/height")
+        x, y, width, height = box
+        if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > left.width or y + height > left.height:
+            fail(f"parity region is outside image bounds: {region_id}")
+        region_diff = diff.crop((x, y, x + width, y + height))
+        region_extrema = region_diff.getextrema()
+        region_max = max(high for _, high in region_extrema)
+        region_pixels = list(region_diff.getdata())
+        threshold = region.get("errorThreshold", 0)
+        if not isinstance(threshold, int) or threshold < 0:
+            fail(f"parity region errorThreshold must be a non-negative integer: {region_id}")
+        region_reports.append({
+            "id": region_id,
+            "rect": {"x": x, "y": y, "width": width, "height": height},
+            "pixelCount": len(region_pixels),
+            "differingPixels": sum(any(channel for channel in px) for px in region_pixels),
+            "pixelsAboveThreshold": sum(max(px) > threshold for px in region_pixels),
+            "errorThreshold": threshold,
+            "meanAbsoluteError": sum(ImageStat.Stat(region_diff).mean) / 4,
+            "maxAbsoluteError": region_max,
+        })
+
     report = {
         "schema": "spectr-browser-native-parity-v1",
         "version": 1,
@@ -193,6 +220,7 @@ def main():
             "maxAbsoluteError": max_error,
             "channelCount": channels,
             "plantedNegative": args.plant_negative,
+            "regions": region_reports,
         },
         "pass": (not args.plant_negative) and exact,
     }

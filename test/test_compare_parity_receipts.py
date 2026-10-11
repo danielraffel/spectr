@@ -36,6 +36,7 @@ def main():
         native_binary.write_bytes(b"fixture")
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha}, "viewport": {"width": 4, "height": 3, "deviceScaleFactor": 1}}
+        state["parityRegions"] = [{"id": "all", "x": 0, "y": 0, "width": 4, "height": 3, "errorThreshold": 0}]
         state["native"] = {"binarySha256": hashlib.sha256(b"fixture").hexdigest()}
         state_hash = state_digest(state)
         state["stateSha256"] = state_hash
@@ -74,7 +75,10 @@ def main():
                               "--native-binary", str(native_binary),
                               "--output", str(report)], capture_output=True, text=True)
         assert run.returncode == 0, run.stderr
-        assert json.loads(report.read_text())["comparison"]["exact"]
+        report_json = json.loads(report.read_text())
+        assert report_json["comparison"]["exact"]
+        assert report_json["comparison"]["regions"][0]["id"] == "all"
+        assert report_json["comparison"]["regions"][0]["pixelsAboveThreshold"] == 0
 
         negative = subprocess.run([sys.executable, str(tool), "--browser-receipt", str(receipt_path),
                                    "--browser-png", str(browser_png),
