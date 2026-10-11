@@ -137,6 +137,9 @@ def main():
         fail("state manifest contains an invalid state digest")
     if receipt_state != expected_state:
         fail("state digest does not match browser receipt")
+    embedded_state = browser.get("parityState")
+    if not isinstance(embedded_state, dict) or embedded_state != state:
+        fail("browser receipt embedded parity state does not match supplied manifest")
     if native.get("stateSha256") != expected_state:
         fail("state digest does not match native receipt")
     if native.get("sourceSha256") != expected_artifact:

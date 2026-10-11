@@ -1417,6 +1417,7 @@ add_test(NAME Spectr-native-parity-deterministic
         --binary=$<TARGET_FILE:Spectr-native-shot>
         --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
         --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
+        --binary-sha256=9ee49779cd2ab9916b61dab82268241cfb9ec453b9d517a236c5dc9da40103d9
         --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
 set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
     TIMEOUT 180

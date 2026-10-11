@@ -23,6 +23,7 @@ def main() -> int:
     parser.add_argument("--fixture", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--fixture-sha256", required=True)
+    parser.add_argument("--binary-sha256", required=True)
     args = parser.parse_args()
     binary = Path(args.binary).resolve()
     fixture = Path(args.fixture).resolve()
@@ -33,14 +34,35 @@ def main() -> int:
     if actual != args.fixture_sha256:
         print(f"FAIL: deterministic fixture provenance mismatch: {actual} != {args.fixture_sha256}", file=sys.stderr)
         return 1
+    binary_digest = sha256(binary)
+    if binary_digest != args.binary_sha256:
+        print(f"FAIL: native binary provenance mismatch: {binary_digest} != {args.binary_sha256}", file=sys.stderr)
+        return 1
     env = os.environ.copy()
     env.update({
         "SPECTR_DETERMINISTIC_ANALYZER": "1",
         "SPECTR_ANALYZER_FIXTURE": str(fixture),
     })
-    return subprocess.run([
+    result = subprocess.run([
         str(binary), f"--out={Path(args.output).resolve()}", "--backend=gpu",
     ], env=env).returncode
+    if result != 0:
+        return result
+    png = Path(args.output).resolve() / "deterministic-analyzer.png"
+    if not png.is_file() or png.stat().st_size < 24:
+        print("FAIL: native parity capture did not emit a PNG", file=sys.stderr)
+        return 1
+    receipt = {
+        "schema": "spectr-native-ctest-receipt-v1",
+        "binarySha256": binary_digest,
+        "analyzerFixtureSha256": actual,
+        "pngSha256": sha256(png),
+        "png": str(png),
+    }
+    (Path(args.output).resolve() / "native-ctest-receipt.json").write_text(
+        __import__("json").dumps(receipt, indent=2) + "\n"
+    )
+    return 0
 
 
 if __name__ == "__main__":
