@@ -103,6 +103,7 @@ def main():
         "png": str(png),
         "binary": str(binary),
         "deterministicAnalyzer": True,
+        "readiness": {"contract": "spectr-parity-v1", "analyzerSequence": 2},
     }
     receipt_path = output / "native-receipt.json"
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")

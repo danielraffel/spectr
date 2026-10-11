@@ -59,6 +59,11 @@ def main():
         fail("unsupported browser receipt schema")
     if native.get("schema") != "spectr-native-shot-receipt-v1":
         fail("unsupported native receipt schema")
+    if native.get("deterministicAnalyzer") is not True:
+        fail("native receipt lacks deterministic analyzer proof")
+    native_ready = native.get("readiness", {})
+    if native_ready.get("contract") != "spectr-parity-v1" or native_ready.get("analyzerSequence") != 2:
+        fail("native receipt lacks deterministic parity readiness")
     browser_positive = browser.get("positive", {})
     browser_ready = browser_positive.get("ready", {})
     browser_info = browser_positive.get("info", {})
@@ -85,6 +90,9 @@ def main():
         fail("viewport width and height must be positive integers")
     if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:
         fail("viewport deviceScaleFactor must be positive")
+    fixed_viewport = browser.get("fixedViewport", {})
+    if fixed_viewport != {"width": width, "height": height, "deviceScaleFactor": scale}:
+        fail("browser receipt viewport does not match parity state")
 
     browser_source = Path(browser["positive"]["before"]["path"]).resolve()
     if browser_source != browser_png_path:

@@ -43,11 +43,14 @@ def main():
                           "stateSha256": state_hash, "sourceSha256": source_sha,
                           "binarySha256": state["native"]["binarySha256"],
                           "pngSha256": hashlib.sha256(native_png.read_bytes()).hexdigest(),
-                          "dimensions": {"width": 4, "height": 3}}
+                          "dimensions": {"width": 4, "height": 3},
+                          "deterministicAnalyzer": True,
+                          "readiness": {"contract": "spectr-parity-v1", "analyzerSequence": 2}}
         receipt = {
             "schema": "spectr-html-cdp-comparison-v1",
             "sourceSha256": source_sha,
             "stateSha256": state_hash,
+            "fixedViewport": {"width": 4, "height": 3, "deviceScaleFactor": 1},
             "checks": {"strict": True},
             "positive": {"ready": {"ready": "complete", "sourceEditorReady": True,
                                      "parityReady": {"contract": "spectr-parity-v1", "analyzerSequence": 2}},
