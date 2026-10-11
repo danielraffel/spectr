@@ -33,16 +33,21 @@ def main():
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
         binary = fake
         binary_sha = hashlib.sha256(binary.read_bytes()).hexdigest()
+        fixture = out / "fixture.json"
+        fixture.write_text("{}")
+        fixture_sha = hashlib.sha256(fixture.read_bytes()).hexdigest()
         source_sha = "a" * 64
         state = {"schema": "spectr-parity-state-v1", "version": 1,
                  "source": {"sha256": source_sha},
                  "viewport": {"width": 4, "height": 3, "deviceScaleFactor": 1, "png": {"width": 4, "height": 3}},
-                 "native": {"binarySha256": binary_sha}}
+                 "native": {"binarySha256": binary_sha},
+                 "analyzer": {"fixtureSha256": fixture_sha}}
         state["stateSha256"] = state_digest(state)
         state_path = out / "state.json"
         state_path.write_text(json.dumps(state))
         result = subprocess.run([sys.executable, str(tool), "--native-shot", str(fake),
                                  "--binary", str(binary), "--state", str(state_path),
+                                 "--analyzer-fixture", str(fixture),
                                  "--output", str(out / "capture")], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         receipt = json.loads((out / "capture" / "native-receipt.json").read_text())
