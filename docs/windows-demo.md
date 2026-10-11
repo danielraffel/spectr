@@ -60,6 +60,16 @@ working. From the RDP window, open the `REAPER (ARM64)` shortcut or the `Live
 10 Trial` shortcut. The launcher reads the local 0600 credential file and never
 prints the password.
 
+For a routine double-click workflow, install a Desktop launcher once:
+
+```bash
+tools/windows/install-desktop-launcher.sh
+```
+
+Then double-click `/Users/danielraffel/Desktop/Spectr Windows Demo.command`.
+It starts or reuses the UTM guest, repairs RDP, and opens the Windows desktop;
+the RDP client retries transient reconnects automatically.
+
 The verified application inventory and executable hashes are recorded in
 [`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
 
