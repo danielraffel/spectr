@@ -506,7 +506,8 @@ struct Rig {
   if (typeof globalThis.__spectrPublishNativeMessage !== 'function')
     throw new Error('deterministic analyzer seam is unavailable');
   if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
-      || spec.epoch !== 1 || spec.sequences.length !== 2
+      || spec.epoch !== 1 || !Array.isArray(spec.sequences)
+      || spec.sequences.length !== 2
       || spec.sequences[0] !== 1 || spec.sequences[1] !== 2
       || !Number.isFinite(spec.fftSize) || spec.fftSize <= 0
       || !Number.isFinite(spec.sampleRate) || spec.sampleRate <= 0
@@ -515,7 +516,8 @@ struct Rig {
       || spec.ceilingDb <= spec.floorDb
       || !Number.isSafeInteger(spec.visibleSamples) || spec.visibleSamples < 2
       || !Number.isSafeInteger(spec.overviewSamples) || spec.overviewSamples < 2
-      || !Number.isFinite(spec.minHz) || !Number.isFinite(spec.maxHz)
+      || !Number.isFinite(spec.minHz) || spec.minHz <= 0
+      || !Number.isFinite(spec.maxHz) || spec.maxHz <= 0
       || spec.maxHz <= spec.minHz || !spec.trace
       || !Number.isFinite(spec.trace.baseDb) || !Number.isFinite(spec.trace.peakDb)
       || !Number.isFinite(spec.trace.centre) || !Number.isFinite(spec.trace.phaseStep)
