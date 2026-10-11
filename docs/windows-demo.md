@@ -191,6 +191,16 @@ reliable through Windows OpenSSH. When `-CachePath` is omitted it selects
 
 ## Launch the desktop demo
 
+Before the first interactive run, prepare the host once to clear stale failed
+projects and select deterministic Dummy Audio:
+
+```powershell
+.\tools\windows\prepare-reaper-demo.ps1 -Architecture arm64-win
+```
+
+The helper keeps a one-time `REAPER.ini.bak-spectr-demo` backup and writes a
+preparation receipt. It does not claim plugin loading or audio acceptance.
+
 After logging into Windows, use the fail-closed helper to verify the active
 desktop session, hash the exact ARM64 host and plugin, and launch REAPER:
 
