@@ -501,6 +501,11 @@ struct Rig {
   if (spec.schema !== 'spectr-parity-analyzer-v1' || spec.version !== 1
       || spec.epoch !== 1 || spec.sequences.length !== 2
       || spec.sequences[0] !== 1 || spec.sequences[1] !== 2
+      || !Number.isFinite(spec.fftSize) || spec.fftSize <= 0
+      || !Number.isFinite(spec.sampleRate) || spec.sampleRate <= 0
+      || !Number.isFinite(spec.sourceChannels) || spec.sourceChannels <= 0
+      || !Number.isFinite(spec.floorDb) || !Number.isFinite(spec.ceilingDb)
+      || spec.ceilingDb <= spec.floorDb
       || !Number.isSafeInteger(spec.visibleSamples) || spec.visibleSamples < 2
       || !Number.isSafeInteger(spec.overviewSamples) || spec.overviewSamples < 2
       || !Number.isFinite(spec.minHz) || !Number.isFinite(spec.maxHz)

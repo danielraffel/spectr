@@ -43,12 +43,13 @@ if(statePath){
   const integer=v=>Number.isSafeInteger(v);
   const finitePositive=v=>Number.isFinite(v)&&v>0;
   const t=analyzerFixture.trace;
-  if(!integer(analyzerFixture.epoch)||analyzerFixture.epoch<0
+  if(analyzerFixture.epoch!==1
      ||!Array.isArray(analyzerFixture.sequences)||analyzerFixture.sequences.length!==2
-     ||!analyzerFixture.sequences.every(v=>integer(v)&&v>=0)
+     ||analyzerFixture.sequences[0]!==1||analyzerFixture.sequences[1]!==2
      ||!finitePositive(analyzerFixture.fftSize)||!finitePositive(analyzerFixture.sampleRate)
      ||!Number.isFinite(analyzerFixture.floorDb)||!Number.isFinite(analyzerFixture.ceilingDb)
      ||analyzerFixture.ceilingDb<=analyzerFixture.floorDb
+     ||!finitePositive(analyzerFixture.sourceChannels)
      ||!integer(analyzerFixture.visibleSamples)||analyzerFixture.visibleSamples<2
      ||!integer(analyzerFixture.overviewSamples)||analyzerFixture.overviewSamples<2
      ||!finitePositive(analyzerFixture.minHz)||!finitePositive(analyzerFixture.maxHz)

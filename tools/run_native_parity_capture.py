@@ -70,6 +70,8 @@ def main():
         fail("native binary SHA does not match parity state before launch")
     expected_fixture = state.get("analyzer", {}).get("fixtureSha256")
     fixture_digest = None
+    if fixture is not None and not expected_fixture:
+        fail("--analyzer-fixture requires analyzer.fixtureSha256 in state")
     if expected_fixture:
         if fixture is None or not fixture.exists():
             fail("state requires an analyzer fixture")
