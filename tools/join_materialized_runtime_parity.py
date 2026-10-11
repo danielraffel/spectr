@@ -136,6 +136,7 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
     embedded = browser.get("state")
     if not isinstance(embedded, dict) \
             or embedded.get("schema") != "spectr-materialized-browser-state-v1" \
+            or not integer(embedded.get("version")) \
             or embedded.get("version") != 1:
         fail("unsupported or missing browser state envelope")
     if browser.get("stateSha256") != embedded.get("stateSha256"):
@@ -165,8 +166,13 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
         fail(f"browser embedded viewport {embedded_viewport} does not match state {expected_viewport}")
     if embedded_dimensions != expected_dimensions:
         fail("browser embedded PNG dimensions do not match state manifest")
+    expected_authority = state.get("authority")
+    if not isinstance(expected_authority, dict) or not expected_authority:
+        fail("shared parity state lacks an authority manifest")
     if embedded.get("authority") != browser.get("authority"):
         fail("browser embedded authority does not match its receipt")
+    if browser.get("authority") != expected_authority:
+        fail("browser authority does not match the shared parity state")
     vendors = embedded.get("environment", {}).get("reactVendorScripts")
     if not isinstance(vendors, list) or len(vendors) != 2:
         fail("browser state lacks the two authenticated React vendor scripts")
@@ -175,6 +181,12 @@ def validate_browser_state(browser: dict, state: dict, source_sha: str,
                 or not isinstance(vendor.get("sha256"), str)
                 or len(vendor["sha256"]) != 64):
             fail("browser state contains an invalid React vendor identity")
+
+    # The browser-specific envelope is intentionally different from the
+    # native receipt, but a parity join must still name the exact shared
+    # parity-state-v1 manifest used to configure both captures.
+    if browser.get("sharedStateSha256") != state.get("stateSha256"):
+        fail("browser receipt does not identify the exact shared parity state")
 
 
 def image_metrics(left: Image.Image, right: Image.Image, regions: list[dict]) -> dict:
@@ -229,9 +241,11 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
                  native_png: Path) -> dict:
     if Image is None:
         fail("Pillow is required for image parity comparison")
-    if browser.get("schema") != "spectr-materialized-runtime-browser-receipt-v1":
+    if browser.get("schema") != "spectr-materialized-runtime-browser-receipt-v1" \
+            or not integer(browser.get("version")) or browser.get("version") != 1:
         fail("unsupported browser receipt schema")
-    if native.get("schema") != "spectr-native-shot-receipt-v1":
+    if native.get("schema") != "spectr-native-shot-receipt-v1" \
+            or not integer(native.get("version")) or native.get("version") != 1:
         fail("unsupported native receipt schema")
     require_native_executable(binary, native)
     if native.get("deterministicAnalyzer") is not True:
@@ -240,16 +254,44 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("native receipt state digest does not match the shared state manifest")
     readiness = native.get("readiness", {})
     if readiness.get("contract") != "spectr-parity-v1" \
+            or not integer(readiness.get("analyzerSequence")) \
             or readiness.get("analyzerSequence") != 2:
         fail("native receipt lacks sequence-2 analyzer readiness")
-    if not browser.get("checks", {}).get("strict") \
-            or not browser.get("checks", {}).get("repeatedSettledCapture"):
+    if browser.get("checks", {}).get("strict") is not True \
+        or browser.get("checks", {}).get("repeatedSettledCapture") is not True:
         fail("browser receipt is not strict and repeatable")
     if browser.get("checks", {}).get("consoleNetworkClean") is not True:
         fail("browser receipt lacks clean console/network proof")
+    if browser.get("checks", {}).get("realInteraction") is not True:
+        fail("browser receipt lacks real interaction proof")
+    browser_evidence = browser.get("browser", {})
+    if not isinstance(browser_evidence.get("consoleErrors"), list) \
+            or browser_evidence.get("consoleErrors"):
+        fail("browser receipt contains console errors")
+    if not isinstance(browser_evidence.get("networkFailures"), list) \
+            or browser_evidence.get("networkFailures"):
+        fail("browser receipt contains network failures")
+    interaction = browser_evidence.get("interaction")
+    if not isinstance(interaction, dict) \
+            or interaction.get("closedWithTriggerToggle") is not True:
+        fail("browser receipt lacks structured interaction completion evidence")
+    interaction_screenshot = interaction.get("menuScreenshot")
+    if not isinstance(interaction_screenshot, dict):
+        fail("browser receipt lacks interaction screenshot evidence")
+    interaction_path = interaction_screenshot.get("path")
+    if not interaction_path:
+        fail("browser interaction screenshot path is missing")
+    interaction_path = Path(interaction_path).resolve()
+    require_file(interaction_path, "browser interaction screenshot")
+    if interaction_screenshot.get("sha256") != sha256(interaction_path):
+        fail("browser interaction screenshot SHA does not match receipt")
     if state.get("schema") != "spectr-parity-state-v1" \
+            or not integer(state.get("version")) \
             or state.get("version") != 1:
         fail("unsupported parity state manifest")
+    capture_kind = state.get("captureKind")
+    if capture_kind not in (None, "shared"):
+        fail("unsupported parity state capture kind for a native join")
     try:
         computed_state = state_digest(state)
     except (TypeError, ValueError) as error:
@@ -300,20 +342,55 @@ def authenticate(browser: dict, native: dict, state: dict, artifact: Path,
         fail("native receipt dimensions do not match state manifest")
 
     authority = browser.get("authority", {})
+    expected_authority = state.get("authority")
+    if not isinstance(expected_authority, dict) or not expected_authority:
+        fail("shared parity state lacks an authority manifest")
+    if authority != expected_authority:
+        fail("browser authority does not match the shared parity state")
+    if authority.get("joinMode") != "same-materialized-runtime-diagnostic":
+        fail("shared parity authority has an unsupported join mode")
     if authority.get("browserArtifact") != authority.get("nativeArtifact"):
         fail("browser/native authority identities differ")
 
     if native.get("pngSha256") != sha256(native_png):
         fail("native PNG SHA does not match receipt")
     declared_native_png = receipt_path(native, "png")
-    if declared_native_png is not None and declared_native_png != native_png:
+    if declared_native_png is None:
+        fail("native receipt PNG path is missing")
+    if declared_native_png != native_png:
         fail("explicit native PNG is not the image in its receipt")
     settled = receipt_path(browser, "browser", "screenshots", "settled", "path")
     if settled is not None and settled != browser_png:
         fail("explicit browser PNG is not the settled image in its receipt")
-    if browser.get("browser", {}).get("screenshots", {}).get("settled", {}).get("sha256") \
+    settled_evidence = browser_evidence.get("screenshots", {}).get("settled")
+    if not isinstance(settled_evidence, dict):
+        fail("browser receipt lacks settled screenshot evidence")
+    if settled_evidence.get("sha256") \
             != sha256(browser_png):
         fail("browser settled PNG SHA does not match receipt")
+    repeat_evidence = browser_evidence.get("screenshots", {}).get("settledRepeat")
+    if not isinstance(repeat_evidence, dict):
+        fail("browser receipt lacks repeated settled screenshot evidence")
+    repeat_path = receipt_path(browser, "browser", "screenshots", "settledRepeat", "path")
+    if repeat_path is None:
+        fail("browser repeated settled screenshot path is missing")
+    require_file(repeat_path, "browser repeated settled PNG")
+    if repeat_evidence.get("sha256") != sha256(repeat_path):
+        fail("browser repeated settled PNG SHA does not match receipt")
+    if repeat_evidence.get("sha256") != settled_evidence.get("sha256"):
+        fail("browser settled screenshots are not byte-identical")
+    if repeat_path.resolve() == browser_png.resolve():
+        fail("browser repeated settled screenshot is not a distinct capture")
+    if interaction_path.resolve() == browser_png.resolve() \
+            or interaction_screenshot.get("sha256") == settled_evidence.get("sha256"):
+        fail("browser interaction screenshot is not distinct from the settled capture")
+    try:
+        with Image.open(interaction_path) as image:
+            if dimensions(image) != expected_dimensions:
+                fail("browser interaction screenshot dimensions do not match state manifest")
+            image.verify()
+    except (OSError, ValueError):
+        fail("browser interaction screenshot is not a valid image")
     with Image.open(browser_png) as image:
         browser_image = image.convert("RGBA")
     with Image.open(native_png) as image:

@@ -80,11 +80,40 @@ def main() -> None:
         "source": {"htmlSha256": "html"},
         "authority": authority,
     }
-    validate_browser_state(browser, {}, "artifact", "fixture",
+    shared_state = {"authority": authority, "stateSha256": "shared"}
+    browser["sharedStateSha256"] = "shared"
+    validate_browser_state(browser, shared_state, "artifact", "fixture",
                            expected_viewport, expected_dimensions)
+    wrong_authority = {**authority, "joinMode": "wrong-authority"}
+    browser["authority"] = wrong_authority
+    browser["state"]["authority"] = wrong_authority
+    browser["state"]["stateSha256"] = state_digest(browser["state"])
+    browser["stateSha256"] = browser["state"]["stateSha256"]
+    try:
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
+                               expected_viewport, expected_dimensions)
+    except SystemExit as error:
+        assert "authority" in str(error)
+    else:
+        raise AssertionError("browser authority mismatch was accepted")
+    browser["authority"] = authority
+    browser["state"]["authority"] = authority
+    browser["state"]["stateSha256"] = state_digest(browser["state"])
+    browser["stateSha256"] = browser["state"]["stateSha256"]
+    browser["state"]["version"] = True
+    browser["stateSha256"] = state_digest(browser["state"])
+    try:
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
+                               expected_viewport, expected_dimensions)
+    except SystemExit as error:
+        assert "unsupported or missing browser state envelope" in str(error)
+    else:
+        raise AssertionError("boolean browser state version was accepted")
+    browser["state"]["version"] = 1
+    browser["stateSha256"] = state_digest(browser["state"])
     browser["stateSha256"] = "stale-state"
     try:
-        validate_browser_state(browser, {}, "artifact", "fixture",
+        validate_browser_state(browser, shared_state, "artifact", "fixture",
                                expected_viewport, expected_dimensions)
     except SystemExit as error:
         assert "state digest" in str(error)
