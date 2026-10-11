@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument("--fixture", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--fixture-sha256", required=True)
-    parser.add_argument("--binary-sha256")
+    parser.add_argument("--binary-sha256-file", required=True)
     args = parser.parse_args()
     binary = Path(args.binary).resolve()
     fixture = Path(args.fixture).resolve()
@@ -35,8 +35,9 @@ def main() -> int:
         print(f"FAIL: deterministic fixture provenance mismatch: {actual} != {args.fixture_sha256}", file=sys.stderr)
         return 1
     binary_digest = sha256(binary)
-    if args.binary_sha256 and binary_digest != args.binary_sha256:
-        print(f"FAIL: native binary provenance mismatch: {binary_digest} != {args.binary_sha256}", file=sys.stderr)
+    expected_binary = Path(args.binary_sha256_file).resolve().read_text().strip()
+    if binary_digest != expected_binary:
+        print(f"FAIL: native binary provenance mismatch: {binary_digest} != {expected_binary}", file=sys.stderr)
         return 1
     env = os.environ.copy()
     env.update({

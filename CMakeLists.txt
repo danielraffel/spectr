@@ -1367,6 +1367,14 @@ target_link_libraries(Spectr-native-shot PRIVATE
     ${SPECTR_NATIVE_CORE_TARGET}
 )
 spectr_configure_native_target(Spectr-native-shot)
+if(Python3_Interpreter_FOUND)
+    add_custom_command(TARGET Spectr-native-shot POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/write_binary_digest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --output=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        VERBATIM)
+endif()
 
 # The joined parity receipt is intentionally a small, dependency-light
 # contract test. It proves the comparator can accept an exact same-state
@@ -1418,6 +1426,7 @@ if(Python3_Interpreter_FOUND)
             --binary=$<TARGET_FILE:Spectr-native-shot>
             --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
             --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
+            --binary-sha256-file=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
             --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
     set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
         TIMEOUT 180
