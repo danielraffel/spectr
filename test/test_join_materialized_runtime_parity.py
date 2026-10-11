@@ -84,7 +84,11 @@ def main() -> None:
     browser["sharedStateSha256"] = "shared"
     validate_browser_state(browser, shared_state, "artifact", "fixture",
                            expected_viewport, expected_dimensions)
-    browser["authority"] = {**authority, "joinMode": "wrong-authority"}
+    wrong_authority = {**authority, "joinMode": "wrong-authority"}
+    browser["authority"] = wrong_authority
+    browser["state"]["authority"] = wrong_authority
+    browser["state"]["stateSha256"] = state_digest(browser["state"])
+    browser["stateSha256"] = browser["state"]["stateSha256"]
     try:
         validate_browser_state(browser, shared_state, "artifact", "fixture",
                                expected_viewport, expected_dimensions)
@@ -93,6 +97,9 @@ def main() -> None:
     else:
         raise AssertionError("browser authority mismatch was accepted")
     browser["authority"] = authority
+    browser["state"]["authority"] = authority
+    browser["state"]["stateSha256"] = state_digest(browser["state"])
+    browser["stateSha256"] = browser["state"]["stateSha256"]
     browser["state"]["version"] = True
     browser["stateSha256"] = state_digest(browser["state"])
     try:
