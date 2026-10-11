@@ -483,7 +483,7 @@ remain separate, testable gates:
 
 Current exact-head evidence after the P2 fixes:
 
-- branch head is now `b2d8394`; the explicit plot bounds, authenticated CTest
+- branch head is now `66cb13c`; the explicit plot bounds, authenticated CTest
   wrapper, browser/native-equivalent fixture validation, and receipt-embedded
   state/binary authentication are committed and
   pushed;
