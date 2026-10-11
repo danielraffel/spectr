@@ -38,6 +38,19 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
   SPECTR_WINDOWS_RDP_PORT="$rdp_port" \
   "$repo_root/tools/windows/ensure-rdp-over-ssh.sh"
 
+ssh_key="${SPECTR_WINDOWS_SSH_KEY:-$HOME/.ssh/id_ed25519_macstudio}"
+[[ -f "$ssh_key" ]] || ssh_key="$HOME/.ssh/id_ed25519"
+if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
+  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no -i "$ssh_key" \
+    "$repo_root/tools/windows/prepare-reaper-demo.ps1" \
+    "admin@127.0.0.1:/Users/admin/prepare-reaper-demo.ps1"
+  SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
+    SPECTR_WINDOWS_SSH_KEY="$ssh_key" \
+    "$repo_root/tools/windows/ssh-qemu.sh" \
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\admin\\prepare-reaper-demo.ps1 -Architecture arm64-win' >/dev/null
+fi
+
 if ! SPECTR_WINDOWS_SSH_PORT="$ssh_port" "$repo_root/tools/windows/utm-daw-status.sh"; then
   echo "WARNING: the authenticated Windows desktop is reachable, but the optional DAW inventory is incomplete; opening Jump Desktop for the REAPER path." >&2
 fi
