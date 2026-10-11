@@ -1097,13 +1097,24 @@ void capture(Rig& rig,
 bool deterministic_analyzer_region(Rig& rig,
                                    pulp::view::ScreenshotBackend backend,
                                    float scale) {
+    // These bounds are the authored analyzer plot, measured in design-space
+    // coordinates from the materialized editor: the top ruler and header end
+    // at y=84, the plot ends before the viewport minimap at y=558, and the
+    // plot's interactive surface is inset by the 56px side margins. Keeping
+    // this contract explicit prevents editor chrome from satisfying the
+    // analyzer content floor.
+    constexpr float kPlotX = 56.0f;
+    constexpr float kPlotY = 84.0f;
+    constexpr float kPlotWidth = 1208.0f;
+    constexpr float kPlotHeight = 474.0f;
     const auto png = pulp::view::render_to_png(
         *rig.root, static_cast<std::uint32_t>(kDesignWidth),
         static_cast<std::uint32_t>(kDesignHeight), scale, backend);
     const auto crop = pulp::view::crop_png(
-        png, 0, static_cast<std::uint32_t>(std::lround(44.0f * scale)),
-        static_cast<std::uint32_t>(std::lround(kDesignWidth * scale)),
-        static_cast<std::uint32_t>(std::lround(700.0f * scale)));
+        png, static_cast<std::uint32_t>(std::lround(kPlotX * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotY * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotWidth * scale)),
+        static_cast<std::uint32_t>(std::lround(kPlotHeight * scale)));
     if (crop.empty()) {
         std::fprintf(stderr, "FAIL parity-analyzer-region: empty plot crop\n");
         ++g_failures;

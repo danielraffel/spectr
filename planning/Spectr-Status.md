@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-09. This is the concise state-of-the-world for
+_Last updated: 2026-10-10. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Release 1 product state
@@ -459,3 +459,41 @@ Current honest result:
   direct `/usr/local/bin/python3` harness runs are the authoritative local
   receipts until hosted CI supplies the dependency;
 - Shipyard/PR merge proof and final thermonuclear review remain open.
+
+## 2026-10-10 exact-head parity closeout plan and review update
+
+The closeout plan is now explicitly staged so pixel parity and release work
+remain separate, testable gates:
+
+1. **Contract hardening:** keep one checked-in analyzer fixture and state
+   manifest; authenticate source, fixture, native binary, readiness, and
+   screenshot provenance in every browser/native receipt.
+2. **Production capture:** rebuild the native shot from the exact branch head,
+   exercise CPU Skia and GPU Dawn/Metal, run the settled Chromium capture, and
+   repeat each deterministic lane for byte identity.
+3. **Parity verdict:** run strict CPU and GPU joins without weakening thresholds.
+   A failed join stays open and is reported as renderer/layout composition work
+   until a measured implementation change improves it.
+4. **Adversarial closure:** require the plot-region content floor to inspect the
+   authored plot bounds, and require the CTest row to pin the fixture SHA before
+   accepting a native semantic pass.
+5. **Landing:** refresh the durable Pulp planning ledger, rerun autoreview and
+   thermonuclear review on the final exact head, then use Shipyard/required CI
+   and verify the merged SHA and ancestry before closing the goal.
+
+Current exact-head evidence after the P2 fixes:
+
+- branch head remains `92c79f2` before the new fixes; the working tree adds the
+  explicit plot bounds and authenticated CTest wrapper and must be committed
+  before final PR evidence;
+- CPU Skia and GPU Dawn/Metal deterministic captures pass response readiness;
+- the direct authenticated CTest wrapper passes and a planted fixture mutation
+  fails on SHA mismatch;
+- strict joins still honestly fail at 4,331,167 CPU pixels / MAE 2.604556 and
+  4,366,704 GPU pixels / MAE 2.608550, preserving the renderer/layout gap;
+- Chromium remains settled with two canvases, accepted analyzer sequence 2,
+  zero console/network errors, and byte-identical repeated screenshots.
+
+The next action is to commit this hardening, rerun both independent reviews,
+refresh the exact-head receipts, and then drive PR
+<https://github.com/Generous-Corp/spectr/pull/270> through merge proof.
