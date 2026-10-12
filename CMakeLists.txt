@@ -2286,6 +2286,13 @@ find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
     PATHS "/Applications/Google Chrome.app/Contents/MacOS")
 
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-provenance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_provenance.mjs)
+    set_tests_properties(Spectr-materialized-provenance PROPERTIES TIMEOUT 60)
+endif()
+
 # Node-only, deliberately outside the Chrome-gated block below: this executes
 # the shipped reattach ladder out of the materialized document directly, so it
 # still runs on a host with no Chrome -- where every other oracle silently
