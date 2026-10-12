@@ -6,7 +6,7 @@
     "browserArtifact": "resources/editor.html",
     "browserArtifactSha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
     "nativeArtifact": "native-ui/materialized/materialized-document.runtime.json",
-    "nativeArtifactSha256": "00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212",
+    "nativeArtifactSha256": "8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6",
     "joinMode": "diagnostic-authority-mismatch"
   },
   "states": [

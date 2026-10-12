@@ -126,7 +126,7 @@ READOUT_COMPONENT = '''function SpectrZoomReadout({ bankRef }) {
       if (unsubscribe) unsubscribe();
     };
   }, [bankRef]);
-  return /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { whiteSpace: "nowrap", flexShrink: 0, minWidth: 84 } }, zoom, "\\xD7 zoom");
+  return /* @__PURE__ */ React.createElement("span", { className: "tnum", style: { whiteSpace: "nowrap", flexShrink: 0, minWidth: 84, marginRight: 64 } }, zoom, "\\xD7 zoom");
 }
 '''
 
@@ -219,7 +219,7 @@ EDITS = [
      + 'function Chrome({ settings, setSettings, bankRef, status,'),
 
     ('chrome renders the leaf readout',
-     'React.createElement("span", { className: "tnum", style: { whiteSpace: "nowrap", flexShrink: 0, minWidth: 84 } }, info.zoom, "\\xD7 zoom")',
+     'React.createElement("span", { className: "tnum", style: { whiteSpace: "nowrap", flexShrink: 0, minWidth: 84, marginRight: 64 } }, info.zoom, "\\xD7 zoom")',
      'React.createElement(SpectrZoomReadout, { bankRef })'),
 
     # The polled N was always settings.bandCount one tick late: FilterBank
