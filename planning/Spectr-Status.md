@@ -695,7 +695,7 @@ source/artifact tests pass.
 The native target was rebuilt through the governed build wrapper. The current
 binary SHA is `76c76e84681305781e2a5ba0da127cb0eb9bd4496e7a60a8854e38ecd2db146e`;
 the materialized runtime SHA is
-`00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212`.
+`8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6`.
 The fresh browser oracle and native CPU Skia capture share the same artifact,
 fixture, viewport, state digest, and binary identity. The authenticated join
 passes all provenance checks and remains a measured diagnostic failure:
