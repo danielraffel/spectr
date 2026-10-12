@@ -70,6 +70,7 @@ setFlex('root', 'width', 1320);
   setPosition('Browser_canvas_11', 'absolute');
   setLeft('Browser_canvas_11', 0);
   setTop('Browser_canvas_11', 0);
+  setZIndex('Browser_canvas_11', 2);
   setFlex('Browser_canvas_11', 'width', 1320);
   setFlex('Browser_canvas_11', 'height', 860);
 
@@ -79,6 +80,7 @@ setFlex('root', 'width', 1320);
   setPosition('Browser_canvas_22', 'absolute');
   setLeft('Browser_canvas_22', 0);
   setTop('Browser_canvas_22', 0);
+  setZIndex('Browser_canvas_22', 3);
   setFlex('Browser_canvas_22', 'width', 1320);
   setFlex('Browser_canvas_22', 'height', 860);
 

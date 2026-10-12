@@ -117,6 +117,10 @@ def validate(manifest_path: Path, *, source_path: Path | None = None,
         fail('opaque Chromium paint authority must have an explicit lower z-index')
     if materialized.get('z_index', 0) <= 0:
         fail('pseudo plane must be composited above the opaque paint authority')
+    for node_id, z_index in (("Browser_canvas_11", 2), ("Browser_canvas_22", 3)):
+        line = f"setZIndex('{node_id}', {z_index});"
+        if design_text.count(line) != 1:
+            fail(f'{node_id} must have an explicit layer above the pseudo plane')
 
 
 def expect_rejected(mutated_manifest: Path, *, design_path: Path | None = None) -> None:

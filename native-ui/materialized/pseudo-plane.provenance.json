@@ -19,7 +19,7 @@
   },
   "materialized": {
     "path": "native-ui/materialized/design.js",
-    "sha256": "1db8b50e03197100e7167e042dcf8d6ab07220ef16aca124efd1362d70319e08",
+    "sha256": "f8a220465e383073e8f4fe328eaec26ccd6ae1c2f984334a6e4c66ad12a0cddf",
     "node_id": "Pseudo_body_before",
     "parent_id": "root",
     "position": "absolute",
