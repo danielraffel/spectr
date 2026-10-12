@@ -54,7 +54,10 @@ $receiptObject = [ordered]@{
 }
 
 if ($Launch) {
-    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinstance' -PassThru
+    # REAPER's Windows command-line switch is `-new`; `-newinstance` is not a
+    # valid switch and opens the usage dialog instead of the DAW. Keep the
+    # launcher usable from the desktop/RDP path.
+    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-new' -PassThru
     Start-Sleep -Seconds ([Math]::Max(0, $WaitSeconds))
     $receiptObject.reaper_pid = $process.Id
     $receiptObject.reaper_running = -not $process.HasExited

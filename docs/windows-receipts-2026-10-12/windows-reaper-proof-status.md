@@ -36,6 +36,29 @@ internal modulation, host automation modulation, and LFO ramp. Current native
 CLAP SHA-256 is
 `F95B9EAA6EE994BA8051884F0DA89C3982B26D3788F460B27855D81912CF3201`.
 
+### Native ARM64 GPU package correction
+
+The package previously installed in the retained UTM guest was not an ARM64
+GPU package: the installed CLAP was an x86-64, browser-free/headless artifact.
+That explains the generic REAPER parameter page and must not be counted as the
+Spectr editor. The corrected producer artifact is the ARM64 Release GPU build
+from `C:\builds\spectr-arm64-gpu`:
+
+- CLAP: `59F7B1D6CC67E42230FED10FE1A9835C6D06807AD22A330AB3C19FCA50498AAC`
+- VST3: `A0611BC25BB3F31AF440C43E4EF82E684C88E9DFF861E55D1EAD19DE9E1A92A3`
+- Standalone: `48FABA70E4DDA89653C8859A0A44470C551ED607F249BF0951EB667FC5F18999`
+- PE machine: `Aarch64` for the CLAP and VST3 binaries.
+- Build-info records Skia `chrome/m153`, Graphite Dawn, `wgpu-native`, and the
+  ARM64 MSVC build.
+
+The corrected CLAP, VST3, `wgpu_native.dll`, and `icudtl.dat` were installed in
+the UTM guest and REAPER's ARM64 scan caches were cleared. REAPER then rejected
+both the corrected Spectr ARM64 CLAP and a known-good ARM64 PulpGain CLAP; the
+resulting cache files contain only the scan hash header and no plugin entry.
+The same behavior occurs for the corrected ARM64 VST3. This is a current
+REAPER ARM64 host compatibility boundary, not evidence that the native Spectr
+editor rendered. The generic parameter page remains a negative control.
+
 After a fresh REAPER launch and removal of the CLAP/VST3 scan caches, the
 visible REAPER project-load warning reported:
 
@@ -62,8 +85,10 @@ all of the following in one fresh receipt:
 4. Headless modulation/audio tests and exact artifact hashes.
 
 Until that gate passes, the supported demo path is Intel/x64 REAPER on
-Proxmox. The ARM64 UTM image remains useful for headless ARM64 validation and
-for iterating the ARM64EC build; it does not consume a TartCI/macOS runner.
+Proxmox. To prove the UTM plugin path we need an ARM64EC/ARM64X package (or an
+x64 GPU package hosted by an x64 REAPER process); a pure ARM64 plugin is not
+accepted by the current REAPER ARM64 scanner. The UTM image remains useful for
+headless ARM64 validation and does not consume a TartCI/macOS runner.
 
 A later clean scan of the replacement package produced a second current
 negative screenshot, `arm64-reaper-vst3-scan-current-unavailable.png`, showing
