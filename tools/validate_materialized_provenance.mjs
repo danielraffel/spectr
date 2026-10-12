@@ -598,6 +598,9 @@ export function validateManifest(manifest, root = repoRoot) {
     const record = files[name];
     assert(record?.present === true && typeof record.path === 'string',
       name + ' artifact record is missing');
+    const relativeArtifact = relative(resolve(root), resolve(root, record.path));
+    assert(relativeArtifact && !relativeArtifact.startsWith('..') && !isAbsolute(relativeArtifact),
+      name + ' artifact path escapes repository root');
     const path = resolve(root, record.path);
     assert(existsSync(path), name + ' artifact missing: ' + path);
     const actualRecord = fileRecord(path, root);
@@ -612,6 +615,18 @@ export function validateManifest(manifest, root = repoRoot) {
   const shadowDocument = JSON.parse(shadowBytes.toString('utf8'));
   assert(sha256Text(canonicalJson(shadowDocument)) ===
     manifest.shadow.canonical_sha256, 'shadow output SHA-256 mismatch');
+  assert(manifest.shadow.authoritative === false,
+    'diagnostic shadow cannot claim authoritative ownership');
+  const provenance = manifest.provenance;
+  assert(isObject(provenance) && isObject(provenance.dependency_hashes),
+    'provenance dependency hashes are missing');
+  const expectedDependencyHashes = {
+    materialized_document: manifest.source.sha256,
+    materialized_runtime_document: files.materialized_runtime_document.sha256,
+    runtime_js: files.runtime_js.sha256
+  };
+  assert(canonicalJson(provenance.dependency_hashes) ===
+    canonicalJson(expectedDependencyHashes), 'provenance dependency hashes mismatch');
   const runtime = manifest.runtime_fingerprint;
   assert(runtime?.expected_revision === EXPECTED_RUNTIME_FINGERPRINT_REVISION,
     'unexpected runtime fingerprint revision');

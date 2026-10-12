@@ -178,9 +178,18 @@ expectThrows(() => validateManifest(sourceMetadataTampered, repoRoot), 'byte len
 const shadowMetadataTampered = JSON.parse(JSON.stringify(manifest));
 shadowMetadataTampered.shadow.binding_counts.layout += 1;
 expectThrows(() => validateManifest(shadowMetadataTampered, repoRoot), 'binding counts');
+const shadowAuthorityTampered = JSON.parse(JSON.stringify(manifest));
+shadowAuthorityTampered.shadow.authoritative = true;
+expectThrows(() => validateManifest(shadowAuthorityTampered, repoRoot), 'authoritative');
+const dependencyTampered = JSON.parse(JSON.stringify(manifest));
+delete dependencyTampered.provenance.dependency_hashes.runtime_js;
+expectThrows(() => validateManifest(dependencyTampered, repoRoot), 'dependency hashes');
 const artifactRecordTampered = JSON.parse(JSON.stringify(manifest));
 artifactRecordTampered.files.editor_ir.present = false;
 expectThrows(() => validateManifest(artifactRecordTampered, repoRoot), 'artifact record');
+const artifactEscape = JSON.parse(JSON.stringify(manifest));
+artifactEscape.files.editor_ir = { path: '/etc/hosts', present: true, bytes: 0, sha256: '0'.repeat(64) };
+expectThrows(() => validateManifest(artifactEscape, repoRoot), 'escapes repository');
 const allowlistTampered = JSON.parse(JSON.stringify(manifest));
 allowlistTampered.runtime_patch_allowlist.scripts.pop();
 expectThrows(() => validateManifest(allowlistTampered, repoRoot), 'allowlist');
