@@ -24,7 +24,10 @@ PATH = Path(__file__).resolve().parents[1] / "native-ui/materialized/materialize
 OLD = r'''fmt: (i) => spectrModulationRates[i] + " beats",'''
 NEW = r'''fmt: (i) => spectrFormatModulationRate(spectrModulationRates[i]),'''
 
-HELPER_ANCHOR = r'''const spectrModulationRates = [0.25, 0.5, 1, 2, 4, 8, 16];'''
+# The rates table appears twice; the copy inside the LFO panel component is
+# the one followed by its render, and it is the scope the formatter runs in.
+HELPER_ANCHOR = r'''const spectrModulationRates = [0.25, 0.5, 1, 2, 4, 8, 16];
+  return ['''
 HELPER = r'''const spectrModulationRates = [0.25, 0.5, 1, 2, 4, 8, 16];
   // One line at every rate: the readout column fits "16 beats", and a
   // sub-beat rate spelled as a decimal ("0.25 beats") is wider than that and
@@ -33,7 +36,8 @@ HELPER = r'''const spectrModulationRates = [0.25, 0.5, 1, 2, 4, 8, 16];
     beats === 0.25 ? "1/4 beat"
       : beats === 0.5 ? "1/2 beat"
       : beats === 1 ? "1 beat"
-      : beats + " beats";'''
+      : beats + " beats";
+  return ['''
 
 
 def encode(text):
