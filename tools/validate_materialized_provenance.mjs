@@ -730,6 +730,9 @@ export function validateManifest(manifest, root = repoRoot) {
   }
   assert(manifest.parity?.status === recomputedParity.status,
     'parity status is not recomputed from evidence');
+  assert(canonicalJson(manifest.parity?.mismatch ?? []) ===
+    canonicalJson(recomputedParity.mismatch ?? []),
+    'parity mismatch metadata is not recomputed from evidence');
   assert(manifest.parity?.comparator === recomputedParity.comparator &&
     canonicalJson(manifest.parity?.missing ?? []) ===
       canonicalJson(recomputedParity.missing ?? []) &&
