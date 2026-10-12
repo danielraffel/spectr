@@ -274,7 +274,13 @@
   "fidelity_receipt": {
     "status": "NOT_PROVIDED",
     "missing": [],
-    "invalid": []
+    "invalid": [],
+    "schema": null,
+    "source_sha256": null,
+    "screenshot_sha256": null,
+    "repeat": null,
+    "deterministic_dom_marker": null,
+    "negative_control": null
   },
   "parity": {
     "status": "NOT_RUN",

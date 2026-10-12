@@ -36,6 +36,10 @@ export const EXPECTED_RUNTIME_PATCH_SCRIPTS = Object.freeze([
   'patch_materialized_runtime_single_font_pass.py',
   'patch_materialized_runtime_unread_data_attributes.py'
 ]);
+const REQUIRED_ARTIFACT_KEYS = Object.freeze([
+  'materialized_document', 'materialized_runtime_document', 'runtime_js',
+  'editor_html', 'editor_ir', 'state_atlas'
+]);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 export const repoRoot = resolve(scriptDir, '..');
 
@@ -325,7 +329,11 @@ function validEvidence(value) {
   );
 }
 function strictFidelityReceipt(receipt) {
-  if (!receipt) return { status: 'NOT_PROVIDED', missing: [], invalid: [] };
+  if (!receipt) return {
+    status: 'NOT_PROVIDED', missing: [], invalid: [], schema: null,
+    source_sha256: null, screenshot_sha256: null, repeat: null,
+    deterministic_dom_marker: null, negative_control: null
+  };
   const required = [
     'sourceSha256', 'screenshotSha256', 'repeat',
     'deterministicDomMarker', 'negativeControl'
@@ -343,7 +351,12 @@ function strictFidelityReceipt(receipt) {
   }
   return {
     status: missing.length === 0 && invalid.length === 0 ? 'COMPATIBLE' : 'INCOMPATIBLE',
-    missing, invalid, schema: receipt.schema ?? null
+    missing, invalid, schema: receipt.schema ?? null,
+    source_sha256: receipt.sourceSha256 ?? null,
+    screenshot_sha256: receipt.screenshotSha256 ?? null,
+    repeat: receipt.repeat ?? null,
+    deterministic_dom_marker: receipt.deterministicDomMarker ?? null,
+    negative_control: receipt.negativeControl ?? null
   };
 }
 export function evaluateParity(options = {}) {
@@ -430,6 +443,24 @@ export function buildManifest(options = {}) {
         ? 'fidelity_receipt_missing' : 'fidelity_receipt_incompatible'
     ];
   }
+  if (artifactsSupplied && strictReceipt.status === 'COMPATIBLE') {
+    const sourceDigests = [options.sourceBeforeSha256, options.sourceAfterSha256];
+    const browserDigests = [browserBefore?.sha256, browserAfter?.sha256];
+    if (sourceDigests.some((digest) => !digest)) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_source_sha256_unbound'];
+    } else if (sourceDigests.some(
+      (digest) => digest !== receipt.sourceSha256
+    )) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_source_sha256_mismatch'];
+    } else if (browserDigests.some(
+      (digest) => digest && digest !== receipt.screenshotSha256
+    )) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_screenshot_sha256_mismatch'];
+    }
+  }
   const shadowCanonical = canonicalJson(normalized.shadowDocument);
   return {
     schema: MANIFEST_SCHEMA,
@@ -515,9 +546,15 @@ export function validateManifest(manifest, root = repoRoot) {
     manifest.source.version === sourceDocument.version,
     'source schema/version mismatch');
   const normalized = normalizeMaterializedDocument(sourceDocument);
-  assert(canonicalJson(assetResolution(sourceDocument)) ===
+  const actualAssetResolution = assetResolution(sourceDocument);
+  assert(actualAssetResolution.status === manifest.asset_resolution?.status,
+    'asset resolution status mismatch');
+  assert(canonicalJson(actualAssetResolution) ===
     canonicalJson(manifest.asset_resolution), 'asset resolution mismatch');
-  assert(canonicalJson(runtimePatchAllowlist(root)) ===
+  const actualRuntimePatchAllowlist = runtimePatchAllowlist(root);
+  assert(actualRuntimePatchAllowlist.status === manifest.runtime_patch_allowlist?.status,
+    'runtime patch allowlist status mismatch');
+  assert(canonicalJson(actualRuntimePatchAllowlist) ===
     canonicalJson(manifest.runtime_patch_allowlist), 'runtime patch allowlist mismatch');
   const shadowCanonical = canonicalJson(normalized.shadowDocument);
   assert(sha256Text(shadowCanonical) === manifest.shadow.canonical_sha256,
@@ -536,36 +573,98 @@ export function validateManifest(manifest, root = repoRoot) {
   assert(manifest.shadow.source_arrays_preserved === true,
     'shadow does not prove source arrays were preserved');
   validateShadowProjection(sourceDocument, normalized);
-  for (const [name, record] of Object.entries(manifest.files ?? {})) {
-    assert(record?.present === true, name + ' artifact record is missing');
+  const files = manifest.files;
+  assert(isObject(files), 'manifest artifact records are missing');
+  for (const name of REQUIRED_ARTIFACT_KEYS) {
+    assert(Object.hasOwn(files, name), name + ' artifact record is missing');
+    const record = files[name];
+    assert(record?.present === true && typeof record.path === 'string',
+      name + ' artifact record is missing');
     const path = resolve(root, record.path);
     assert(existsSync(path), name + ' artifact missing: ' + path);
-    assert(sha256Bytes(readFileSync(path)) === record.sha256,
-      name + ' artifact SHA-256 mismatch');
+    const actualRecord = fileRecord(path, root);
+    assert(canonicalJson(actualRecord) === canonicalJson(record),
+      name + ' artifact provenance mismatch');
   }
-  if (manifest.shadow.output_path) {
-    const shadowPath = resolve(root, manifest.shadow.output_path);
-    assert(existsSync(shadowPath), 'shadow output missing: ' + shadowPath);
-    const shadowBytes = readFileSync(shadowPath);
-    const shadowDocument = JSON.parse(shadowBytes.toString('utf8'));
-    assert(sha256Text(canonicalJson(shadowDocument)) ===
-      manifest.shadow.canonical_sha256, 'shadow output SHA-256 mismatch');
-  }
+  assert(typeof manifest.shadow.output_path === 'string' &&
+    manifest.shadow.output_path.length > 0, 'shadow output record is missing');
+  const shadowPath = resolve(root, manifest.shadow.output_path);
+  assert(existsSync(shadowPath), 'shadow output missing: ' + shadowPath);
+  const shadowBytes = readFileSync(shadowPath);
+  const shadowDocument = JSON.parse(shadowBytes.toString('utf8'));
+  assert(sha256Text(canonicalJson(shadowDocument)) ===
+    manifest.shadow.canonical_sha256, 'shadow output SHA-256 mismatch');
   const runtime = manifest.runtime_fingerprint;
   assert(runtime?.expected_revision === EXPECTED_RUNTIME_FINGERPRINT_REVISION,
     'unexpected runtime fingerprint revision');
-  if (runtime.file?.present) {
-    const runtimePath = resolve(root, runtime.file.path);
-    const actualRuntime = runtimeFingerprint(runtimePath, root);
-    assert(canonicalJson(actualRuntime.signatures) === canonicalJson(runtime.signatures),
-      'runtime fingerprint signatures mismatch');
-    assert(actualRuntime.file.sha256 === runtime.file.sha256,
-      'runtime bundle SHA-256 mismatch');
-  }
+  assert(runtime?.file?.present === true && typeof runtime.file.path === 'string',
+    'runtime fingerprint file is missing');
+  const runtimePath = resolve(root, runtime.file.path);
+  assert(existsSync(runtimePath), 'runtime fingerprint file is missing');
+  const actualRuntime = runtimeFingerprint(runtimePath, root);
+  assert(actualRuntime.status !== 'MISSING', 'runtime fingerprint is missing');
+  assert(canonicalJson(actualRuntime) === canonicalJson(runtime),
+    'runtime fingerprint mismatch');
+  assert(canonicalJson(runtime.file) === canonicalJson(files.runtime_js),
+    'runtime fingerprint is not bound to runtime_js artifact');
   if (runtime.status === 'LEGACY_PRODUCT_PATCHED') {
     assert(runtime.wholesale_regeneration === false,
       'legacy runtime cannot claim wholesale regeneration');
   }
+  const fidelity = manifest.fidelity_receipt;
+  const receiptInput = fidelity?.status === 'NOT_PROVIDED' ? null : {
+    schema: fidelity?.schema,
+    sourceSha256: fidelity?.source_sha256,
+    screenshotSha256: fidelity?.screenshot_sha256,
+    repeat: fidelity?.repeat,
+    deterministicDomMarker: fidelity?.deterministic_dom_marker,
+    negativeControl: fidelity?.negative_control
+  };
+  assert(canonicalJson(strictFidelityReceipt(receiptInput)) ===
+    canonicalJson(fidelity), 'fidelity receipt status mismatch');
+  const recomputedParity = evaluateParity({
+    sourceBeforeSha256: manifest.parity?.source_sha256_before,
+    sourceAfterSha256: manifest.parity?.source_sha256_after,
+    browserBefore: manifest.parity?.browser_before,
+    browserAfter: manifest.parity?.browser_after,
+    nativeBefore: manifest.parity?.native_before,
+    nativeAfter: manifest.parity?.native_after
+  });
+  const artifactsSupplied = [
+    manifest.parity?.browser_before, manifest.parity?.browser_after,
+    manifest.parity?.native_before, manifest.parity?.native_after
+  ].some((artifact) => artifact !== null && artifact !== undefined);
+  if (artifactsSupplied && fidelity?.status !== 'COMPATIBLE') {
+    recomputedParity.status = 'FAIL';
+    recomputedParity.mismatch = [
+      fidelity?.status === 'NOT_PROVIDED'
+        ? 'fidelity_receipt_missing' : 'fidelity_receipt_incompatible'
+    ];
+  }
+  if (artifactsSupplied && fidelity?.status === 'COMPATIBLE') {
+    const sourceDigests = [
+      manifest.parity?.source_sha256_before,
+      manifest.parity?.source_sha256_after
+    ];
+    const browserDigests = [
+      manifest.parity?.browser_before?.sha256,
+      manifest.parity?.browser_after?.sha256
+    ];
+    if (sourceDigests.some((digest) => !digest)) {
+      recomputedParity.status = 'FAIL';
+      recomputedParity.mismatch = ['receipt_source_sha256_unbound'];
+    } else if (sourceDigests.some((digest) => digest !== fidelity.source_sha256)) {
+      recomputedParity.status = 'FAIL';
+      recomputedParity.mismatch = ['receipt_source_sha256_mismatch'];
+    } else if (browserDigests.some(
+      (digest) => digest && digest !== fidelity.screenshot_sha256
+    )) {
+      recomputedParity.status = 'FAIL';
+      recomputedParity.mismatch = ['receipt_screenshot_sha256_mismatch'];
+    }
+  }
+  assert(manifest.parity?.status === recomputedParity.status,
+    'parity status is not recomputed from evidence');
   if (manifest.parity?.status === 'PASS') {
     assert(!manifest.parity.mismatch || manifest.parity.mismatch.length === 0,
       'passing parity has mismatches');

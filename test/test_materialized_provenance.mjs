@@ -23,6 +23,7 @@ const runtimeJs = join(repoRoot, 'native-ui/materialized/runtime.js');
 const editorHtml = join(repoRoot, 'resources/editor.html');
 const editorIr = join(repoRoot, 'native-ui/materialized/editor.ir.json');
 const stateAtlas = join(repoRoot, 'native-ui/materialized/state-atlas.json');
+const shadowOutput = join(repoRoot, 'native-ui/materialized/materialized-document.v2-shadow.json');
 const source = JSON.parse(readFileSync(documentPath, 'utf8'));
 const expectThrows = (fn, needle) => throws(fn, new RegExp(needle));
 
@@ -62,6 +63,20 @@ malformedAsset.assets[0].data_base64 = '%%%%';
 malformedAsset.assets[0].byte_length = 0;
 malformedAsset.assets[0].sha256 = sha256Bytes(Buffer.from(''));
 strictEqual(assetResolution(malformedAsset).status, 'FAIL');
+const directAssetBytes = Buffer.from('a');
+const directAssetSha = sha256Bytes(directAssetBytes);
+const directAssetId = 'pulp-materialized-asset-' + directAssetSha;
+const directAssetFixture = {
+  ...source,
+  html: '<img src="' + directAssetId + '">',
+  assets: [{
+    id: directAssetId, data_base64: 'YQ', byte_length: 1,
+    mime_type: 'text/plain', sha256: directAssetSha
+  }]
+};
+const directAssetResolution = assetResolution(directAssetFixture);
+strictEqual(directAssetResolution.status, 'FAIL');
+strictEqual(directAssetResolution.invalid_assets.includes(directAssetId), true);
 validateShadowProjection(source, first);
 for (const kind of BINDING_KINDS) {
   strictEqual(Object.keys(first.bindingsById[kind]).length, source[kind + '_bindings'].length);
@@ -120,7 +135,7 @@ expectThrows(() => normalizeMaterializedDocument(prototypeFixture), 'prototype i
 // Manifest positive and exact file hash controls.
 const manifest = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
-  editorHtml, editorIr, stateAtlas
+  editorHtml, editorIr, stateAtlas, shadowOutput
 });
 validateManifest(manifest, repoRoot);
 strictEqual(manifest.status.parity, 'NOT_RUN');
@@ -131,6 +146,27 @@ expectThrows(() => validateManifest(hashTampered, repoRoot), 'source SHA-256 mis
 const runtimeTampered = JSON.parse(JSON.stringify(manifest));
 runtimeTampered.runtime_fingerprint.signatures.batched_host_callbacks.present = false;
 expectThrows(() => validateManifest(runtimeTampered, repoRoot), 'runtime');
+const runtimeMissing = JSON.parse(JSON.stringify(manifest));
+runtimeMissing.runtime_fingerprint.file.present = false;
+runtimeMissing.runtime_fingerprint.status = 'MISSING';
+expectThrows(() => validateManifest(runtimeMissing, repoRoot),
+  'runtime fingerprint file is missing');
+const shadowMissing = JSON.parse(JSON.stringify(manifest));
+shadowMissing.shadow.output_path = 'native-ui/materialized/missing-shadow.json';
+expectThrows(() => validateManifest(shadowMissing, repoRoot), 'shadow output missing');
+const artifactOmitted = JSON.parse(JSON.stringify(manifest));
+delete artifactOmitted.files.editor_ir;
+expectThrows(() => validateManifest(artifactOmitted, repoRoot), 'artifact record is missing');
+const assetStatusTampered = JSON.parse(JSON.stringify(manifest));
+assetStatusTampered.asset_resolution.status = 'FAIL';
+expectThrows(() => validateManifest(assetStatusTampered, repoRoot),
+  'asset resolution status mismatch');
+const parityStatusTampered = JSON.parse(JSON.stringify(manifest));
+parityStatusTampered.parity.status = 'PASS';
+parityStatusTampered.status.parity = 'PASS';
+parityStatusTampered.status.overall = 'PASS';
+expectThrows(() => validateManifest(parityStatusTampered, repoRoot),
+  'parity status is not recomputed');
 const sourceMetadataTampered = JSON.parse(JSON.stringify(manifest));
 sourceMetadataTampered.source.bytes += 1;
 expectThrows(() => validateManifest(sourceMetadataTampered, repoRoot), 'byte length');
@@ -177,6 +213,7 @@ const malformedSourceParity = evaluateParity({
   nativeBefore: sameNative, nativeAfter: sameNativeAfter
 });
 strictEqual(malformedSourceParity.status, 'FAIL');
+writeFileSync(afterNative, Buffer.from('same-image'));
 
 // A legacy receipt lacking strict fields is explicitly incompatible.
 writeFileSync(join(temp, 'legacy.json'), JSON.stringify({
@@ -184,12 +221,46 @@ writeFileSync(join(temp, 'legacy.json'), JSON.stringify({
 }));
 const receiptMissing = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
-  editorHtml, editorIr, stateAtlas, parityReceipt: join(temp, 'legacy.json'),
+  editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: join(temp, 'legacy.json'),
   browserBefore: beforeBrowser, browserAfter: afterBrowser,
   nativeBefore: beforeNative, nativeAfter: afterNative
 });
 strictEqual(receiptMissing.fidelity_receipt.status, 'INCOMPATIBLE');
 strictEqual(receiptMissing.status.parity, 'FAIL');
+const validReceiptInput = join(temp, 'valid.json');
+writeFileSync(validReceiptInput, JSON.stringify({
+  schema: 'spectr-html-cdp-comparison-v1',
+  sourceSha256: sha256Bytes(readFileSync(documentPath)),
+  screenshotSha256: sameBrowser.sha256,
+  repeat: true, deterministicDomMarker: true, negativeControl: true
+}));
+const validReceiptManifest = buildManifest({
+  root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
+  editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: validReceiptInput,
+  sourceBeforeSha256: sha256Bytes(readFileSync(documentPath)),
+  sourceAfterSha256: sha256Bytes(readFileSync(documentPath)),
+  browserBefore: beforeBrowser, browserAfter: afterBrowser,
+  nativeBefore: beforeNative, nativeAfter: afterNative
+});
+strictEqual(validReceiptManifest.status.parity, 'PASS');
+validateManifest(validReceiptManifest, repoRoot);
+const mismatchedReceiptInput = join(temp, 'mismatched.json');
+writeFileSync(mismatchedReceiptInput, JSON.stringify({
+  schema: 'spectr-html-cdp-comparison-v1',
+  sourceSha256: 'f'.repeat(64),
+  screenshotSha256: sameBrowser.sha256,
+  repeat: true, deterministicDomMarker: true, negativeControl: true
+}));
+const mismatchedReceipt = buildManifest({
+  root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
+  editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: mismatchedReceiptInput,
+  sourceBeforeSha256: sha256Bytes(readFileSync(documentPath)),
+  sourceAfterSha256: sha256Bytes(readFileSync(documentPath)),
+  browserBefore: beforeBrowser, browserAfter: afterBrowser,
+  nativeBefore: beforeNative, nativeAfter: afterNative
+});
+strictEqual(mismatchedReceipt.status.parity, 'FAIL');
+strictEqual(mismatchedReceipt.parity.mismatch.includes('receipt_source_sha256_mismatch'), true);
 const malformedReceipt = JSON.parse(JSON.stringify(receiptMissing));
 malformedReceipt.fidelity_receipt = {
   status: 'COMPATIBLE', missing: [], invalid: []
@@ -205,7 +276,7 @@ writeFileSync(malformedReceiptInput, JSON.stringify({
 }));
 const malformed = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
-  editorHtml, editorIr, stateAtlas, parityReceipt: malformedReceiptInput,
+  editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: malformedReceiptInput,
   browserBefore: beforeBrowser, browserAfter: afterBrowser,
   nativeBefore: beforeNative, nativeAfter: afterNative
 });
