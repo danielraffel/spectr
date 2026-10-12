@@ -670,8 +670,12 @@ export function validateManifest(manifest, root = repoRoot) {
   assert(canonicalJson(strictFidelityReceipt(receiptInput)) ===
     canonicalJson(fidelity), 'fidelity receipt status mismatch');
   const recomputedParity = evaluateParity({
-    sourceBeforeSha256: manifest.parity?.source_sha256_before,
-    sourceAfterSha256: manifest.parity?.source_sha256_after,
+    sourceBeforeSha256: manifest.parity?.source_sha256_before ??
+      (manifest.parity?.browser_before || manifest.parity?.native_before
+        ? undefined : manifest.source.sha256),
+    sourceAfterSha256: manifest.parity?.source_sha256_after ??
+      (manifest.parity?.browser_after || manifest.parity?.native_after
+        ? undefined : manifest.source.sha256),
     browserBefore: manifest.parity?.browser_before,
     browserAfter: manifest.parity?.browser_after,
     nativeBefore: manifest.parity?.native_before,
@@ -712,6 +716,11 @@ export function validateManifest(manifest, root = repoRoot) {
   }
   assert(manifest.parity?.status === recomputedParity.status,
     'parity status is not recomputed from evidence');
+  assert(manifest.parity?.comparator === recomputedParity.comparator &&
+    canonicalJson(manifest.parity?.missing ?? []) ===
+      canonicalJson(recomputedParity.missing ?? []) &&
+    (manifest.parity?.reason ?? null) === (recomputedParity.reason ?? null),
+    'parity diagnostic metadata is not recomputed from evidence');
   if (manifest.parity?.status === 'PASS') {
     assert(!manifest.parity.mismatch || manifest.parity.mismatch.length === 0,
       'passing parity has mismatches');
