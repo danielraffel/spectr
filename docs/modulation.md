@@ -123,11 +123,12 @@ block) and must fail on its gate.
 each still shows ONE indicator: its one needle and value arc sit at the
 **value playing**, in violet, moving at the display rate (white needle and blue
 arc when nothing drives it). The **base** -- the value the user set, or host
-automation is playing -- is a short white tick across the ring. The readout
-prints the value playing, and the base while the knob is being dragged; the
-drag moves the tick. The base is the only thing a drag, a wheel notch or an
-arrow key edits and the only thing the host records; the value playing is
-display only. While an LFO drives a knob its track ring and rim are tinted a
+automation is playing -- is not marked on the ring: a second mark read as a
+second, stuck control in a DAW. The readout prints the value playing, and the
+base while the knob is being dragged. The base is the only thing a drag, a
+wheel notch or an arrow key edits and the only thing the host records; the
+value playing is display only
+(`tools/patch_materialized_modulated_no_base_tick.py`). While an LFO drives a knob its track ring and rim are tinted a
 quiet violet as well. Grabbing a
 driven knob -- a drag, a wheel notch or an arrow key -- asks the override
 question (below) on the release of the press; **Keep modulating** lets the
@@ -143,9 +144,10 @@ around it in the same frame (`tools/patch_materialized_modulation_controls_follo
 
 **The MORPH slider** works the same way: while an LFO drives Morph and both
 snapshots exist, its one thumb and fill sit at the morph position playing, in
-violet, and the base (what a drag moves and the Morph lane records) is a short
-white tick on the track; with no LFO the white thumb and blue fill are the
-base (`tools/patch_materialized_modulated_single_indicator.py`).
+violet, and the base (what a drag moves and the Morph lane records) is not
+marked on the track; with no LFO the white thumb and blue fill are the base
+(`tools/patch_materialized_modulated_single_indicator.py`, then
+`tools/patch_materialized_modulated_no_base_tick.py`).
 
 A control showing two indicators at once -- the base's own needle or thumb
 beside the value playing -- reads as two selections. `Spectr-native-shot`'s
