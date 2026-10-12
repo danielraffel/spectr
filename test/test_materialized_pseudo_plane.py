@@ -113,8 +113,8 @@ def validate(manifest_path: Path, *, source_path: Path | None = None,
     for name, line in expected_lines.items():
         if design_text.count(line) != 1:
             fail(f"generated pseudo plane {name} binding is missing or duplicated")
-    authority_line = "setZIndex('Accepted_Chromium_chrome0', 0);"
-    if design_text.count(authority_line) != 1:
+    authority_prefix = "setZIndex('Accepted_Chromium_chrome0',"
+    if design_text.count(authority_prefix) != 1 or "setZIndex('Accepted_Chromium_chrome0', 0);" not in design_text:
         fail('opaque Chromium paint authority must have exactly one lower z-index setter')
     if materialized.get('z_index', 0) <= 0:
         fail('pseudo plane must be composited above the opaque paint authority')
