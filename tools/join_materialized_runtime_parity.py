@@ -61,6 +61,13 @@ def require_embedded_artifact(binary: Path, artifact: Path) -> None:
         fail("native binary does not embed the exact source artifact bytes")
 
 
+def require_embedded_source(binary: Path, source: Path, label: str) -> None:
+    """Bind auxiliary authored source bytes to the executable under review."""
+    payload = source.read_bytes()
+    if payload not in binary.read_bytes():
+        fail(f"native binary does not embed the exact {label} bytes")
+
+
 def require_native_executable(binary: Path, native: dict) -> None:
     """Reject a receipt paired with a non-native or different executable."""
     if not os.access(binary, os.X_OK):
@@ -419,6 +426,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--source-artifact", required=True)
     parser.add_argument("--native-binary", required=True)
     parser.add_argument("--fixture", required=True)
+    parser.add_argument("--design-js",
+                        help="authored native design source whose embedded bytes must match")
     parser.add_argument("--browser-png")
     parser.add_argument("--native-png")
     parser.add_argument("--output", required=True)
@@ -434,11 +443,15 @@ def main(argv: list[str]) -> int:
     artifact = Path(args.source_artifact).resolve()
     binary = Path(args.native_binary).resolve()
     fixture = Path(args.fixture).resolve()
+    design_js = Path(args.design_js).resolve() if args.design_js else None
     for path, label in ((browser_path, "browser receipt"),
                         (native_path, "native receipt"), (state_path, "state manifest"),
                         (artifact, "source artifact"), (binary, "native binary"),
                         (fixture, "analyzer fixture")):
         require_file(path, label)
+    if design_js is not None:
+        require_file(design_js, "design.js source")
+        require_embedded_source(binary, design_js, "design.js source")
     browser = json.loads(browser_path.read_text())
     native = json.loads(native_path.read_text())
     state = json.loads(state_path.read_text())
