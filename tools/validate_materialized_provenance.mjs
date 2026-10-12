@@ -650,8 +650,9 @@ export function validateManifest(manifest, root = repoRoot) {
     if (record === null || record === undefined) continue;
     assert(record.present === true && typeof record.path === 'string',
       lane + ' parity artifact record is missing');
-    assert(!(isAbsolute(record.path) && /^\/(?:etc|usr|bin|sbin)\//.test(record.path)),
-      lane + ' parity artifact path is outside an approved capture location');
+    const parityRelative = relative(resolve(root), resolve(root, record.path));
+    assert(parityRelative && !parityRelative.startsWith('..') && !isAbsolute(parityRelative),
+      lane + ' parity artifact path escapes repository root');
     assert(canonicalJson(fileRecord(resolve(root, record.path), root)) ===
       canonicalJson(record), lane + ' parity artifact provenance mismatch');
   }
