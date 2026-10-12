@@ -265,11 +265,12 @@
         "present": false
       }
     },
-    "missing_expected_signatures": [
+    "missing_expected_signatures": [],
+    "optional_missing_signatures": [
       "__pulpReconcileMaterializedPaint__",
       "materializedIndexedChildren"
     ],
-    "note": "Product-patched vendored runtime retained; no wholesale regeneration performed."
+    "note": "Product-patched vendored runtime retained; baseline signatures are present; optional signatures remain diagnostic."
   },
   "fidelity_receipt": {
     "status": "NOT_PROVIDED",

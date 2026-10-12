@@ -36,6 +36,14 @@ export const EXPECTED_RUNTIME_PATCH_SCRIPTS = Object.freeze([
   'patch_materialized_runtime_single_font_pass.py',
   'patch_materialized_runtime_unread_data_attributes.py'
 ]);
+const EXPECTED_LEGACY_RUNTIME_SIGNATURES = Object.freeze({
+  batched_host_callbacks: true,
+  scoped_metadata_reapply: true,
+  selector_parse_cache: true
+});
+const OPTIONAL_RUNTIME_SIGNATURES = Object.freeze([
+  'paint_reconcile', 'indexed_children'
+]);
 const REQUIRED_ARTIFACT_KEYS = Object.freeze([
   'materialized_document', 'materialized_runtime_document', 'runtime_js',
   'editor_html', 'editor_ir', 'state_atlas'
@@ -303,22 +311,25 @@ export function runtimeFingerprint(runtimePath, root = repoRoot) {
       present: source.includes('materializedIndexedChildren')
     }
   };
-  const legacyProductPatched = signatures.batched_host_callbacks.present &&
-    signatures.scoped_metadata_reapply.present &&
-    signatures.selector_parse_cache.present &&
-    !signatures.paint_reconcile.present;
+  const legacyProductPatched = Object.entries(EXPECTED_LEGACY_RUNTIME_SIGNATURES)
+    .every(([name, expected]) => signatures[name]?.present === expected);
+  const missingExpectedSignatures = Object.entries(EXPECTED_LEGACY_RUNTIME_SIGNATURES)
+    .filter(([name, expected]) => signatures[name]?.present !== expected)
+    .flatMap(([name]) => signatures[name].needles);
+  const optionalMissingSignatures = OPTIONAL_RUNTIME_SIGNATURES
+    .filter((name) => !signatures[name]?.present)
+    .flatMap((name) => signatures[name].needles);
   return {
     expected_revision: EXPECTED_RUNTIME_FINGERPRINT_REVISION,
     status: legacyProductPatched ? 'LEGACY_PRODUCT_PATCHED' : 'INSPECTED',
     wholesale_regeneration: false,
     file: record,
     signatures,
-    missing_expected_signatures: Object.values(signatures)
-      .filter((signature) => !signature.present)
-      .flatMap((signature) => signature.needles),
+    missing_expected_signatures: missingExpectedSignatures,
+    optional_missing_signatures: optionalMissingSignatures,
     note: legacyProductPatched
-      ? 'Product-patched vendored runtime retained; no wholesale regeneration performed.'
-      : 'Runtime signature set differs from the known product-patched baseline.'
+      ? 'Product-patched vendored runtime retained; baseline signatures are present; optional signatures remain diagnostic.'
+      : 'Runtime signature set differs from the known product-patched baseline; fingerprint is diagnostic, not behavioral proof.'
   };
 }
 function artifactRecord(path, root) { return path ? fileRecord(path, root) : null; }
@@ -433,14 +444,16 @@ export function buildManifest(options = {}) {
   const nativeBefore = artifactRecord(options.nativeBefore, root);
   const nativeAfter = artifactRecord(options.nativeAfter, root);
   const receipt = readOptionalJson(options.parityReceipt);
+  const artifactsSupplied = [browserBefore, browserAfter, nativeBefore, nativeAfter]
+    .some((artifact) => artifact !== null);
   const parity = evaluateParity({
-    sourceBeforeSha256: options.sourceBeforeSha256 ?? sourceSha256,
-    sourceAfterSha256: options.sourceAfterSha256 ?? sourceSha256,
+    sourceBeforeSha256: artifactsSupplied
+      ? options.sourceBeforeSha256 : options.sourceBeforeSha256 ?? sourceSha256,
+    sourceAfterSha256: artifactsSupplied
+      ? options.sourceAfterSha256 : options.sourceAfterSha256 ?? sourceSha256,
     browserBefore, browserAfter, nativeBefore, nativeAfter
   });
   const strictReceipt = strictFidelityReceipt(receipt);
-  const artifactsSupplied = [browserBefore, browserAfter, nativeBefore, nativeAfter]
-    .some((artifact) => artifact !== null);
   if (artifactsSupplied && strictReceipt.status !== 'COMPATIBLE') {
     parity.status = 'FAIL';
     parity.mismatch = [

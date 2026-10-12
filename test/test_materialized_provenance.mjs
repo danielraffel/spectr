@@ -249,6 +249,17 @@ const validReceiptManifest = buildManifest({
 });
 strictEqual(validReceiptManifest.status.parity, 'PASS');
 validateManifest(validReceiptManifest, repoRoot);
+const omittedSourceManifest = buildManifest({
+  root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
+  editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: validReceiptInput,
+  browserBefore: beforeBrowser, browserAfter: afterBrowser,
+  nativeBefore: beforeNative, nativeAfter: afterNative
+});
+strictEqual(omittedSourceManifest.status.parity, 'FAIL');
+strictEqual(omittedSourceManifest.parity.mismatch.includes(
+  'receipt_source_sha256_unbound'
+), true);
+validateManifest(omittedSourceManifest, repoRoot);
 const mismatchedReceiptInput = join(temp, 'mismatched.json');
 writeFileSync(mismatchedReceiptInput, JSON.stringify({
   schema: 'spectr-html-cdp-comparison-v1',
