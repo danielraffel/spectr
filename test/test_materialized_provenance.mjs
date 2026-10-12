@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { deepStrictEqual, notDeepStrictEqual, strictEqual, throws } from 'node:assert';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+
 import { join } from 'node:path';
 import {
   BINDING_KINDS,
@@ -213,7 +213,7 @@ allowlistTampered.runtime_patch_allowlist.scripts.pop();
 expectThrows(() => validateManifest(allowlistTampered, repoRoot), 'allowlist');
 
 // Exact before/after parity positive and changed-artifact negative.
-const temp = mkdtempSync(join(tmpdir(), 'spectr-provenance-'));
+const temp = mkdtempSync(join(repoRoot, '.spectr-provenance-test-'));
 const beforeBrowser = join(temp, 'browser-before.png');
 const afterBrowser = join(temp, 'browser-after.png');
 const beforeNative = join(temp, 'native-before.png');
@@ -261,10 +261,10 @@ strictEqual(receiptMissing.fidelity_receipt.status, 'INCOMPATIBLE');
 strictEqual(receiptMissing.status.parity, 'FAIL');
 const parityArtifactTampered = JSON.parse(JSON.stringify(receiptMissing));
 parityArtifactTampered.parity.browser_before = {
-  path: '/etc/hosts', present: true, bytes: 999, sha256: 'e'.repeat(64)
+  path: '/tmp/spectr-forged.png', present: true, bytes: 999, sha256: 'e'.repeat(64)
 };
 expectThrows(() => validateManifest(parityArtifactTampered, repoRoot),
-  'fidelity receipt status mismatch|approved capture location');
+  'fidelity receipt status mismatch|parity artifact path escapes repository root');
 const validReceiptInput = join(temp, 'valid.json');
 writeFileSync(validReceiptInput, JSON.stringify({
   schema: 'spectr-html-cdp-comparison-v1',
@@ -355,3 +355,6 @@ console.log('spectr-materialized-provenance: PASS');
 console.log('spectr-materialized-provenance: deterministic/lossless shadow, identity and map/list controls PASS');
 console.log('spectr-materialized-provenance: parity positive + changed-artifact negative controls PASS');
 console.log('spectr-materialized-provenance: strict receipt incompatibility control PASS');
+
+
+rmSync(temp, { recursive: true, force: true });
