@@ -1,0 +1,37 @@
+{
+  "schema": "spectr-materialized-pseudo-binding-v1",
+  "version": 1,
+  "source": {
+    "path": "resources/editor.html",
+    "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
+    "selector": "body::before",
+    "authored": {
+      "position": "fixed",
+      "inset": "0",
+      "pointer_events": "none",
+      "z_index": 0,
+      "background_layers": [
+        "radial-gradient(ellipse 80% 60% at 50% 20%, var(--glow-1), transparent 60%)",
+        "radial-gradient(ellipse 60% 40% at 20% 80%, var(--glow-2), transparent 60%)",
+        "var(--bg)"
+      ]
+    }
+  },
+  "materialized": {
+    "path": "native-ui/materialized/design.js",
+    "sha256": "e2201a9c839e4fe3b5207e22c48ab41f20c521e6710754bff3fcb68bdc1c43e9",
+    "node_id": "Pseudo_body_before",
+    "parent_id": "root",
+    "position": "absolute",
+    "left": 0,
+    "top": 0,
+    "width": 1320,
+    "height": 860,
+    "background": "transparent",
+    "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
+    "opacity": 1,
+    "z_index": 1,
+    "pointer_events": "none",
+    "compositing": "overlay-above-opaque-paint-authority"
+  }
+}

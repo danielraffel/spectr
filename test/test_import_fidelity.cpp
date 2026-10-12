@@ -31,7 +31,7 @@ constexpr std::string_view kTemplateDigest =
 // goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
 // bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "c54d31bfffc77fc0723227abc56e6dbc40bb6acab37925e697b76d3a810059a6";
+    "6dd931d853835282f18784bffc7174a6cd59ce4cf76a70a24c9f5d87f7aac860";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -1068,6 +1068,35 @@ TEST_CASE("settings overflow follows live content height") {
     auto mutated = runtime;
     erase_once(mutated, marker);
     CHECK(count_occurrences(mutated, marker) == 0);
+}
+
+TEST_CASE("source and materialized publication provenance stay aligned") {
+    const auto source = outer_adapter(embedded_html());
+    REQUIRE_FALSE(source.empty());
+    const std::string materialized{
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size};
+
+    // These are the semantic seams that must survive both authored-source
+    // import and materialization. A digest alone would accept a source-only
+    // repair, so keep an explicit cross-surface control for the provenance
+    // contract that native host merging consumes.
+    constexpr std::array markers{
+        "const spectrPublicationProvenance = () => ({",
+        "lmin: viewRef.current.lmin,",
+        "lmax: viewRef.current.lmax,",
+        "drawn: nativeAppliedRevisionRef.current",
+        "drawn_revision: live.drawn",
+    };
+    for (const auto marker : markers) {
+        INFO(marker);
+        CHECK(source.find(marker) != source.npos);
+        CHECK(materialized.find(marker) != materialized.npos);
+    }
+    // Both paths publish the drawn revision at the render publication and the
+    // coalesced direct publication sites.
+    CHECK(count_occurrences(source, "drawn_revision: live.drawn") == 2);
+    CHECK(count_occurrences(materialized, "drawn_revision: live.drawn") == 2);
 }
 
 #endif // SPECTR_NATIVE_ASSETS

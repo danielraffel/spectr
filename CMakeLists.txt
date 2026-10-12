@@ -270,6 +270,34 @@ set(SPECTR_NATIVE_ASSET_SOURCES
     # design.js; it assigns one string to globalThis.SPECTR_HELP_TEXT.
     native-ui/materialized/help-content.js
 )
+
+# Fail closed before the native asset encoder can capture an incomplete
+# materialized document.  These selectors are the stable product bridge used
+# by native_shot and the shipping native editor; embedding a runtime without
+# them produces a visually valid home frame that cannot satisfy interaction
+# contracts.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME Spectr-materialized-static-grid-zindex
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
+set_tests_properties(Spectr-materialized-static-grid-zindex PROPERTIES TIMEOUT 30)
+add_test(NAME Spectr-materialized-pseudo-plane
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_pseudo_plane.py)
+set_tests_properties(Spectr-materialized-pseudo-plane PROPERTIES TIMEOUT 30)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+    RESULT_VARIABLE _spectr_native_marker_check
+    OUTPUT_VARIABLE _spectr_native_marker_output
+    ERROR_VARIABLE _spectr_native_marker_error
+)
+if(NOT _spectr_native_marker_check EQUAL 0)
+    message(FATAL_ERROR
+        "Spectr native materialized runtime failed marker contract:\n"
+        "${_spectr_native_marker_output}${_spectr_native_marker_error}")
+endif()
 foreach(_forbidden_native_asset
         resources/editor.html
         native-ui/materialized/editor.ir.json)
@@ -300,6 +328,9 @@ pulp_add_binary_data(spectr_native_assets
 # (-DSPECTR_ENABLE_PERF_FIXTURES=ON) only for a dedicated perf-fixture build.
 option(SPECTR_ENABLE_PERF_FIXTURES
        "Compile in the test-only perf fixtures (SPECTR_AUTOMATION_PERF_FIXTURE, SPECTR_GESTURE_PERF)" OFF)
+
+option(SPECTR_BUILD_FORGE_ADAPTER
+       "Expose an opt-in in-process Processor factory for Forge graph consumers" OFF)
 
 # Test seams (include/spectr/test_seams.hpp): the SPECTR_* environment
 # variables that load a script into the editor (SPECTR_EVAL), synthesise
@@ -557,6 +588,46 @@ if(TARGET ${SPECTR_AAX_TARGET}_Core)
 endif()
 endif()
 
+if(SPECTR_BUILD_FORGE_ADAPTER)
+    # The adapter is deliberately an interface target over Spectr's existing
+    # Processor core. Forge consumes the same product implementation and
+    # control authority; no second DSP or provider registry is introduced.
+    add_library(Spectr_ForgeAdapter INTERFACE)
+    add_library(Spectr::ForgeAdapter ALIAS Spectr_ForgeAdapter)
+    target_include_directories(Spectr_ForgeAdapter INTERFACE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    # Spectr's public Processor type has a build contract: the editor-enabled
+    # class layout and its geometry/version constants must match the owner core
+    # object linked below. Export those definitions through the consumer seam
+    # so Forge (and any other in-process host) cannot compile a mismatched
+    # header view by including <spectr/forge_adapter.hpp> alone.
+    target_compile_definitions(Spectr_ForgeAdapter INTERFACE
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_NATIVE_EDITOR=1
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP}
+        $<$<BOOL:${SPECTR_SHARED_PRODUCT_ACCEPTANCE}>:SPECTR_SHARED_PRODUCT_ACCEPTANCE=1>
+        $<$<BOOL:${SPECTR_EXPERIMENTAL_SHARED_RENDERER}>:SPECTR_EXPERIMENTAL_SHARED_RENDERER=1>)
+    # pulp_add_plugin exposes the product implementation as an OBJECT target;
+    # an interface link alone does not carry those objects to a downstream
+    # executable.  Publish the exact owner objects through the adapter so a
+    # Forge GraphNode consumer receives the same Processor implementation as
+    # Spectr's format wrappers.
+    target_sources(Spectr_ForgeAdapter INTERFACE
+        $<TARGET_OBJECTS:${SPECTR_NATIVE_CORE_TARGET}>)
+    target_link_libraries(Spectr_ForgeAdapter INTERFACE
+        "${SPECTR_NATIVE_CORE_TARGET}")
+endif()
+
 # ── Product icon ───────────────────────────────────────────────────────
 # Spectr's own five-bar spectrum mark, on the dark ground the editor chrome
 # already uses. tools/icon/generate_icon.py rebuilds every asset from the
@@ -657,10 +728,14 @@ include(Catch)
 # — which build from SPECTR_NATIVE_SOURCES — stay green, so the breakage looks like
 # a product failure when it is only the legacy test graph.
 set(SPECTR_SDK_HAS_WEBVIEW OFF)
+set(SPECTR_SDK_HAS_DESIGN_IMPORT OFF)
 if(TARGET Pulp::view)
     get_target_property(_spectr_pulp_view_defs Pulp::view INTERFACE_COMPILE_DEFINITIONS)
     if(_spectr_pulp_view_defs MATCHES "PULP_BUILD_WEBVIEW=1")
         set(SPECTR_SDK_HAS_WEBVIEW ON)
+    endif()
+    if(_spectr_pulp_view_defs MATCHES "PULP_HAS_DESIGN_IMPORT=1")
+        set(SPECTR_SDK_HAS_DESIGN_IMPORT ON)
     endif()
     unset(_spectr_pulp_view_defs)
 endif()
@@ -700,7 +775,6 @@ add_executable(Spectr-test
     test/test_editor_resize.cpp
     test/test_pattern.cpp
     ${SPECTR_TEST_WEBVIEW_CASES}
-    test/test_import_fidelity.cpp
     test/test_preset.cpp
     test/test_snapshot.cpp
     test/test_param_surface.cpp
@@ -720,6 +794,13 @@ add_executable(Spectr-test
     test/test_auto_gain_v2_transients.cpp
     ${SPECTR_TEST_SOURCES}
 )
+if(SPECTR_SDK_HAS_DESIGN_IMPORT)
+    # Import-fidelity exercises pulp::view::parse_claude_bundle, which is
+    # intentionally absent from the normal browser-free SDK. Keep the cases
+    # in the design-import lane instead of allowing an SDK capability mismatch
+    # to make every Windows audio build fail at link time.
+    target_sources(Spectr-test PRIVATE test/test_import_fidelity.cpp)
+endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
@@ -756,6 +837,29 @@ target_compile_definitions(Spectr-test PRIVATE
     SPECTR_PRODUCT_GIT_DIRTY=$<BOOL:${SPECTR_SOURCE_GIT_DIRTY}>
 )
 catch_discover_tests(Spectr-test)
+
+if(SPECTR_BUILD_FORGE_ADAPTER)
+    add_executable(Spectr-forge-adapter-test test/test_forge_adapter.cpp)
+    target_link_libraries(Spectr-forge-adapter-test PRIVATE
+        Spectr::ForgeAdapter Catch2::Catch2WithMain Pulp::host)
+    # pulp_add_plugin exposes the product core as an OBJECT target.  The
+    # adapter test is a standalone executable, so include those objects
+    # explicitly instead of relying on the format wrappers to pull them in.
+    target_sources(Spectr-forge-adapter-test PRIVATE
+        $<TARGET_OBJECTS:${SPECTR_NATIVE_CORE_TARGET}>)
+    target_include_directories(Spectr-forge-adapter-test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(Spectr-forge-adapter-test PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
+    catch_discover_tests(Spectr-forge-adapter-test)
+endif()
 # The stream-start case with the framework's full-overlap stream start turned
 # off (SpectralFrameEngineConfig::full_overlap_stream_start = false): the
 # measurement must reject it, or it could not see the fade it exists to catch.
@@ -1292,6 +1396,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/spectr-detectors/level_help_pins.py --plant)
     set_tests_properties(Spectr-level-help-pins-negative-control PROPERTIES WILL_FAIL TRUE)
 endif()
+find_program(SPECTR_NODE_EXECUTABLE node)
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-parity-state-canonical-node
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.mjs)
+    set_tests_properties(Spectr-parity-state-canonical-node PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
@@ -1370,6 +1481,56 @@ target_link_libraries(Spectr-native-shot PRIVATE
     ${SPECTR_NATIVE_CORE_TARGET}
 )
 spectr_configure_native_target(Spectr-native-shot)
+if(Python3_Interpreter_FOUND)
+    add_custom_command(TARGET Spectr-native-shot POST_BUILD
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/write_binary_digest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --output=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+        VERBATIM)
+endif()
+
+# The joined parity receipt is intentionally a small, dependency-light
+# contract test. It proves the comparator can accept an exact same-state
+# capture and reject a one-pixel planted mutation before any production
+# browser/native verdict is trusted.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-parity-receipt-comparator
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_parity_receipts.py)
+    add_test(NAME Spectr-materialized-parity-join-boundary
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_join_materialized_runtime_parity.py)
+    add_test(NAME Spectr-native-parity-receipt-harness
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_run_native_parity_capture.py)
+    add_test(NAME Spectr-parity-state-canonical
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_state_canonical.py)
+    add_test(NAME Spectr-parity-authority-manifest
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py)
+    add_test(NAME Spectr-analyzer-fixture-conformance
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_analyzer_fixture_conformance.py)
+    set_tests_properties(Spectr-parity-receipt-comparator PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-materialized-parity-join-boundary PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-native-parity-receipt-harness PROPERTIES
+        TIMEOUT 30 SKIP_RETURN_CODE 77)
+    set_tests_properties(Spectr-parity-state-canonical PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-parity-authority-manifest-negative-control
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_parity_authority_manifest.py
+            --expect-missing-authority)
+    set_tests_properties(Spectr-parity-authority-manifest PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-parity-authority-manifest-negative-control
+        PROPERTIES TIMEOUT 30)
+    set_tests_properties(Spectr-analyzer-fixture-conformance PROPERTIES
+        TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
 
 # Registered so the shipping native surface is actually captured by CI, not
 # merely buildable. This binary's whole point is the offscreen Dawn+Skia GPU
@@ -1386,6 +1547,46 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     SKIP_RETURN_CODE 77
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+# Exercise the same shipping binary through its deterministic analyzer seam so
+# CI proves response acceptance and rendered plot content on the production
+# Skia/Dawn path. The Python receipt wrapper adds provenance and a stable CTest
+# receipt; this row ensures the native semantic gate itself cannot silently
+# disappear from the configured test graph.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME Spectr-native-parity-deterministic
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_native_parity_ctest.py
+            --binary=$<TARGET_FILE:Spectr-native-shot>
+            --fixture=${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --fixture-sha256=68987ed2f756a919ef7e7476f538c53a9702ab141bcfa2790341e4e2ec5c33f8
+            --binary-sha256-file=${CMAKE_CURRENT_BINARY_DIR}/Spectr-native-shot.sha256
+            --output=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-parity-deterministic)
+    set_tests_properties(Spectr-native-parity-deterministic PROPERTIES
+        TIMEOUT 180
+        SKIP_RETURN_CODE 77
+        RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# Canvas ownership is a distinct contract from the general native capture and
+# from the hit-target detector.  The ownership probe is nested under
+# SPECTR_HIT_PROBE, so keep both switches in this dedicated CTest invocation;
+# setting only SPECTR_CANVAS_OWNERSHIP_PROBE would silently skip the probe.
+# This test is selected by the M5 acceptance pattern list, making the
+# owner-map/hidden-relay/native-dispatch checks a required gate rather than an
+# opt-in instrument somebody has to remember to run by hand.
+add_test(NAME Spectr-native-canvas-ownership
+    COMMAND ${CMAKE_COMMAND} -E env
+        SPECTR_HIT_PROBE=1
+        SPECTR_CANVAS_OWNERSHIP_PROBE=1
+        $<TARGET_FILE:Spectr-native-shot>
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-native-canvas-ownership
+        --backend=skia)
+set_tests_properties(Spectr-native-canvas-ownership PROPERTIES
+    TIMEOUT 300
+    # This row is required by M5 acceptance, so an unmeasured/unsupported
+    # result must fail CTest instead of being normalized to "Not Run".
     RESOURCE_LOCK spectr_native_materialized_editor)
 # The CPU/GPU chip through the host hit test: in Tracking a press shows the
 # "Mixing only" notice and changes nothing in the processor (no renderer
@@ -3578,12 +3779,24 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    add_test(NAME Spectr-browser-source-doctype
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_source_html_chromium.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/compare_source_html_chromium.mjs
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-source-doctype PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
+    add_test(NAME Spectr-browser-runtime-facade
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_spectr_runtime_facade_browser.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/spectr-native-services.js
+            ${SPECTR_CHROME_EXECUTABLE})
+    set_tests_properties(Spectr-browser-runtime-facade PROPERTIES TIMEOUT 45)
     add_test(NAME Spectr-browser-resize
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
@@ -3677,6 +3890,64 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     set_tests_properties(Spectr-browser-preset-truncation-negative-control PROPERTIES
         TIMEOUT 120
         WILL_FAIL TRUE)
+    # Bounded authored-source import proof.  This regenerates the current
+    # FilterBank TSX from the artifact, injects it into a served copy of the
+    # Claude editor template, and captures deterministic analyzer before/after
+    # screenshots in Chromium.  The no-ink mutation is run as a separate
+    # planted failure, so a harness that stops observing central canvas ink
+    # cannot pass silently.  This remains staging evidence; it never mutates
+    # editor.html or the materialized runtime and does not claim native parity.
+    add_test(NAME Spectr-browser-authored-filter-bank-reimport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_filter_bank_app_mount.mjs
+            --editor ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/authored-filter-bank-reimport)
+    set_tests_properties(Spectr-browser-authored-filter-bank-reimport PROPERTIES TIMEOUT 180)
+    # Full authored App closure proof against the current materialized runtime.
+    # The older Claude template is intentionally not used as its baseline: it
+    # predates SpectrControlMenu and newer helpers.  This remains staging
+    # evidence and does not imply native parity or production cutover.
+    add_test(NAME Spectr-browser-authored-full-app-materialized-reimport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_full_app_materialized_browser.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/authored-full-app-materialized-reimport)
+    set_tests_properties(Spectr-browser-authored-full-app-materialized-reimport PROPERTIES TIMEOUT 180)
+    # Authority-aligned browser oracle for the shipping materialized runtime.
+    # Unlike the older source comparator, this serves the runtime JSON's
+    # embedded fonts/assets over HTTP, injects the shared deterministic
+    # analyzer fixture, captures at the native 1320x860/DPR2 viewport, and
+    # proves a real dropdown interaction plus byte-stable settled frames.
+    # Its receipt is browser evidence for a later native join; it does not
+    # silently relabel the existing editor.html/materialized cross-artifact
+    # comparison as pixel parity.
+    add_test(NAME Spectr-browser-materialized-runtime-authority-oracle
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle
+            --dpr 2)
+    set_tests_properties(Spectr-browser-materialized-runtime-authority-oracle PROPERTIES TIMEOUT 180)
+    # Planted negative: remove the visible latin font from the HTTP envelope.
+    # The test script accepts the run only when the strict network-failure
+    # assertion rejects the capture for the intended reason.
+    add_test(NAME Spectr-browser-materialized-runtime-authority-oracle-negative-control
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
+            --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
+            --chrome ${SPECTR_CHROME_EXECUTABLE}
+            --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle-negative
+            --dpr 2
+            --plant-missing-asset)
+    set_tests_properties(Spectr-browser-materialized-runtime-authority-oracle-negative-control PROPERTIES TIMEOUT 180)
 endif()
 
 # These need node only -- NOT chrome. Registered under the browser
@@ -4548,9 +4819,18 @@ if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} O
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_CLAP_TARGET})
     endif()
     if(TARGET ${SPECTR_NATIVE_VST3_TARGET})
+        # Windows emits the VST3 entry as a DLL. The other platforms emit a
+        # bundle directory, so point the cross-platform host test at the
+        # platform's actual loadable artifact.
+        set(SPECTR_TEST_VST3_PATH
+            "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
+        if(WIN32)
+            set(SPECTR_TEST_VST3_PATH
+                "${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.dll")
+        endif()
         target_compile_definitions(Spectr-artifact-test PRIVATE
             SPECTR_HAVE_TEST_VST3=1
-            SPECTR_TEST_VST3_PATH="${CMAKE_BINARY_DIR}/VST3/${SPECTR_NATIVE_PLUGIN_NAME}.vst3")
+            SPECTR_TEST_VST3_PATH="${SPECTR_TEST_VST3_PATH}")
         add_dependencies(Spectr-artifact-test ${SPECTR_NATIVE_VST3_TARGET})
     endif()
     if(TARGET ${SPECTR_NATIVE_AU_TARGET} AND APPLE)
@@ -4738,6 +5018,32 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/git/test_merge_materialized_runtime.py)
     set_tests_properties(Spectr-materialized-merge-driver PROPERTIES TIMEOUT 120)
+    # WP-1's parser-backed authored-source gate resolves the complete App
+    # closure and freezes its browser host runtime surface.  It is pure
+    # Python/Node against the checked-in artifact, so it needs no SDK or
+    # native target and can run before the product build on a clean runner.
+    add_test(NAME Spectr-wp1-full-app-runtime-surface
+        COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_runtime_surface.py)
+    set_tests_properties(Spectr-wp1-full-app-runtime-surface PROPERTIES TIMEOUT 300)
+    # Execute the complete authored App closure in a deterministic staging VM.
+    # This remains separate from browser/native parity and production cutover.
+    add_test(NAME Spectr-wp1-full-app-import-mount
+        COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_wp1_full_app_import_mount.py)
+    set_tests_properties(Spectr-wp1-full-app-import-mount PROPERTIES TIMEOUT 300)
+    # The native services use the renderer-neutral `pulp.postMessage` seam.
+    # Keep generated commands aligned with the C++ handlers, then verify the
+    # checked-in inline facade is the one embedded in the maintained service.
+    # Materialized runtime replay has its own synchronization check above.
+    add_test(NAME Spectr-wp1-runtime-client-contract
+        COMMAND ${Python3_EXECUTABLE} -u
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_spectr_runtime_client_contract.py)
+    set_tests_properties(Spectr-wp1-runtime-client-contract PROPERTIES TIMEOUT 60)
+    add_test(NAME Spectr-runtime-client-inline-sync
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/sync_generated_runtime_client.py --check)
+    set_tests_properties(Spectr-runtime-client-inline-sync PROPERTIES TIMEOUT 30)
 else()
     message(STATUS
         "Spectr: Python3 interpreter not found; "

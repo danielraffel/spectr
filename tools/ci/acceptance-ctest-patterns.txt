@@ -30,14 +30,20 @@
 ^a resize
 ^native:
 editor authority
-import fidelity
 materialized
-^status overlay
-^settings overflow
 Built Spectr
 Spectr editor
 # A backtick in an editor.html String.raw patch silently unmounts the mirror.
 ^Spectr-editor-html-raw-templates$
+# The generated native-client contract is a pure source/provenance gate. It
+# must be selected explicitly so a missing CMake registration cannot silently
+# make the typed bridge seam disappear from acceptance.
+^Spectr-wp1-runtime-client-contract$
+# The generated inline client must match the block embedded in the maintained
+# service. The contract above verifies generated files, and the materialized
+# replay check verifies service versus runtime, but neither detects inline
+# drift by itself. Keep this row independently selected on the M5 lane.
+^Spectr-runtime-client-inline-sync$
 # The AU artifact case run with the parameter-adoption worker held back, so
 # it can only pass if a plain parameter WRITE reaches the DSP without that
 # thread. The plain run of the same case lives under `^Pulp host loads`, which
@@ -56,6 +62,10 @@ Spectr editor
 # absence -- and a cost gate that silently stops registering looks exactly
 # like an editor that got faster.
 ^Spectr-materialized-marquee-render-cost
+
+# Static grid canvas stacking and idempotent materialized patch control.
+^Spectr-materialized-static-grid-zindex$
+^Spectr-materialized-pseudo-plane$
 
 # The idle draw loop and its fourteen plants. Same reason: `materialized`
 # matches them but can never report their absence -- and this whole suite
@@ -289,9 +299,8 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 ^"?output level:
 
 # Switching the Latency mode must not move the Settings panel. Nothing above
-# reaches these four rows -- they start with "Spectr-settings", and the
-# closest existing line, `^settings overflow`, matches a different test
-# entirely -- so without this pattern they register and never run.
+# reaches these rows -- they start with "Spectr-settings" -- so without this
+# pattern they register and never run.
 #
 # The live row is the one that matters and the one most easily lost: it is the
 # only gate anywhere in this suite that presses a Settings control and compares
@@ -452,3 +461,15 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # Every shipped bundle declares LSMinimumSystemVersion equal to the binaries'
 # minos (missing from every bundle in 1.0.7 RC1), plus its negative controls.
 ^Spectr-bundle-min-os
+
+# Parser-backed authored-source/import gate. This exact row is pure artifact
+# validation and must remain selected by the M5 focused CTest regex.
+^Spectr-wp1-full-app-runtime-surface$
+# Full authored App closure mount: deterministic VM execution plus planted
+# identity/allowlist negatives. Browser/native parity remain separate gates.
+^Spectr-wp1-full-app-import-mount$
+# Native canvas behavior ownership: the dedicated CTest row sets both
+# SPECTR_HIT_PROBE and SPECTR_CANVAS_OWNERSHIP_PROBE, then requires the
+# materialized owner map, hidden relay programs, native hit owner, handler,
+# dispatch chain, and revision change to agree on the production surface.
+^Spectr-native-canvas-ownership$

@@ -36,3 +36,6 @@ Spectr_Info.plist.au
 # Bytecode from the tools/ scripts (patch_materialized_editor.py et al).
 __pycache__/
 *.pyc
+
+# Installed parser toolchain (created by the product-acceptance workflow)
+tools/wp1-parser/node_modules/

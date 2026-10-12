@@ -1,0 +1,559 @@
+#!/usr/bin/env node
+/**
+ * Inventory semantic debt in the full App authored ESM staging graph.
+ *
+ * This tool intentionally preserves TypeScript diagnostics instead of making
+ * the App appear green. It is a read-only planning probe: no runtime artifact
+ * is rewritten and no staged module is published. The optional planted-name
+ * control proves that an unknown binding cannot disappear silently.
+ */
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import process from 'node:process';
+import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const SCHEMA = 'spectr-owned-app-type-debt-inventory-v1';
+const EMISSION_SCHEMA = 'spectr-owned-authored-module-emission-v1';
+const MANIFEST_SCHEMA = 'spectr-owned-component-dependency-v1';
+const NAME_RE = /^[A-Za-z_$][\w$]*$/;
+const DIGEST_RE = /^[0-9a-f]{64}$/;
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const toolchainDir = path.join(scriptDir, 'wp1-parser');
+const tscPath = path.join(toolchainDir, 'node_modules', 'typescript', 'bin', 'tsc');
+const parserPath = path.join(toolchainDir, 'node_modules', '@babel', 'parser');
+const babel = createRequire(import.meta.url)(parserPath);
+const parse = babel.parse || babel.default?.parse;
+const emitterPath = path.join(scriptDir, 'wp1_authored_module_emitter.mjs');
+
+const FACADE_BINDINGS = new Set(['React', 'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus']);
+const BROWSER_RUNTIME_BINDINGS = new Set([
+  'window', 'document', 'navigator', 'globalThis', 'performance', 'console', 'Blob', 'FileReader',
+  'URL', 'URLSearchParams', 'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout',
+  'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask', 'HTMLElement', 'KeyboardEvent',
+  'MouseEvent', 'PointerEvent', 'WheelEvent', 'ResizeObserver', 'DOMRect', 'CSS', 'getComputedStyle',
+]);
+const JS_RUNTIME_BINDINGS = new Set([
+  'Array', 'Boolean', 'Date', 'Error', 'Float32Array', 'Infinity', 'JSON', 'Map', 'Math', 'NaN',
+  'Number', 'Object', 'Promise', 'RegExp', 'Set', 'String', 'Symbol', 'WeakMap', 'BigInt',
+  'undefined', 'arguments', 'parseInt', 'parseFloat', 'isFinite', 'Intl',
+]);
+
+function fail(message) { throw new Error(`WP-1 App type debt inventory failed: ${message}`); }
+function sha256(bytes) { return crypto.createHash('sha256').update(bytes).digest('hex'); }
+function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function readBytes(file, label) { try { return fs.readFileSync(file); } catch (error) { fail(`cannot read ${label}: ${error.message}`); } }
+function readJson(file, label) {
+  const raw = readBytes(file, label);
+  try { return { raw, value: JSON.parse(raw) }; } catch (error) { fail(`${label} JSON is invalid: ${error.message}`); }
+}
+function assertDigest(value, label) { if (typeof value !== 'string' || !DIGEST_RE.test(value)) fail(`${label} must be a SHA-256 digest`); }
+function assertKeys(value, expected, label) {
+  if (!isRecord(value)) fail(`${label} must be an object`);
+  const actual = new Set(Object.keys(value));
+  const missing = [...expected].filter((key) => !actual.has(key));
+  const extra = [...actual].filter((key) => !expected.has(key));
+  if (missing.length || extra.length) fail(`${label} keys changed`);
+}
+function namesFromPattern(node, out = new Set()) {
+  if (!node) return out;
+  if (node.type === 'Identifier') out.add(node.name);
+  else if (node.type === 'RestElement') namesFromPattern(node.argument, out);
+  else if (node.type === 'AssignmentPattern') namesFromPattern(node.left, out);
+  else if (node.type === 'ArrayPattern') node.elements.forEach((item) => namesFromPattern(item, out));
+  else if (node.type === 'ObjectPattern') node.properties.forEach((property) => namesFromPattern(property.value || property.argument, out));
+  return out;
+}
+
+function scriptSources(artifact) {
+  if (!isRecord(artifact) || typeof artifact.html !== 'string' || !artifact.html) fail('artifact html must be a non-empty string');
+  const scripts = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+  for (const match of artifact.html.matchAll(re)) {
+    const attrs = match[1] || '';
+    const typeMatch = attrs.match(/\btype\s*=\s*["']([^"']+)["']/i);
+    const type = (typeMatch?.[1] || 'text/javascript').toLowerCase();
+    if (type === 'application/json' || type === 'importmap') continue;
+    if (!/^(?:text|application)\/(?:java|ecma)script$/.test(type) && type !== 'module') continue;
+    scripts.push(match[2]);
+  }
+  if (!scripts.length) fail('artifact contains no JavaScript scripts');
+  return scripts;
+}
+
+function authoredScriptBindings(artifact) {
+  if (typeof parse !== 'function') fail('WP-1 parser toolchain has no parse() API');
+  const names = new Set();
+  scriptSources(artifact).forEach((source, index) => {
+    let ast;
+    try { ast = parse(source, { sourceType: 'script', plugins: ['jsx', 'typescript'], errorRecovery: false }); }
+    catch (error) { fail(`artifact script ${index} parser rejected source: ${error.message}`); }
+    for (const statement of ast.program.body) {
+      if (statement.type === 'FunctionDeclaration' && statement.id) names.add(statement.id.name);
+      if (statement.type === 'ClassDeclaration' && statement.id) names.add(statement.id.name);
+      if (statement.type === 'VariableDeclaration') statement.declarations.forEach((declaration) => namesFromPattern(declaration.id, names));
+    }
+  });
+  return names;
+}
+
+function validateExternalBindings(manifest, artifact) {
+  const allowed = new Set([
+    ...FACADE_BINDINGS,
+    ...BROWSER_RUNTIME_BINDINGS,
+    ...JS_RUNTIME_BINDINGS,
+    ...authoredScriptBindings(artifact),
+  ]);
+  for (const component of manifest.components) {
+    if (!Array.isArray(component.external_bindings)
+        || component.external_bindings.some((name) => typeof name !== 'string'))
+      fail(`external bindings are invalid for ${component.name}`);
+    if (new Set(component.external_bindings).size !== component.external_bindings.length)
+      fail(`external bindings contain duplicates for ${component.name}`);
+    for (const name of component.external_bindings) {
+      if (!NAME_RE.test(name)) fail(`external binding is not an identifier: ${name}`);
+      if (!allowed.has(name)) fail(`external binding ${name} is not proven by artifact scope`);
+    }
+  }
+}
+
+function runEmitterVerify(artifactPath, manifestPath, emissionDir) {
+  const result = spawnSync(process.execPath, [emitterPath, '--artifact', artifactPath, '--manifest', manifestPath, '--out', emissionDir, '--verify'], {
+    cwd: scriptDir, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.error) fail(`emitter verification process failed: ${result.error.message}`);
+  if (result.status !== 0) fail(`emission verification rejected the App closure: ${(result.stderr || result.stdout || 'no diagnostic').trim()}`);
+}
+
+function ambientDeclarations(manifest) {
+  const names = new Set(['React', 'claimDocumentNavigationFocus', 'releaseDocumentNavigationFocus']);
+  for (const component of manifest.components) {
+    for (const name of component.external_bindings || []) {
+      if (!NAME_RE.test(name)) fail(`external binding is not an identifier: ${name}`);
+      if (!JS_RUNTIME_BINDINGS.has(name) && !BROWSER_RUNTIME_BINDINGS.has(name)) names.add(name);
+    }
+  }
+  const declarations = [...names].sort().map((name) => `declare const ${name}: any;`);
+  declarations.push('declare namespace JSX { interface IntrinsicElements { [elemName: string]: any; } interface IntrinsicAttributes { key?: unknown; } interface ElementChildrenAttribute { children: {}; } }');
+  return `${declarations.join('\n')}\n`;
+}
+
+function parseDiagnostics(text) {
+  const diagnostics = [];
+  for (const line of text.split('\n')) {
+    const match = line.match(/^(.*)\((\d+),(\d+)\): error (TS\d+): (.*)$/);
+    if (!match) continue;
+    const message = match[5];
+    let category = 'other-semantic';
+    if (match[4] === 'TS2304' || /Cannot find name/.test(message)) category = 'unknown-binding';
+    else if (/does not exist on type 'Window|Property .* does not exist on type 'Window/.test(message)) category = 'browser-window';
+    else if (/not assignable|missing the following properties|Expected \d+ arguments?/.test(message)) category = 'prop-or-type';
+    else if (match[4] === 'TS2307') category = 'module-resolution';
+    const unknown = message.match(/^Cannot find name '([^']+)'\.?$/);
+    diagnostics.push({ file: match[1], line: Number(match[2]), column: Number(match[3]), code: match[4], message, category, ...(unknown ? { unknown_name: unknown[1] } : {}) });
+  }
+  return diagnostics;
+}
+
+function runTypeScript(stage) {
+  const files = ['globals.d.ts', ...fs.readdirSync(path.join(stage, 'components')).filter((name) => name.endsWith('.tsx')).sort().map((name) => path.join('components', name))];
+  const result = spawnSync(process.execPath, [tscPath, '--noEmit', '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--jsx', 'react', '--skipLibCheck', '--pretty', 'false', ...files], {
+    cwd: stage, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.error) fail(`TypeScript process failed: ${result.error.message}`);
+  const output = `${result.stdout || ''}${result.stderr || ''}`.trim();
+  return { status: result.status ?? 1, output, diagnostics: parseDiagnostics(output) };
+}
+
+function stageModules(manifest, emission, emissionDir, stage, { applyPropContracts = true } = {}) {
+  const byId = new Map(manifest.components.map((component) => [component.id, component]));
+  const components = [];
+  fs.mkdirSync(path.join(stage, 'components'), { recursive: true });
+  for (const module of emission.modules) {
+    const component = byId.get(module.id);
+    if (!component) fail(`emitted module ${module.name} is absent from manifest`);
+    const source = readBytes(path.join(emissionDir, module.path), `emitted module ${module.name}`);
+    const imports = [...component.dependencies].sort().map((id) => {
+      const dependency = byId.get(id);
+      if (!dependency) fail(`dependency ${id} for ${component.name} is unknown`);
+      return `import { ${dependency.name} } from './${dependency.name}';`;
+    });
+    let authored = source.toString('utf8');
+    let propContract = null;
+    let helperContract = null;
+    if (applyPropContracts && component.name === 'SpectrSettingsField') {
+      const marker = 'function SpectrSettingsField({ label, hint, children, hidden }) {';
+      if (!authored.includes(marker)) fail('SpectrSettingsField prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'label required; hint/children/hidden optional',
+        value_type: 'label:string; hint?:string; children?:SpectrSettingsFieldChild; hidden?:boolean',
+      };
+      authored = authored.replace(marker, `type SpectrSettingsFieldChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<SpectrSettingsFieldChild> } | ReadonlyArray<SpectrSettingsFieldChild>;\ntype SpectrSettingsFieldProps = { label: string; hint?: string; children?: SpectrSettingsFieldChild; hidden?: boolean };\nfunction SpectrSettingsField({ label, hint, children, hidden }: SpectrSettingsFieldProps) {`);
+    }
+    if (applyPropContracts && component.name === 'MBtn') {
+      const marker = 'function MBtn({ children, onClick, primary, danger, action }) {';
+      if (!authored.includes(marker)) fail('MBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'all props optional; action:string; primary/danger:boolean; onClick:callable',
+        value_type: 'children?:MBtnChild; onClick?:(...args:any[])=>unknown; primary?:boolean; danger?:boolean; action?:string',
+      };
+      authored = authored.replace(marker, `type MBtnChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<MBtnChild> } | ReadonlyArray<MBtnChild>;\ntype MBtnProps = { children?: MBtnChild; onClick?: (...args: any[]) => unknown; primary?: boolean; danger?: boolean; action?: string };\nfunction MBtn({ children, onClick, primary, danger, action }: MBtnProps) {`);
+    }
+    if (applyPropContracts && component.name === 'SpectrSettingsChips') {
+      const marker = 'function SpectrSettingsChips({ value, onChange, opts, wrap }) {';
+      if (!authored.includes(marker)) fail('SpectrSettingsChips prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'value and opts required; onChange callable; wrap optional',
+        value_type: 'value:string|number; onChange:(value:string|number)=>unknown; opts:ReadonlyArray<ReadonlyArray<string|number>>; wrap?:boolean',
+      };
+      authored = authored.replace(marker, `type SpectrSettingsChipValue = string | number;\ntype SpectrSettingsChipsProps = { value: SpectrSettingsChipValue; onChange: (value: SpectrSettingsChipValue) => unknown; opts: ReadonlyArray<ReadonlyArray<SpectrSettingsChipValue>>; wrap?: boolean };\nfunction SpectrSettingsChips({ value, onChange, opts, wrap }: SpectrSettingsChipsProps) {`);
+    }
+    if (applyPropContracts && component.name === 'SpectrSettingsSlider') {
+      const marker = 'function SpectrSettingsSlider({ value, min, max, step, onChange, fmt, gestureId, disabled, target }) {';
+      if (!authored.includes(marker)) fail('SpectrSettingsSlider prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'value/min/max/step/onChange required; fmt/gestureId/disabled/target optional',
+        value_type: 'value:number; min:number; max:number; step:number; onChange:(value:number)=>unknown; fmt?:(value:number)=>string; gestureId?:number; disabled?:boolean; target?:string',
+      };
+      authored = authored.replace(marker, `type SpectrSettingsSliderProps = { value: number; min: number; max: number; step: number; onChange: (value: number) => unknown; fmt?: (value: number) => string; gestureId?: number; disabled?: boolean; target?: string };\nfunction SpectrSettingsSlider({ value, min, max, step, onChange, fmt, gestureId, disabled, target }: SpectrSettingsSliderProps) {`);
+    }
+    if (applyPropContracts && component.name === 'RailBtn') {
+      const marker = 'function RailBtn({ children, onClick, active, popupKind, railAction, dropdown, onContextMenu }) {';
+      if (!authored.includes(marker)) fail('RailBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'children/onClick required; active/popupKind/railAction/dropdown/onContextMenu optional',
+        value_type: 'children:ReactChild; onClick:(...args:any[])=>unknown; active?:boolean; popupKind?:string; railAction?:string; dropdown?:string; onContextMenu?:(...args:any[])=>unknown',
+      };
+      authored = authored.replace(marker, `type RailBtnChild = string | number | boolean | null | { readonly type: unknown; readonly props: Record<string, unknown> | null; readonly children: ReadonlyArray<RailBtnChild> } | ReadonlyArray<RailBtnChild>;\ntype RailBtnProps = { children: RailBtnChild; onClick: (...args: any[]) => unknown; active?: boolean; popupKind?: string; railAction?: string; dropdown?: string; onContextMenu?: (...args: any[]) => unknown };\nfunction RailBtn({ children, onClick, active, popupKind, railAction, dropdown, onContextMenu }: RailBtnProps) {`);
+    }
+    if (applyPropContracts && component.name === 'SnapBtn') {
+      const marker = 'function SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }) {';
+      if (!authored.includes(marker)) fail('SnapBtn prop contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'id/action/slot/filled/onClick/label required; onClear/capture optional',
+        value_type: 'id:string; action:string; slot:string; filled:boolean; onClick:(...args:any[])=>unknown; onClear?:(...args:any[])=>unknown; capture?:boolean; label:string',
+      };
+      authored = authored.replace(marker, `type SnapBtnProps = { id: string; action: string; slot: string; filled: boolean; onClick: (...args: any[]) => unknown; onClear?: (...args: any[]) => unknown; capture?: boolean; label: string };\nfunction SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }: SnapBtnProps) {`);
+    }
+    if (applyPropContracts && component.name === 'FilterBank') {
+      const functionMarker = 'function FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState, initialNativeState }) {';
+      const helperMarker = 'const issueNativeCommand = (type, payload, successStatus, skipState) => {';
+      if (!authored.includes(functionMarker)) fail('FilterBank function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('FilterBank issueNativeCommand contract marker is missing');
+      propContract = {
+        name: component.name,
+        type: 'all declared props required except onStateChange',
+        value_type: 'onStateChange?: (...args:any[])=>unknown; all other FilterBank props required',
+      };
+      helperContract = {
+        name: 'issueNativeCommand', component: component.name,
+        type: '(type:string, payload:Record<string,unknown>, successStatus:string|null, skipState?:boolean) => number',
+        value_type: 'skipState optional with false default; payload/status remain explicit',
+      };
+      authored = authored.replace(functionMarker, `type FilterBankProps = { settings: any; onStateChange?: (...args: any[]) => unknown; sharedState: any; onStatus: any; dspMode: any; editMode: any; analyzerMode: any; visualizationMode: any; onEditModeChange: (...args: any[]) => unknown; nativeHydrated: any; onNativeState: (...args: any[]) => unknown; initialNativeState: any };\ntype SpectrNativeCommandPayload = Readonly<Record<string, unknown>>;\ntype SpectrNativeCommand = (type: string, payload: SpectrNativeCommandPayload, successStatus: string | null, skipState?: boolean) => number;\nfunction FilterBank({ settings, onStateChange, sharedState, onStatus, dspMode, editMode, analyzerMode, visualizationMode, onEditModeChange, nativeHydrated, onNativeState, initialNativeState }: FilterBankProps) {`);
+      authored = authored.replace(helperMarker, 'const issueNativeCommand: SpectrNativeCommand = (type, payload, successStatus, skipState = false) => {');
+    }
+    if (applyPropContracts && component.name === 'SpectrFreezeLength') {
+      const functionMarker = 'function SpectrFreezeLength() {';
+      const helperMarker = 'const openMenu = (reveal, edge) => {';
+      if (!authored.includes(functionMarker)) fail('SpectrFreezeLength function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('SpectrFreezeLength openMenu contract marker is missing');
+      helperContract = {
+        name: 'openMenu', component: component.name,
+        type: '(reveal:boolean, edge?:"first"|"last") => void',
+        value_type: 'edge optional; keyboard callers use first/last and click callers use the checked row',
+      };
+      authored = authored.replace(functionMarker, `type SpectrFreezeMenuEdge = "first" | "last";\ntype SpectrFreezeOpenMenu = (reveal: boolean, edge?: SpectrFreezeMenuEdge) => void;\n${functionMarker}`);
+      authored = authored.replace(helperMarker, 'const openMenu: SpectrFreezeOpenMenu = (reveal, edge) => {');
+    }
+    if (applyPropContracts && component.name === 'SpectrModulationSettings') {
+      const functionMarker = 'function SpectrModulationSettings() {';
+      const helperMarker = 'const lane = (t) =>';
+      if (!authored.includes(functionMarker)) fail('SpectrModulationSettings function contract marker is missing');
+      if (!authored.includes(helperMarker)) fail('SpectrModulationSettings lane contract marker is missing');
+      helperContract = {
+        name: 'lane', component: component.name,
+        type: '(target:number) => number',
+        value_type: 'target is the numeric modulation route offset',
+      };
+      authored = authored.replace(functionMarker, `type SpectrModulationLane = (target: number) => number;\n${functionMarker}`);
+      authored = authored.replace(helperMarker, 'const lane: SpectrModulationLane = (t) =>');
+    }
+    const output = Buffer.from(`${imports.length ? `${imports.join('\n')}\n\n` : ''}${authored}\nexport { ${component.name} };\n`);
+    fs.writeFileSync(path.join(stage, module.path), output);
+    components.push({ id: component.id, name: component.name, path: module.path, authored_source_sha256: module.source_sha256, emitted_module_sha256: sha256(source), output_sha256: sha256(output), output_bytes: output.length, imports: [...component.dependencies].sort().map((id) => byId.get(id).name), ...(propContract ? { prop_contract: propContract } : {}), ...(helperContract ? { helper_contract: helperContract } : {}) });
+  }
+  return components;
+}
+
+function classifyBindings(manifest, artifact) {
+  const authored = authoredScriptBindings(artifact);
+  const all = new Set();
+  for (const component of manifest.components) for (const name of component.external_bindings || []) all.add(name);
+  const groups = { facade_provided: [], browser_runtime: [], authored_script_scope: [], JavaScript_runtime: [], unclassified_external: [] };
+  for (const name of [...all].sort()) {
+    if (FACADE_BINDINGS.has(name)) groups.facade_provided.push(name);
+    else if (BROWSER_RUNTIME_BINDINGS.has(name)) groups.browser_runtime.push(name);
+    else if (authored.has(name)) groups.authored_script_scope.push(name);
+    else if (JS_RUNTIME_BINDINGS.has(name)) groups.JavaScript_runtime.push(name);
+    else groups.unclassified_external.push(name);
+  }
+  return { groups, authored_script_bindings: [...authored].sort() };
+}
+
+function build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown, plantProp, plantPropType, plantMbtnPropType, plantJsxChildren, plantSettingsChipsPropType, plantSettingsSliderPropType, plantChromePropType, plantFilterCommandContract, plantFilterBankPropContract, plantFreezeMenuContract, plantModulationLaneContract }) {
+  const artifactBytes = readBytes(artifactPath, 'artifact');
+  const manifestBytes = readBytes(manifestPath, 'dependency manifest');
+  const { value: artifact } = readJson(artifactPath, 'artifact');
+  const { value: manifest } = readJson(manifestPath, 'dependency manifest');
+  if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.components)) fail('dependency manifest schema/components are invalid');
+  validateExternalBindings(manifest, artifact);
+  runEmitterVerify(artifactPath, manifestPath, emissionDir);
+  const { raw: emissionRaw, value: emission } = readJson(path.join(emissionDir, 'authored-modules.manifest.json'), 'emission manifest');
+  if (emission.schema !== EMISSION_SCHEMA || !Array.isArray(emission.modules)) fail('unsupported emission manifest');
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-'));
+  const controlStage = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-wp1-app-debt-control-'));
+  try {
+    const modules = stageModules(manifest, emission, emissionDir, stage);
+    fs.writeFileSync(path.join(stage, 'globals.d.ts'), ambientDeclarations(manifest));
+    const baseline = runTypeScript(stage);
+    stageModules(manifest, emission, emissionDir, controlStage, { applyPropContracts: false });
+    fs.writeFileSync(path.join(controlStage, 'globals.d.ts'), ambientDeclarations(manifest));
+    const controlBaseline = runTypeScript(controlStage);
+    let negativeControl = { status: 'not-run' };
+    if (plantUnknown) {
+      if (!NAME_RE.test(plantUnknown)) fail(`planted name is not an identifier: ${plantUnknown}`);
+      const target = path.join(stage, 'components', `${modules[0].name}.tsx`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_unknown__: ${plantUnknown} = null;\n`);
+      const planted = runTypeScript(stage);
+      const found = planted.diagnostics.some((diagnostic) => diagnostic.code === 'TS2304' && diagnostic.message.includes(plantUnknown));
+      if (!found) fail(`planted unknown binding ${plantUnknown} did not produce TS2304`);
+      negativeControl = { status: 'passed', name: plantUnknown, diagnostic: planted.diagnostics.find((diagnostic) => diagnostic.message.includes(plantUnknown)), planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let propNegativeControl = { status: 'not-run' };
+    if (plantProp) {
+      if (!NAME_RE.test(plantProp)) fail(`planted prop component is not an identifier: ${plantProp}`);
+      const target = path.join(stage, 'components', `${plantProp}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted prop component ${plantProp} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_missing_props__: SpectrSettingsFieldProps = { children: \"planted\" };\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantProp}.tsx`;
+      const found = planted.diagnostics.some((diagnostic) => ['TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith(targetSuffix) && /label/.test(diagnostic.message));
+      if (!found) fail(`planted missing props for ${plantProp} did not produce a required-label diagnostic: ${JSON.stringify(planted.diagnostics.filter((diagnostic) => diagnostic.file.endsWith(targetSuffix)))}`);
+      propNegativeControl = { status: 'passed', name: plantProp, diagnostic: planted.diagnostics.find((diagnostic) => ['TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith(targetSuffix) && /label/.test(diagnostic.message)), planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let propTypeNegativeControl = { status: 'not-run' };
+    if (plantPropType) {
+      if (!NAME_RE.test(plantPropType)) fail(`planted prop-type component is not an identifier: ${plantPropType}`);
+      const target = path.join(stage, 'components', `${plantPropType}.tsx`);
+      if (!fs.existsSync(target)) fail(`planted prop-type component ${plantPropType} is not staged`);
+      fs.appendFileSync(target, `\nconst __wp1_planted_wrong_label__ = <${plantPropType} label={1} />;\nconst __wp1_planted_wrong_hidden__ = <${plantPropType} label={\"ok\"} hidden={\"yes\"} />;\n`);
+      const planted = runTypeScript(stage);
+      const targetSuffix = `components/${plantPropType}.tsx`;
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const typedControls = typeDiagnostics.filter((diagnostic) => /number/.test(diagnostic.message) && /string/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong prop types for ${plantPropType} did not produce exact label/hidden TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      propTypeNegativeControl = { status: 'passed', name: plantPropType, properties: ['label', 'hidden'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let mbtnPropTypeNegativeControl = { status: 'not-run' };
+    if (plantMbtnPropType) {
+      if (plantMbtnPropType !== 'MBtn') fail(`MBtn prop-type control must target MBtn, got ${plantMbtnPropType}`);
+      const target = path.join(stage, 'components', 'MBtn.tsx');
+      if (!fs.existsSync(target)) fail('MBtn prop-type control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_planted_mbtn_wrong_primary__ = <MBtn primary={"yes"} />;\nconst __wp1_planted_mbtn_wrong_action__ = <MBtn action={1} />;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/MBtn.tsx';
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const typedControls = typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /number/.test(diagnostic.message) && /string/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong MBtn prop types did not produce exact primary/action TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      mbtnPropTypeNegativeControl = { status: 'passed', name: 'MBtn', properties: ['primary', 'action'], diagnostics: typedControls, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let settingsChipsPropTypeNegativeControl = { status: 'not-run' };
+    if (plantSettingsChipsPropType) {
+      if (plantSettingsChipsPropType !== 'SpectrSettingsChips') fail(`settings chips prop-type control must target SpectrSettingsChips, got ${plantSettingsChipsPropType}`);
+      const target = path.join(stage, 'components', 'SpectrSettingsChips.tsx');
+      if (!fs.existsSync(target)) fail('SpectrSettingsChips prop-type control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_planted_chips_missing_required__ = <SpectrSettingsChips onChange={() => {}} />;\nconst __wp1_planted_chips_wrong_wrap__ = <SpectrSettingsChips value={0} opts={[[0, "ok"]]} onChange={() => {}} wrap={"yes"} />;\nconst __wp1_planted_chips_wrong_value__ = <SpectrSettingsChips value={true} opts={[[0, "ok"]]} onChange={() => {}} />;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrSettingsChips.tsx';
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const typedControls = typeDiagnostics.filter((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message)).concat(typeDiagnostics.filter((diagnostic) => /boolean/.test(diagnostic.message) && /SpectrSettingsChipValue/.test(diagnostic.message)));
+      if (typedControls.length !== 2) fail(`planted wrong SpectrSettingsChips prop types did not produce exact value/wrap TS2322 controls: ${JSON.stringify(typeDiagnostics)}`);
+      const missing = typeDiagnostics.find((diagnostic) => /onChange/.test(diagnostic.message) && /SpectrSettingsChipsProps/.test(diagnostic.message));
+      if (!missing) fail(`planted missing SpectrSettingsChips props did not produce a required-prop diagnostic: ${JSON.stringify(typeDiagnostics)}`);
+      settingsChipsPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsChips', properties: ['wrap', 'value'], missing_property: ['value', 'opts'], diagnostics: typedControls, missing_diagnostic: missing, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let settingsSliderPropTypeNegativeControl = { status: 'not-run' };
+    if (plantSettingsSliderPropType) {
+      if (plantSettingsSliderPropType !== 'SpectrSettingsSlider') fail(`settings slider prop-type control must target SpectrSettingsSlider, got ${plantSettingsSliderPropType}`);
+      const target = path.join(stage, 'components', 'SpectrSettingsSlider.tsx');
+      if (!fs.existsSync(target)) fail('SpectrSettingsSlider prop-type control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_planted_slider_missing_required__ = <SpectrSettingsSlider min={0} max={1} step={0.1} onChange={() => {}} />;\nconst __wp1_planted_slider_wrong_disabled__ = <SpectrSettingsSlider value={0} min={0} max={1} step={0.1} onChange={() => {}} disabled={"yes"} />;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrSettingsSlider.tsx';
+      const typeDiagnostics = planted.diagnostics.filter((diagnostic) => diagnostic.code === 'TS2322' && diagnostic.file.endsWith(targetSuffix));
+      const wrong = typeDiagnostics.find((diagnostic) => /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const missing = typeDiagnostics.find((diagnostic) => /onChange/.test(diagnostic.message) && /SpectrSettingsSliderProps/.test(diagnostic.message));
+      if (!wrong || !missing) fail(`planted SpectrSettingsSlider controls did not fail closed: ${JSON.stringify(typeDiagnostics)}`);
+      settingsSliderPropTypeNegativeControl = { status: 'passed', name: 'SpectrSettingsSlider', properties: ['disabled'], missing_property: ['value'], diagnostics: [wrong], missing_diagnostic: missing, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let chromePropTypeNegativeControl = { status: 'not-run' };
+    if (plantChromePropType) {
+      if (plantChromePropType !== 'toolbar-buttons') fail(`Chrome prop-type control must target toolbar-buttons, got ${plantChromePropType}`);
+      const railTarget = path.join(stage, 'components', 'RailBtn.tsx');
+      const snapTarget = path.join(stage, 'components', 'SnapBtn.tsx');
+      if (!fs.existsSync(railTarget) || !fs.existsSync(snapTarget)) fail('toolbar button prop-type control targets are not staged');
+      fs.appendFileSync(railTarget, '\nconst __wp1_planted_rail_missing_required__ = <RailBtn active={false}>{"x"}</RailBtn>;\nconst __wp1_planted_rail_wrong_active__ = <RailBtn onClick={() => {}} active={"yes"}>{"x"}</RailBtn>;\n');
+      fs.appendFileSync(snapTarget, '\nconst __wp1_planted_snap_missing_required__ = <SnapBtn action={"x"} slot={"A"} filled={false} onClick={() => {}} label={"A"} />;\nconst __wp1_planted_snap_wrong_filled__ = <SnapBtn id={"x"} action={"x"} slot={"A"} filled={"yes"} onClick={() => {}} label={"A"} />;\n');
+      const planted = runTypeScript(stage);
+      const railDiagnostics = planted.diagnostics.filter((diagnostic) => ['TS2322', 'TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith('components/RailBtn.tsx'));
+      const snapDiagnostics = planted.diagnostics.filter((diagnostic) => ['TS2322', 'TS2739', 'TS2741'].includes(diagnostic.code) && diagnostic.file.endsWith('components/SnapBtn.tsx'));
+      const railWrong = railDiagnostics.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const railMissing = railDiagnostics.find((diagnostic) => /RailBtnProps/.test(diagnostic.message));
+      const snapWrong = snapDiagnostics.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /boolean/.test(diagnostic.message));
+      const snapMissing = snapDiagnostics.find((diagnostic) => /SnapBtnProps/.test(diagnostic.message));
+      if (!railWrong || !railMissing || !snapWrong || !snapMissing) fail(`planted toolbar button controls did not fail closed: ${JSON.stringify({ railDiagnostics, snapDiagnostics })}`);
+      chromePropTypeNegativeControl = { status: 'passed', components: ['RailBtn', 'SnapBtn'], diagnostics: [railWrong, snapWrong], missing_diagnostics: [railMissing, snapMissing], planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let filterCommandContractNegativeControl = { status: 'not-run' };
+    if (plantFilterCommandContract) {
+      if (plantFilterCommandContract !== 'FilterBank') fail(`FilterBank command-contract control must target FilterBank, got ${plantFilterCommandContract}`);
+      const target = path.join(stage, 'components', 'FilterBank.tsx');
+      if (!fs.existsSync(target)) fail('FilterBank command-contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_filter_command_contract_bad__: SpectrNativeCommand = (type, payload, successStatus, skipState) => 0;\nconst __wp1_filter_command_contract_call__ = __wp1_filter_command_contract_bad__("capture_snapshot", "bad-payload", null);\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/FilterBank.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /string/.test(item.message) && /SpectrNativeCommandPayload|Record/.test(item.message));
+      if (!diagnostic) fail(`planted FilterBank command-contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      filterCommandContractNegativeControl = { status: 'passed', component: 'FilterBank', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let filterBankPropContractNegativeControl = { status: 'not-run' };
+    if (plantFilterBankPropContract) {
+      if (plantFilterBankPropContract !== 'FilterBank') fail(`FilterBank prop-contract control must target FilterBank, got ${plantFilterBankPropContract}`);
+      const target = path.join(stage, 'components', 'FilterBank.tsx');
+      if (!fs.existsSync(target)) fail('FilterBank prop-contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_filter_bank_prop_optional_callback__: FilterBankProps = { settings: null, sharedState: null, onStatus: null, dspMode: null, editMode: null, analyzerMode: null, visualizationMode: null, onEditModeChange: () => {}, nativeHydrated: false, onNativeState: () => {}, initialNativeState: null };\nconst __wp1_filter_bank_prop_missing_required__: FilterBankProps = { sharedState: null, onStatus: null, dspMode: null, editMode: null, analyzerMode: null, visualizationMode: null, onEditModeChange: () => {}, nativeHydrated: false, onNativeState: () => {}, initialNativeState: null };\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/FilterBank.tsx';
+      const diagnostic = planted.diagnostics.find((item) => ['TS2741', 'TS2739'].includes(item.code) && item.file.endsWith(targetSuffix) && /settings/.test(item.message));
+      if (!diagnostic) fail(`planted FilterBank missing required prop did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      const callbackDiagnostic = planted.diagnostics.find((item) => item.file.endsWith(targetSuffix) && /onStateChange/.test(item.message));
+      if (callbackDiagnostic) fail(`optional FilterBank onStateChange was reported as required: ${JSON.stringify(callbackDiagnostic)}`);
+      filterBankPropContractNegativeControl = { status: 'passed', component: 'FilterBank', optional_callback_omission: 'passed', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let freezeMenuContractNegativeControl = { status: 'not-run' };
+    if (plantFreezeMenuContract) {
+      if (plantFreezeMenuContract !== 'SpectrFreezeLength') fail(`Freeze menu contract control must target SpectrFreezeLength, got ${plantFreezeMenuContract}`);
+      const target = path.join(stage, 'components', 'SpectrFreezeLength.tsx');
+      if (!fs.existsSync(target)) fail('Freeze menu contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_freeze_menu_contract_bad__: SpectrFreezeOpenMenu = (reveal, edge) => {};\nconst __wp1_freeze_menu_contract_call__ = __wp1_freeze_menu_contract_bad__(true, "middle");\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrFreezeLength.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /middle/.test(item.message) && /SpectrFreezeMenuEdge/.test(item.message));
+      if (!diagnostic) fail(`planted Freeze menu contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      freezeMenuContractNegativeControl = { status: 'passed', component: 'SpectrFreezeLength', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let modulationLaneContractNegativeControl = { status: 'not-run' };
+    if (plantModulationLaneContract) {
+      if (plantModulationLaneContract !== 'SpectrModulationSettings') fail(`Modulation lane contract control must target SpectrModulationSettings, got ${plantModulationLaneContract}`);
+      const target = path.join(stage, 'components', 'SpectrModulationSettings.tsx');
+      if (!fs.existsSync(target)) fail('Modulation lane contract control target is not staged');
+      fs.appendFileSync(target, '\nconst __wp1_modulation_lane_contract_bad__: SpectrModulationLane = (target) => 0;\nconst __wp1_modulation_lane_contract_call__ = __wp1_modulation_lane_contract_bad__("bad");\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/SpectrModulationSettings.tsx';
+      const diagnostic = planted.diagnostics.find((item) => item.code === 'TS2345' && item.file.endsWith(targetSuffix) && /number/.test(item.message) && /string/.test(item.message));
+      if (!diagnostic) fail(`planted Modulation lane contract violation did not fail closed: ${JSON.stringify(planted.diagnostics.filter((item) => item.file.endsWith(targetSuffix)))}`);
+      modulationLaneContractNegativeControl = { status: 'passed', component: 'SpectrModulationSettings', diagnostic, planted_diagnostic_count: planted.diagnostics.length };
+    }
+    let jsxChildrenNegativeControl = { status: 'not-run' };
+    if (plantJsxChildren) {
+      const target = path.join(stage, 'components', 'Hrow.tsx');
+      if (!fs.existsSync(target)) fail('JSX children control target is not staged');
+      fs.appendFileSync(target, '\ntype __Wp1RequiredChildrenProps = { children: number };\nfunction __Wp1RequiredChildren({ children }: __Wp1RequiredChildrenProps) { return children; }\nconst __wp1_planted_missing_children = <__Wp1RequiredChildren />;\nconst __wp1_planted_wrong_children = <__Wp1RequiredChildren>{"wrong"}</__Wp1RequiredChildren>;\n');
+      const planted = runTypeScript(stage);
+      const targetSuffix = 'components/Hrow.tsx';
+      const controls = planted.diagnostics.filter((diagnostic) => diagnostic.file.endsWith(targetSuffix));
+      const missing = controls.find((diagnostic) => ['TS2322', 'TS2741', 'TS2745'].includes(diagnostic.code) && /(?:children|__Wp1RequiredChildrenProps)/.test(diagnostic.message) && /missing|required|expects|assignable/.test(diagnostic.message));
+      const wrong = controls.find((diagnostic) => diagnostic.code === 'TS2322' && /string/.test(diagnostic.message) && /number/.test(diagnostic.message));
+      if (!missing || !wrong) fail(`planted JSX children controls did not fail closed: ${JSON.stringify(controls)}`);
+      jsxChildrenNegativeControl = { status: 'passed', properties: ['children required', 'children:number'], diagnostics: [missing, wrong], planted_diagnostic_count: planted.diagnostics.length };
+    }
+    const bindingClass = classifyBindings(manifest, artifact);
+    const report = {
+      schema: SCHEMA, version: 1,
+      artifact: { path: path.basename(artifactPath), sha256: sha256(artifactBytes), bytes: artifactBytes.length },
+      dependency_manifest: { path: path.basename(manifestPath), sha256: sha256(manifestBytes) },
+      emission: { path: path.basename(emissionDir), sha256: sha256(Buffer.from(emissionRaw)), modules: emission.modules.length },
+      graph: { root: 'App', modules: modules.length, module_names: modules.map((module) => module.name), graph_sha256: sha256(Buffer.from(JSON.stringify(modules))) },
+      bindings: bindingClass,
+      baseline: {
+        exit_status: baseline.status,
+        diagnostics: baseline.diagnostics,
+        counts: Object.fromEntries(Object.entries(Object.groupBy(baseline.diagnostics, (diagnostic) => diagnostic.category)).map(([key, values]) => [key, values.length])),
+        counts_by_code: Object.fromEntries(Object.entries(Object.groupBy(baseline.diagnostics, (diagnostic) => diagnostic.code)).map(([key, values]) => [key, values.length])),
+        unknown_binding_names: [...new Set(baseline.diagnostics.filter((diagnostic) => diagnostic.unknown_name).map((diagnostic) => diagnostic.unknown_name))].sort(),
+      },
+      prop_contract_effect: {
+        before_diagnostics: controlBaseline.diagnostics.length,
+        after_diagnostics: baseline.diagnostics.length,
+        delta: baseline.diagnostics.length - controlBaseline.diagnostics.length,
+        control_counts: Object.fromEntries(Object.entries(Object.groupBy(controlBaseline.diagnostics, (diagnostic) => diagnostic.category)).map(([key, values]) => [key, values.length])),
+      },
+      negative_control: negativeControl,
+      prop_contracts: modules.filter((module) => module.prop_contract).map((module) => module.prop_contract),
+      helper_contracts: modules.filter((module) => module.helper_contract).map((module) => module.helper_contract),
+      prop_negative_control: propNegativeControl,
+      prop_type_negative_control: propTypeNegativeControl,
+      mbtn_prop_type_negative_control: mbtnPropTypeNegativeControl,
+      settings_chips_prop_type_negative_control: settingsChipsPropTypeNegativeControl,
+      settings_slider_prop_type_negative_control: settingsSliderPropTypeNegativeControl,
+      chrome_prop_type_negative_control: chromePropTypeNegativeControl,
+      filter_command_contract_negative_control: filterCommandContractNegativeControl,
+      filter_bank_prop_contract_negative_control: filterBankPropContractNegativeControl,
+      freeze_menu_contract_negative_control: freezeMenuContractNegativeControl,
+      modulation_lane_contract_negative_control: modulationLaneContractNegativeControl,
+      jsx_children_negative_control: jsxChildrenNegativeControl,
+      scope: { runtime_artifact_changed: false, semantic_full_app: baseline.diagnostics.length === 0, runtime_facade: 'not-applied', staging_only: true },
+    };
+    fs.writeFileSync(outReport, `${JSON.stringify(report, null, 2)}\n`);
+    return report;
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+    fs.rmSync(controlStage, { recursive: true, force: true });
+  }
+}
+
+function parseArgs(argv) {
+  const args = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--artifact' || arg === '--manifest' || arg === '--emission' || arg === '--out-report' || arg === '--plant-unknown' || arg === '--plant-prop' || arg === '--plant-prop-type' || arg === '--plant-mbtn-prop-type' || arg === '--plant-jsx-children' || arg === '--plant-settings-chips-prop-type' || arg === '--plant-settings-slider-prop-type' || arg === '--plant-chrome-prop-type' || arg === '--plant-filter-command-contract' || arg === '--plant-filter-bank-prop-contract' || arg === '--plant-freeze-menu-contract' || arg === '--plant-modulation-lane-contract') args[arg.slice(2).replaceAll('-', '_')] = argv[++index];
+    else if (arg === '--help') args.help = true;
+    else fail(`unknown argument ${arg}`);
+  }
+  return args;
+}
+function usage() { console.log('usage: node tools/wp1_app_type_debt_inventory.mjs --artifact FILE --manifest FILE --emission DIR --out-report FILE [--plant-unknown NAME] [--plant-prop COMPONENT] [--plant-prop-type COMPONENT] [--plant-mbtn-prop-type MBtn] [--plant-jsx-children yes] [--plant-settings-chips-prop-type SpectrSettingsChips] [--plant-settings-slider-prop-type SpectrSettingsSlider] [--plant-chrome-prop-type toolbar-buttons] [--plant-filter-command-contract FilterBank] [--plant-filter-bank-prop-contract FilterBank] [--plant-freeze-menu-contract SpectrFreezeLength] [--plant-modulation-lane-contract SpectrModulationSettings]'); }
+
+try {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) { usage(); process.exit(0); }
+  if (!args.artifact || !args.manifest || !args.emission || !args.out_report) fail('--artifact, --manifest, --emission, and --out-report are required');
+  const artifactPath = path.resolve(args.artifact), manifestPath = path.resolve(args.manifest), emissionDir = path.resolve(args.emission), outReport = path.resolve(args.out_report);
+  if (!fs.existsSync(artifactPath)) fail(`artifact does not exist: ${artifactPath}`);
+  if (!fs.existsSync(manifestPath)) fail(`dependency manifest does not exist: ${manifestPath}`);
+  if (!fs.existsSync(emissionDir) || !fs.statSync(emissionDir).isDirectory()) fail(`emission directory does not exist: ${emissionDir}`);
+  process.stdout.write(`${JSON.stringify(build({ artifactPath, manifestPath, emissionDir, outReport, plantUnknown: args.plant_unknown, plantProp: args.plant_prop, plantPropType: args.plant_prop_type, plantMbtnPropType: args.plant_mbtn_prop_type, plantJsxChildren: args.plant_jsx_children, plantSettingsChipsPropType: args.plant_settings_chips_prop_type, plantSettingsSliderPropType: args.plant_settings_slider_prop_type, plantChromePropType: args.plant_chrome_prop_type, plantFilterCommandContract: args.plant_filter_command_contract, plantFilterBankPropContract: args.plant_filter_bank_prop_contract, plantFreezeMenuContract: args.plant_freeze_menu_contract, plantModulationLaneContract: args.plant_modulation_lane_contract }), null, 2)}\n`);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}

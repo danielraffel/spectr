@@ -181,6 +181,11 @@ document.addEventListener('DOMContentLoaded', async function() {
     // viewport into one atomic EditorBridge publication per animation frame.
     const spectrStateNeedle = '  // ---- public methods (via sharedState ref) ----\n  useEffect(() => {';
     const spectrStateEffect = String.raw`  // ---- native DSP state publication ----
+  const spectrPublicationProvenance = () => ({
+    lmin: viewRef.current.lmin,
+    lmax: viewRef.current.lmax,
+    drawn: nativeAppliedRevisionRef.current
+  });
   useEffect(() => {
     if (!nativeHydrated) return;
     if (nativeProjectionRef.current && !nativeEditPendingRef.current) {
@@ -197,8 +202,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         ? (Number.isFinite(mutedGainDbRef.current[i])
             ? mutedGainDbRef.current[i] : 0)
         : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
+      const live = spectrPublicationProvenance();
       const publicationSignature = JSON.stringify([
-        N, gainDb, muted, view.lmin, view.lmax,
+        N, gainDb, muted, live.lmin, live.lmax,
       ]);
       // Direct pointer handlers have already published this exact state. A
       // signature is deliberately used instead of an effect-ordering flag:
@@ -213,8 +219,9 @@ document.addEventListener('DOMContentLoaded', async function() {
           n_visible: N,
           gain_db: gainDb,
           muted,
-          min_hz: Math.pow(10, view.lmin),
-          max_hz: Math.pow(10, view.lmax),
+          min_hz: Math.pow(10, live.lmin),
+          max_hz: Math.pow(10, live.lmax),
+          drawn_revision: live.drawn,
         }, 'spectr-processing-state');
       } catch (error) {
         console.error('[Spectr] native processing-state publication failed', error);
@@ -669,8 +676,12 @@ window.FilterBank = FilterBank;`,
       'band context consumes dismissal gestures');
     replaceSpectrSource(
       '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));',
-      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
+      '  const targetGainsRef = useRef(new Array(N).fill(0));\n  const renderGainsRef = useRef(new Array(N).fill(0));\n  // A muted band is rendered as -Infinity, but native keeps its authored dB.\n  const mutedGainDbRef = useRef(new Array(N).fill(0));\n  const unmutePulseRef = useRef(new Float32Array(N));\n  const nativeProjectionRef = useRef(false);\n  // A direct edit wins if it shares a React commit with hydration.\n  const nativeEditPendingRef = useRef(false);\n  const nativeDirectPublicationSignatureRef = useRef(\'\');\n  const nativePublicationFrameRef = useRef(0);\n  const nativePendingPublicationRef = useRef(null);\n  const nativeCommandSequenceRef = useRef(0);\n  const nativeAppliedRevisionRef = useRef(0);\n  // True while the internal LFOs are driving the drawn bank, so the falling\n  // edge can release the overlay back to canonical state exactly once.\n  const modulationActiveRef = useRef(false);\n  // Last projected canvas geometry, published only to the test-hook seam.\n  const bandGeometryRef = useRef(null);',
       'independent muted gain hydration');
+    replaceSpectrSource(
+      'onPointerUp={onPointerUp}',
+      'onPointerUp={event => { onPointerUp(event); flushNativeProcessingStatePublication(); }}',
+      'flush final publication after pointer release');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
       // Map old → new by proportional index
@@ -713,28 +724,67 @@ window.FilterBank = FilterBank;`,
       return nxt;
     });
   };`,
-      String.raw`  const queueNativeProcessingStatePublication = () => {
+      String.raw`  const sendNativeProcessingStatePublication = (publication) => {
+    try {
+      Promise.resolve(window.pulp.postMessage('processing_state_set', publication, 'spectr-processing-state')).catch(error => {
+        console.error('[Spectr] native direct-edit publication failed', error);
+      });
+    } catch (error) {
+      console.error('[Spectr] native direct-edit publication failed', error);
+    }
+  };
+  const flushNativeProcessingStatePublication = () => {
+    const frame = nativePublicationFrameRef.current;
+    nativePublicationFrameRef.current = 0;
+    if (frame) cancelAnimationFrame(frame);
+    const publication = nativePendingPublicationRef.current;
+    nativePendingPublicationRef.current = null;
+    if (publication) sendNativeProcessingStatePublication(publication);
+  };
+  const queueNativeProcessingStatePublication = () => {
     // A real user gesture is always publishable. Hydration gates projection
     // effects, not direct intent arriving through an already-live bridge.
     if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
     const current = targetGainsRef.current;
+    const live = spectrPublicationProvenance();
     const muted = current.map(value => isMuted(value));
     const gainDb = current.map((value, i) => isMuted(value)
       ? (Number.isFinite(mutedGainDbRef.current[i])
           ? mutedGainDbRef.current[i] : 0)
       : clamp(Number.isFinite(value) ? value : 0, -1, 1) * 24);
-    nativeDirectPublicationSignatureRef.current = JSON.stringify([
-      N, gainDb, muted, view.lmin, view.lmax,
-    ]);
+    // Advance the command sequence at user intent time, before the frame
+    // flush, so an older async native response cannot overwrite this edit.
     ++nativeCommandSequenceRef.current;
-    Promise.resolve(window.pulp.postMessage('processing_state_set', {
+    // Stamp the signature when queued so the render effect cannot publish a
+    // duplicate while the coalesced frame is waiting. The payload is copied
+    // now; a later host projection cannot replace the user's latest edit.
+    nativeDirectPublicationSignatureRef.current = JSON.stringify([
+      N, gainDb, muted, live.lmin, live.lmax,
+    ]);
+    nativePendingPublicationRef.current = {
       n_visible: N, gain_db: gainDb, muted,
-      min_hz: Math.pow(10, view.lmin),
-      max_hz: Math.pow(10, view.lmax),
-    }, 'spectr-processing-state')).catch(error => {
-      console.error('[Spectr] native direct-edit publication failed', error);
-    });
+      min_hz: Math.pow(10, live.lmin),
+      max_hz: Math.pow(10, live.lmax),
+      drawn_revision: live.drawn,
+    };
+    if (!nativePublicationFrameRef.current)
+      nativePublicationFrameRef.current = requestAnimationFrame(() => {
+        nativePublicationFrameRef.current = 0;
+        flushNativeProcessingStatePublication();
+      });
   };
+  // Pointerup bubbles after the target handler, so the final edit is flushed
+  // immediately while move samples within one frame still coalesce.
+  useEffect(() => {
+    const flush = () => flushNativeProcessingStatePublication();
+    window.addEventListener('pointerup', flush);
+    window.addEventListener('pointercancel', flush);
+    return () => {
+      window.removeEventListener('pointerup', flush);
+      window.removeEventListener('pointercancel', flush);
+      flushNativeProcessingStatePublication();
+    };
+  }, []);
   const commitGain = (idx, value, deferReact = false) => {
     // A real pointer edit is authoritative even if it arrives before the
     // hydration echo-suppression effect has consumed its one-shot latch.
@@ -3336,6 +3386,14 @@ window.PatternManager = PatternManager;`,
               <span className="tnum" style={{ lineHeight: 1.2, whiteSpace: 'nowrap' }}>{settings.bandCount + ' bands ▾'}</span>`,
       'band count label shares one vertical center');
     replaceSpectrSource(
+      String.raw`        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>`,
+      String.raw`        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, minWidth: 0, whiteSpace: 'nowrap', fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>`,
+      'header bands and zoom row reserves its width');
+    replaceSpectrSource(
+      String.raw`          <span className="tnum">{info.zoom}× zoom</span>`,
+      String.raw`          <span className="tnum" style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{info.zoom}× zoom</span>`,
+      'header zoom readout keeps its label intact');
+    replaceSpectrSource(
       String.raw`                      background: info.N === n ? 'rgba(120,180,255,0.18)' : 'transparent',
                       border: '1px solid ' + (info.N === n ? 'rgba(180,210,255,0.4)' : 'rgba(255,255,255,0.06)'),
                       color: '#fff', padding: '4px 8px', borderRadius: 2,
@@ -3566,10 +3624,8 @@ window.PatternManager = PatternManager;`,
       '  const viewRef = useRef({ ...initialView });\n  const wheelCommitRef = useRef(0);\n  const view = viewRef.current;',
       'wheel zoom owns one deferred semantic commit');
     replaceSpectrSource(
-      String.raw`  };
-  const commitGain = (idx, value, deferReact = false) => {`,
-      String.raw`  };
-  const commitLiveViewport = (next) => {
+      String.raw`  const commitGain = (idx, value, deferReact = false) => {`,
+      String.raw`  const commitLiveViewport = (next) => {
     viewRef.current.lmin = next.lmin;
     viewRef.current.lmax = next.lmax;
     queueNativeProcessingStatePublication();
@@ -3822,8 +3878,8 @@ window.PatternManager = PatternManager;`,
       'GPU status pill sits above the bottom rail');
     replaceSpectrSource(
       '      </div>\n\n      {/* Status banner */}',
-      '      </div>\n\n      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n\n      {/* Status banner */}',
-      'GPU mode indicator follows zoom readout');
+      '      <GpuModeIndicator renderMode={renderMode} gpuAudio={gpuAudio} onChange={onRenderModeChange} />\n      </div>\n\n      {/* Status banner */}',
+      'GPU mode indicator follows zoom readout in the top bar');
     replaceSpectrSource(
       'function StatusBanner({ message, disabled }) {',
       String.raw`function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
@@ -3840,7 +3896,7 @@ window.PatternManager = PatternManager;`,
     style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10,
       padding: '3px 8px', borderRadius: 3, border: '1px solid ' + color,
       background: 'rgba(255,255,255,0.03)', color, fontFamily: 'var(--mono)',
-      fontSize: 10, letterSpacing: 1 }}>
+      fontSize: 10, letterSpacing: 1, flexShrink: 0, whiteSpace: 'nowrap' }}>
     <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3,
       background: color, boxShadow: ready ? '0 0 6px ' + color : 'none' }} />{label}
   </button>;
@@ -3862,7 +3918,7 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
     text = 'GPU | ' + gpu + ' blocks | ' + fallback + ' CPU fallback';
   }
   return <div data-spectr-gpu-audio-status-pill data-spectr-gpu-audio-state={ready ? 'gpu' : 'cpu'}
-    style={{ position: 'absolute', left: '50%', bottom: 62, transform: 'translateX(-50%)',
+    style={{ position: 'absolute', left: '50%', bottom: 88, transform: 'translateX(-50%)',
       display: 'inline-flex', alignItems: 'center', gap: 6, zIndex: 6, pointerEvents: 'none',
       padding: '5px 10px', borderRadius: 3, border: '1px solid ' + color,
       background: 'rgba(8,12,18,0.9)', color, fontFamily: 'var(--mono)',

@@ -16,7 +16,14 @@
 
 #include <clap/clap.h>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 #include "spectr/param_surface.hpp"
 
@@ -73,17 +80,30 @@ clap_host_t make_host() {
 }
 
 struct Library {
+#if defined(_WIN32)
+    HMODULE handle = nullptr;
+#else
     void* handle = nullptr;
+#endif
     const clap_plugin_entry_t* entry = nullptr;
     const clap_plugin_factory_t* factory = nullptr;
     std::string plugin_id;
 
     explicit Library(const std::filesystem::path& bundle) {
+#if defined(_WIN32)
+        const auto binary = bundle;
+        handle = LoadLibraryW(binary.c_str());
+        if (!handle) return;
+        entry = reinterpret_cast<const clap_plugin_entry_t*>(
+            GetProcAddress(handle, "clap_entry"));
+#else
         const auto binary = bundle / "Contents" / "MacOS" / bundle.stem();
         handle = dlopen(binary.c_str(), RTLD_LOCAL | RTLD_NOW);
         if (!handle) return;
         entry = static_cast<const clap_plugin_entry_t*>(dlsym(handle, "clap_entry"));
-        if (!entry || !entry->init(bundle.c_str())) {
+#endif
+        const auto bundle_string = bundle.string();
+        if (!entry || !entry->init(bundle_string.c_str())) {
             entry = nullptr;
             return;
         }

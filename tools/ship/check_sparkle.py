@@ -13,7 +13,9 @@ bundles: Spectr.app embeds Sparkle.framework, links it, and declares SUFeedURL
          Sparkle (no file, no load command, no reference to its classes).
          --signed adds the release-signature checks: codesign --verify --deep
          --strict, a Developer ID Team ID on the app and the framework, the
-         hardened runtime on the framework's nested code, and spctl.
+         hardened runtime on the framework's nested code, and spctl. Use
+         --skip-gatekeeper only when checking an app extracted from a notarized
+         installer; the installer itself must still pass install assessment.
 appcast: the newest item describes exactly this package (length, EdDSA
          signature verified with the PUBLIC key), is marked as an installer
          package, carries a sparkle:version higher than every other item, and
@@ -136,7 +138,7 @@ def _codesign_info(path: Path) -> str:
     return r.stdout + r.stderr
 
 
-def signed_errors(app: Path) -> list[str]:
+def signed_errors(app: Path, *, check_gatekeeper: bool = True) -> list[str]:
     errors = []
     r = subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)],
                        capture_output=True, text=True)
@@ -161,10 +163,11 @@ def signed_errors(app: Path) -> list[str]:
             errors.append(f"{p.relative_to(app.parent)}: no secure timestamp")
     if len(teams) > 1:
         errors.append(f"{app.name}: nested code signed by several teams: {sorted(teams)}")
-    r = subprocess.run(["spctl", "--assess", "--type", "execute", "--verbose", str(app)],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        errors.append(f"{app.name}: spctl rejects it: {(r.stdout + r.stderr).strip()}")
+    if check_gatekeeper:
+        r = subprocess.run(["spctl", "--assess", "--type", "execute", "--verbose", str(app)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            errors.append(f"{app.name}: spctl rejects it: {(r.stdout + r.stderr).strip()}")
     return errors
 
 
@@ -384,6 +387,8 @@ def main() -> int:
     b.add_argument("--public-key", default=EXPECTED_PUBLIC_KEY)
     b.add_argument("--feed", help="expected SUFeedURL (default: any)")
     b.add_argument("--signed", action="store_true")
+    b.add_argument("--skip-gatekeeper", action="store_true",
+                   help="skip app execution assessment for an app extracted from a notarized installer")
     a = sub.add_parser("appcast")
     a.add_argument("--appcast", required=True, help="file or https URL")
     a.add_argument("--pkg", required=True, help="file or https URL")
@@ -403,7 +408,7 @@ def main() -> int:
         for p in args.plugin:
             errors += plugin_errors(p)
         if args.signed:
-            errors += signed_errors(args.app)
+            errors += signed_errors(args.app, check_gatekeeper=not args.skip_gatekeeper)
         checked = f"{args.app.name} + {len(args.plugin)} plug-in bundle(s)"
     else:
         xml_text = fetch_bytes(args.appcast, args.fetch_attempts).decode("utf-8")

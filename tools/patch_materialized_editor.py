@@ -20,6 +20,11 @@ native editor it is reachable only at its default (on). Re-materializing the
 document is what surfaces the control, and at that point this note goes away.
 
 Idempotent: re-running it after a successful pass reports "already applied".
+
+The focused ``--readable-typography-only`` mode is the supported migration
+path for the generated CSS rule.  It applies just this source-boundary recipe
+when the larger historical compatibility recipe is blocked by an unrelated
+document drift, while preserving the same idempotent normalization semantics.
 """
 import glob
 import json
@@ -29,6 +34,7 @@ import shutil
 import sys
 
 PATH = 'native-ui/materialized/materialized-document.runtime.json'
+PROVENANCE_PATH = 'native-ui/materialized/materialized-document.provenance.json'
 RUNTIME_PATH = 'native-ui/materialized/runtime.js'
 SOURCE_PATH = 'resources/editor.html'
 CAPTURE_DOCUMENT_PATHS = [
@@ -5314,11 +5320,38 @@ def enforce_settings_fixed_shell(document):
 
 
 def add_readable_typography(document):
-    """Scale compact labels up while constraining them to their control rails."""
+    """Keep compact labels readable without overriding authored control sizes.
+
+    The materialized runtime already carries the authored inline sizes that the
+    native bridge uses.  A viewport-wide ``font-size: ... !important`` rule
+    made short controls such as ``AUTO`` and the Tracking footer wider than
+    their captured rails, so Chromium applied the existing ellipsis rule.  The
+    recipe still owns the safe line/overflow constraints, but leaves sizing to
+    the authored/native boundary.
+
+    The legacy rule is migrated in place so an existing checked-in artifact and
+    a fresh materialization converge to the same bytes.  Keeping the migration
+    here makes the fix replayable and idempotent rather than a one-off artifact
+    edit.
+    """
     html = document.get('html', '')
-    if 'spectr-readable-type' in html:
+    legacy = ('<style id="spectr-readable-type">button,[role="button"],[role="tab"]'
+              '{font-size:clamp(11px,.9vw,14px)!important;line-height:1.15;white-space:nowrap}'
+              'button span,[role="button"] span,[role="tab"] span{max-width:100%;overflow:hidden;'
+              'text-overflow:ellipsis;white-space:nowrap}[data-spectr-settings-group]>div:first-child'
+              '{font-size:clamp(10px,.82vw,13px)!important}</style>')
+    style = ('<style id="spectr-readable-type">button,[role="button"],[role="tab"]'
+             '{line-height:1.15;white-space:nowrap}button span,[role="button"] span,[role="tab"] span'
+             '{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+             '[data-spectr-settings-group]>div:first-child{font-size:clamp(10px,.82vw,13px)!important}'
+             '</style>')
+    if style in html:
         return False
-    style = '<style id="spectr-readable-type">button,[role="button"],[role="tab"]{font-size:clamp(11px,.9vw,14px)!important;line-height:1.15;white-space:nowrap}button span,[role="button"] span,[role="tab"] span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-spectr-settings-group]>div:first-child{font-size:clamp(10px,.82vw,13px)!important}</style>'
+    if legacy in html:
+        document['html'] = html.replace(legacy, style, 1)
+        return True
+    if 'spectr-readable-type' in html:
+        raise RuntimeError('unrecognised spectr-readable-type rule; refusing to overwrite drift')
     marker = '</head>'
     if marker not in html:
         return False
@@ -5935,5 +5968,37 @@ def main():
         print('written', RUNTIME_PATH)
 
 
+def migrate_readable_typography_only():
+    """Apply the focused readable-type migration and write one artifact.
+
+    The complete compatibility recipe intentionally fails closed when an
+    unrelated historical patch point has drifted.  This small mode keeps the
+    measured typography fix independently replayable without weakening that
+    guard or hand-editing the generated JSON.
+    """
+    raw = open(PATH, encoding='utf-8').read()
+    document = json.loads(raw)
+    changed = add_readable_typography(document)
+    if changed:
+        open(PATH, 'w', encoding='utf-8').write(
+            json.dumps(document, ensure_ascii=False, separators=(',', ':')))
+        # Keep the checked-in provenance receipt coupled to the generated
+        # artifact so this supported migration cannot leave a stale digest.
+        provenance = json.loads(open(PROVENANCE_PATH, encoding='utf-8').read())
+        artifact_bytes = open(PATH, 'rb').read()
+        provenance.setdefault('artifact', {})['path'] = PATH
+        provenance['artifact']['sha256'] = __import__('hashlib').sha256(artifact_bytes).hexdigest()
+        provenance['artifact']['bytes'] = len(artifact_bytes)
+        open(PROVENANCE_PATH, 'w', encoding='utf-8').write(
+            json.dumps(provenance, indent=2, ensure_ascii=False) + '\n')
+        print('written', PROVENANCE_PATH)
+        print('written', PATH)
+    else:
+        print('already applied readable typography migration')
+
+
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) == 2 and sys.argv[1] == '--readable-typography-only':
+        migrate_readable_typography_only()
+    else:
+        main()

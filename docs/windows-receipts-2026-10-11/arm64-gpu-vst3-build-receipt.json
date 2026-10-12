@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-11T09:25:00Z",
+  "host": "M5S macOS host, direct QEMU Windows 11 ARM64 guest",
+  "guest": {
+    "ssh": "127.0.0.1:50375",
+    "source": "C:\\src\\spectr-20261011",
+    "source_git_sha": "17c25184d519e7b2e649be18d6a57fe3c8228fd8",
+    "architecture": "ARM64",
+    "toolchain": "MSVC 19.51.36260.0"
+  },
+  "pulp_sdk": {
+    "source_git_sha": "5487f0f0a36c8c4832ca2966bec24954f06738b6",
+    "sdk_version": "0.947.0",
+    "kind": "development",
+    "distribution_eligible": false,
+    "gpu": true,
+    "vst3": true,
+    "provenance": "C:\\Program Files (x86)\\Pulp\\sdk-provenance.json"
+  },
+  "configure": "cmake -S C:/src/spectr-20261011 -B C:/builds/spectr-5487-gpu-vst3 -G Ninja -DCMAKE_BUILD_TYPE=Release -DPulp_DIR=\"C:/Program Files (x86)/Pulp/lib/cmake/Pulp\" -DSPECTR_EXPECTED_PULP_SDK_SHA=5487f0f0a36c8c4832ca2966bec24954f06738b6",
+  "build": {
+    "targets": [
+      "Spectr_Standalone",
+      "Spectr_VST3",
+      "Spectr_CLAP",
+      "Spectr-test"
+    ],
+    "parallel": 4,
+    "result": "PASS"
+  },
+  "focused_test": {
+    "command": "Spectr-test.exe \"Spectr processes audio\" --reporter compact",
+    "result": "PASS",
+    "assertions": 2,
+    "cases": 1
+  },
+  "artifacts": {
+    "standalone": {
+      "path": "C:\\builds\\spectr-5487-gpu-vst3\\Spectr.exe",
+      "sha256": "b9f9797182cb062d90c10a94dae3c5690785e3594f432a910eb11b34149cfe11"
+    },
+    "vst3": {
+      "path": "C:\\builds\\spectr-5487-gpu-vst3\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+      "sha256": "c5e055cea2f14840b8938cfe61724697bcd11f104fd045336cb23a06724e36cd"
+    },
+    "clap": {
+      "path": "C:\\builds\\spectr-5487-gpu-vst3\\CLAP\\Spectr.clap",
+      "sha256": "f95b9eaa6ee994ba8051884f0da89c3982b26d3788f460b27855d81912cf3201"
+    }
+  },
+  "utm_install": {
+    "ssh": "127.0.0.1:50376",
+    "vst3_path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+    "vst3_sha256": "c5e055cea2f14840b8938cfe61724697bcd11f104fd045336cb23a06724e36cd",
+    "clap_path": "C:\\Program Files\\Common Files\\CLAP\\Spectr.clap",
+    "clap_sha256": "f95b9eaa6ee994ba8051884f0da89c3982b26d3788f460b27855d81912cf3201"
+  },
+  "reaper": {
+    "status": "UNVERIFIED",
+    "reason": "The retained UTM session has an active desktop transport and a current ARM64 VST3 cache entry, but REAPER reports the CLAP project entry unavailable and the audio device dialog remains open. No current Spectr editor instance or audio receipt was observed, so this is not acceptance.",
+    "observed": {
+      "reaper_version": "7.82 ARM64",
+      "vst_cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-vstplugins64arwmin.ini",
+      "vst_cache_entry": "Spectr.vst3=216CEC616159DD01",
+      "clap_cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-clap-winarm64.ini",
+      "clap_cache_entry": "[Spectr.clap]",
+      "audio_dialog": "Error opening devices",
+      "project_result": "CLAP: Spectr (Pulp) reported unavailable by REAPER despite the installed CLAP cache entry"
+    }
+  },
+  "standalone": {
+    "status": "BLOCKED",
+    "result": "The installed ARM64 executable opened WASAPI successfully but failed WindowHost::create() in the UTM RDP session (exit code 1). A reversible probe of UTM virtio-ramfb-gl and virtio-gpu-gl-pci display hardware produced the same failure; the retained VM was restored to ramfb for reliability. This prevents a GPU editor screenshot and is evidence against claiming Skia/Dawn runtime success in this UTM guest.",
+    "display_probe": ["virtio-ramfb-gl: WindowHost::create failed", "virtio-gpu-gl-pci: WindowHost::create failed", "restored: ramfb"],
+    "log": ".local-evidence/windows-gpu-5487/standalone-windowhost-failure-20261011.log"
+  },
+  "limitations": [
+    "Headless build and focused DSP test prove compilation and audio path only.",
+    "GPU Skia/Dawn runtime editor and REAPER/Ableton instance/audio/screenshot acceptance remain open."
+  ]
+}

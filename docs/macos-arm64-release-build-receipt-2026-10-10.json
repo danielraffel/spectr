@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T22:40:00Z",
+  "source_sha": "b6aa8161d063f91315ff55c75195259d0eabcde4",
+  "sdk_dir": "/Users/danielraffel/.pulp/sdk-dev/forge-v1/darwin-arm64/b83e3ad11c16e5160733f454cc94bad2ea4e7525/9260f1b7c248/lib/cmake/Pulp",
+  "build_dir": "/Users/danielraffel/Code/spectr-mac-arm64-build-20261010",
+  "build_type": "Release",
+  "architecture": "arm64",
+  "test_seams": false,
+  "artifacts": {
+    "standalone": { "relative_path": "Spectr.app/Contents/MacOS/Spectr", "bytes": 49959592, "sha256": "dfd3a56556dfedc3679b65162db503a1f5c8d7ab117ba63a030a28e034086202" },
+    "vst3": { "relative_path": "VST3/Spectr.vst3/Contents/MacOS/Spectr", "bytes": 48347384, "sha256": "2fcfe47ac5001531693742b23bc238c57741958dcd58b2b252f49087254655c0" },
+    "clap": { "relative_path": "CLAP/Spectr.clap/Contents/MacOS/Spectr", "bytes": 48415480, "sha256": "b80491ec2db6040c2c55347d3d07810ec2e3881844bc94e03e77755407fa54dd" },
+    "au": { "relative_path": "AU/Spectr.component/Contents/MacOS/Spectr", "bytes": 48499688, "sha256": "e8c935782c9bf8cffbd803000f0020f667b5890318e88a373ff90374ca4cace0" }
+  },
+  "checks": {
+    "configure": "PASS",
+    "build_targets": ["Spectr_Standalone", "Spectr_VST3", "Spectr_CLAP", "Spectr_AU"],
+    "no_test_seams": "PASS",
+    "native_host_behavior": "UNVERIFIED",
+    "real_host_load": "UNVERIFIED"
+  },
+  "ctest": "NOT_ACCEPTANCE: release artifacts were built, but full CTest was not run against built test targets; missing test executables and missing local TypeScript dependencies caused unrelated Not Run/Failed entries."
+}

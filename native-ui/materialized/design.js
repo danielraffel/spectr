@@ -37,6 +37,21 @@ setOverflow('root', 'hidden');
 setFlex('root', 'height', 860);
 setFlex('root', 'width', 1320);
 
+  // Generated from the exact Chromium materialized pseudo binding for body::before.
+  // This bounded overlay preserves the authored radial glow above the opaque
+  // Chromium paint authority while remaining pointer-transparent.
+  createCol('Pseudo_body_before', 'root');
+  setPosition('Pseudo_body_before', 'absolute');
+  setLeft('Pseudo_body_before', 0);
+  setTop('Pseudo_body_before', 0);
+  setFlex('Pseudo_body_before', 'width', 1320);
+  setFlex('Pseudo_body_before', 'height', 860);
+  setBackground('Pseudo_body_before', 'transparent');
+  setBackgroundGradient('Pseudo_body_before', 'radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none');
+  setOpacity('Pseudo_body_before', 1);
+  setZIndex('Pseudo_body_before', 1);
+  setPointerEvents('Pseudo_body_before', 'none');
+
   // @pulp-anchor browser:paint-authority
   // Accepted Chromium chrome
   createImage('Accepted_Chromium_chrome0', 'root');
@@ -44,6 +59,7 @@ setFlex('root', 'width', 1320);
   setLeft('Accepted_Chromium_chrome0', 0);
   setTop('Accepted_Chromium_chrome0', 0);
   setObjectFit('Accepted_Chromium_chrome0', 'fill');
+  setZIndex('Accepted_Chromium_chrome0', 0);
   setImageSource('Accepted_Chromium_chrome0', 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png');
   setFlex('Accepted_Chromium_chrome0', 'width', 1320);
   setFlex('Accepted_Chromium_chrome0', 'height', 860);
@@ -54,6 +70,7 @@ setFlex('root', 'width', 1320);
   setPosition('Browser_canvas_11', 'absolute');
   setLeft('Browser_canvas_11', 0);
   setTop('Browser_canvas_11', 0);
+  setZIndex('Browser_canvas_11', 2);
   setFlex('Browser_canvas_11', 'width', 1320);
   setFlex('Browser_canvas_11', 'height', 860);
 
@@ -63,6 +80,7 @@ setFlex('root', 'width', 1320);
   setPosition('Browser_canvas_22', 'absolute');
   setLeft('Browser_canvas_22', 0);
   setTop('Browser_canvas_22', 0);
+  setZIndex('Browser_canvas_22', 3);
   setFlex('Browser_canvas_22', 'width', 1320);
   setFlex('Browser_canvas_22', 'height', 860);
 
