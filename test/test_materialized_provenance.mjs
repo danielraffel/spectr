@@ -125,6 +125,11 @@ notDeepStrictEqual(
 const duplicate = JSON.parse(JSON.stringify(explicitFixture));
 duplicate.semantic_bindings.push({ ...duplicate.semantic_bindings[0], index: 999 });
 expectThrows(() => normalizeMaterializedDocument(duplicate), 'duplicate identity');
+const crossStreamDuplicate = JSON.parse(JSON.stringify(explicitFixture));
+crossStreamDuplicate.layout_bindings[0]['data-pulp-id'] =
+  crossStreamDuplicate.semantic_bindings[0]['data-pulp-id'];
+expectThrows(() => normalizeMaterializedDocument(crossStreamDuplicate),
+  'cross-stream duplicate identity');
 const tampered = normalizeMaterializedDocument(source);
 delete tampered.bindingsById.layout[Object.keys(tampered.bindingsById.layout)[0]];
 expectThrows(() => validateShadowProjection(source, tampered), 'map/list count mismatch');

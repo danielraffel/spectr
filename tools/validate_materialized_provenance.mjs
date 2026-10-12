@@ -67,7 +67,7 @@ function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
 function explicitSourceId(row) {
   if (!isObject(row)) return null;
-  for (const key of ['data-pulp-id', 'data_pulp_id', 'dataPulpId']) {
+  for (const key of ['data-pulp-id', 'data_pulp_id', 'dataPulpId', 'pulp_id', 'stable_id']) {
     const value = row[key];
     if (typeof value === 'string' && value.trim() !== '') return value.trim();
   }
@@ -101,7 +101,7 @@ function rowIdentity(kind, row, index) {
     descriptor: pathDescriptor(row)
   };
 }
-function normalizeBindingStream(kind, rows) {
+function normalizeBindingStream(kind, rows, globalIds = null) {
   if (!Array.isArray(rows)) throw new Error(kind + '_bindings must be an array');
   const bindingsById = {};
   const identities = [];
@@ -112,11 +112,15 @@ function normalizeBindingStream(kind, rows) {
     if (Object.hasOwn(bindingsById, identity.id)) {
       throw new Error(kind + '_bindings has duplicate identity ' + identity.id);
     }
+    if (globalIds?.has(identity.id)) {
+      throw new Error('cross-stream duplicate identity ' + identity.id);
+    }
     if (identity.id === '__proto__' || identity.id === 'constructor' ||
         identity.id === 'prototype') {
       throw new Error(kind + '_bindings rejected prototype identity ' + identity.id);
     }
     bindingsById[identity.id] = clone(row);
+    globalIds?.add(identity.id);
     identities.push(identity);
   }
   const allExplicit = identities.every((identity) => identity.mode === 'source-explicit');
@@ -138,9 +142,10 @@ export function normalizeMaterializedDocument(document) {
   const identitiesByKind = {};
   const identityModesByKind = {};
   const counts = {};
+  const globalIds = new Set();
   for (const kind of BINDING_KINDS) {
     const field = BINDING_ARRAYS[kind];
-    const result = normalizeBindingStream(kind, document[field]);
+    const result = normalizeBindingStream(kind, document[field], globalIds);
     bindingsById[kind] = result.bindingsById;
     identitiesByKind[kind] = result.identities;
     identityModesByKind[kind] = result.identityMode;
