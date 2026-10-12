@@ -115,6 +115,41 @@ single effect identity cannot reliably combine audio input, MIDI input,
 freeze capture, recall, and keyboard playback. No Release 2 freeze or sampler
 implementation is claimed by the current branch.
 
+## Import provenance regression slice — 2026-10-12
+
+The isolated branch codex/spectr-v2-provenance-parity-20261012 adds a
+diagnostic-only v1 to v2 shadow gate without changing the shipped runtime or
+native parser.
+
+DONE:
+
+- deterministic, lossless normalization of semantic, layout, text, paint, and
+  canvas binding arrays;
+- source-explicit identity when a data-pulp-id exists, otherwise
+  positional-provisional identity with sibling-reorder negative coverage;
+- canonical source/runtime/editor/IR/state-atlas hashes and a 13-script runtime
+  patch allowlist;
+- embedded materialized asset reference, byte-length, and SHA-256 validation;
+- exact before/after browser/native artifact gate with positive and changed-
+  artifact controls; and
+- strict fidelity receipt compatibility checks that reject legacy receipts
+  lacking repeat, deterministic DOM marker, negative-control, and screenshot
+  digest fields.
+
+OPEN:
+
+- native and JavaScript materialized consumers remain v1-only; the v2 shadow is
+  not authoritative and must not be wired into shipping import yet;
+- same-source browser/native before/after captures require a fixed interaction
+  state and settle protocol; missing captures report NOT_RUN;
+- current browser/native visual receipts with unequal hashes or incomplete
+  strict fields remain diagnostic failures, not parity proof; and
+- SDK source commit and per-patch source/target anchor receipts should be
+  filled when the authoritative Pulp SDK is selected.
+
+The generated manifest is intentionally overall: OPEN until those external
+parity artifacts exist.
+
 ## References
 
 - Canonical active goal:

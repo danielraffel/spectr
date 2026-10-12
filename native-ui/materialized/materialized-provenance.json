@@ -1,0 +1,299 @@
+{
+  "schema": "spectr-materialized-shadow-parity-v1",
+  "version": 1,
+  "generated_by": "tools/validate_materialized_provenance.mjs",
+  "source": {
+    "path": "native-ui/materialized/materialized-document.json",
+    "bytes": 6534165,
+    "sha256": "93a4af454c71a889b00a2447c955f48ef293638a4166a9633122ef783e0a599c",
+    "schema": "pulp-materialized-browser-document-v1",
+    "version": 1
+  },
+  "shadow": {
+    "schema": "pulp-materialized-browser-document-v2-shadow",
+    "version": 2,
+    "canonical_sha256": "7546966f93a410fce4a62661a8e03629c02b1aa019f9dd7353d940276d570edd",
+    "bytes": 6575121,
+    "authoritative": false,
+    "source_arrays_preserved": true,
+    "binding_counts": {
+      "semantic": 18,
+      "layout": 69,
+      "text": 26,
+      "paint": 17,
+      "canvas": 2
+    },
+    "identity_mode": "positional-provisional",
+    "identity_modes_by_kind": {
+      "semantic": "positional-provisional",
+      "layout": "positional-provisional",
+      "text": "positional-provisional",
+      "paint": "positional-provisional",
+      "canvas": "positional-provisional"
+    },
+    "output_path": "native-ui/materialized/materialized-document.v2-shadow.json"
+  },
+  "asset_resolution": {
+    "status": "PASS",
+    "referenced_count": 16,
+    "asset_count": 16,
+    "missing_ids": [],
+    "duplicate_ids": [],
+    "invalid_assets": [],
+    "hashes": {
+      "pulp-materialized-asset-fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5": "fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5",
+      "pulp-materialized-asset-aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6": "aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6",
+      "pulp-materialized-asset-a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271": "a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271",
+      "pulp-materialized-asset-46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf": "46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf",
+      "pulp-materialized-asset-8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931": "8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931",
+      "pulp-materialized-asset-a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2": "a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2",
+      "pulp-materialized-asset-c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4": "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4",
+      "pulp-materialized-asset-992eea2f70210457ddd1196de4df3240919ffe068ad188c79d985fba4565d3bf": "992eea2f70210457ddd1196de4df3240919ffe068ad188c79d985fba4565d3bf",
+      "pulp-materialized-asset-af7486955880be1c2b972e9c766acffb776768d669b6576ed9a0919ce72e7ca6": "af7486955880be1c2b972e9c766acffb776768d669b6576ed9a0919ce72e7ca6",
+      "pulp-materialized-asset-3edf363dbf9d5fa0cdc784ae2b431a8a4152f4055a8a8858028c0bd668808273": "3edf363dbf9d5fa0cdc784ae2b431a8a4152f4055a8a8858028c0bd668808273",
+      "pulp-materialized-asset-1390e86cc2823e759358918c01c4fcc1b6e4f01bca915bdbeb6d68eb5c244405": "1390e86cc2823e759358918c01c4fcc1b6e4f01bca915bdbeb6d68eb5c244405",
+      "pulp-materialized-asset-7db7affbce1fdee69c1ffc2641bbca289b049867f524c9d861fe35ab6670bf29": "7db7affbce1fdee69c1ffc2641bbca289b049867f524c9d861fe35ab6670bf29",
+      "pulp-materialized-asset-1e06740a02a443fb7f3eeda8fcaa685a0f6c620e3f01e6666e847295469ce3ad": "1e06740a02a443fb7f3eeda8fcaa685a0f6c620e3f01e6666e847295469ce3ad",
+      "pulp-materialized-asset-28348fef6cb0ed8b2ceeb22deaf824428fd13875d84c73d38f77dd216fc24e7f": "28348fef6cb0ed8b2ceeb22deaf824428fd13875d84c73d38f77dd216fc24e7f",
+      "pulp-materialized-asset-f9044a5e9c39db8bb1a204dff924e526ec0a621e695bb69de1035811be8709e4": "f9044a5e9c39db8bb1a204dff924e526ec0a621e695bb69de1035811be8709e4",
+      "pulp-materialized-asset-2623a9e22809915ce789b4461154e277ddce520d5a4320c14d44332a5d0dcea0": "2623a9e22809915ce789b4461154e277ddce520d5a4320c14d44332a5d0dcea0"
+    }
+  },
+  "runtime_patch_allowlist": {
+    "expected_count": 13,
+    "status": "PASS",
+    "expected_scripts": [
+      "patch_materialized_runtime_batched_host_callbacks.py",
+      "patch_materialized_runtime_batched_state_resolution.py",
+      "patch_materialized_runtime_commit_scope.py",
+      "patch_materialized_runtime_commit_stats.py",
+      "patch_materialized_runtime_hit_slop.py",
+      "patch_materialized_runtime_insert_index.py",
+      "patch_materialized_runtime_linear_scroll_upgrade.py",
+      "patch_materialized_runtime_overlay_parent.py",
+      "patch_materialized_runtime_path_memo.py",
+      "patch_materialized_runtime_pattern_menu_footer.py",
+      "patch_materialized_runtime_selector_parse_cache.py",
+      "patch_materialized_runtime_single_font_pass.py",
+      "patch_materialized_runtime_unread_data_attributes.py"
+    ],
+    "discovered_scripts": [
+      "patch_materialized_runtime_batched_host_callbacks.py",
+      "patch_materialized_runtime_batched_state_resolution.py",
+      "patch_materialized_runtime_commit_scope.py",
+      "patch_materialized_runtime_commit_stats.py",
+      "patch_materialized_runtime_hit_slop.py",
+      "patch_materialized_runtime_insert_index.py",
+      "patch_materialized_runtime_linear_scroll_upgrade.py",
+      "patch_materialized_runtime_overlay_parent.py",
+      "patch_materialized_runtime_path_memo.py",
+      "patch_materialized_runtime_pattern_menu_footer.py",
+      "patch_materialized_runtime_selector_parse_cache.py",
+      "patch_materialized_runtime_single_font_pass.py",
+      "patch_materialized_runtime_unread_data_attributes.py"
+    ],
+    "missing_scripts": [],
+    "unexpected_scripts": [],
+    "scripts": [
+      {
+        "path": "tools/patch_materialized_runtime_batched_host_callbacks.py",
+        "present": true,
+        "bytes": 3045,
+        "sha256": "c02f4ca474e39d8456aeed7f4dec50237a52f6052567e107a815023a2d6b8101"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_batched_state_resolution.py",
+        "present": true,
+        "bytes": 8657,
+        "sha256": "fe65e0be9393f0b5785a8a2e97f903a28c226ba847a17df8ba21db5d7dd1682b"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_commit_scope.py",
+        "present": true,
+        "bytes": 24120,
+        "sha256": "bfbce0bc4263a08a68b7a2f6fbd5d25c0597091bcbb3e5c494cd84f3801096a4"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_commit_stats.py",
+        "present": true,
+        "bytes": 5202,
+        "sha256": "cb06c9d4196ed5af4cc9d9315360a8ea8bdc88330b1b5bf2009a22a44ab73b0d"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_hit_slop.py",
+        "present": true,
+        "bytes": 4794,
+        "sha256": "5968a2614fb7965e534176ddaf3c1bb1f472fd0816e39168364b995e42e10363"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_insert_index.py",
+        "present": true,
+        "bytes": 8136,
+        "sha256": "710a0d4f96cd8444da0fe033bb87057b36234b6c1931c5cf77f2024526ece4b5"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_linear_scroll_upgrade.py",
+        "present": true,
+        "bytes": 4598,
+        "sha256": "c8c7934c08f75ee8c3418bbe7871e24301af09a5ed7b37336ac76235ec95f3bf"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_overlay_parent.py",
+        "present": true,
+        "bytes": 9297,
+        "sha256": "6f2bda617ec50397ea9ea192444b241b171d9fa715fe4db5d5605f17cc6373a6"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_path_memo.py",
+        "present": true,
+        "bytes": 5931,
+        "sha256": "55640643db716f90275da00c9c928579b8260aa7dc6529629023c86f31630f97"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_pattern_menu_footer.py",
+        "present": true,
+        "bytes": 4229,
+        "sha256": "c8ddcc8162b5ad4732ce29096f43e1118648e28bf1830321e0822db1303c3559"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_selector_parse_cache.py",
+        "present": true,
+        "bytes": 3223,
+        "sha256": "ef19619f796e902efd33855deba300871069685177b7f42df0c4c9892aec06ea"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_single_font_pass.py",
+        "present": true,
+        "bytes": 2760,
+        "sha256": "57185ea00761fea29ca0301681fb88a034c53939fafeef4ab41c8fe60067868c"
+      },
+      {
+        "path": "tools/patch_materialized_runtime_unread_data_attributes.py",
+        "present": true,
+        "bytes": 5410,
+        "sha256": "3a3a60877c2e46941d81caa9e990694128194820078b16668054b8119bfef1dc"
+      }
+    ]
+  },
+  "provenance": {
+    "sdk_source_git_sha": null,
+    "dependency_hashes": {
+      "materialized_document": "93a4af454c71a889b00a2447c955f48ef293638a4166a9633122ef783e0a599c",
+      "materialized_runtime_document": "8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6",
+      "runtime_js": "bb786d95c0210659e0c163cb9f59438a511ac0915c10ffd9ea98779bc26da1df"
+    }
+  },
+  "files": {
+    "materialized_document": {
+      "path": "native-ui/materialized/materialized-document.json",
+      "present": true,
+      "bytes": 6534165,
+      "sha256": "93a4af454c71a889b00a2447c955f48ef293638a4166a9633122ef783e0a599c"
+    },
+    "materialized_runtime_document": {
+      "path": "native-ui/materialized/materialized-document.runtime.json",
+      "present": true,
+      "bytes": 1154127,
+      "sha256": "8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6"
+    },
+    "runtime_js": {
+      "path": "native-ui/materialized/runtime.js",
+      "present": true,
+      "bytes": 1641999,
+      "sha256": "bb786d95c0210659e0c163cb9f59438a511ac0915c10ffd9ea98779bc26da1df"
+    },
+    "editor_html": {
+      "path": "resources/editor.html",
+      "present": true,
+      "bytes": 2067538,
+      "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558"
+    },
+    "editor_ir": {
+      "path": "native-ui/materialized/editor.ir.json",
+      "present": true,
+      "bytes": 9677,
+      "sha256": "063bb28228a3e9d2a17572e92663ba59d476ccfdb0917c738bba6f06f968a9d0"
+    },
+    "state_atlas": {
+      "path": "native-ui/materialized/state-atlas.json",
+      "present": true,
+      "bytes": 3614,
+      "sha256": "705655d3ab457d26bdeb1609b3a566616a1dd88b9f80e9294787785273b84132"
+    }
+  },
+  "runtime_fingerprint": {
+    "expected_revision": 3,
+    "status": "LEGACY_PRODUCT_PATCHED",
+    "wholesale_regeneration": false,
+    "file": {
+      "path": "native-ui/materialized/runtime.js",
+      "present": true,
+      "bytes": 1641999,
+      "sha256": "bb786d95c0210659e0c163cb9f59438a511ac0915c10ffd9ea98779bc26da1df"
+    },
+    "signatures": {
+      "batched_host_callbacks": {
+        "needles": [
+          "__pulpBatchUpdates__"
+        ],
+        "present": true
+      },
+      "scoped_metadata_reapply": {
+        "needles": [
+          "markMaterializedTreeDirty",
+          "__pulpMaterializedTreeEpoch__"
+        ],
+        "present": true
+      },
+      "selector_parse_cache": {
+        "needles": [
+          "selectorAttributeNames",
+          "missCacheable"
+        ],
+        "present": true
+      },
+      "paint_reconcile": {
+        "needles": [
+          "__pulpReconcileMaterializedPaint__"
+        ],
+        "present": false
+      },
+      "indexed_children": {
+        "needles": [
+          "materializedIndexedChildren"
+        ],
+        "present": false
+      }
+    },
+    "missing_expected_signatures": [
+      "__pulpReconcileMaterializedPaint__",
+      "materializedIndexedChildren"
+    ],
+    "note": "Product-patched vendored runtime retained; no wholesale regeneration performed."
+  },
+  "fidelity_receipt": {
+    "status": "NOT_PROVIDED",
+    "missing": [],
+    "invalid": []
+  },
+  "parity": {
+    "status": "NOT_RUN",
+    "comparator": "exact-sha256",
+    "missing": [
+      "browser_screenshot_before_after_distinct",
+      "native_screenshot_before_after_distinct"
+    ],
+    "reason": "Same-source before/after browser and native artifacts are required.",
+    "browser_before": null,
+    "browser_after": null,
+    "native_before": null,
+    "native_after": null
+  },
+  "status": {
+    "shadow_projection": "PASS",
+    "provenance_hashes": "PASS",
+    "runtime": "LEGACY_PRODUCT_PATCHED",
+    "parity": "NOT_RUN",
+    "overall": "OPEN"
+  }
+}
