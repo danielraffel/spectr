@@ -146,6 +146,9 @@ OPEN:
   strict fields remain diagnostic failures, not parity proof; and
 - SDK source commit and per-patch source/target anchor receipts should be
   filled when the authoritative Pulp SDK is selected.
+- CMake registers the materialized provenance test only when Node.js is
+  discoverable; a host without Node is UNKNOWN for this gate and must not be
+  reported as a passing validation.
 
 The generated manifest is intentionally overall: OPEN until those external
 parity artifacts exist.
