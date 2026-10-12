@@ -148,6 +148,9 @@ strictEqual(manifest.status.overall, 'OPEN');
 const hashTampered = JSON.parse(JSON.stringify(manifest));
 hashTampered.source.sha256 = '0'.repeat(64);
 expectThrows(() => validateManifest(hashTampered, repoRoot), 'source SHA-256 mismatch');
+const generatorTampered = JSON.parse(JSON.stringify(manifest));
+generatorTampered.generated_by = 'forged-generator';
+expectThrows(() => validateManifest(generatorTampered, repoRoot), 'generator');
 const runtimeTampered = JSON.parse(JSON.stringify(manifest));
 runtimeTampered.runtime_fingerprint.signatures.batched_host_callbacks.present = false;
 expectThrows(() => validateManifest(runtimeTampered, repoRoot), 'runtime');
@@ -159,6 +162,12 @@ expectThrows(() => validateManifest(runtimeMissing, repoRoot),
 const shadowMissing = JSON.parse(JSON.stringify(manifest));
 shadowMissing.shadow.output_path = 'native-ui/materialized/missing-shadow.json';
 expectThrows(() => validateManifest(shadowMissing, repoRoot), 'shadow output missing');
+const sourceEscape = JSON.parse(JSON.stringify(manifest));
+sourceEscape.source.path = '/etc/hosts';
+expectThrows(() => validateManifest(sourceEscape, repoRoot), 'source path escapes');
+const shadowEscape = JSON.parse(JSON.stringify(manifest));
+shadowEscape.shadow.output_path = '/etc/hosts';
+expectThrows(() => validateManifest(shadowEscape, repoRoot), 'shadow output path escapes');
 const artifactOmitted = JSON.parse(JSON.stringify(manifest));
 delete artifactOmitted.files.editor_ir;
 expectThrows(() => validateManifest(artifactOmitted, repoRoot), 'artifact record is missing');
@@ -307,6 +316,19 @@ const malformed = buildManifest({
 });
 strictEqual(malformed.fidelity_receipt.status, 'INCOMPATIBLE');
 strictEqual(malformed.status.parity, 'FAIL');
+const schemaTamperedInput = join(temp, 'schema-tampered.json');
+writeFileSync(schemaTamperedInput, JSON.stringify({
+  schema: 'evil', sourceSha256: sha256Bytes(readFileSync(documentPath)),
+  screenshotSha256: 'a'.repeat(64), repeat: true,
+  deterministicDomMarker: true, negativeControl: true
+}));
+const schemaTampered = buildManifest({
+  root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
+  editorHtml, editorIr, stateAtlas, parityReceipt: schemaTamperedInput,
+  browserBefore: beforeBrowser, browserAfter: afterBrowser,
+  nativeBefore: beforeNative, nativeAfter: afterNative
+});
+strictEqual(schemaTampered.fidelity_receipt.status, 'INCOMPATIBLE');
 
 console.log('spectr-materialized-provenance: PASS');
 console.log('spectr-materialized-provenance: deterministic/lossless shadow, identity and map/list controls PASS');

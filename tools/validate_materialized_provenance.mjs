@@ -21,6 +21,7 @@ const BINDING_ARRAYS = Object.freeze(Object.fromEntries(
 export const EXPECTED_RUNTIME_FINGERPRINT_REVISION = 3;
 export const MANIFEST_SCHEMA = 'spectr-materialized-shadow-parity-v1';
 export const SHADOW_SCHEMA = 'pulp-materialized-browser-document-v2-shadow';
+export const FIDELITY_RECEIPT_SCHEMA = 'spectr-html-cdp-comparison-v1';
 export const EXPECTED_RUNTIME_PATCH_SCRIPTS = Object.freeze([
   'patch_materialized_runtime_batched_host_callbacks.py',
   'patch_materialized_runtime_batched_state_resolution.py',
@@ -356,6 +357,7 @@ function strictFidelityReceipt(receipt) {
   ];
   const missing = required.filter((key) => receipt[key] === undefined);
   const invalid = [];
+  if (receipt.schema !== FIDELITY_RECEIPT_SCHEMA) invalid.push('schema');
   if (receipt.sourceSha256 !== undefined && !validSha(receipt.sourceSha256)) {
     invalid.push('sourceSha256');
   }
@@ -552,6 +554,11 @@ export function validateShadowProjection(document, normalized) {
 export function validateManifest(manifest, root = repoRoot) {
   assert(manifest?.schema === MANIFEST_SCHEMA && manifest.version === 1,
     'unsupported provenance manifest schema/version');
+  assert(manifest.generated_by === 'tools/validate_materialized_provenance.mjs',
+    'unexpected provenance generator');
+  const sourceRelative = relative(resolve(root), resolve(root, manifest.source.path));
+  assert(sourceRelative && !sourceRelative.startsWith('..') && !isAbsolute(sourceRelative),
+    'source path escapes repository root');
   const sourcePath = resolve(root, manifest.source.path);
   assert(existsSync(sourcePath), 'source file missing: ' + sourcePath);
   const sourceBytes = readFileSync(sourcePath);
@@ -609,6 +616,9 @@ export function validateManifest(manifest, root = repoRoot) {
   }
   assert(typeof manifest.shadow.output_path === 'string' &&
     manifest.shadow.output_path.length > 0, 'shadow output record is missing');
+  const shadowRelative = relative(resolve(root), resolve(root, manifest.shadow.output_path));
+  assert(shadowRelative && !shadowRelative.startsWith('..') && !isAbsolute(shadowRelative),
+    'shadow output path escapes repository root');
   const shadowPath = resolve(root, manifest.shadow.output_path);
   assert(existsSync(shadowPath), 'shadow output missing: ' + shadowPath);
   const shadowBytes = readFileSync(shadowPath);
