@@ -64,3 +64,9 @@ all of the following in one fresh receipt:
 Until that gate passes, the supported demo path is Intel/x64 REAPER on
 Proxmox. The ARM64 UTM image remains useful for headless ARM64 validation and
 for iterating the ARM64EC build; it does not consume a TartCI/macOS runner.
+
+A later clean scan of the replacement package produced a second current
+negative screenshot, `arm64-reaper-vst3-scan-current-unavailable.png`, showing
+REAPER's `VST Plug-in Scan` dialog stuck on `Spectr.vst3` with the
+“not responding” message. Its SHA-256 is
+`2D00A6A795D85B379BE128AB4A7348B6FFD861580BC281306C3225BCFDBC554D`.
