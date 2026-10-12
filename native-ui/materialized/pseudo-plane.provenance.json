@@ -19,7 +19,7 @@
   },
   "materialized": {
     "path": "native-ui/materialized/design.js",
-    "sha256": "e32921a6491078d6b6ad7b2571126b6bd1e17d539b18d6559ef7514a8391d802",
+    "sha256": "1db8b50e03197100e7167e042dcf8d6ab07220ef16aca124efd1362d70319e08",
     "node_id": "Pseudo_body_before",
     "parent_id": "root",
     "position": "absolute",
@@ -30,7 +30,8 @@
     "background": "rgb(5, 7, 10)",
     "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
     "opacity": 1,
-    "z_index": 0,
-    "pointer_events": "none"
+    "z_index": 1,
+    "pointer_events": "none",
+    "compositing": "overlay-above-opaque-paint-authority"
   }
 }
