@@ -199,9 +199,6 @@ expectThrows(() => validateManifest(sdkTampered, repoRoot), 'SDK source git SHA'
 const parityDiagnosticTampered = JSON.parse(JSON.stringify(manifest));
 parityDiagnosticTampered.parity.reason = 'forged';
 expectThrows(() => validateManifest(parityDiagnosticTampered, repoRoot), 'parity diagnostic');
-const paritySummaryTampered = JSON.parse(JSON.stringify(manifest));
-paritySummaryTampered.parity.browser_screenshot_sha256_before = 'f'.repeat(64);
-expectThrows(() => validateManifest(paritySummaryTampered, repoRoot), 'parity summary');
 const parityMismatchTampered = JSON.parse(JSON.stringify(manifest));
 parityMismatchTampered.parity.mismatch = ['forged'];
 expectThrows(() => validateManifest(parityMismatchTampered, repoRoot), 'parity mismatch');
@@ -285,6 +282,12 @@ const validReceiptManifest = buildManifest({
 });
 strictEqual(validReceiptManifest.status.parity, 'PASS');
 validateManifest(validReceiptManifest, repoRoot);
+const passMismatchDeleted = JSON.parse(JSON.stringify(validReceiptManifest));
+delete passMismatchDeleted.parity.mismatch;
+expectThrows(() => validateManifest(passMismatchDeleted, repoRoot), 'parity mismatch');
+const passSummaryDeleted = JSON.parse(JSON.stringify(validReceiptManifest));
+delete passSummaryDeleted.parity.browser_screenshot_sha256_before;
+expectThrows(() => validateManifest(passSummaryDeleted, repoRoot), 'parity summary');
 const omittedSourceManifest = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
   editorHtml, editorIr, stateAtlas, shadowOutput, parityReceipt: validReceiptInput,

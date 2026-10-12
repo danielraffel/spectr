@@ -738,15 +738,30 @@ export function validateManifest(manifest, root = repoRoot) {
       canonicalJson(recomputedParity.missing ?? []) &&
     (manifest.parity?.reason ?? null) === (recomputedParity.reason ?? null),
     'parity diagnostic metadata is not recomputed from evidence');
-  for (const key of [
+  const paritySummaryKeys = [
     'source_sha256_before', 'source_sha256_after',
     'browser_screenshot_sha256_before', 'browser_screenshot_sha256_after',
     'native_screenshot_sha256_before', 'native_screenshot_sha256_after'
-  ]) {
-    if (Object.hasOwn(manifest.parity ?? {}, key)) {
-      assert(manifest.parity[key] === recomputedParity[key],
+  ];
+  for (const key of paritySummaryKeys) {
+    if (recomputedParity[key] !== undefined) {
+      assert(Object.hasOwn(manifest.parity ?? {}, key) &&
+        manifest.parity[key] === recomputedParity[key],
         'parity summary metadata is not recomputed from evidence');
     }
+  }
+  const summaryPresent = paritySummaryKeys.some((key) =>
+    Object.hasOwn(manifest.parity ?? {}, key));
+  if (summaryPresent) {
+    for (const key of paritySummaryKeys) {
+      assert(Object.hasOwn(manifest.parity ?? {}, key),
+        'parity summary metadata is incomplete');
+    }
+  }
+  if (recomputedParity.mismatch !== undefined) {
+    assert(Object.hasOwn(manifest.parity ?? {}, 'mismatch') &&
+      canonicalJson(manifest.parity.mismatch) === canonicalJson(recomputedParity.mismatch),
+      'parity mismatch metadata is not recomputed from evidence');
   }
   if (manifest.parity?.status === 'PASS') {
     assert(!manifest.parity.mismatch || manifest.parity.mismatch.length === 0,
