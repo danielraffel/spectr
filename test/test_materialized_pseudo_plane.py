@@ -25,7 +25,7 @@ EXPECTED_MATERIALIZED = {
     "top": 0,
     "width": 1320,
     "height": 860,
-    "background": "rgb(5, 7, 10)",
+    "background": "transparent",
     "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
     "opacity": 1,
     "z_index": 1,
@@ -113,8 +113,9 @@ def validate(manifest_path: Path, *, source_path: Path | None = None,
     for name, line in expected_lines.items():
         if design_text.count(line) != 1:
             fail(f"generated pseudo plane {name} binding is missing or duplicated")
-    if "setZIndex('Accepted_Chromium_chrome0', 0);" not in design_text:
-        fail('opaque Chromium paint authority must have an explicit lower z-index')
+    authority_line = "setZIndex('Accepted_Chromium_chrome0', 0);"
+    if design_text.count(authority_line) != 1:
+        fail('opaque Chromium paint authority must have exactly one lower z-index setter')
     if materialized.get('z_index', 0) <= 0:
         fail('pseudo plane must be composited above the opaque paint authority')
     for node_id, z_index in (("Browser_canvas_11", 2), ("Browser_canvas_22", 3)):
@@ -152,6 +153,13 @@ def main() -> int:
                                 "createCol('Pseudo_body_before', 'root');\n  createCol('Pseudo_body_before', 'root');", 1),
             encoding="utf-8")
         expect_rejected(MANIFEST, design_path=duplicate_design)
+
+        authority_override = temp_path / "design-authority-override.js"
+        authority_override.write_text(
+            design_text + "\nsetZIndex('Accepted_Chromium_chrome0', 5);\n",
+            encoding="utf-8",
+        )
+        expect_rejected(MANIFEST, design_path=authority_override)
 
         mutated_manifest = temp_path / "manifest-mutated.json"
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
