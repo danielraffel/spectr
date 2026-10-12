@@ -193,6 +193,9 @@ expectThrows(() => validateManifest(shadowAuthorityTampered, repoRoot), 'authori
 const dependencyTampered = JSON.parse(JSON.stringify(manifest));
 delete dependencyTampered.provenance.dependency_hashes.runtime_js;
 expectThrows(() => validateManifest(dependencyTampered, repoRoot), 'dependency hashes');
+const sdkTampered = JSON.parse(JSON.stringify(manifest));
+sdkTampered.provenance.sdk_source_git_sha = 'bad';
+expectThrows(() => validateManifest(sdkTampered, repoRoot), 'SDK source git SHA');
 const artifactRecordTampered = JSON.parse(JSON.stringify(manifest));
 artifactRecordTampered.files.editor_ir.present = false;
 expectThrows(() => validateManifest(artifactRecordTampered, repoRoot), 'artifact record');

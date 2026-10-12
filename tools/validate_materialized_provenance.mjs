@@ -630,6 +630,10 @@ export function validateManifest(manifest, root = repoRoot) {
   const provenance = manifest.provenance;
   assert(isObject(provenance) && isObject(provenance.dependency_hashes),
     'provenance dependency hashes are missing');
+  assert(provenance.sdk_source_git_sha === null ||
+    (typeof provenance.sdk_source_git_sha === 'string' &&
+      /^[0-9a-f]{40}$/.test(provenance.sdk_source_git_sha)),
+    'invalid SDK source git SHA');
   const expectedDependencyHashes = {
     materialized_document: manifest.source.sha256,
     materialized_runtime_document: files.materialized_runtime_document.sha256,
