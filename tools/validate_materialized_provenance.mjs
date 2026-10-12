@@ -641,6 +641,20 @@ export function validateManifest(manifest, root = repoRoot) {
   };
   assert(canonicalJson(provenance.dependency_hashes) ===
     canonicalJson(expectedDependencyHashes), 'provenance dependency hashes mismatch');
+  for (const [lane, record] of Object.entries({
+    browser_before: manifest.parity?.browser_before,
+    browser_after: manifest.parity?.browser_after,
+    native_before: manifest.parity?.native_before,
+    native_after: manifest.parity?.native_after
+  })) {
+    if (record === null || record === undefined) continue;
+    assert(record.present === true && typeof record.path === 'string',
+      lane + ' parity artifact record is missing');
+    assert(!(isAbsolute(record.path) && /^\/(?:etc|usr|bin|sbin)\//.test(record.path)),
+      lane + ' parity artifact path is outside an approved capture location');
+    assert(canonicalJson(fileRecord(resolve(root, record.path), root)) ===
+      canonicalJson(record), lane + ' parity artifact provenance mismatch');
+  }
   const runtime = manifest.runtime_fingerprint;
   assert(runtime?.expected_revision === EXPECTED_RUNTIME_FINGERPRINT_REVISION,
     'unexpected runtime fingerprint revision');

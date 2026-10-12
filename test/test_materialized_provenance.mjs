@@ -256,6 +256,12 @@ const receiptMissing = buildManifest({
 });
 strictEqual(receiptMissing.fidelity_receipt.status, 'INCOMPATIBLE');
 strictEqual(receiptMissing.status.parity, 'FAIL');
+const parityArtifactTampered = JSON.parse(JSON.stringify(receiptMissing));
+parityArtifactTampered.parity.browser_before = {
+  path: '/etc/hosts', present: true, bytes: 999, sha256: 'e'.repeat(64)
+};
+expectThrows(() => validateManifest(parityArtifactTampered, repoRoot),
+  'fidelity receipt status mismatch|approved capture location');
 const validReceiptInput = join(temp, 'valid.json');
 writeFileSync(validReceiptInput, JSON.stringify({
   schema: 'spectr-html-cdp-comparison-v1',
