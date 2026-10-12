@@ -19,11 +19,15 @@ Release 1 is a zoomable spectral-isolation effect:
 - AUv2, VST3, CLAP, and Standalone arm64 artifacts. No PKG, signing,
   notarization, or public distribution claim is part of this local M5 trial.
 
-The active product branch is `recon/real-analyzer-integration-20260810` at
-`e2b565e142e82b05ba2d1ab60d515cf3864b763d`, seven clean commits ahead of
-Spectr `origin/main` at `36dfe1bc`. The Release 1 work is committed locally
-but has not been pushed, PR'd, or merged. The ignored `native-react/`
-experiment is not part of the shipping branch.
+The active product branch is `main` at https://github.com/danielraffel/spectr/commit/ef1cfa53509eeab24d2c75397505bf72f2bdec97. Spectr provenance/parity hardening is merged through https://github.com/danielraffel/spectr/commit/ef1cfa53509eeab24d2c75397505bf72f2bdec97; its post-merge M5 product-acceptance run passed at https://github.com/danielraffel/spectr/actions/runs/38316742820. Historical integration branches and local trial artifacts below are evidence from earlier experiments, not current unreleased branch claims.
+
+## Current landed optimization state
+
+- Pulp provenance/schema contract merged at https://github.com/Generous-Corp/pulp/commit/83ae20909246d3395f7ed2063b78db9015b5298a.
+- Pulp materialized hot-region benchmark merged at https://github.com/Generous-Corp/pulp/commit/c3a55d7e241c4e91d3d9d95fa81833a6b69a6704; a follow-up test split is under review at https://github.com/Generous-Corp/pulp/pull/10164 to keep the benchmark module below the 1,000-line maintainability threshold.
+- Spectr provenance validator hardening is merged; a follow-up fail-closed parity path policy is under review at https://github.com/danielraffel/spectr/pull/283.
+- Deterministic old/new Chromium geometry evidence is recorded at `/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261012/old-new-geometry-regression.json`; it proves matching canvas geometry and shared footer placement, while raw pixels remain diagnostic because the old and new defaults differ.
+
 
 ## Pulp SDK and fresh build evidence
 
