@@ -28,8 +28,9 @@ EXPECTED_MATERIALIZED = {
     "background": "rgb(5, 7, 10)",
     "background_gradient": "radial-gradient(80% 60% at 50% 20%, rgba(40, 90, 140, 0.08), rgba(0, 0, 0, 0) 60%), radial-gradient(60% 40% at 20% 80%, rgba(140, 40, 120, 0.05), rgba(0, 0, 0, 0) 60%), none",
     "opacity": 1,
-    "z_index": 0,
+    "z_index": 1,
     "pointer_events": "none",
+    "compositing": "overlay-above-opaque-paint-authority",
 }
 
 
@@ -112,6 +113,14 @@ def validate(manifest_path: Path, *, source_path: Path | None = None,
     for name, line in expected_lines.items():
         if design_text.count(line) != 1:
             fail(f"generated pseudo plane {name} binding is missing or duplicated")
+    if "setZIndex('Accepted_Chromium_chrome0', 0);" not in design_text:
+        fail('opaque Chromium paint authority must have an explicit lower z-index')
+    if materialized.get('z_index', 0) <= 0:
+        fail('pseudo plane must be composited above the opaque paint authority')
+    for node_id, z_index in (("Browser_canvas_11", 2), ("Browser_canvas_22", 3)):
+        line = f"setZIndex('{node_id}', {z_index});"
+        if design_text.count(line) != 1:
+            fail(f'{node_id} must have an explicit layer above the pseudo plane')
 
 
 def expect_rejected(mutated_manifest: Path, *, design_path: Path | None = None) -> None:
@@ -132,7 +141,7 @@ def main() -> int:
         mutated_design = temp_path / "design.js"
         design_text = (ROOT / "native-ui" / "materialized" / "design.js").read_text(encoding="utf-8")
         mutated_design.write_text(
-            design_text.replace("setZIndex('Pseudo_body_before', 0);",
+            design_text.replace("setZIndex('Pseudo_body_before', 1);",
                                 "setZIndex('Pseudo_body_before', 2);", 1),
             encoding="utf-8")
         expect_rejected(MANIFEST, design_path=mutated_design)
@@ -146,7 +155,7 @@ def main() -> int:
 
         mutated_manifest = temp_path / "manifest-mutated.json"
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        manifest["materialized"]["z_index"] = 2
+        manifest["materialized"]["z_index"] = 3
         mutated_manifest.write_text(json.dumps(manifest), encoding="utf-8")
         expect_rejected(mutated_manifest)
     print("PASS: body::before pseudo plane provenance and negative controls")
