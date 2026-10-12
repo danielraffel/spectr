@@ -423,6 +423,38 @@ export function evaluateParity(options = {}) {
     native_screenshot_sha256_after: options.nativeAfter.sha256
   };
 }
+export function recomputeParity(options = {}) {
+  const parity = evaluateParity(options);
+  const artifactsSupplied = [
+    options.browserBefore, options.browserAfter,
+    options.nativeBefore, options.nativeAfter
+  ].some((artifact) => artifact !== null && artifact !== undefined);
+  const fidelity = options.fidelityReceipt;
+  if (artifactsSupplied && fidelity?.status !== 'COMPATIBLE') {
+    parity.status = 'FAIL';
+    parity.mismatch = [
+      fidelity?.status === 'NOT_PROVIDED'
+        ? 'fidelity_receipt_missing' : 'fidelity_receipt_incompatible'
+    ];
+  }
+  if (artifactsSupplied && fidelity?.status === 'COMPATIBLE') {
+    const sourceDigests = [options.sourceBeforeSha256, options.sourceAfterSha256];
+    const browserDigests = [options.browserBefore?.sha256, options.browserAfter?.sha256];
+    if (sourceDigests.some((digest) => !digest)) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_source_sha256_unbound'];
+    } else if (sourceDigests.some((digest) => digest !== fidelity.source_sha256)) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_source_sha256_mismatch'];
+    } else if (browserDigests.some(
+      (digest) => digest && digest !== fidelity.screenshot_sha256
+    )) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_screenshot_sha256_mismatch'];
+    }
+  }
+  return parity;
+}
 function defaultFiles(root, options) {
   return {
     materialized_document: fileRecord(options.document, root),
@@ -448,39 +480,15 @@ export function buildManifest(options = {}) {
   const receipt = readOptionalJson(options.parityReceipt);
   const artifactsSupplied = [browserBefore, browserAfter, nativeBefore, nativeAfter]
     .some((artifact) => artifact !== null);
-  const parity = evaluateParity({
+  const strictReceipt = strictFidelityReceipt(receipt);
+  const parity = recomputeParity({
     sourceBeforeSha256: artifactsSupplied
       ? options.sourceBeforeSha256 : options.sourceBeforeSha256 ?? sourceSha256,
     sourceAfterSha256: artifactsSupplied
       ? options.sourceAfterSha256 : options.sourceAfterSha256 ?? sourceSha256,
-    browserBefore, browserAfter, nativeBefore, nativeAfter
+    browserBefore, browserAfter, nativeBefore, nativeAfter,
+    fidelityReceipt: strictReceipt
   });
-  const strictReceipt = strictFidelityReceipt(receipt);
-  if (artifactsSupplied && strictReceipt.status !== 'COMPATIBLE') {
-    parity.status = 'FAIL';
-    parity.mismatch = [
-      strictReceipt.status === 'NOT_PROVIDED'
-        ? 'fidelity_receipt_missing' : 'fidelity_receipt_incompatible'
-    ];
-  }
-  if (artifactsSupplied && strictReceipt.status === 'COMPATIBLE') {
-    const sourceDigests = [options.sourceBeforeSha256, options.sourceAfterSha256];
-    const browserDigests = [browserBefore?.sha256, browserAfter?.sha256];
-    if (sourceDigests.some((digest) => !digest)) {
-      parity.status = 'FAIL';
-      parity.mismatch = ['receipt_source_sha256_unbound'];
-    } else if (sourceDigests.some(
-      (digest) => digest !== receipt.sourceSha256
-    )) {
-      parity.status = 'FAIL';
-      parity.mismatch = ['receipt_source_sha256_mismatch'];
-    } else if (browserDigests.some(
-      (digest) => digest && digest !== receipt.screenshotSha256
-    )) {
-      parity.status = 'FAIL';
-      parity.mismatch = ['receipt_screenshot_sha256_mismatch'];
-    }
-  }
   const shadowCanonical = canonicalJson(normalized.shadowDocument);
   return {
     schema: MANIFEST_SCHEMA,
@@ -684,7 +692,7 @@ export function validateManifest(manifest, root = repoRoot) {
   };
   assert(canonicalJson(strictFidelityReceipt(receiptInput)) ===
     canonicalJson(fidelity), 'fidelity receipt status mismatch');
-  const recomputedParity = evaluateParity({
+  const recomputedParity = recomputeParity({
     sourceBeforeSha256: manifest.parity?.source_sha256_before ??
       (manifest.parity?.browser_before || manifest.parity?.native_before
         ? undefined : manifest.source.sha256),
@@ -694,41 +702,9 @@ export function validateManifest(manifest, root = repoRoot) {
     browserBefore: manifest.parity?.browser_before,
     browserAfter: manifest.parity?.browser_after,
     nativeBefore: manifest.parity?.native_before,
-    nativeAfter: manifest.parity?.native_after
+    nativeAfter: manifest.parity?.native_after,
+    fidelityReceipt: fidelity
   });
-  const artifactsSupplied = [
-    manifest.parity?.browser_before, manifest.parity?.browser_after,
-    manifest.parity?.native_before, manifest.parity?.native_after
-  ].some((artifact) => artifact !== null && artifact !== undefined);
-  if (artifactsSupplied && fidelity?.status !== 'COMPATIBLE') {
-    recomputedParity.status = 'FAIL';
-    recomputedParity.mismatch = [
-      fidelity?.status === 'NOT_PROVIDED'
-        ? 'fidelity_receipt_missing' : 'fidelity_receipt_incompatible'
-    ];
-  }
-  if (artifactsSupplied && fidelity?.status === 'COMPATIBLE') {
-    const sourceDigests = [
-      manifest.parity?.source_sha256_before,
-      manifest.parity?.source_sha256_after
-    ];
-    const browserDigests = [
-      manifest.parity?.browser_before?.sha256,
-      manifest.parity?.browser_after?.sha256
-    ];
-    if (sourceDigests.some((digest) => !digest)) {
-      recomputedParity.status = 'FAIL';
-      recomputedParity.mismatch = ['receipt_source_sha256_unbound'];
-    } else if (sourceDigests.some((digest) => digest !== fidelity.source_sha256)) {
-      recomputedParity.status = 'FAIL';
-      recomputedParity.mismatch = ['receipt_source_sha256_mismatch'];
-    } else if (browserDigests.some(
-      (digest) => digest && digest !== fidelity.screenshot_sha256
-    )) {
-      recomputedParity.status = 'FAIL';
-      recomputedParity.mismatch = ['receipt_screenshot_sha256_mismatch'];
-    }
-  }
   assert(manifest.parity?.status === recomputedParity.status,
     'parity status is not recomputed from evidence');
   assert(canonicalJson(manifest.parity?.mismatch ?? []) ===
