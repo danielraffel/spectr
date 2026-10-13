@@ -991,3 +991,69 @@ TEST_CASE("native analyzer and output meter frames are dispatched, not compiled"
 
     processor.on_view_closed(*root);
 }
+
+TEST_CASE("native modulation frames carry the window an LFO is moving",
+          "[native-n1][modulation][publication]") {
+    // Band shift routes an LFO to the viewport position. The audio owner
+    // publishes the window it modulated from and the window it played; the
+    // editor's frame must carry a drawn window that moves with the LFO, so
+    // the plot can paint the sweep instead of holding the user's window.
+    spectr::Spectr processor;
+    pulp::state::StateStore store;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 256;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    processor.prepare(prepare);
+
+    // A window with room to move: at the full 20 Hz..20 kHz span a shift has
+    // nowhere to go and the edge clamp holds it still.
+    const auto [center_log, width_log] =
+        spectr::encode_viewport(spectr::Viewport{200.0f, 2000.0f});
+    store.set_value(spectr::kParamViewportCenter, center_log);
+    store.set_value(spectr::kParamViewportWidth, width_log);
+    const auto target = static_cast<std::size_t>(spectr::ModulationTarget::ViewportPosition);
+    store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    store.set_value(spectr::kParamLfoDepth, 1.0f);
+    store.set_value(spectr::lfo_route_enabled_param_id(0, target), 1.0f);
+    store.set_value(spectr::lfo_route_amount_param_id(0, target), 1.0f);
+
+    auto root = processor.create_view();
+    REQUIRE(root != nullptr);
+    root->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock clock;
+    root->set_frame_clock(&clock);
+    root->layout_children();
+    processor.on_view_opened(*root);
+    auto* session = processor.active_scripted_ui();
+    REQUIRE(session != nullptr);
+    REQUIRE(session->bridge() != nullptr);
+    for (int frame = 0; frame < 4; ++frame)
+        clock.tick(1.0f / 60.0f);
+
+    session->bridge()->load_script(R"js(
+      globalThis.__spectrObservedModulation = [];
+      window.pulp.on('modulation_frame', message => {
+        globalThis.__spectrObservedModulation.push(message.payload);
+      });
+    )js", "spectr-native-modulation-observer");
+
+    feed_tone(processor, clock);
+
+    session->bridge()->load_script(R"js(
+      const frames = globalThis.__spectrObservedModulation.filter(f => f.active === true);
+      if (frames.length < 2)
+        throw new Error(`expected active modulation frames, saw ${frames.length}`);
+      const last = frames[frames.length - 1];
+      if (last.viewport_driven !== true)
+        throw new Error('the frame does not say the LFO drives the window');
+      if (!Number.isFinite(last.min_hz) || !Number.isFinite(last.max_hz) || !(last.max_hz > last.min_hz))
+        throw new Error(`malformed drawn window ${last.min_hz}..${last.max_hz}`);
+      const lows = new Set(frames.map(f => f.min_hz.toFixed(3)));
+      if (lows.size < 2)
+        throw new Error('the drawn window never moved across the sweep');
+    )js", "spectr-native-modulation-check");
+}

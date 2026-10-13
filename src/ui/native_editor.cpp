@@ -1618,6 +1618,21 @@ void Spectr::publish_modulation_frame_() {
         gains.addArrayElement(static_cast<double>(drawn->bands[band].gain_db));
         muted.addArrayElement(drawn->bands[band].muted);
     }
+    // The window an LFO is moving (Band shift / Band spread). Evaluated at
+    // this frame's phase like the control pulls, from the base window the
+    // audio owner modulated, so the drawn window and the audible one come
+    // from one derivation. Paint only on the editor side: the user's window
+    // is never overwritten by it.
+    const auto& settings = modulated.settings;
+    const bool viewport_driven = modulated.active
+        && (modulation_drives(settings, ModulationTarget::ViewportPosition)
+            || modulation_drives(settings, ModulationTarget::ViewportZoom));
+    Viewport drawn_viewport = modulated.viewport;
+    if (viewport_driven && reconstructable)
+        drawn_viewport = apply_viewport_modulation(
+            modulated.base_viewport,
+            modulation_coordinates(settings, lfo_value(fade_1, phase_1),
+                                   lfo_value(fade_2, phase_2)));
     auto payload = choc::value::createObject("SpectrModulationFrame");
     payload.addMember("active", modulated.active);
     payload.addMember("sequence",
@@ -1625,6 +1640,9 @@ void Spectr::publish_modulation_frame_() {
     payload.addMember("n_visible", static_cast<std::int32_t>(visible));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
+    payload.addMember("viewport_driven", viewport_driven);
+    payload.addMember("min_hz", static_cast<double>(drawn_viewport.min_hz));
+    payload.addMember("max_hz", static_cast<double>(drawn_viewport.max_hz));
     try {
         native_scripted_ui_->bridge()->dispatch_native_message(
             "__spectrPublishNativeMessage",
