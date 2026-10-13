@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { deepStrictEqual, notDeepStrictEqual, strictEqual, throws } from 'node:assert';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { notDeepStrictEqual, strictEqual, throws } from 'node:assert';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 
 import { join } from 'node:path';
 import {
@@ -34,21 +34,19 @@ function reverseObjectKeys(value) {
   for (const key of Object.keys(value).reverse()) result[key] = reverseObjectKeys(value[key]);
   return result;
 }
-function allRowsEqual(original, shadow) {
-  for (const kind of BINDING_KINDS) {
-    deepStrictEqual(shadow[kind + '_bindings'], original[kind + '_bindings']);
-  }
-}
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-// Real document: v1 -> shadow v2 is deterministic and lossless.
+// Real document: v1 -> shadow v2 is deterministic and digest-bound.
 const first = normalizeMaterializedDocument(source);
 const second = normalizeMaterializedDocument(reverseObjectKeys(source));
 strictEqual(canonicalJson(first.shadowDocument), canonicalJson(second.shadowDocument),
   'canonical shadow changed when source object key order changed');
-allRowsEqual(source, first.shadowDocument);
+strictEqual(first.shadowDocument.diagnostic_shadow.source_rows, 'sha256-bound');
+strictEqual(first.shadowDocument.diagnostic_shadow.binding_digests_by_id.layout[
+  first.identitiesByKind.layout[0].id
+], first.bindingDigestsById.layout[first.identitiesByKind.layout[0].id]);
 strictEqual(first.identityMode, 'positional-provisional',
   'Spectr fallback identities must be labeled provisional');
 strictEqual(assetResolution(source).status, 'PASS');
@@ -131,8 +129,8 @@ crossStreamDuplicate.layout_bindings[0]['data-pulp-id'] =
 expectThrows(() => normalizeMaterializedDocument(crossStreamDuplicate),
   'cross-stream duplicate identity');
 const tampered = normalizeMaterializedDocument(source);
-delete tampered.bindingsById.layout[Object.keys(tampered.bindingsById.layout)[0]];
-expectThrows(() => validateShadowProjection(source, tampered), 'map/list count mismatch');
+delete tampered.bindingDigestsById.layout[Object.keys(tampered.bindingDigestsById.layout)[0]];
+expectThrows(() => validateShadowProjection(source, tampered), 'digest/list count mismatch');
 const prototypeFixture = JSON.parse(JSON.stringify(explicitFixture));
 prototypeFixture.semantic_bindings[0]['data-pulp-id'] = '__proto__';
 expectThrows(() => normalizeMaterializedDocument(prototypeFixture), 'prototype identity');
@@ -165,6 +163,13 @@ expectThrows(() => validateManifest(shadowMissing, repoRoot), 'shadow output mis
 const sourceEscape = JSON.parse(JSON.stringify(manifest));
 sourceEscape.source.path = '/etc/hosts';
 expectThrows(() => validateManifest(sourceEscape, repoRoot), 'source path escapes');
+const symlinkRoot = mkdtempSync(join(repoRoot, '.spectr-provenance-symlink-'));
+const symlinkEscape = join(symlinkRoot, 'source.json');
+symlinkSync('/etc/hosts', symlinkEscape);
+const symlinkSourceEscape = JSON.parse(JSON.stringify(manifest));
+symlinkSourceEscape.source.path = symlinkEscape;
+expectThrows(() => validateManifest(symlinkSourceEscape, repoRoot),
+  'source path escapes');
 const shadowEscape = JSON.parse(JSON.stringify(manifest));
 shadowEscape.shadow.output_path = '/etc/hosts';
 expectThrows(() => validateManifest(shadowEscape, repoRoot), 'shadow output path escapes');
@@ -266,11 +271,27 @@ parityArtifactTampered.parity.browser_before = {
 expectThrows(() => validateManifest(parityArtifactTampered, repoRoot),
   'fidelity receipt status mismatch|parity artifact path escapes repository root');
 const validReceiptInput = join(temp, 'valid.json');
+const sourceDigest = sha256Bytes(readFileSync(documentPath));
+const imageDigest = sameBrowser.sha256;
 writeFileSync(validReceiptInput, JSON.stringify({
   schema: 'spectr-html-cdp-comparison-v1',
-  sourceSha256: sha256Bytes(readFileSync(documentPath)),
-  screenshotSha256: sameBrowser.sha256,
-  repeat: true, deterministicDomMarker: true, negativeControl: true
+  sourceSha256: sourceDigest,
+  screenshotSha256: imageDigest,
+  repeat: true, deterministicDomMarker: true, negativeControl: true,
+  captureEvidence: {
+    schema: 'spectr-fidelity-capture-v1', sourceSha256: sourceDigest,
+    browserBeforeSha256: sameBrowser.sha256, browserAfterSha256: sameBrowserAfter.sha256,
+    nativeBeforeSha256: sameNative.sha256, nativeAfterSha256: sameNativeAfter.sha256,
+    repeat: true, deterministicDomMarker: true, negativeControl: true
+  },
+  comparatorEvidence: {
+    schema: 'spectr-fidelity-comparator-v1', status: 'PASS', comparator: 'exact-sha256',
+    sourceSha256Before: sourceDigest, sourceSha256After: sourceDigest,
+    browserScreenshotSha256Before: sameBrowser.sha256,
+    browserScreenshotSha256After: sameBrowserAfter.sha256,
+    nativeScreenshotSha256Before: sameNative.sha256,
+    nativeScreenshotSha256After: sameNativeAfter.sha256
+  }
 }));
 const validReceiptManifest = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
@@ -282,6 +303,14 @@ const validReceiptManifest = buildManifest({
 });
 strictEqual(validReceiptManifest.status.parity, 'PASS');
 validateManifest(validReceiptManifest, repoRoot);
+const paritySymlink = join(symlinkRoot, 'browser.png');
+symlinkSync('/etc/hosts', paritySymlink);
+const paritySymlinkManifest = JSON.parse(JSON.stringify(validReceiptManifest));
+paritySymlinkManifest.parity.browser_before = {
+  path: paritySymlink, present: true, bytes: sameBrowser.bytes, sha256: sameBrowser.sha256
+};
+expectThrows(() => validateManifest(paritySymlinkManifest, repoRoot),
+  'parity artifact path escapes repository root');
 const passMismatchDeleted = JSON.parse(JSON.stringify(validReceiptManifest));
 delete passMismatchDeleted.parity.mismatch;
 expectThrows(() => validateManifest(passMismatchDeleted, repoRoot), 'parity mismatch');
@@ -304,7 +333,21 @@ writeFileSync(mismatchedReceiptInput, JSON.stringify({
   schema: 'spectr-html-cdp-comparison-v1',
   sourceSha256: 'f'.repeat(64),
   screenshotSha256: sameBrowser.sha256,
-  repeat: true, deterministicDomMarker: true, negativeControl: true
+  repeat: true, deterministicDomMarker: true, negativeControl: true,
+  captureEvidence: {
+    schema: 'spectr-fidelity-capture-v1', sourceSha256: 'f'.repeat(64),
+    browserBeforeSha256: sameBrowser.sha256, browserAfterSha256: sameBrowserAfter.sha256,
+    nativeBeforeSha256: sameNative.sha256, nativeAfterSha256: sameNativeAfter.sha256,
+    repeat: true, deterministicDomMarker: true, negativeControl: true
+  },
+  comparatorEvidence: {
+    schema: 'spectr-fidelity-comparator-v1', status: 'PASS', comparator: 'exact-sha256',
+    sourceSha256Before: sourceDigest, sourceSha256After: sourceDigest,
+    browserScreenshotSha256Before: sameBrowser.sha256,
+    browserScreenshotSha256After: sameBrowserAfter.sha256,
+    nativeScreenshotSha256Before: sameNative.sha256,
+    nativeScreenshotSha256After: sameNativeAfter.sha256
+  }
 }));
 const mismatchedReceipt = buildManifest({
   root: repoRoot, document: documentPath, runtimeDocument, runtimeJs,
@@ -352,9 +395,10 @@ const schemaTampered = buildManifest({
 strictEqual(schemaTampered.fidelity_receipt.status, 'INCOMPATIBLE');
 
 console.log('spectr-materialized-provenance: PASS');
-console.log('spectr-materialized-provenance: deterministic/lossless shadow, identity and map/list controls PASS');
+console.log('spectr-materialized-provenance: deterministic digest shadow, identity and map/list controls PASS');
 console.log('spectr-materialized-provenance: parity positive + changed-artifact negative controls PASS');
 console.log('spectr-materialized-provenance: strict receipt incompatibility control PASS');
 
 
 rmSync(temp, { recursive: true, force: true });
+rmSync(symlinkRoot, { recursive: true, force: true });

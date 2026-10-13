@@ -12,10 +12,11 @@
   "shadow": {
     "schema": "pulp-materialized-browser-document-v2-shadow",
     "version": 2,
-    "canonical_sha256": "7546966f93a410fce4a62661a8e03629c02b1aa019f9dd7353d940276d570edd",
-    "bytes": 6575121,
+    "canonical_sha256": "446982b4630cd1197280a213cf40a72148664558ec5d85dba998ac7c766ca397",
+    "bytes": 51257,
     "authoritative": false,
-    "source_arrays_preserved": true,
+    "source_arrays_preserved": false,
+    "source_rows_digest_bound": true,
     "binding_counts": {
       "semantic": 18,
       "layout": 69,
@@ -281,7 +282,9 @@
     "screenshot_sha256": null,
     "repeat": null,
     "deterministic_dom_marker": null,
-    "negative_control": null
+    "negative_control": null,
+    "capture_evidence": null,
+    "comparator_evidence": null
   },
   "parity": {
     "status": "NOT_RUN",
