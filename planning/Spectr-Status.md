@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-10. This is the concise state-of-the-world for
+_Last updated: 2026-10-12. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Release 1 product state
@@ -19,13 +19,13 @@ Release 1 is a zoomable spectral-isolation effect:
 - AUv2, VST3, CLAP, and Standalone arm64 artifacts. No PKG, signing,
   notarization, or public distribution claim is part of this local M5 trial.
 
-The active product branch is `main` at https://github.com/danielraffel/spectr/commit/ef1cfa53509eeab24d2c75397505bf72f2bdec97. Spectr provenance/parity hardening is merged through https://github.com/danielraffel/spectr/commit/ef1cfa53509eeab24d2c75397505bf72f2bdec97; its post-merge M5 product-acceptance run passed at https://github.com/danielraffel/spectr/actions/runs/38316742820. Historical integration branches and local trial artifacts below are evidence from earlier experiments, not current unreleased branch claims.
+The active product branch is `main` at https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903. Spectr provenance/parity hardening is merged through https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903; its post-merge M5 product-acceptance run passed at https://github.com/danielraffel/spectr/actions/runs/38316742820. Historical integration branches and local trial artifacts below are evidence from earlier experiments, not current unreleased branch claims.
 
 ## Current landed optimization state
 
 - Pulp provenance/schema contract merged at https://github.com/Generous-Corp/pulp/commit/83ae20909246d3395f7ed2063b78db9015b5298a.
 - Pulp materialized hot-region benchmark merged at https://github.com/Generous-Corp/pulp/commit/c3a55d7e241c4e91d3d9d95fa81833a6b69a6704; a follow-up test split is under review at https://github.com/Generous-Corp/pulp/pull/10164 to keep the benchmark module below the 1,000-line maintainability threshold.
-- Spectr provenance validator hardening is merged; a follow-up fail-closed parity path policy is under review at https://github.com/danielraffel/spectr/pull/283.
+- Spectr provenance validator hardening is merged through https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903; the follow-up fail-closed parity path policy is implemented on the current review branch.
 - Deterministic old/new Chromium geometry evidence is recorded at `/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261012/old-new-geometry-regression.json`; it proves matching canvas geometry and shared footer placement, while raw pixels remain diagnostic because the old and new defaults differ.
 
 
@@ -76,9 +76,9 @@ Pulp dependencies.
 
 ## Remaining Release 1 gates
 
-1. Land Pulp realtime visualization PR #7399, then the inspector-off CLI and
-   transport-less VST3 host fixes; publish/select the resulting authoritative
-   development SDK.
+1. Rebuild against the merged Pulp realtime visualization, inspector-off CLI,
+   and transport-less VST3 host fixes; publish/select the resulting
+   authoritative development SDK.
 2. Rebuild all four Spectr formats against that SDK and rerun native,
    Chromium, artifact, validator, and CLI-first audio gates.
 3. Complete the current Logic reopen/Musical Typing/minimum-size checks, the
@@ -121,14 +121,15 @@ implementation is claimed by the current branch.
 
 ## Import provenance regression slice — 2026-10-12
 
-The isolated branch codex/spectr-v2-provenance-parity-20261012 adds a
-diagnostic-only v1 to v2 shadow gate without changing the shipped runtime or
-native parser.
+The current provenance validator keeps the v1 runtime/native contract and uses
+a diagnostic-only v2 projection without changing the shipped runtime or native
+parser. The follow-up branch also closes symlink escapes and binds strict
+parity receipts to canonical capture/comparator evidence.
 
 DONE:
 
-- deterministic, lossless normalization of semantic, layout, text, paint, and
-  canvas binding arrays;
+- deterministic normalization of semantic, layout, text, paint, and canvas
+  binding arrays with per-row SHA-256 evidence;
 - source-explicit identity when a data-pulp-id exists, otherwise
   positional-provisional identity with sibling-reorder negative coverage;
 - canonical source/runtime/editor/IR/state-atlas hashes and a 13-script runtime
@@ -136,9 +137,13 @@ DONE:
 - embedded materialized asset reference, byte-length, and SHA-256 validation;
 - exact before/after browser/native artifact gate with positive and changed-
   artifact controls; and
-- strict fidelity receipt compatibility checks that reject legacy receipts
-  lacking repeat, deterministic DOM marker, negative-control, and screenshot
-  digest fields.
+- strict fidelity receipt compatibility checks that reject legacy or forged
+  receipts lacking canonical capture/comparator evidence bound to the supplied
+  artifact hashes;
+- canonical realpath containment checks that reject repository symlinks which
+  resolve outside the repository; and
+- a slim checked-in shadow projection (about 50 KB) in place of the duplicated
+  full materialized document.
 
 OPEN:
 
@@ -147,7 +152,7 @@ OPEN:
 - same-source browser/native before/after captures require a fixed interaction
   state and settle protocol; missing captures report NOT_RUN;
 - current browser/native visual receipts with unequal hashes or incomplete
-  strict fields remain diagnostic failures, not parity proof; and
+  canonical evidence remain diagnostic failures, not parity proof; and
 - SDK source commit and per-patch source/target anchor receipts should be
   filled when the authoritative Pulp SDK is selected.
 - CMake registers the materialized provenance test only when Node.js is

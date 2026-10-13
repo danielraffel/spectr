@@ -3,12 +3,20 @@
  * Spectr materialized-document provenance and shadow-v2 gate.
  *
  * The checked-in materialized document remains v1 because current JavaScript
- * and native consumers consume v1. This tool creates a lossless,
+ * and native consumers consume v1. This tool creates a compact, digest-bound
  * diagnostic-only v2 shadow projection and provenance manifest. It does not
  * rewrite runtime.js or the shipping document.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync
+} from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -113,6 +121,7 @@ function rowIdentity(kind, row, index) {
 function normalizeBindingStream(kind, rows, globalIds = null) {
   if (!Array.isArray(rows)) throw new Error(kind + '_bindings must be an array');
   const bindingsById = {};
+  const bindingDigestsById = {};
   const identities = [];
   for (let index = 0; index < rows.length; ++index) {
     const row = rows[index];
@@ -129,12 +138,13 @@ function normalizeBindingStream(kind, rows, globalIds = null) {
       throw new Error(kind + '_bindings rejected prototype identity ' + identity.id);
     }
     bindingsById[identity.id] = clone(row);
+    bindingDigestsById[identity.id] = sha256Text(canonicalJson(row));
     globalIds?.add(identity.id);
     identities.push(identity);
   }
   const allExplicit = identities.every((identity) => identity.mode === 'source-explicit');
   return {
-    bindingsById,
+    bindingsById, bindingDigestsById,
     identities,
     identityMode: allExplicit ? 'source-explicit' : 'positional-provisional'
   };
@@ -148,6 +158,7 @@ export function normalizeMaterializedDocument(document) {
       document.schema + '/version ' + document.version);
   }
   const bindingsById = {};
+  const bindingDigestsById = {};
   const identitiesByKind = {};
   const identityModesByKind = {};
   const counts = {};
@@ -156,6 +167,7 @@ export function normalizeMaterializedDocument(document) {
     const field = BINDING_ARRAYS[kind];
     const result = normalizeBindingStream(kind, document[field], globalIds);
     bindingsById[kind] = result.bindingsById;
+    bindingDigestsById[kind] = result.bindingDigestsById;
     identitiesByKind[kind] = result.identities;
     identityModesByKind[kind] = result.identityMode;
     counts[kind] = document[field].length;
@@ -169,17 +181,20 @@ export function normalizeMaterializedDocument(document) {
     identity_mode: identityMode,
     identity_modes_by_kind: identityModesByKind,
     binding_counts: counts,
-    bindings_by_id: bindingsById,
+    binding_digests_by_id: bindingDigestsById,
     identities_by_kind: identitiesByKind,
     authoritative: false,
+    source_rows: 'sha256-bound',
     consumer_compatibility: {
       source_schema: document.schema,
       source_version: document.version,
       runtime_and_native_consumers: 'v1-only'
     }
   };
+  // Keep the diagnostic projection small. The v1 source remains the only
+  // consumer input; retaining every source row here duplicated megabytes of
+  // materialized data in the repository without adding provenance strength.
   const shadowDocument = {
-    ...clone(document),
     schema: SHADOW_SCHEMA,
     version: 2,
     source_schema: document.schema,
@@ -187,14 +202,33 @@ export function normalizeMaterializedDocument(document) {
     diagnostic_shadow: diagnosticShadow
   };
   return {
-    shadowDocument, diagnosticShadow, bindingsById, identitiesByKind,
+    shadowDocument, diagnosticShadow, bindingsById, bindingDigestsById, identitiesByKind,
     identityModesByKind, identityMode, counts
   };
 }
 
-function pathForManifest(file, root) {
+function canonicalPath(file) {
   const absolute = resolve(file);
-  const rel = relative(root, absolute);
+  try { return realpathSync(absolute); } catch { return null; }
+}
+function containedPath(file, root) {
+  const canonicalRoot = canonicalPath(root);
+  if (!canonicalRoot) return false;
+  const canonicalFile = canonicalPath(file);
+  if (!canonicalFile) {
+    try {
+      if (lstatSync(resolve(file)).isSymbolicLink()) return false;
+    } catch { /* a missing regular path is checked by its caller */ }
+    const rel = relative(canonicalRoot, resolve(file));
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  }
+  const rel = relative(canonicalRoot, canonicalFile);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+function pathForManifest(file, root) {
+  const absolute = canonicalPath(file) ?? resolve(file);
+  const canonicalRoot = canonicalPath(root) ?? resolve(root);
+  const rel = relative(canonicalRoot, absolute);
   return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : absolute;
 }
 export function fileRecord(file, root = repoRoot) {
@@ -338,18 +372,66 @@ function validSha(value) {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 }
 function validEvidence(value) {
-  if (value === true) return true;
-  if (Number.isInteger(value) && value >= 2) return true;
-  return isObject(value) && (
-    value.pass === true || value.ok === true || value.equal === true ||
-    value.completed === true || value.status === 'PASS'
-  );
+  return value === true;
+}
+function strictCaptureEvidence(receipt) {
+  const capture = receipt?.captureEvidence;
+  const required = [
+    'sourceSha256', 'browserBeforeSha256', 'browserAfterSha256',
+    'nativeBeforeSha256', 'nativeAfterSha256', 'repeat',
+    'deterministicDomMarker', 'negativeControl'
+  ];
+  const missing = !isObject(capture) ? required :
+    required.filter((key) => capture[key] === undefined);
+  const invalid = [];
+  if (!isObject(capture) || capture.schema !== 'spectr-fidelity-capture-v1') {
+    invalid.push('captureEvidence.schema');
+  }
+  for (const key of [
+    'sourceSha256', 'browserBeforeSha256', 'browserAfterSha256',
+    'nativeBeforeSha256', 'nativeAfterSha256'
+  ]) {
+    if (capture?.[key] !== undefined && !validSha(capture[key])) {
+      invalid.push('captureEvidence.' + key);
+    }
+  }
+  for (const key of ['repeat', 'deterministicDomMarker', 'negativeControl']) {
+    if (capture?.[key] !== undefined && !validEvidence(capture[key])) {
+      invalid.push('captureEvidence.' + key);
+    }
+  }
+  return { capture, missing, invalid };
+}
+function strictComparatorEvidence(receipt) {
+  const comparator = receipt?.comparatorEvidence;
+  const required = [
+    'sourceSha256Before', 'sourceSha256After',
+    'browserScreenshotSha256Before', 'browserScreenshotSha256After',
+    'nativeScreenshotSha256Before', 'nativeScreenshotSha256After'
+  ];
+  const missing = !isObject(comparator) ? required :
+    required.filter((key) => comparator[key] === undefined);
+  const invalid = [];
+  if (!isObject(comparator) || comparator.schema !== 'spectr-fidelity-comparator-v1') {
+    invalid.push('comparatorEvidence.schema');
+  }
+  if (comparator?.status !== 'PASS') invalid.push('comparatorEvidence.status');
+  if (comparator?.comparator !== 'exact-sha256') {
+    invalid.push('comparatorEvidence.comparator');
+  }
+  for (const key of required) {
+    if (comparator?.[key] !== undefined && !validSha(comparator[key])) {
+      invalid.push('comparatorEvidence.' + key);
+    }
+  }
+  return { comparator, missing, invalid };
 }
 function strictFidelityReceipt(receipt) {
   if (!receipt) return {
     status: 'NOT_PROVIDED', missing: [], invalid: [], schema: null,
     source_sha256: null, screenshot_sha256: null, repeat: null,
-    deterministic_dom_marker: null, negative_control: null
+    deterministic_dom_marker: null, negative_control: null,
+    capture_evidence: null, comparator_evidence: null
   };
   const required = [
     'sourceSha256', 'screenshotSha256', 'repeat',
@@ -367,14 +449,52 @@ function strictFidelityReceipt(receipt) {
   for (const key of ['repeat', 'deterministicDomMarker', 'negativeControl']) {
     if (receipt[key] !== undefined && !validEvidence(receipt[key])) invalid.push(key);
   }
+  const captureEvidence = strictCaptureEvidence(receipt);
+  const comparatorEvidence = strictComparatorEvidence(receipt);
+  missing.push(...captureEvidence.missing, ...comparatorEvidence.missing);
+  invalid.push(...captureEvidence.invalid, ...comparatorEvidence.invalid);
+  if (captureEvidence.capture?.sourceSha256 !== undefined &&
+      captureEvidence.capture.sourceSha256 !== receipt.sourceSha256) {
+    invalid.push('captureEvidence.sourceSha256_binding');
+  }
+  if (captureEvidence.capture?.browserBeforeSha256 !== undefined &&
+      captureEvidence.capture.browserBeforeSha256 !== receipt.screenshotSha256) {
+    invalid.push('captureEvidence.screenshotSha256_binding');
+  }
   return {
     status: missing.length === 0 && invalid.length === 0 ? 'COMPATIBLE' : 'INCOMPATIBLE',
-    missing, invalid, schema: receipt.schema ?? null,
+    missing: [...new Set(missing)], invalid: [...new Set(invalid)], schema: receipt.schema ?? null,
     source_sha256: receipt.sourceSha256 ?? null,
     screenshot_sha256: receipt.screenshotSha256 ?? null,
     repeat: receipt.repeat ?? null,
     deterministic_dom_marker: receipt.deterministicDomMarker ?? null,
-    negative_control: receipt.negativeControl ?? null
+    negative_control: receipt.negativeControl ?? null,
+    capture_evidence: isObject(receipt.captureEvidence) ? {
+      schema: receipt.captureEvidence.schema ?? null,
+      source_sha256: receipt.captureEvidence.sourceSha256 ?? null,
+      browser_before_sha256: receipt.captureEvidence.browserBeforeSha256 ?? null,
+      browser_after_sha256: receipt.captureEvidence.browserAfterSha256 ?? null,
+      native_before_sha256: receipt.captureEvidence.nativeBeforeSha256 ?? null,
+      native_after_sha256: receipt.captureEvidence.nativeAfterSha256 ?? null,
+      repeat: receipt.captureEvidence.repeat ?? null,
+      deterministic_dom_marker: receipt.captureEvidence.deterministicDomMarker ?? null,
+      negative_control: receipt.captureEvidence.negativeControl ?? null
+    } : null,
+    comparator_evidence: isObject(receipt.comparatorEvidence) ? {
+      schema: receipt.comparatorEvidence.schema ?? null,
+      status: receipt.comparatorEvidence.status ?? null,
+      comparator: receipt.comparatorEvidence.comparator ?? null,
+      source_sha256_before: receipt.comparatorEvidence.sourceSha256Before ?? null,
+      source_sha256_after: receipt.comparatorEvidence.sourceSha256After ?? null,
+      browser_screenshot_sha256_before:
+        receipt.comparatorEvidence.browserScreenshotSha256Before ?? null,
+      browser_screenshot_sha256_after:
+        receipt.comparatorEvidence.browserScreenshotSha256After ?? null,
+      native_screenshot_sha256_before:
+        receipt.comparatorEvidence.nativeScreenshotSha256Before ?? null,
+      native_screenshot_sha256_after:
+        receipt.comparatorEvidence.nativeScreenshotSha256After ?? null
+    } : null
   };
 }
 export function evaluateParity(options = {}) {
@@ -440,6 +560,9 @@ export function recomputeParity(options = {}) {
   if (artifactsSupplied && fidelity?.status === 'COMPATIBLE') {
     const sourceDigests = [options.sourceBeforeSha256, options.sourceAfterSha256];
     const browserDigests = [options.browserBefore?.sha256, options.browserAfter?.sha256];
+    const nativeDigests = [options.nativeBefore?.sha256, options.nativeAfter?.sha256];
+    const capture = fidelity.capture_evidence;
+    const comparator = fidelity.comparator_evidence;
     if (sourceDigests.some((digest) => !digest)) {
       parity.status = 'FAIL';
       parity.mismatch = ['receipt_source_sha256_unbound'];
@@ -451,6 +574,21 @@ export function recomputeParity(options = {}) {
     )) {
       parity.status = 'FAIL';
       parity.mismatch = ['receipt_screenshot_sha256_mismatch'];
+    } else if (capture?.source_sha256 !== fidelity.source_sha256 ||
+      capture?.browser_before_sha256 !== browserDigests[0] ||
+      capture?.browser_after_sha256 !== browserDigests[1] ||
+      capture?.native_before_sha256 !== nativeDigests[0] ||
+      capture?.native_after_sha256 !== nativeDigests[1]) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_capture_evidence_mismatch'];
+    } else if (comparator?.source_sha256_before !== sourceDigests[0] ||
+      comparator?.source_sha256_after !== sourceDigests[1] ||
+      comparator?.browser_screenshot_sha256_before !== browserDigests[0] ||
+      comparator?.browser_screenshot_sha256_after !== browserDigests[1] ||
+      comparator?.native_screenshot_sha256_before !== nativeDigests[0] ||
+      comparator?.native_screenshot_sha256_after !== nativeDigests[1]) {
+      parity.status = 'FAIL';
+      parity.mismatch = ['receipt_comparator_evidence_mismatch'];
     }
   }
   return parity;
@@ -505,7 +643,8 @@ export function buildManifest(options = {}) {
       schema: SHADOW_SCHEMA, version: 2,
       canonical_sha256: sha256Text(shadowCanonical),
       bytes: Buffer.byteLength(shadowCanonical),
-      authoritative: false, source_arrays_preserved: true,
+      authoritative: false, source_arrays_preserved: false,
+      source_rows_digest_bound: true,
       binding_counts: normalized.counts,
       identity_mode: normalized.identityMode,
       identity_modes_by_kind: normalized.identityModesByKind,
@@ -548,13 +687,13 @@ export function validateShadowProjection(document, normalized) {
   for (const kind of BINDING_KINDS) {
     const field = BINDING_ARRAYS[kind];
     const rows = document[field];
-    const map = normalized.bindingsById[kind];
-    assert(Object.keys(map).length === rows.length,
-      kind + ' map/list count mismatch');
+    const digests = normalized.bindingDigestsById[kind];
+    assert(Object.keys(digests).length === rows.length,
+      kind + ' digest/list count mismatch');
     for (const identity of normalized.identitiesByKind[kind]) {
-      assert(Object.hasOwn(map, identity.id), kind + ' identity missing from map');
-      assert(canonicalJson(map[identity.id]) === canonicalJson(rows[identity.index]),
-        kind + ' map/list row mismatch for ' + identity.id);
+      assert(Object.hasOwn(digests, identity.id), kind + ' identity missing from digest map');
+      assert(digests[identity.id] === sha256Text(canonicalJson(rows[identity.index])),
+        kind + ' digest/list row mismatch for ' + identity.id);
     }
   }
   return true;
@@ -564,10 +703,10 @@ export function validateManifest(manifest, root = repoRoot) {
     'unsupported provenance manifest schema/version');
   assert(manifest.generated_by === 'tools/validate_materialized_provenance.mjs',
     'unexpected provenance generator');
-  const sourceRelative = relative(resolve(root), resolve(root, manifest.source.path));
-  assert(sourceRelative && !sourceRelative.startsWith('..') && !isAbsolute(sourceRelative),
+  assert(containedPath(resolve(root, manifest.source.path), root),
     'source path escapes repository root');
-  const sourcePath = resolve(root, manifest.source.path);
+  const sourcePath = canonicalPath(resolve(root, manifest.source.path)) ??
+    resolve(root, manifest.source.path);
   assert(existsSync(sourcePath), 'source file missing: ' + sourcePath);
   const sourceBytes = readFileSync(sourcePath);
   assert(sha256Bytes(sourceBytes) === manifest.source.sha256,
@@ -603,8 +742,9 @@ export function validateManifest(manifest, root = repoRoot) {
     canonicalJson(manifest.shadow.identity_modes_by_kind) ===
       canonicalJson(normalized.identityModesByKind),
     'shadow identity mode mismatch');
-  assert(manifest.shadow.source_arrays_preserved === true,
-    'shadow does not prove source arrays were preserved');
+  assert(manifest.shadow.source_arrays_preserved === false &&
+    manifest.shadow.source_rows_digest_bound === true,
+    'shadow does not prove source rows are digest-bound');
   validateShadowProjection(sourceDocument, normalized);
   const files = manifest.files;
   assert(isObject(files), 'manifest artifact records are missing');
@@ -613,10 +753,10 @@ export function validateManifest(manifest, root = repoRoot) {
     const record = files[name];
     assert(record?.present === true && typeof record.path === 'string',
       name + ' artifact record is missing');
-    const relativeArtifact = relative(resolve(root), resolve(root, record.path));
-    assert(relativeArtifact && !relativeArtifact.startsWith('..') && !isAbsolute(relativeArtifact),
+    assert(containedPath(resolve(root, record.path), root),
       name + ' artifact path escapes repository root');
-    const path = resolve(root, record.path);
+    const path = canonicalPath(resolve(root, record.path)) ??
+      resolve(root, record.path);
     assert(existsSync(path), name + ' artifact missing: ' + path);
     const actualRecord = fileRecord(path, root);
     assert(canonicalJson(actualRecord) === canonicalJson(record),
@@ -624,10 +764,10 @@ export function validateManifest(manifest, root = repoRoot) {
   }
   assert(typeof manifest.shadow.output_path === 'string' &&
     manifest.shadow.output_path.length > 0, 'shadow output record is missing');
-  const shadowRelative = relative(resolve(root), resolve(root, manifest.shadow.output_path));
-  assert(shadowRelative && !shadowRelative.startsWith('..') && !isAbsolute(shadowRelative),
+  assert(containedPath(resolve(root, manifest.shadow.output_path), root),
     'shadow output path escapes repository root');
-  const shadowPath = resolve(root, manifest.shadow.output_path);
+  const shadowPath = canonicalPath(resolve(root, manifest.shadow.output_path)) ??
+    resolve(root, manifest.shadow.output_path);
   assert(existsSync(shadowPath), 'shadow output missing: ' + shadowPath);
   const shadowBytes = readFileSync(shadowPath);
   const shadowDocument = JSON.parse(shadowBytes.toString('utf8'));
@@ -658,10 +798,9 @@ export function validateManifest(manifest, root = repoRoot) {
     if (record === null || record === undefined) continue;
     assert(record.present === true && typeof record.path === 'string',
       lane + ' parity artifact record is missing');
-    const parityRelative = relative(resolve(root), resolve(root, record.path));
-    assert(parityRelative && !parityRelative.startsWith('..') && !isAbsolute(parityRelative),
+    assert(containedPath(resolve(root, record.path), root),
       lane + ' parity artifact path escapes repository root');
-    assert(canonicalJson(fileRecord(resolve(root, record.path), root)) ===
+    assert(canonicalJson(fileRecord(canonicalPath(resolve(root, record.path)), root)) ===
       canonicalJson(record), lane + ' parity artifact provenance mismatch');
   }
   const runtime = manifest.runtime_fingerprint;
@@ -669,7 +808,8 @@ export function validateManifest(manifest, root = repoRoot) {
     'unexpected runtime fingerprint revision');
   assert(runtime?.file?.present === true && typeof runtime.file.path === 'string',
     'runtime fingerprint file is missing');
-  const runtimePath = resolve(root, runtime.file.path);
+  const runtimePath = canonicalPath(resolve(root, runtime.file.path)) ??
+    resolve(root, runtime.file.path);
   assert(existsSync(runtimePath), 'runtime fingerprint file is missing');
   const actualRuntime = runtimeFingerprint(runtimePath, root);
   assert(actualRuntime.status !== 'MISSING', 'runtime fingerprint is missing');
@@ -688,7 +828,33 @@ export function validateManifest(manifest, root = repoRoot) {
     screenshotSha256: fidelity?.screenshot_sha256,
     repeat: fidelity?.repeat,
     deterministicDomMarker: fidelity?.deterministic_dom_marker,
-    negativeControl: fidelity?.negative_control
+    negativeControl: fidelity?.negative_control,
+    captureEvidence: fidelity?.capture_evidence ? {
+      schema: fidelity.capture_evidence.schema,
+      sourceSha256: fidelity.capture_evidence.source_sha256,
+      browserBeforeSha256: fidelity.capture_evidence.browser_before_sha256,
+      browserAfterSha256: fidelity.capture_evidence.browser_after_sha256,
+      nativeBeforeSha256: fidelity.capture_evidence.native_before_sha256,
+      nativeAfterSha256: fidelity.capture_evidence.native_after_sha256,
+      repeat: fidelity.capture_evidence.repeat,
+      deterministicDomMarker: fidelity.capture_evidence.deterministic_dom_marker,
+      negativeControl: fidelity.capture_evidence.negative_control
+    } : null,
+    comparatorEvidence: fidelity?.comparator_evidence ? {
+      schema: fidelity.comparator_evidence.schema,
+      status: fidelity.comparator_evidence.status,
+      comparator: fidelity.comparator_evidence.comparator,
+      sourceSha256Before: fidelity.comparator_evidence.source_sha256_before,
+      sourceSha256After: fidelity.comparator_evidence.source_sha256_after,
+      browserScreenshotSha256Before:
+        fidelity.comparator_evidence.browser_screenshot_sha256_before,
+      browserScreenshotSha256After:
+        fidelity.comparator_evidence.browser_screenshot_sha256_after,
+      nativeScreenshotSha256Before:
+        fidelity.comparator_evidence.native_screenshot_sha256_before,
+      nativeScreenshotSha256After:
+        fidelity.comparator_evidence.native_screenshot_sha256_after
+    } : null
   };
   assert(canonicalJson(strictFidelityReceipt(receiptInput)) ===
     canonicalJson(fidelity), 'fidelity receipt status mismatch');
