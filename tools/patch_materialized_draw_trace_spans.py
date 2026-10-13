@@ -29,8 +29,8 @@ HEAD_NEW = r'''  const renderAll = useCallback(() => {
     const g = getGeom();
     if (!g) return;
     // One trace span per draw pass (tools/patch_materialized_draw_trace_spans.py).
-    const span = typeof __traceBegin__ === "function" && typeof __traceEnd__ === "function"
-      ? (name, fn) => { __traceBegin__(name); try { fn(); } finally { __traceEnd__(); } }
+    const span = typeof globalThis.__traceBegin__ === "function" && typeof globalThis.__traceEnd__ === "function"
+      ? (name, fn) => { globalThis.__traceBegin__(name); try { fn(); } finally { globalThis.__traceEnd__(); } }
       : (name, fn) => fn();
 '''
 

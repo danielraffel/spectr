@@ -2,8 +2,8 @@
   "schema": "spectr-owned-app-runtime-surface-allowlist-v1",
   "version": 1,
   "artifact": {
-    "sha256": "8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6",
-    "bytes": 1154127
+    "sha256": "1110334194b6cd51800bd899561a00fde1d6112b3b36c3b55549ffc982f75537",
+    "bytes": 1155224
   },
   "objects": {
     "window": {
@@ -182,6 +182,14 @@
         },
         {
           "name": "__spectrShowTracingBadge",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__traceBegin__",
+          "classification": "plugin-runtime"
+        },
+        {
+          "name": "__traceEnd__",
           "classification": "plugin-runtime"
         },
         {
