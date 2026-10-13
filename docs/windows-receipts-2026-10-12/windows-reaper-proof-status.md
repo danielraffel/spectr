@@ -59,6 +59,18 @@ The same behavior occurs for the corrected ARM64 VST3. This is a current
 REAPER ARM64 host compatibility boundary, not evidence that the native Spectr
 editor rendered. The generic parameter page remains a negative control.
 
+### UTM x64 compatibility bridge
+
+To separate the ARM64 host boundary from the GPU editor itself, the UTM guest
+now also has REAPER 7.82 x64 running under Windows ARM emulation, with the
+x64 GPU Spectr VST3/CLAP and `wgpu_native.dll` staged from the Proxmox build.
+The exact staged plugin hashes are CLAP
+`B995B009E983EEC7C55BF5B4C600EAE4E2ADAF4964507D0D235E613E53E65EDE` and VST3
+`329D2FBF55D1CB5B47B7FB6DD150E94308233B77A60635DCB776C125471C8620`.
+This bridge is ready for an interactive REAPER load test, but it has not been
+counted as acceptance until a fresh FX instance, screenshot, and render are
+captured against those exact hashes.
+
 After a fresh REAPER launch and removal of the CLAP/VST3 scan caches, the
 visible REAPER project-load warning reported:
 
