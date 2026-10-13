@@ -1,7 +1,34 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-10. This is the concise state-of-the-world for
+_Last updated: 2026-10-11. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
+
+## Windows build and runtime checkpoint — 2026-10-11
+
+The Windows work is now split into two independently useful lanes and remains
+outside the macOS runner pool:
+
+- **M5S direct-QEMU Windows 11 ARM64:** Pulp's GPU/Skia/Dawn `pulp-view-core`
+  compiles with MSVC after the `NOMINMAX`, DPI-helper, and GPU-diagnostics
+  fixes. A complete current SDK is not yet installed because its `pulp-cli`
+  target is still building. The prior GPU-enabled Spectr build produced
+  Standalone, VST3, and CLAP artifacts and passed the focused DSP test.
+- **ARM64 consumer/runtime:** the current receipt is **PARTIAL**. REAPER's
+  ARM64 VST3 discovery/cache path is proven, but exact plugin instantiation,
+  rendered audio, and a current editor screenshot are not. The UTM display
+  path currently fails `WindowHost::create()` even after reversible display
+  probes; this is why no Skia/Dawn runtime acceptance is claimed.
+- **Proxmox Windows x64:** the focused Spectr audio test passes and historical
+  REAPER/render evidence remains valid. The current health check has SSH/RDP
+  but no ready Proxmox guest agent, so automation uses the bounded SSH fallback.
+
+Authoritative dated receipts are in `docs/windows-receipts-2026-10-11/` and the
+capability summary is `docs/windows-capability-matrix.md`. The older VM-path
+note remains useful for topology, but it is not a current runtime acceptance
+record. The remaining gates are: finish/install the complete current SDK,
+rebuild Spectr against it, resolve the UTM GPU WindowHost path (or capture a
+working direct-QEMU display), then obtain current REAPER instantiation/audio
+evidence before attempting Ableton. No lane is wired into macOS CI runners.
 
 ## Release 1 product state
 

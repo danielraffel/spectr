@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve the helper relative to this script. The desktop launcher normally
+# changes into the repository first, but direct invocation from Finder,
+# another terminal, or an absolute path must be just as reliable.
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+ssh_helper="$script_dir/ssh-qemu.sh"
+[[ -x "$ssh_helper" ]] || { echo "missing SSH helper: $ssh_helper" >&2; exit 2; }
+
 # A linked QEMU overlay does not persist the interactive desktop settings from
 # a previous session. Repair them through the authenticated SSH path before a
 # human opens Jump Desktop. The command is deliberately encoded so Windows'
@@ -27,7 +34,7 @@ print(base64.b64encode(script.encode('utf-16le')).decode())
 PY
 })"
 
-output="$(tools/windows/ssh-qemu.sh \
+output="$("$ssh_helper" \
   "powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encoded}")"
 [[ "$output" == *SPECTR_RDP_READY* ]] || {
   echo "RDP repair did not return its readiness marker: $output" >&2

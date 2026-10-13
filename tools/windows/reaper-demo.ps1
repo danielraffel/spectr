@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('x86_64-win', 'arm64-win')]
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win', 'arm64x-win')]
     [string]$Architecture = 'arm64-win',
     [string]$Vst3Root = '',
     [string]$ReaperExe = '',
@@ -24,7 +24,7 @@ if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReaperExe)) {
-    $directory = if ($Architecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
+    $directory = if ($Architecture -in @('arm64-win', 'arm64ec-win', 'arm64x-win')) { 'REAPER (arm64)' } else { 'REAPER (x64)' }
     $ReaperExe = Join-Path (Join-Path $env:ProgramFiles $directory) 'reaper.exe'
 }
 if (-not (Test-Path -LiteralPath $ReaperExe -PathType Leaf)) {
@@ -54,7 +54,10 @@ $receiptObject = [ordered]@{
 }
 
 if ($Launch) {
-    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinstance' -PassThru
+    # REAPER's Windows command-line switch is `-new`; `-newinstance` is not a
+    # valid switch and opens the usage dialog instead of the DAW. Keep the
+    # launcher usable from the desktop/RDP path.
+    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-new' -PassThru
     Start-Sleep -Seconds ([Math]::Max(0, $WaitSeconds))
     $receiptObject.reaper_pid = $process.Id
     $receiptObject.reaper_running = -not $process.HasExited
