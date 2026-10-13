@@ -2,7 +2,7 @@
 param(
     [string]$BuildDir = (Join-Path $PSScriptRoot '..\..\build-win'),
     [string]$Receipt = (Join-Path $BuildDir 'windows-validation-receipt.json'),
-    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64-win' } else { 'x86_64-win' }),
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win', 'arm64x-win')] [string]$Architecture = $(if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64-win' } else { 'x86_64-win' }),
     [switch]$Build
 )
 
