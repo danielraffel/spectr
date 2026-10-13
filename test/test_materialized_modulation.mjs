@@ -158,6 +158,8 @@ function measureExcursion() {
       const targetGainsRef = { current: new Array(N).fill(0) };
       const renderGainsRef = { current: new Array(N).fill(0) };
       const modulationActiveRef = { current: false };
+      // The drawn window the LFO moves; paint only (patch_materialized_modulated_viewport).
+      const modulationViewRef = { current: null };
       // The modulation-look state the loop and applyModulationFrame read.
       // Classic is what this rig measures: heights follow each frame.
       const modulationLookRef = { current: "classic" };
