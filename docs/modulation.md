@@ -187,12 +187,24 @@ into 20 Hz..20 kHz with a one-octave minimum; at an edge Band shift holds the
 width rather than squeezing it. The viewport lanes (3001, 3002) and their
 automation are never written by an LFO.
 
-**Audio only.** The plot and the minimap keep showing the user's window, and
-every pointer hit-test runs in it, so the band under the pointer is always the
-one edited (proved in `test_native_state_parity.cpp`, "viewport modulation
-never moves the band under the pointer"). An overlay of the audible window was
-built and removed by decision; pausing the sweep while a band is dragged was
-rejected because it changes what is heard the moment a band is touched.
+**Drawn, paint only.** The plot, the grid, the rulers and the minimap paint
+the audible window while the sweep runs: each `modulation_frame` carries
+`viewport_driven`, `min_hz` and `max_hz`, evaluated at the frame's phase from
+the base window the audio owner modulated, and `renderAll` swaps that window
+into the live view for exactly one paint pass and restores the user's window
+before it returns (`tools/patch_materialized_modulated_viewport.py`,
+`test_materialized_modulated_viewport.mjs`, and "native modulation frames
+carry the window an LFO is moving" in `test_native_n1.cpp`). Nothing that
+publishes the view can observe the swap, so an edit made during a sweep still
+carries the window the user set, and the zoom readout keeps showing it.
+
+Every pointer hit-test still runs in the user's window, so the band under the
+pointer is always the one edited (proved in `test_native_state_parity.cpp`,
+"viewport modulation never moves the band under the pointer"). An earlier
+overlay of the audible window had been removed by decision and the sweep was
+audio only until 2026-10-13, when drawing it was requested again; pausing the
+sweep while a band is dragged remains rejected because it changes what is
+heard the moment a band is touched.
 
 ## Freeze
 

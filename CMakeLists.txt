@@ -2446,6 +2446,24 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
         TIMEOUT 30)
 
+    # The window an LFO moves is drawn, paint only: the modulation-frame
+    # parser accepts the optional drawn window, renderAll paints one pass
+    # through it and restores the user's window, and nothing writes it into
+    # the live view a publication reads. One plant removes the restore, which
+    # is the defect that would turn an LFO sweep into a user viewport edit.
+    add_test(NAME Spectr-materialized-modulated-viewport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulated_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulated-viewport PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-modulated-viewport-control-no-restore
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulated_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-restore --expect-fail)
+    set_tests_properties(Spectr-materialized-modulated-viewport-control-no-restore
+        PROPERTIES TIMEOUT 30)
+
     # The Latency control: does it exist, does it mount, and does changing it
     # say the right thing on the wire. The mode was saved, recalled and
     # migrated three PRs before anything could set it, so the risk here is

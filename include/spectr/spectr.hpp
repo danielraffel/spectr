@@ -378,17 +378,16 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #endif
         .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
-#if defined(SPECTR_AAX_HEADLESS)
         // Pro Tools filters insert choices by the declared AAX stem layout.
         // Publish both common track widths so Spectr is available on a new
         // mono track as well as the stereo layout used by saved sessions.
-        // AAX only: the other formats keep the adapter's default negotiation,
-        // which the CLAP flush/process parity contract is pinned to.
+        // Stereo comes first: the CLAP adapter selects index 0 until the host
+        // picks a configuration, and a 2-channel block against a mono
+        // selection is rejected before its parameter events are consumed.
         .supported_bus_layouts = {
-            {.inputs = {1}, .outputs = {1}, .name = "Mono"},
             {.inputs = {2}, .outputs = {2}, .name = "Stereo"},
+            {.inputs = {1}, .outputs = {1}, .name = "Mono"},
         },
-#endif
     };
 }
 
