@@ -336,6 +336,28 @@ required for current Ableton validation.
 
 ## Proxmox direct RDP path
 
+## Launching the UTM REAPER demo from macOS
+
+The retained UTM image uses RDP as its interactive display. The default helper
+prepares the native ARM64 REAPER install:
+
+```bash
+tools/windows/open-utm-rdp.sh
+```
+
+The same guest also has the x64 GPU Spectr package and x64 REAPER staged. To
+open that compatibility path under Windows ARM emulation:
+
+```bash
+SPECTR_WINDOWS_REAPER_ARCH=x86_64-win \
+SPECTR_WINDOWS_LAUNCH_REAPER=1 \
+tools/windows/open-utm-rdp.sh
+```
+
+This keeps one warm image and one RDP entry point. The x64 path is useful for
+GPU editor validation while ARM64EC provider work is still in review; it does
+not upgrade the native ARM64 acceptance status.
+
 The Proxmox x64 guest is reached directly at `192.168.86.21:3389`; the local
 forward `127.0.0.1:53390` belongs to the ARM64 UTM guest and must not be used
 for Proxmox. The interactive account is stored locally in
