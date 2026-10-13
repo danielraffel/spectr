@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('x86_64-win', 'arm64-win')]
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win', 'arm64x-win')]
     [string]$Architecture = 'arm64-win',
     [string]$Vst3Root = '',
     [string]$ReaperExe = '',
@@ -24,7 +24,7 @@ if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReaperExe)) {
-    $directory = if ($Architecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
+    $directory = if ($Architecture -in @('arm64-win', 'arm64ec-win', 'arm64x-win')) { 'REAPER (arm64)' } else { 'REAPER (x64)' }
     $ReaperExe = Join-Path (Join-Path $env:ProgramFiles $directory) 'reaper.exe'
 }
 if (-not (Test-Path -LiteralPath $ReaperExe -PathType Leaf)) {

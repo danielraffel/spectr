@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
-    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win', 'arm64x-win')] [string]$Architecture = 'arm64-win',
     [string]$Output = ''
 )
 
