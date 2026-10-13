@@ -7,12 +7,12 @@
   },
   "source": {
     "path": "resources/editor.html",
-    "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
-    "bytes": 2067538
+    "sha256": "cfa51bf5d2544d6451182897f5261c748cb878709c37555c3242102e6b8d96d0",
+    "bytes": 2067971
   },
   "artifact": {
     "path": "native-ui/materialized/materialized-document.runtime.json",
-    "sha256": "8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6",
-    "bytes": 1154127
+    "sha256": "1110334194b6cd51800bd899561a00fde1d6112b3b36c3b55549ffc982f75537",
+    "bytes": 1155224
   }
 }

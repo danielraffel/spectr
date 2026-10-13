@@ -286,13 +286,20 @@ public:
     // standalone showed paint firing with correct bounds while the corner read
     // as empty in a screenshot. A grip nobody can see is a grip nobody drags,
     // so draw it explicitly at a contrast that survives the dark theme.
+    // The diagonals stay clear of the window corner: on macOS 26+ the plug-in
+    // window's bottom-right corner is rounded and masks roughly the outer 4pt
+    // of the content along the diagonal, which hid the first two strokes of a
+    // flush grip in Pro Tools. The hit box is still flush; only the ink moves.
+    static constexpr float kCornerClearance = 6.0f;
+
     void paint(pulp::canvas::Canvas& canvas) override {
-        const float w = bounds().width, h = bounds().height;
+        const float w = bounds().width - kCornerClearance;
+        const float h = bounds().height - kCornerClearance;
         canvas.set_line_width(1.5f);
         for (int i = 0; i < 3; ++i) {
-            const float inset = 2.0f + static_cast<float>(i) * 6.0f;
+            const float inset = 2.0f + static_cast<float>(i) * 5.0f;
             canvas.set_stroke_color(pulp::canvas::Color::rgba8(
-                190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 150)));
+                190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 170)));
             canvas.stroke_line(w - inset, h - 1.0f, w - 1.0f, h - inset);
         }
     }

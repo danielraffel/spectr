@@ -437,10 +437,23 @@ set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
 set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
 set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
+set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless_AAX")
+
+# AAX ships the same native editor as the other desktop formats by default.
+# Keep the processor-only lane available as an explicit escape hatch for
+# diagnosis, but never select it implicitly: a headless artifact opens in Pro
+# Tools with an empty editor container and can be mistaken for a broken GUI.
+option(SPECTR_AAX_HEADLESS
+    "Build a processor-only AAX artifact (no custom EffectGUI)" OFF)
+set(_spectr_native_formats VST3 AU CLAP Standalone)
+if(PULP_ENABLE_AAX AND NOT SPECTR_AAX_HEADLESS)
+    list(APPEND _spectr_native_formats AAX)
+    set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
+endif()
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP Standalone
+    FORMATS ${_spectr_native_formats}
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -448,6 +461,8 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
     MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
     VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
@@ -487,6 +502,91 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+
+# The generated AAX wrapper is compiled as its own translation unit. Keep the
+# product headers reachable there just as they are for the native core.
+if(TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    target_include_directories(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
+endif()
+
+# The explicit headless lane remains available for isolating processor load
+# problems. Shipping/default AAX is generated above with NATIVE_UI so its entry
+# point can register PULP_AAX_PLUGIN_WITH_GUI and Pro Tools can create the
+# editor. This is deliberately conditional because the headless target must
+# not share the native view stack.
+if(SPECTR_AAX_HEADLESS)
+set(SPECTR_AAX_SOURCES
+    src/spectr.cpp
+    src/mask_renderer.cpp
+    src/param_surface.cpp
+    src/edit_engine.cpp
+    src/editor_authority.cpp
+    src/pattern.cpp
+    src/preset_format.cpp
+    src/snapshot.cpp
+    src/level_controls.cpp)
+set(SPECTR_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless")
+pulp_add_plugin(${SPECTR_AAX_TARGET}
+    AAX_HEADLESS
+    FORMATS AAX
+    SOURCES ${SPECTR_AAX_SOURCES}
+    PROCESSOR_FACTORY spectr::create_spectr
+    PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
+    BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}.aax"
+    MANUFACTURER "Pulp"
+    MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
+    VERSION "${PROJECT_VERSION}"
+    CATEGORY Effect)
+if(TARGET ${SPECTR_AAX_TARGET}_AAX)
+    target_include_directories(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
+if(TARGET ${SPECTR_AAX_TARGET}_Core)
+    target_include_directories(${SPECTR_AAX_TARGET}_Core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_Core PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
+endif()
 
 if(SPECTR_BUILD_FORGE_ADAPTER)
     # The adapter is deliberately an interface target over Spectr's existing
@@ -4360,6 +4460,17 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
     set_tests_properties(Spectr-settings-render-mode-no-reflow-live PROPERTIES
         TIMEOUT 600
         RESOURCE_LOCK spectr_native_materialized_editor)
+endif()
+
+# macOS codesign treats arbitrary files under Contents/MacOS as nested code.
+# Pulp emits control-shipping evidence beside each plugin binary for local
+# inspection; relocate the AAX evidence into sealed Resources before signing.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    add_custom_command(TARGET ${SPECTR_NATIVE_AAX_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DBUNDLE_CONTENTS=$<TARGET_FILE_DIR:${SPECTR_NATIVE_AAX_TARGET}>/..
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/relocate_aax_control_sidecars.cmake
+        VERBATIM)
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
   "version": 1,
   "source": {
     "path": "resources/editor.html",
-    "sha256": "5425add49d538713ef24b25f8a50b15d5f981b2db47fe1c0e880d749a931f558",
+    "sha256": "cfa51bf5d2544d6451182897f5261c748cb878709c37555c3242102e6b8d96d0",
     "selector": "body::before",
     "authored": {
       "position": "fixed",
