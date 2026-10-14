@@ -2,8 +2,8 @@
   "schema": "spectr-owned-app-runtime-surface-allowlist-v1",
   "version": 1,
   "artifact": {
-    "sha256": "eba49a4944c04b2ea5b532a31e1a6a673b624f61291d701e856a9515fa301535",
-    "bytes": 1157094
+    "sha256": "990c0302134e3be3dd028d5bff6f1ccf923871177f0cddf1cf7ac74c7c0ad76b",
+    "bytes": 1157583
   },
   "objects": {
     "window": {

@@ -372,8 +372,10 @@ measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
 
 ## Header controls: context menus
 
-Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
-the preset button opens a small menu in the band menu's style:
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH,
+the preset button or a SNAPSHOT capture button (A, B -- the Snapshot A and
+Snapshot B targets; the recall buttons keep their right-click, which empties
+a filled slot) opens a small menu in the band menu's style:
 
 - the control's name and **Reset to** its default (Live, 100 %, 0.0 dB,
   1 bar, 32 bands, A; the preset has none);
