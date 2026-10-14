@@ -107,3 +107,14 @@ negative screenshot, `arm64-reaper-vst3-scan-current-unavailable.png`, showing
 REAPER's `VST Plug-in Scan` dialog stuck on `Spectr.vst3` with the
 “not responding” message. Its SHA-256 is
 `2D00A6A795D85B379BE128AB4A7348B6FFD861580BC281306C3225BCFDBC554D`.
+
+### Current x64-on-ARM negative control (2026-10-14)
+
+The x64 GPU VST3 was copied into the ARM guest's per-user VST3 directory and
+REAPER x64 listed it as `VST3: Spectr (Pulp)`. Selecting it in the FX browser
+caused the host to exit. Windows Application Error event 1000 identifies the
+faulting module as `Spectr.vst3`, exception `0xc000001d` (illegal instruction),
+at `C:\\Users\\admin\\AppData\\Local\\Programs\\Common\\VST3\\Spectr.vst3\\Contents\\x86_64-win\\Spectr.vst3`.
+This is a negative runtime proof: x64 emulation on the ARM guest cannot run
+this GPU artifact. It does not upgrade the ARM64 package, and it keeps the
+ARM64EC/ARM64X GPU SDK requirement explicit.
