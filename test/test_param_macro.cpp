@@ -409,6 +409,7 @@ TEST_CASE("the audio owner composes macros exactly as the control thread does") 
     // reads. The comparison is against `pre_field`, the post-morph,
     // post-macro, PRE-LFO field, so the oscillator's value never enters it.
     store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     store.set_value(spectr::kParamLfoDepth, 1.0f);
     // Settle canonical state on this thread rather than waiting for the
     // worker process() spawns, so the comparison is not a race with the

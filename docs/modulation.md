@@ -45,7 +45,12 @@ show their Depth rows together; a switched-off target keeps its stored Depth
 for when it is switched on again. Switching a target never moves the row under
 the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
-with); a fresh instance drives Bank from both LFOs, everything else off.
+with). A fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
+LFOs on and a target is switched on separately, and neither control writes
+the other. An LFO that is on with nothing routed reads "On, no target"; a
+target that is on under an LFO that is off reads "On, LFO off". (A session
+saved by 1.0.x, which had no routing lanes, keeps its single target: it is
+migrated on restore, not defaulted.)
 
 ## How stacked targets combine
 
@@ -378,7 +383,7 @@ the preset button opens a small menu in the band menu's style:
   control, else LFO 1) and that LFO's **Shape** and **Rate**;
 - **<TARGET> TARGET** -- only this control's own target, never the full
   list: per LFO a row such as **LFO 1 → Freeze** whose switch is the route
-  (On, Off, or "LFO off" when the route is on but its LFO is not). While a
+  (On, Off, or "On, LFO off" when the route is on but its LFO is not). While a
   route is on its settings sit nested under it behind Settings' guide line:
   **Depth**, and under Freeze **Hold for Length** (one setting, shown under
   either Freeze route);

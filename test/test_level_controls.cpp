@@ -735,7 +735,7 @@ std::size_t target_index(ModulationTarget t) { return static_cast<std::size_t>(t
 
 // LFO 1 on, square at 16 beats: +1 for the first 8 beats (4 s at 120 BPM), so
 // a render shorter than that sees the destination at full positive swing.
-// Every route off except @p target (a fresh instance drives Bank).
+// Every route off except @p target.
 void route_only(Rig& rig, ModulationTarget target, float depth,
                 spectr::LfoShape shape = spectr::LfoShape::Square, float rate = 16.0f) {
     rig.set(spectr::kParamLfoEnabled, 1.0f);

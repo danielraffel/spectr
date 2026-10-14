@@ -233,10 +233,12 @@ TEST_CASE("The live mask and LFO keep acting on the held sound", "[freeze][modul
                     if (rig.hits(n, 0.6)) rig.set(spectr::kParamFreeze, 1.0f);
                     if (rig.hits(n, 1.2)) {
                         rig.set(spectr::kParamLfoEnabled, 1.0f);
+                        rig.set(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
                         rig.set(spectr::kParamLfoShape,
                                 static_cast<float>(spectr::LfoShape::Square));
                         rig.set(spectr::kParamLfoRate, 1.0f);
                         rig.set(spectr::kParamLfoDepth, depth);
+                        rig.set(spectr::lfo_route_amount_param_id(0, 0), depth);
                         rig.set(spectr::kParamLfoTarget,
                                 static_cast<float>(spectr::ModulationTarget::WholeBank));
                     }

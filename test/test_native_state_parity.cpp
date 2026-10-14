@@ -1688,6 +1688,7 @@ TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canoni
         rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
     }
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape,
                         static_cast<float>(spectr::LfoShape::Sine));
     // 0.25 beats/cycle is the fastest the audio owner accepts. At 120 bpm and
@@ -1696,6 +1697,7 @@ TEST_CASE("an enabled LFO visibly modulates the drawn bank without moving canoni
     // reaches nearly full excursion inside the first sample interval.
     rig.store.set_value(spectr::kParamLfoRate, 0.25f);
     rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoTarget,
                         static_cast<float>(spectr::ModulationTarget::WholeBank));
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -1782,10 +1784,12 @@ TEST_CASE("the modulation overlay tracks every audio frame without decimation",
         rig.store.set_value(spectr::band_mute_param_id(index), 0.0f);
     }
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape,
                         static_cast<float>(spectr::LfoShape::Sine));
     rig.store.set_value(spectr::kParamLfoRate, 0.25f);
     rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoTarget,
                         static_cast<float>(spectr::ModulationTarget::WholeBank));
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -7759,10 +7763,12 @@ TEST_CASE("the status pill shows a band reading only when a gesture edits a band
     activate(rig, "[data-spectr-settings-close]");
     settle(rig.clock, 6);
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape,
                         static_cast<float>(spectr::LfoShape::Sine));
     rig.store.set_value(spectr::kParamLfoRate, 0.25f);
     rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoTarget,
                         static_cast<float>(spectr::ModulationTarget::WholeBank));
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -8084,6 +8090,7 @@ TEST_CASE("a host viewport change redraws the plot and settles the zoom readout"
 
     // LFO shape: the Settings panel shows the host's shape when it opens.
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape,
                         static_cast<float>(spectr::LfoShape::Saw));
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -10109,6 +10116,11 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     press_menu_slider(rig, "lfo1-rate", 1.0);
     CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
 
+    // The LFO switch routes nothing: Bank is switched on as its own gesture
+    // (LFO 1 Bank's routing lane is 4020), which discloses its Depth row.
+    activate(rig, "[data-spectr-band-action=\"modulation-target-bank\"]");
+    CHECK(recorder.take() == "begin 4020, set 4020=1, end 4020");
+
     // Depth is per target now (LFO 1 Bank's Depth lane is 4030).
     press_menu_slider(rig, "modulation-target-depth-bank", 0.25);
     CHECK(recorder.take() == "begin 4030, set 4030=0.25, end 4030");
@@ -10125,6 +10137,9 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     CHECK(recorder.take() == "begin 4011, set 4011=3, end 4011");
     press_menu_slider(rig, "lfo2-rate", 0.0);
     CHECK(recorder.take() == "begin 4012, set 4012=0.25, end 4012");
+    // LFO 2 routes nothing either until Bank is switched on for it (4040).
+    activate(rig, "[data-spectr-band-action=\"modulation-target-bank\"]");
+    CHECK(recorder.take() == "begin 4040, set 4040=1, end 4040");
     press_menu_slider(rig, "modulation-target-depth-bank", 1.0);
     CHECK(recorder.take() == "begin 4050, set 4050=1, end 4050");
 
@@ -10163,6 +10178,11 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
     PatternStoragePoison storage;
     NativeEditorRig rig;
     require_home(rig);
+    // Bank is routed first: a fresh instance routes nothing, and a target's
+    // Depth row is shown only while the target is on.
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
     open_band_menu(rig);
 
     // The user sets depth to 37% by hand, which is a value a float cannot hold
@@ -10178,6 +10198,7 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
 
     // Now the host plays its lanes back.
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, 3.0f);
     rig.store.set_value(spectr::kParamLfoRate, 0.5f);
     rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 0.8f);
@@ -10193,7 +10214,7 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
         "LFO 1 shape did not follow host playback");
     require_runtime_contract(rig,
         "document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]')"
-        "?.getAttribute('aria-valuetext') === '0.5 beats'",
+        "?.getAttribute('aria-valuetext') === '1/2 beat'",
         "LFO 1 rate did not follow host playback");
     require_runtime_contract(rig,
         "document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]')"
@@ -10666,7 +10687,7 @@ TEST_CASE("every routing edit in the band menu records as a host gesture",
     activate(rig, "[data-spectr-band-action=\"modulation-target-a\"]");
     CHECK(recorder.take() == "begin 4021, set 4021=1, end 4021");
     apply_and_settle(rig);
-    CHECK(spectr::route_mask(rig.processor.modulation_settings().routes[0]) == 0x13);
+    CHECK(spectr::route_mask(rig.processor.modulation_settings().routes[0]) == 0x12);
 
     // A Depth drag is ONE bracket with its values inside it.
     drag_menu_slider(rig, "modulation-target-depth-band-shift", {0.2, 0.5, 0.75});
@@ -10772,8 +10793,10 @@ TEST_CASE("viewport modulation never moves the band under the pointer",
     rig.store.set_value(spectr::kParamViewportCenter, 2.8f);
     rig.store.set_value(spectr::kParamViewportWidth, 1.0f);
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoRate, 1.0f);
     rig.store.set_value(spectr::kParamLfoDepth, 1.0f);
+    rig.store.set_value(spectr::lfo_route_amount_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 4), 1.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -10836,6 +10859,7 @@ namespace {
 
 void drive_freeze_target(NativeEditorRig& rig, float rate_beats) {
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, static_cast<float>(spectr::LfoShape::Square));
     rig.store.set_value(spectr::kParamLfoRate, rate_beats);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
@@ -10994,6 +11018,7 @@ TEST_CASE("KEEP MODULATING leaves every modulated control under its LFO",
     // LFO 1, square at 4 beats (2 s): Freeze 50 %, Length 25 %, Bands 100 %,
     // Preset 25 %, and the three level targets.
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, static_cast<float>(spectr::LfoShape::Square));
     rig.store.set_value(spectr::kParamLfoRate, 4.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
@@ -11219,6 +11244,7 @@ TEST_CASE("a LENGTH pick while the Length target is on asks, and changes the cen
     NativeEditorRig rig;
     require_home(rig);
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 7), 1.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
     feed_audio_blocks(rig, 4);
@@ -11401,6 +11427,7 @@ TEST_CASE("grabbing a modulated level knob asks, and the knob keeps its own valu
     NativeEditorRig rig;
     require_home(rig);
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     for (std::size_t t : {8u, 9u, 10u})
         rig.store.set_value(spectr::lfo_route_enabled_param_id(0, t), 1.0f);
     REQUIRE(rig.processor.apply_surface_params(false));
@@ -11639,6 +11666,7 @@ TEST_CASE("LENGTH, BANDS and the preset label show what their LFO plays",
     // Length at 25 % (+2 steps), Bands at 100 % (+4 steps: 32 -> 64), Preset
     // at 25 % (+1 preset).
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, 2.0f);
     rig.store.set_value(spectr::kParamLfoRate, 16.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);
@@ -11717,6 +11745,7 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     // Intensity and Mix are pulled all the way down, Output is +6 dB and
     // Bands plays 64.
     rig.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     rig.store.set_value(spectr::kParamLfoShape, 2.0f);
     rig.store.set_value(spectr::kParamLfoRate, 16.0f);
     rig.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 0.0f);

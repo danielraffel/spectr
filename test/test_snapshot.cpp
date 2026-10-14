@@ -297,7 +297,7 @@ TEST_CASE("plugin state round-trips per-LFO routing, amounts included") {
     const auto blob = a.proc.serialize_plugin_state();
 
     RoutedPlugin b;
-    REQUIRE(mask_int(b.mask(0)) == 0x01);  // control: a fresh instance differs
+    REQUIRE(mask_int(b.mask(0)) == 0x00);  // control: a fresh instance differs
     REQUIRE(b.store.deserialize(params));
     REQUIRE(b.proc.deserialize_plugin_state(blob));
     CHECK(mask_int(b.mask(0)) == 0x29);
@@ -353,6 +353,11 @@ TEST_CASE("a pre-routing session maps its single target onto both LFOs") {
         CHECK(b.store.get_value(spectr::lfo_route_enabled_param_id(1, 3)) == 1.0f);
     }
     SECTION("the LFO Depth is carried into each enabled target's Depth") {
+        // 1.0.6 wrote the unset mask when no Destinations had been chosen:
+        // the enum lane (Bank) names the destination. (A current writer
+        // records LFO 1's actual field routing, which for a fresh instance
+        // is nothing.)
+        set_member_int(json, "modulation_target_mask", 0xFF);
         RoutedPlugin b;
         b.store.set_value(spectr::kParamLfoDepth, 0.3f);
         b.store.set_value(spectr::kParamLfo2Depth, 0.8f);
@@ -389,7 +394,7 @@ TEST_CASE("a pre-routing session maps its single target onto both LFOs") {
         RoutedPlugin c;
         REQUIRE(c.store.deserialize(params));
         REQUIRE(c.proc.deserialize_plugin_state(current));
-        CHECK(mask_int(c.mask(0)) == 0x11);
+        CHECK(mask_int(c.mask(0)) == 0x10);
     }
 }
 

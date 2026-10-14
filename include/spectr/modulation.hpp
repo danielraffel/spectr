@@ -59,12 +59,14 @@ struct ModulationRoute {
 };
 using LfoRoutes = std::array<ModulationRoute, kModulationTargetCount>;
 
-/// A fresh LFO drives the whole bank at 50 % Depth: the destination and depth a
-/// 1.0.x instance opened with, so a new instance sounds as it did.
+/// A fresh LFO drives nothing: its switch and each target's switch are
+/// separate controls, so switching the LFO on moves nothing until a target
+/// is switched on too. Every target keeps the 50 % Depth a 1.0.x instance
+/// opened with, so the first target switched on sounds as that LFO did. (The
+/// parameter defaults in param_surface.cpp say the same; a 1.0.x session is
+/// migrated on restore from its single target, never defaulted.)
 inline constexpr LfoRoutes default_lfo_routes() noexcept {
-    LfoRoutes routes{};
-    routes[static_cast<std::size_t>(ModulationTarget::WholeBank)].enabled = true;
-    return routes;
+    return LfoRoutes{};
 }
 
 struct ModulationSettings {
