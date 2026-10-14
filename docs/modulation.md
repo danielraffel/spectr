@@ -1,7 +1,13 @@
 # Internal modulation: targets, depths, stacking
 
 Spectr has two tempo-synced LFOs. An LFO defines a **movement** -- its Shape
-and its Rate in beats -- and nothing else. What it moves, and how far, is set
+and its Rate in beats -- and nothing else. The Rate runs from 1/1024 to 4096
+beats per cycle; the menus step through the powers of two and show the stop
+as one token ("1/1024" .. "4096", the unit named once in the section head),
+a host can automate any value between. The LFO is sampled once per audio
+block, so a cycle shorter than a block (below about 1/32 beat at 120 BPM and
+256-sample blocks) plays as a block-rate stepper, not an audio-rate wave; at
+the other end 4096 beats is 34 minutes at 120 BPM. What it moves, and how far, is set
 per **target**: each LFO drives any set of targets at once, and each target
 has its own **Depth**. This page is the contract for how targets combine, what
 each one does, how the controls record and play back, and how sessions and

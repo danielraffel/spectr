@@ -36,6 +36,14 @@ inline constexpr std::size_t kModulationTargetCount = 13;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
 
+/// The LFO Rate in beats per cycle, 1/1024 .. 4096. The editor offers the
+/// powers of two; a host can automate any value between. One cycle can be
+/// shorter than an audio block (1/1024 beat is 0.49 ms at 120 BPM; the LFO is
+/// sampled once per block, so such a rate is a block-rate stepper rather than
+/// an audio-rate wave) or longer than a song (4096 beats is 34 min).
+inline constexpr float kLfoBeatsMin = 1.0f / 1024.0f;
+inline constexpr float kLfoBeatsMax = 4096.0f;
+
 /// Sentinel meaning "no explicit destination selection has been made", so the
 /// destination follows the single-target `ModulationSettings::target` enum
 /// (the host-automatable lane). It is deliberately distinct from `0x00`,

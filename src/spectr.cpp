@@ -2065,7 +2065,7 @@ void Spectr::process(
                         std::clamp(static_cast<int>(std::lround(
                             cursor.value(kParamLfoShape))), 0, 3));
                     modulation_settings.beats_per_cycle = std::clamp(
-                        cursor.value(kParamLfoRate), 0.25f, 16.0f);
+                        cursor.value(kParamLfoRate), kLfoBeatsMin, kLfoBeatsMax);
                     modulation_settings.depth = std::clamp(
                         cursor.value(kParamLfoDepth), 0.0f, 1.0f);
                     modulation_settings.target =
@@ -2090,7 +2090,7 @@ void Spectr::process(
                         std::clamp(static_cast<int>(std::lround(
                             cursor.value(kParamLfo2Shape))), 0, 3));
                     modulation_settings.lfo2_beats_per_cycle = std::clamp(
-                        cursor.value(kParamLfo2Rate), 0.25f, 16.0f);
+                        cursor.value(kParamLfo2Rate), kLfoBeatsMin, kLfoBeatsMax);
                     modulation_settings.lfo2_depth = std::clamp(
                         cursor.value(kParamLfo2Depth), 0.0f, 1.0f);
                     // The legacy lanes are COMMANDS (see apply_surface_params):
@@ -2165,13 +2165,13 @@ void Spectr::process(
                     if (should_reset_stream_history && block_offset == 0) {
                         audio_modulation_phase_ =
                             ctx.position_beats
-                            / std::max(0.0625, static_cast<double>(
+                            / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                 modulation_settings.beats_per_cycle));
                         audio_modulation_phase_ -=
                             std::floor(audio_modulation_phase_);
                         audio_modulation_phase_2_ =
                             ctx.position_beats
-                            / std::max(0.0625, static_cast<double>(
+                            / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                 modulation_settings.lfo2_beats_per_cycle));
                         audio_modulation_phase_2_ -=
                             std::floor(audio_modulation_phase_2_);
@@ -2513,10 +2513,10 @@ void Spectr::process(
                         const auto phase_1 = audio_modulation_phase_;
                         const auto phase_2 = audio_modulation_phase_2_;
                         const double rate_1 = cycles_per_second
-                            / std::max(0.0625, static_cast<double>(
+                            / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                 modulation_settings.beats_per_cycle));
                         const double rate_2 = cycles_per_second
-                            / std::max(0.0625, static_cast<double>(
+                            / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                 modulation_settings.lfo2_beats_per_cycle));
                         // SPECTR-RENDER-PATH END
                         //
@@ -2822,13 +2822,11 @@ void Spectr::process(
                                                                  : sample_rate_));
                             const float wave_end = lfo_value(
                                 audio_lfo_shape_fade_,
-                                audio_modulation_phase_ + slice_beats / std::max(
-                                    0.0625, static_cast<double>(
+                                audio_modulation_phase_ + slice_beats / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                         modulation_settings.beats_per_cycle)));
                             const float wave2_end = lfo_value(
                                 audio_lfo_2_shape_fade_,
-                                audio_modulation_phase_2_ + slice_beats / std::max(
-                                    0.0625, static_cast<double>(
+                                audio_modulation_phase_2_ + slice_beats / std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                                         modulation_settings.lfo2_beats_per_cycle)));
                             output_mod_end_db = output_modulation_db(
                                 modulation_coordinates(modulation_settings,
@@ -2971,16 +2969,14 @@ void Spectr::process(
                         ? ctx.sample_rate : sample_rate_;
                     const double tempo = ctx.tempo_bpm > 0.0
                         ? ctx.tempo_bpm : 120.0;
-                    const double beats_per_cycle = std::max(
-                        0.0625, static_cast<double>(
+                    const double beats_per_cycle = std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                             modulation_settings.beats_per_cycle));
                     audio_modulation_phase_ +=
                         (static_cast<double>(out_slice.num_samples())
                          * tempo / (60.0 * sample_rate)) / beats_per_cycle;
                     audio_modulation_phase_ -=
                         std::floor(audio_modulation_phase_);
-                    const double beats_per_cycle_2 = std::max(
-                        0.0625, static_cast<double>(
+                    const double beats_per_cycle_2 = std::max(static_cast<double>(kLfoBeatsMin), static_cast<double>(
                             modulation_settings.lfo2_beats_per_cycle));
                     audio_modulation_phase_2_ +=
                         (static_cast<double>(out_slice.num_samples())

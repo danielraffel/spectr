@@ -10111,10 +10111,10 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
              "pointerdown");
     CHECK(recorder.take() == "begin 4001, set 4001=2, end 4001");
 
-    // Rate moves over the musical rates (0.25 .. 16 beats, 7 stops): the far
-    // end of the track is 16 beats.
+    // Rate moves over the musical rates (1/1024 .. 4096 beats, 23 stops): the
+    // far end of the track is 4096 beats.
     press_menu_slider(rig, "lfo1-rate", 1.0);
-    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+    CHECK(recorder.take() == "begin 4002, set 4002=4096, end 4002");
 
     // The LFO switch routes nothing: Bank is switched on as its own gesture
     // (LFO 1 Bank's routing lane is 4020), which discloses its Depth row.
@@ -10135,8 +10135,9 @@ TEST_CASE("every LFO edit in the band menu records as a host gesture",
     activate(rig, "[data-spectr-band-action=\"lfo2-shape\"] [data-spectr-shape-option=\"3\"]",
              "pointerdown");
     CHECK(recorder.take() == "begin 4011, set 4011=3, end 4011");
+    // The near end is 1/1024 beat.
     press_menu_slider(rig, "lfo2-rate", 0.0);
-    CHECK(recorder.take() == "begin 4012, set 4012=0.25, end 4012");
+    CHECK(recorder.take() == "begin 4012, set 4012=0.000976562, end 4012");
     // LFO 2 routes nothing either until Bank is switched on for it (4040).
     activate(rig, "[data-spectr-band-action=\"modulation-target-bank\"]");
     CHECK(recorder.take() == "begin 4040, set 4040=1, end 4040");
@@ -10168,7 +10169,7 @@ TEST_CASE("every LFO edit in Settings records as a host gesture",
     const auto rate = std::string("[data-spectr-settings-modulation] [data-spectr-setting-slider]");
     activate(rig, rate, "pointerdown", slider_press_at(1.0, rate));
     activate(rig, rate, "pointerup", slider_press_at(1.0, rate));
-    CHECK(recorder.take() == "begin 4002, set 4002=16, end 4002");
+    CHECK(recorder.take() == "begin 4002, set 4002=4096, end 4002");
     CHECK(rig.store.open_gesture_count() == 0);
     storage.require_unchanged();
 }
@@ -10214,7 +10215,7 @@ TEST_CASE("host playback of the LFO lanes moves the band menu, even after an edi
         "LFO 1 shape did not follow host playback");
     require_runtime_contract(rig,
         "document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]')"
-        "?.getAttribute('aria-valuetext') === '1/2 beat'",
+        "?.getAttribute('aria-valuetext') === '1/2'",
         "LFO 1 rate did not follow host playback");
     require_runtime_contract(rig,
         "document.querySelector('[data-spectr-band-action=\"modulation-target-depth-bank\"]')"
@@ -12137,7 +12138,8 @@ TEST_CASE("a header control's menu carries the Modulation head and nests its rou
         activate(rig, rate_track, "pointerdown", slider_press_at(low ? 0.0 : 1.0, rate_track));
         activate(rig, rate_track, "pointerup", slider_press_at(low ? 0.0 : 1.0, rate_track));
         settle(rig.clock, 8);
-        CHECK(rig.store.get_value(spectr::kParamLfo2Rate) == Catch::Approx(low ? 0.25f : 16.0f));
+        CHECK(rig.store.get_value(spectr::kParamLfo2Rate)
+              == Catch::Approx(low ? spectr::kLfoBeatsMin : spectr::kLfoBeatsMax));
         CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(lfo1_rate_was));
         // The route's settings are nested under it and disclosed with it.
         const auto children = std::string("[data-spectr-control-route-children=\"1\"]");

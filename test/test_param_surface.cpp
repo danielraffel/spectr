@@ -398,8 +398,8 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(enabled->kind == pulp::state::ParamKind::Toggle);
     CHECK(shape->kind == pulp::state::ParamKind::Enum);
     CHECK(shape->value_labels.size() == 4);
-    CHECK(rate->range.min == Approx(0.25f));
-    CHECK(rate->range.max == Approx(16.0f));
+    CHECK(rate->range.min == Approx(spectr::kLfoBeatsMin));
+    CHECK(rate->range.max == Approx(spectr::kLfoBeatsMax));
     CHECK(rate->range.default_value == Approx(4.0f));
     CHECK(depth->range.min == Approx(0.0f));
     CHECK(depth->range.max == Approx(1.0f));
@@ -416,7 +416,7 @@ TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
         REQUIRE(rate->to_string);
         REQUIRE(rate->from_string);
         CHECK(rate->to_string(4.0f) == "4 beats");
-        CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(0.25f) == "1/4 beat");
         CHECK(rate->to_string(1.0f) == "1 beat");
         CHECK(rate->from_string("2 beats") == Approx(2.0f));
         CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));
@@ -695,6 +695,39 @@ TEST_CASE("#34: simultaneous morph and band automation preserves the band lane")
     const auto state = w.proc->processing_state_snapshot();
     CHECK(state.field.bands[0].gain_db == Approx(0.0f));
     CHECK(state.field.bands[7].gain_db == Approx(-6.0f));
+}
+
+TEST_CASE("the LFO Rate runs from 1/1024 to 4096 beats and reads as a fraction below one",
+          "[modulation][rate]") {
+    Wired w;
+    const auto* info = w.store.info(spectr::kParamLfoRate);
+    REQUIRE(info != nullptr);
+    CHECK(info->range.min == Approx(1.0f / 1024.0f));
+    CHECK(info->range.max == Approx(4096.0f));
+    CHECK(info->range.default_value == Approx(4.0f));
+    // A host's normalised midpoint lands on 2 beats, the geometric middle.
+    CHECK(info->range.denormalize(0.5f) == Approx(2.0f).margin(0.01f));
+    // The display string the host prints, and what it parses back.
+    CHECK(info->to_string(1.0f / 1024.0f) == "1/1024 beat");
+    CHECK(info->to_string(0.25f) == "1/4 beat");
+    CHECK(info->to_string(1.0f) == "1 beat");
+    CHECK(info->to_string(4096.0f) == "4096 beats");
+    CHECK(info->from_string("1/1024") == Approx(1.0f / 1024.0f));
+    CHECK(info->from_string("1/4 beat") == Approx(0.25f));
+    CHECK(info->from_string("16 beats") == Approx(16.0f));
+    // Both ends reach the audio owner's settings, and nothing beyond them.
+    w.store.set_value(spectr::kParamLfoRate, 1.0f / 1024.0f);
+    w.store.set_value(spectr::kParamLfo2Rate, 4096.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().beats_per_cycle == Approx(1.0f / 1024.0f));
+    CHECK(w.proc->modulation_settings().lfo2_beats_per_cycle == Approx(4096.0f));
+    // Out-of-range writes land on the bounds (the store clamps, so nothing
+    // changes and the pass reports no drift).
+    w.store.set_value(spectr::kParamLfoRate, 1.0e-6f);
+    w.store.set_value(spectr::kParamLfo2Rate, 1.0e6f);
+    (void)w.proc->apply_surface_params(false);
+    CHECK(w.proc->modulation_settings().beats_per_cycle == Approx(1.0f / 1024.0f));
+    CHECK(w.proc->modulation_settings().lfo2_beats_per_cycle == Approx(4096.0f));
 }
 
 TEST_CASE("an LFO switch and its targets are independent controls") {
