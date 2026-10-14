@@ -11,6 +11,7 @@
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <set>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -992,6 +993,62 @@ TEST_CASE("the Preset destination morphs toward neighbouring presets and back",
     REQUIRE(reopened.plugin->deserialize_plugin_state(blob));
     CHECK(reopened.plugin->preset_modulation_centre_id() == "factory:flat");
     CHECK(reopened.plugin->preset_modulation_name(1) == "ABOVE");
+}
+
+TEST_CASE("the Preset destination steps through whole presets, never a blend",
+          "[modulation][preset-target]") {
+    // A sine at full depth sweeps the coordinate continuously; the field must
+    // still only ever be one of the neighbours (or the current preset), so
+    // every short window's level sits on one of three plateaus. A blend
+    // would spend most of its time between them.
+    Rig rig;
+    spectr::PresetModulationNeighbours n{};
+    n.below = 1;
+    n.above = 1;
+    for (auto& g : n.gains[spectr::kPresetModulationSteps + 1]) g = 12.0f;
+    for (auto& g : n.gains[spectr::kPresetModulationSteps - 1]) g = -12.0f;
+    std::array<std::string, spectr::kPresetNeighbourCount> names{};
+    names[spectr::kPresetModulationSteps - 1] = "BELOW";
+    names[spectr::kPresetModulationSteps] = "CURRENT";
+    names[spectr::kPresetModulationSteps + 1] = "ABOVE";
+    REQUIRE(rig.plugin->set_preset_modulation("factory:flat", names, n));
+    rig.set(spectr::kParamLfoShape, float(LfoShape::Sine));
+    rig.set(spectr::kParamLfoRate, 4.0f);  // 2 s per cycle
+    rig.set(spectr::lfo_route_enabled_param_id(0, kPresetT), 1.0f);
+    rig.set(spectr::lfo_route_amount_param_id(0, kPresetT), 1.0f);  // reaches past the one neighbour each way
+    std::vector<float> out;
+    std::set<int> steps_seen;
+    for (int b = 0; b < int(4.0 * kRate / kBlock); ++b) {
+        rig.block([](double) { return 1000.0; }, &out);
+        steps_seen.insert(rig.plugin->preset_modulation_step_shown());
+    }
+    // All three plateaus are visited, and only those.
+    CHECK(steps_seen == std::set<int>{-1, 0, 1});
+    // The level, in 20 ms windows after the first cycle has settled, sits on
+    // one of three plateaus 12 dB apart. The plateau values are measured from
+    // the run itself (a control: they must differ by ~12 dB), and every window
+    // lands within 1.5 dB of one of them -- a blend would not.
+    const auto level = [&](std::size_t at, std::size_t len) {
+        double e = 0.0;
+        for (std::size_t i = 0; i < len; ++i) e += double(out[at + i]) * out[at + i];
+        return 10.0 * std::log10(e / double(len) + 1e-30);
+    };
+    const std::size_t window = std::size_t(0.02 * kRate);
+    std::vector<double> levels;
+    for (std::size_t at = std::size_t(2.0 * kRate); at + window <= out.size(); at += window)
+        levels.push_back(level(at, window));
+    REQUIRE(levels.size() > 50);
+    const double lo = *std::min_element(levels.begin(), levels.end());
+    const double hi = *std::max_element(levels.begin(), levels.end());
+    INFO("plateaus " << lo << " .. " << hi << " dB");
+    CHECK(hi - lo == Approx(24.0).margin(3.0));  // control: the neighbours are heard
+    const double mid = (lo + hi) * 0.5;
+    int between = 0;
+    for (const double l : levels)
+        if (std::abs(l - lo) > 1.5 && std::abs(l - hi) > 1.5 && std::abs(l - mid) > 1.5) ++between;
+    // The route slews each step over 60 ms, so a window straddling a step
+    // reads between plateaus; at a 2 s cycle that is a handful of windows.
+    CHECK(between <= 12);
 }
 
 TEST_CASE("switching the Bands route off fades back to the user's band count",

@@ -2422,22 +2422,21 @@ void Spectr::process(
                         audio_preset_driven_.store(preset_driven, std::memory_order_relaxed);
                         audio_preset_step_.store(preset_modulation_step(offset),
                                                  std::memory_order_relaxed);
-                        if (preset_driven && offset != 0.0f) {
-                            const int lo = static_cast<int>(std::floor(offset));
-                            const float frac = offset - static_cast<float>(lo);
-                            const auto gain_at = [&](int step, std::size_t band) {
-                                return step == 0
-                                    ? composed.field.bands[band].gain_db
-                                    : audio_modulation.preset.gains[static_cast<std::size_t>(
-                                          kPresetModulationSteps + step)][band];
-                            };
+                        // Whole presets, never a blend: the target steps to
+                        // the preset nearest its coordinate and plays that
+                        // preset's gains as they are, so a sine LFO walks
+                        // the list one shape at a time (what the dropdown
+                        // names is what plays) and a square flips between
+                        // two. Between steps the field is unchanged, so the
+                        // editor's overlay has nothing new to draw.
+                        const int step = preset_modulation_step(offset);
+                        if (preset_driven && step != 0) {
                             preset_blended = composed.field;
-                            for (std::size_t band = 0; band < kMaxBands; ++band) {
-                                const float a = gain_at(lo, band);
-                                const float b = frac > 0.0f ? gain_at(lo + 1, band) : a;
+                            const auto& gains = audio_modulation.preset.gains[
+                                static_cast<std::size_t>(kPresetModulationSteps + step)];
+                            for (std::size_t band = 0; band < kMaxBands; ++band)
                                 preset_blended.bands[band].gain_db = std::clamp(
-                                    a + (b - a) * frac, kBandGainMinDb, kBandGainMaxDb);
-                            }
+                                    gains[band], kBandGainMinDb, kBandGainMaxDb);
                             preserve_authored_mutes(preset_blended, host_field);
                             audible_source = &preset_blended;
                         }
