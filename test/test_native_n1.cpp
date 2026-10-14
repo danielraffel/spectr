@@ -1017,7 +1017,9 @@ TEST_CASE("native modulation frames carry the window an LFO is moving",
     store.set_value(spectr::kParamViewportWidth, width_log);
     const auto target = static_cast<std::size_t>(spectr::ModulationTarget::ViewportPosition);
     store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     store.set_value(spectr::kParamLfoDepth, 1.0f);
+    store.set_value(spectr::lfo_route_amount_param_id(0, 0), 1.0f);
     store.set_value(spectr::lfo_route_enabled_param_id(0, target), 1.0f);
     store.set_value(spectr::lfo_route_amount_param_id(0, target), 1.0f);
 
@@ -1056,4 +1058,96 @@ TEST_CASE("native modulation frames carry the window an LFO is moving",
       if (lows.size < 2)
         throw new Error('the drawn window never moved across the sweep');
     )js", "spectr-native-modulation-check");
+}
+
+namespace {
+// Modulation frames under a renderer mode, counted over several seconds of
+// audio. Returns {active frames, distinct sequences, frames in the last
+// quarter of the run} through the page so the test reads what the editor saw.
+std::string modulation_run_report(bool gpu, std::vector<spectr::ModulationTarget> targets) {
+    spectr::Spectr processor;
+    pulp::state::StateStore store;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 256;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    processor.prepare(prepare);
+    // A window with room to move, so Band shift has somewhere to go.
+    const auto [center_log, width_log] =
+        spectr::encode_viewport(spectr::Viewport{200.0f, 2000.0f});
+    store.set_value(spectr::kParamViewportCenter, center_log);
+    store.set_value(spectr::kParamViewportWidth, width_log);
+    store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    store.set_value(spectr::kParamLfoDepth, 1.0f);
+    for (auto target : targets) {
+        const auto index = static_cast<std::size_t>(target);
+        store.set_value(spectr::lfo_route_enabled_param_id(0, index), 1.0f);
+        store.set_value(spectr::lfo_route_amount_param_id(0, index), 1.0f);
+    }
+
+    auto root = processor.create_view();
+    REQUIRE(root != nullptr);
+    root->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock clock;
+    root->set_frame_clock(&clock);
+    root->layout_children();
+    processor.on_view_opened(*root);
+    auto* session = processor.active_scripted_ui();
+    REQUIRE(session != nullptr);
+    for (int frame = 0; frame < 4; ++frame) clock.tick(1.0f / 60.0f);
+    session->bridge()->load_script(R"js(
+      globalThis.__spectrModRun = { frames: [], tick: 0 };
+      window.pulp.on('modulation_frame', message => {
+        globalThis.__spectrModRun.frames.push({ t: globalThis.__spectrModRun.tick,
+          active: message.payload.active, seq: message.payload.sequence });
+      });
+    )js", "spectr-native-modulation-run-observer");
+
+    REQUIRE(processor.set_render_mode(spectr::MaskRenderMode::linear_phase));
+    if (gpu) REQUIRE(processor.set_gpu_processing(true));
+    // 12 passes of feed_tone: ~6 s of audio at 48 kHz in 256-frame blocks,
+    // the clock ticking at 30 Hz alongside.
+    for (int pass = 0; pass < 12; ++pass) {
+        session->bridge()->load_script("globalThis.__spectrModRun.tick += 96; void 0;",
+                                       "spectr-native-modulation-run-tick");
+        feed_tone(processor, clock);
+    }
+    std::string report;
+    try {
+        session->bridge()->load_script(R"js(
+          const run = globalThis.__spectrModRun;
+          const active = run.frames.filter(f => f.active === true);
+          const seqs = new Set(active.map(f => f.seq));
+          const lastQuarter = active.filter(f => f.t >= run.tick * 0.75);
+          throw new Error('REPORT=' + JSON.stringify({ frames: run.frames.length, active: active.length,
+            sequences: seqs.size, lastQuarter: lastQuarter.length,
+            gpu: )js" + std::string(gpu ? "true" : "false") + R"js( }) + '=END');
+        )js", "spectr-native-modulation-run-report");
+    } catch (const std::exception& error) {
+        report = error.what();
+    }
+    processor.on_view_closed(*root);
+    return report;
+}
+} // namespace
+
+TEST_CASE("Mixing mode keeps modulation frames flowing on CPU and on GPU",
+          "[native-n1][modulation][gpu]") {
+    using T = spectr::ModulationTarget;
+    struct Variant { const char* name; std::vector<T> targets; };
+    const Variant variants[] = {
+        {"bank+intensity", {T::WholeBank, T::Intensity}},
+        {"band-shift", {T::ViewportPosition}},
+    };
+    for (const auto& variant : variants) {
+        for (bool gpu : {false, true}) {
+            const auto report = modulation_run_report(gpu, variant.targets);
+            INFO(variant.name << (gpu ? " GPU " : " CPU ") << report);
+            WARN(variant.name << (gpu ? " GPU " : " CPU ") << report);
+            CHECK(report.find("\"lastQuarter\":0") == std::string::npos);
+        }
+    }
 }

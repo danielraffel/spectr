@@ -697,6 +697,43 @@ TEST_CASE("#34: simultaneous morph and band automation preserves the band lane")
     CHECK(state.field.bands[7].gain_db == Approx(-6.0f));
 }
 
+TEST_CASE("an LFO switch and its targets are independent controls") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    const auto mask = [&](std::size_t lfo) {
+        return mask_int(spectr::route_mask(w.proc->modulation_settings().routes[lfo]));
+    };
+    // A fresh instance routes nothing, so switching an LFO on moves nothing
+    // until a target is switched on as well.
+    CHECK(mask(0) == 0);
+    CHECK(mask(1) == 0);
+    CHECK_FALSE(w.proc->modulation_settings().enabled);
+    w.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().enabled);
+    CHECK(mask(0) == 0);
+    CHECK(spectr::resolve_modulation_target_mask(w.proc->modulation_settings()) == 0);
+
+    // A target switched on while its LFO is off stays on, and leaves the LFO
+    // off: neither control writes the other.
+    w.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(
+                          0, static_cast<std::size_t>(spectr::ModulationTarget::Freeze)), 1.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(
+                          1, static_cast<std::size_t>(spectr::ModulationTarget::Length)), 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    const auto settings = w.proc->modulation_settings();
+    CHECK_FALSE(settings.enabled);
+    CHECK_FALSE(settings.lfo2_enabled);
+    CHECK(settings.routes[0][static_cast<std::size_t>(spectr::ModulationTarget::Freeze)].enabled);
+    CHECK(settings.routes[1][static_cast<std::size_t>(spectr::ModulationTarget::Length)].enabled);
+    CHECK(w.store.get_value(spectr::kParamLfoEnabled) == 0.0f);
+    CHECK(w.store.get_value(spectr::kParamLfo2Enabled) == 0.0f);
+    // The legacy single-target lane never moved, so the routing lanes keep
+    // exactly what was written.
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 0)) == 0.0f);
+}
+
 TEST_CASE("host target automation reclaims the modulation destination") {
     Wired w;
     w.proc->apply_surface_params(false);  // settle the applied-parameter cache
@@ -707,9 +744,9 @@ TEST_CASE("host target automation reclaims the modulation destination") {
         w.store.set_value(spectr::lfo_route_enabled_param_id(
                               lfo, static_cast<std::size_t>(t)), on ? 1.0f : 0.0f);
     };
+    route(0, spectr::ModulationTarget::WholeBank, true);
     route(0, spectr::ModulationTarget::Morph, true);
     route(0, spectr::ModulationTarget::ViewportPosition, true);
-    route(1, spectr::ModulationTarget::WholeBank, false);
     route(1, spectr::ModulationTarget::SnapshotA, true);
     REQUIRE(w.proc->apply_surface_params(false));
     auto settings = w.proc->modulation_settings();
@@ -745,7 +782,8 @@ TEST_CASE("the legacy LFO Depth lanes set the Depth of every enabled target",
           "[modulation][routing]") {
     Wired w;
     w.proc->apply_surface_params(false);
-    // LFO 1: Bank (default) + Band spread; LFO 2: Morph only.
+    // LFO 1: Bank + Band spread; LFO 2: Morph only.
+    w.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     w.store.set_value(spectr::lfo_route_enabled_param_id(0, 5), 1.0f);
     w.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.33f);  // Morph off
     w.store.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);

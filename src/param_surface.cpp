@@ -436,8 +436,9 @@ void register_surface_params(pulp::state::StateStore& store) {
     // existing parameter moves. Each LFO drives any set of destinations at
     // once; each destination has an on/off lane and its own Depth (there is no
     // LFO-level depth any more; 4003/4013 are command lanes onto these).
-    // Defaults reproduce a fresh 1.0.x instance: both LFOs on the whole bank at
-    // 50 %, nothing else.
+    // A fresh instance routes nothing: an LFO's switch is its own control,
+    // and a target is switched on separately. (A 1.0.x session, which had no
+    // routing lanes, is migrated on restore from its single target instead.)
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
         "Band shift", "Band spread", "Freeze", "Length",
@@ -447,7 +448,7 @@ void register_surface_params(pulp::state::StateStore& store) {
             pulp::state::ParamInfo info;
             info.id = lfo_route_enabled_param_id(lfo, t);
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];
-            info.range = {0.0f, 1.0f, t == 0 ? 1.0f : 0.0f, 1.0f};
+            info.range = {0.0f, 1.0f, 0.0f, 1.0f};
             info.group_id = kGroupModulation;
             info.kind = pulp::state::ParamKind::Toggle;
             add_enum_labels(info, {"Off", "On"});
@@ -458,8 +459,8 @@ void register_surface_params(pulp::state::StateStore& store) {
             info.id = lfo_route_amount_param_id(lfo, t);
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t]
                 + " Depth";
-            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a new
-            // instance's LFO 1 on Bank sounds as it did.
+            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a
+            // target switched on sounds as that LFO did.
             info.range = {0.0f, 1.0f, 0.5f};
             info.group_id = kGroupModulation;
             info.to_string = [](float v) { return percent_string(v); };

@@ -191,6 +191,9 @@ function check() {
     // Progressive disclosure: the route's children are mounted, hidden while off.
     assert(mounted('depth1'), 'Depth is mounted');
     assert.equal(action('depth1'), undefined, 'and hidden while the route is off');
+    // The LFO switch is its own control: on with nothing routed, it says why
+    // the LFO is silent rather than routing something itself.
+    assert(text(action('lfo1-enable')).includes('On, no target'), `${control}: "${text(action('lfo1-enable'))}"`);
     // Toggling writes exactly this target's lane for that LFO, and no other.
     const before = test.calls.length;
     action('lfo1').props.onClick();
@@ -200,6 +203,7 @@ function check() {
     assert(!others.includes(test.calls.at(-1).id), `${control}: the lane is no other target's`);
     modulation['routeOn1_' + target] = true;
     test.render();
+    assert(!text(action('lfo1-enable')).includes('no target'), `${control}: routed, so plain "On"`);
     // The children sit under the route, behind the guide line.
     const children = rows().find((n) => n.props['data-spectr-control-route-children'] === 1);
     assert(children, `${control}: LFO 1's route children are disclosed`);
@@ -217,11 +221,14 @@ function check() {
     // The depth writes this route's amount lane.
     const depthNode = {}; action('depth1').props.ref(depthNode); depthNode.__spectrSliderStep(1);
     assert.deepEqual(test.calls.at(-1), { key: 'routeAmt1_' + target, id: lane(1, target) + 10, value: 0.51 });
-    // LFO 2's route on while LFO 2 is off: the row says so.
+    // LFO 2's route on while LFO 2 is off: the row says the route is on AND
+    // that the LFO is off, since neither switch writes the other.
     modulation.lfo2Enabled = false;
     modulation['routeOn2_' + target] = true;
     test.render();
-    assert(text(action('lfo2')).includes('LFO off'));
+    assert(text(action('lfo2')).includes('On, LFO off'), `${control}: "${text(action('lfo2'))}"`);
+    assert(text(action('lfo2-enable')).includes('Off'));
+    assert(text(action('lfo1')).includes('On') && !text(action('lfo1')).includes('LFO off'));
     // "All targets..." opens the full submenu on this target.
     action('all-targets').props.onClick();
     assert.equal(test.focusCalls.length, 1);

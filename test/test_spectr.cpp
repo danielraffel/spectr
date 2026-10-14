@@ -161,11 +161,13 @@ TEST_CASE("Spectr applies internal modulation on the audio owner",
                     spectr::band_gain_param_id(band), 0, -12.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
                                  enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoShape, 0,
                                  static_cast<float>(spectr::LfoShape::Square),
                                  0}));
             REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                                  static_cast<float>(
                                      spectr::ModulationTarget::WholeBank),
@@ -321,11 +323,13 @@ TEST_CASE("Spectr keeps host band automation and internal modulation both audibl
                     spectr::band_gain_param_id(band), 0, band_db, 0}));
             REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
                                  modulation_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoShape, 0,
                                  static_cast<float>(spectr::LfoShape::Square),
                                  0}));
             REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                                  static_cast<float>(
                                      spectr::ModulationTarget::WholeBank),
@@ -993,22 +997,26 @@ TEST_CASE("Spectr reports the display overlay inactive when depth is zero",
                     spectr::band_gain_param_id(band), 0, -12.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
                                  lfo1_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoShape, 0,
                                  static_cast<float>(spectr::LfoShape::Square),
                                  0}));
             REQUIRE(events.push({spectr::kParamLfoRate, 0, 16.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoDepth, 0, lfo1_depth, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, lfo1_depth, 0}));
             REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                                  static_cast<float>(
                                      spectr::ModulationTarget::WholeBank),
                                  0}));
             REQUIRE(events.push({spectr::kParamLfo2Enabled, 0,
                                  lfo2_enabled ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_enabled_param_id(1, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfo2Shape, 0,
                                  static_cast<float>(spectr::LfoShape::Square),
                                  0}));
             REQUIRE(events.push({spectr::kParamLfo2Rate, 0, 16.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfo2Depth, 0, lfo2_depth, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(1, 0), 0, lfo2_depth, 0}));
             // Depth is per target: each LFO's Bank target carries it.
             REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, lfo1_depth, 0}));
             REQUIRE(events.push({spectr::lfo_route_amount_param_id(1, 0), 0, lfo2_depth, 0}));
@@ -1079,12 +1087,14 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
             REQUIRE(events.push({
                 spectr::band_gain_param_id(band), 0, -12.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         // A constant-slope shape: any change over a sub-block interval is the
         // reconstruction resolving real motion, not a waveform turning point.
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(spectr::LfoShape::Saw), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
                                  spectr::ModulationTarget::WholeBank), 0}));
@@ -1175,10 +1185,12 @@ TEST_CASE("Spectr crossfades an LFO shape change instead of jumping",
             REQUIRE(events.push({
                 spectr::band_gain_param_id(band), 0, -12.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(shape), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
                                  spectr::ModulationTarget::WholeBank), 0}));
@@ -1255,11 +1267,13 @@ std::vector<float> render_audible_band_gain(
         for (std::size_t band = 0; band < 32; ++band)
             REQUIRE(events.push({spectr::band_gain_param_id(band), 0, -12.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, lane.enabled ? 1.0f : 0.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(spectr::LfoShape::Sine), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0,
                              rate_at ? rate_at(block) : 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, lane.depth, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, lane.depth, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(spectr::ModulationTarget::WholeBank), 0}));
         host.process(output, input, events);
@@ -1395,8 +1409,10 @@ TEST_CASE("Spectr's LFO enable is a ramp in the audio, not a step",
                 REQUIRE(events.push({spectr::band_gain_param_id(band), 0, -12.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoEnabled, 0,
                                  block >= enable_block ? 1.0f : 0.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
             REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+            REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
             host.process(output, input, events);
             rendered.insert(rendered.end(), out.channel(0).begin(), out.channel(0).end());
         }
@@ -1458,7 +1474,9 @@ TEST_CASE("Spectr releases the modulation overlay without a parameter event",
     for (std::size_t block = 0; block < 4; ++block) {
         pulp::state::ParameterEventQueue events;
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
@@ -1510,7 +1528,9 @@ TEST_CASE("Spectr publishes and clears level display modulation",
     for (std::size_t block = 0; block < 8; ++block) {
         pulp::state::ParameterEventQueue events;
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::lfo_route_enabled_param_id(
                                  0, static_cast<std::size_t>(
@@ -1574,10 +1594,12 @@ TEST_CASE("a band muted after both snapshots were captured stays silent under "
         pulp::state::ParameterEventQueue events;
         REQUIRE(events.push({spectr::band_mute_param_id(5), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(spectr::LfoShape::Saw), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
                                  spectr::ModulationTarget::Morph), 0}));
@@ -1632,6 +1654,7 @@ TEST_CASE("a derived morph still reaches the audible field",
     for (std::size_t block = 0; block < 8; ++block) {
         pulp::state::ParameterEventQueue events;
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(spectr::LfoShape::Sine), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
@@ -1643,6 +1666,7 @@ TEST_CASE("a derived morph still reaches the audible field",
         // `pre_field` is the PRE-LFO field by construction, so the modulator
         // being alive does not contaminate what is measured below.
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 0.5f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 0.5f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
                                  spectr::ModulationTarget::WholeBank), 0}));
@@ -1700,10 +1724,12 @@ TEST_CASE("a band muted after a derived morph outranks the re-derivation",
     for (std::size_t block = 0; block < 8; ++block) {
         pulp::state::ParameterEventQueue events;
         REQUIRE(events.push({spectr::kParamLfoEnabled, 0, 1.0f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_enabled_param_id(0, 0), 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoShape, 0,
                              static_cast<float>(spectr::LfoShape::Sine), 0}));
         REQUIRE(events.push({spectr::kParamLfoRate, 0, 1.0f, 0}));
         REQUIRE(events.push({spectr::kParamLfoDepth, 0, 0.5f, 0}));
+        REQUIRE(events.push({spectr::lfo_route_amount_param_id(0, 0), 0, 0.5f, 0}));
         REQUIRE(events.push({spectr::kParamLfoTarget, 0,
                              static_cast<float>(
                                  spectr::ModulationTarget::Morph), 0}));
