@@ -101,8 +101,8 @@ if (plantResetKeeps) {
 
 if (plantAnything) {
   html = replaceExactlyOnce(html,
-    "onContextMenu: onClear && !isCapture && filled ? (event) => {",
-    "onContextMenu: onClear ? (event) => {",
+    "onContextMenu: onContextMenu ? onContextMenu : onClear && !isCapture && filled ? (event) => {",
+    "onContextMenu: onContextMenu ? onContextMenu : onClear ? (event) => {",
     "--plant-anything-clearable");
   notes.push("planted the unscoped gesture (a capture button and an empty slot accept it)");
 }
@@ -218,7 +218,7 @@ function fnAt(source, signature, label) {
 
 function snapBtnProps(props) {
   const src = fnAt(html,
-    "function SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label }) {",
+    "function SnapBtn({ id, action, slot, filled, onClick, onClear, capture, label, onContextMenu }) {",
     "SnapBtn");
   return new Function("props", `
     const useStateChrome = (initial) => [initial, () => {}];
