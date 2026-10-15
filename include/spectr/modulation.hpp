@@ -100,14 +100,14 @@ using BandGroups = std::array<BandGroup, kBandGroupCount>;
 struct ModulationSettings {
     bool enabled = false;
     LfoShape shape = LfoShape::Sine;
-    float beats_per_cycle = 4.0f;
+    float beats_per_cycle = 1.0f;
     float depth = 0.5f;
     /// The legacy single-target lane (`4004`). Read-mostly: see
     /// docs/modulation.md. Routing is `routes`.
     ModulationTarget target = ModulationTarget::WholeBank;
     bool lfo2_enabled = false;
     LfoShape lfo2_shape = LfoShape::Sine;
-    float lfo2_beats_per_cycle = 4.0f;
+    float lfo2_beats_per_cycle = 1.0f;
     float lfo2_depth = 0.0f;
     // Legacy destination mask for ALL/NONE composition; bits 0..3 map
     // Bank/A/B/Morph. `kModulationTargetMaskUnset` defers to `target`. Only

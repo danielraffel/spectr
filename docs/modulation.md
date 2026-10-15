@@ -51,7 +51,9 @@ show their Depth rows together; a switched-off target keeps its stored Depth
 for when it is switched on again. Switching a target never moves the row under
 the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
-with). A fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
+with; for Freeze that is half of every cycle frozen), and each LFO's Rate opens
+at 1 beat, one cycle per beat, so a fresh LFO follows the host tempo as is. A
+fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
 LFOs on and a target is switched on separately, and neither control writes
 the other. An LFO that is on with nothing routed reads "On, no target"; a
 target that is on under an LFO that is off reads "On, LFO off". (A session
