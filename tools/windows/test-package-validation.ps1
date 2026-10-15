@@ -41,7 +41,7 @@ try {
     Write-FakePe (Join-Path $build 'CLAP\Spectr.clap') $machine
     Set-Content -LiteralPath (Join-Path $build 'icudtl.dat') -Value 'synthetic ICU sidecar' -NoNewline
     New-Item -ItemType Directory -Force -Path (Join-Path $build 'VST3\Release') | Out-Null
-    Set-Content -LiteralPath (Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json') -Value '{"source_sha":"synthetic"}' -NoNewline
+    Set-Content -LiteralPath (Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json') -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["arm64-win"]}}' -NoNewline
     if (-not [string]::IsNullOrWhiteSpace($Arm64EcBinary)) {
         Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $Arm64EcBinary).Path) 'arm64ec-win'
         Write-Output 'PASS: real ARM64X/ARM64EC PE positive accepted'
@@ -84,6 +84,15 @@ try {
     $missingMetadata = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $missingMetadata.metadata_sidecars = @()
     Assert-Fails { Assert-SpectrPackageManifest $expanded $missingMetadata } 'missing required build-info sidecar'
+    $wrongBuildInfo = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    Set-Content -LiteralPath (Join-Path $expanded 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["x86_64-win"]}}' -NoNewline
+    foreach ($entry in @($wrongBuildInfo.files)) {
+        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+            $entry.bytes = (Get-Item (Join-Path $expanded $entry.path)).Length
+            $entry.sha256 = (Get-FileHash (Join-Path $expanded $entry.path) -Algorithm SHA256).Hash
+        }
+    }
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongBuildInfo } 'build-info architecture mismatch'
 
     Set-Content -LiteralPath (Join-Path $expanded 'unlisted.dll') -Value 'unlisted' -NoNewline
     Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted extracted payload'
