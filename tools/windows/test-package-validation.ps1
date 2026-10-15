@@ -302,6 +302,86 @@ try {
     if (Test-Path -LiteralPath "$interruptedVst3.$interruptedId.backup") { throw 'Interrupted swap backup was not cleared after recovery' }
     Write-Output 'PASS: interrupted swap journal restores previous installed bytes on retry'
 
+    # A same-ID receipt whose hashes are valid at unrelated paths must not
+    # authorize deletion of the real install backup during recovery.
+    $foreignId = [guid]::NewGuid().ToString('N')
+    $foreignRoot = Join-Path $temp 'foreign-receipt-files'
+    Move-Item -LiteralPath $interruptedVst3 -Destination "$interruptedVst3.$foreignId.backup"
+    Copy-Item -LiteralPath (Join-Path $expanded 'VST3\Spectr.vst3') -Destination $interruptedVst3 -Recurse
+    $foreignReceipt = $receipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $foreignReceipt.transaction_id = $foreignId
+    for ($index = 0; $index -lt @($foreignReceipt.installed_files).Count; $index++) {
+        $file = $foreignReceipt.installed_files[$index]
+        $alternate = Join-Path $foreignRoot ("file-$index")
+        New-Item -ItemType Directory -Force -Path $foreignRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $expanded ([string]$file.package_path).Replace('/', [IO.Path]::DirectorySeparatorChar)) -Destination $alternate
+        $file.destination = $alternate
+    }
+    $foreignJournal = [ordered]@{
+        schema = 'spectr.windows.install.pending.v1'
+        id = $foreignId
+        destinations = $interruptedJournal.destinations
+        package = $receipt.package
+        installed_files = $receipt.installed_files
+    }
+    $foreignJournal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath "$installReceipt.pending.json"
+    $foreignReceipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $installReceipt
+    Assert-Fails {
+        & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $badPackage `
+            -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') `
+            -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null
+    } 'foreign receipt destination during pending recovery' 'Package manifest.json is missing'
+    if ((Get-FileHash -LiteralPath $oldFiles[0] -Algorithm SHA256).Hash -ne $oldHashes[0] -or
+        (Test-Path -LiteralPath "$interruptedVst3.$foreignId.backup") -or
+        (Test-Path -LiteralPath "$installReceipt.pending.json") -or
+        (Test-Path -LiteralPath $installReceipt)) {
+        throw 'Foreign receipt incorrectly committed the pending install or failed to restore its backup'
+    }
+    Write-Output 'PASS: foreign-path receipt cannot commit an interrupted transaction'
+
+    $committedRoot = Join-Path $temp 'committed-recovery'
+    $committedReceiptPath = Join-Path $temp 'committed-recovery-receipt.json'
+    $committedArgs = @{
+        Package = $package
+        Vst3Root = (Join-Path $committedRoot 'VST3')
+        ClapRoot = (Join-Path $committedRoot 'CLAP')
+        StandaloneRoot = (Join-Path $committedRoot 'Standalone')
+        Receipt = $committedReceiptPath
+        NoShortcuts = $true
+    }
+    & (Join-Path $PSScriptRoot 'install-package.ps1') @committedArgs | Out-Null
+    $committedReceipt = Get-Content -LiteralPath $committedReceiptPath -Raw | ConvertFrom-Json
+    $committedVst3 = Join-Path $committedRoot 'VST3\Spectr.vst3'
+    $committedBackup = "$committedVst3.$($committedReceipt.transaction_id).backup"
+    Copy-Item -LiteralPath $committedVst3 -Destination $committedBackup -Recurse
+    Set-Content -LiteralPath (Join-Path $committedBackup 'Contents\arm64-win\Spectr.vst3') -Value 'prior install' -NoNewline
+    $committedJournal = [ordered]@{
+        schema = 'spectr.windows.install.pending.v1'
+        id = $committedReceipt.transaction_id
+        destinations = @(
+            [ordered]@{ path = [IO.Path]::GetFullPath($committedVst3); had_original = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'CLAP\Spectr.clap')); had_original = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'Standalone\Spectr.exe')); had_original = $true }
+        )
+        package = $committedReceipt.package
+        installed_files = $committedReceipt.installed_files
+    }
+    $committedJournal | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath "$committedReceiptPath.pending.json"
+    Assert-Fails {
+        & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $badPackage `
+            -Vst3Root $committedArgs.Vst3Root -ClapRoot $committedArgs.ClapRoot `
+            -StandaloneRoot $committedArgs.StandaloneRoot -Receipt $committedReceiptPath -NoShortcuts | Out-Null
+    } 'validated committed receipt before invalid retry' 'Package manifest.json is missing'
+    $committedBinary = Join-Path $committedVst3 'Contents\arm64-win\Spectr.vst3'
+    $committedExpected = @($committedReceipt.installed_files | Where-Object { $_.destination -eq $committedBinary })
+    if ($committedExpected.Count -ne 1 -or
+        (Get-FileHash -LiteralPath $committedBinary -Algorithm SHA256).Hash -ne $committedExpected[0].sha256 -or
+        (Test-Path -LiteralPath $committedBackup) -or
+        (Test-Path -LiteralPath "$committedReceiptPath.pending.json")) {
+        throw 'Valid committed receipt did not preserve the installed package during recovery'
+    }
+    Write-Output 'PASS: matched receipt commits an interrupted transaction before retry'
+
     $freshRoot = Join-Path $temp 'fresh-install'
     $freshVst3Root = Join-Path $freshRoot 'VST3'
     $freshClapRoot = Join-Path $freshRoot 'CLAP'

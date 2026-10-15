@@ -41,6 +41,17 @@ function Restore-SpectrInstall {
     Remove-SpectrPath $JournalPath
 }
 
+function Get-SpectrInstallFileDestination {
+    param([string]$PackagePath)
+    $relative = $PackagePath.Replace('/', '\')
+    if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
+        return [IO.Path]::GetFullPath((Join-Path $Vst3Root $relative.Substring(5)))
+    }
+    if ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) { return [IO.Path]::GetFullPath($clapDest) }
+    if ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) { return [IO.Path]::GetFullPath($standaloneDest) }
+    return $null
+}
+
 $vst3Dest = Join-Path $Vst3Root 'Spectr.vst3'
 $clapDest = Join-Path $ClapRoot 'Spectr.clap'
 $standaloneDest = Join-Path $StandaloneRoot 'Spectr.exe'
@@ -128,14 +139,35 @@ if (Test-Path -LiteralPath $pending -PathType Leaf) {
         if ($previousReceipt.schema -eq 'spectr.windows.install.v1' -and
             $previousReceipt.status -eq 'installed_files_match_manifest' -and
             $previousReceipt.transaction_id -eq $journal.id -and
+            [string]$previousReceipt.package.path -eq [string]$journal.package.path -and
+            [string]$previousReceipt.package.sha256 -eq [string]$journal.package.sha256 -and
+            [string]$previousReceipt.package.manifest_sha256 -eq [string]$journal.package.manifest_sha256 -and
             @($previousReceipt.installed_files).Count -gt 0 -and
+            @($previousReceipt.installed_files).Count -eq @($journal.installed_files).Count -and
             @($previousReceipt.shortcuts).Count -eq $shortcutPaths.Count) {
             $committed = $true
-            foreach ($file in @($previousReceipt.installed_files) + @($previousReceipt.shortcuts)) {
-                if (-not (Test-Path -LiteralPath $file.destination -PathType Leaf) -or
+            for ($index = 0; $index -lt @($journal.installed_files).Count; $index++) {
+                $file = $previousReceipt.installed_files[$index]
+                $expected = $journal.installed_files[$index]
+                if ([string]$file.package_path -ne [string]$expected.package_path -or
+                    -not ([string]$file.destination).Equals([string]$expected.destination, [StringComparison]::OrdinalIgnoreCase) -or
+                    [string]$file.sha256 -ne [string]$expected.sha256 -or
+                    [Int64]$file.bytes -ne [Int64]$expected.bytes -or
+                    -not (Test-Path -LiteralPath $file.destination -PathType Leaf) -or
                     (Get-FileHash -LiteralPath $file.destination -Algorithm SHA256).Hash -ne $file.sha256) {
                     $committed = $false
                     break
+                }
+            }
+            if ($committed) {
+                for ($index = 0; $index -lt $shortcutPaths.Count; $index++) {
+                    $file = $previousReceipt.shortcuts[$index]
+                    if (-not ([string]$file.destination).Equals([string]$recoveryPlan[$index + 3].destination, [StringComparison]::OrdinalIgnoreCase) -or
+                        -not (Test-Path -LiteralPath $file.destination -PathType Leaf) -or
+                        (Get-FileHash -LiteralPath $file.destination -Algorithm SHA256).Hash -ne $file.sha256) {
+                        $committed = $false
+                        break
+                    }
                 }
             }
         }
@@ -198,6 +230,17 @@ try {
             schema = 'spectr.windows.install.pending.v1'
             id = $transactionId
             destinations = @($plan | ForEach-Object { [ordered]@{ path = $_.destination; had_original = $_.had_original } })
+            package = [ordered]@{
+                path = $Package
+                sha256 = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash
+                manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+            }
+            installed_files = @($manifest.files | ForEach-Object {
+                $destination = Get-SpectrInstallFileDestination ([string]$_.path)
+                if ($null -ne $destination) {
+                    [ordered]@{ package_path = [string]$_.path; destination = $destination; bytes = [Int64]$_.bytes; sha256 = [string]$_.sha256 }
+                }
+            })
         }
         $receiptDir = Split-Path $Receipt -Parent
         New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
