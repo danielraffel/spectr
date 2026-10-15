@@ -15,11 +15,18 @@ secret_file="${SPECTR_WINDOWS_UTM_SECRET:-$HOME/.config/pulp/secrets/spectr-wind
 
 [[ -x "$utmctl" ]] || { echo "UTM is not installed at $utmctl" >&2; exit 1; }
 [[ -f "$secret_file" ]] || { echo "missing credential file: $secret_file" >&2; exit 2; }
+if [[ "$(stat -f %Lp "$secret_file")" != 600 ||
+      "$(stat -f %Lp "$(dirname "$secret_file")")" != 700 ]]; then
+  echo "credential file must be 0600 inside a 0700 directory" >&2
+  exit 2
+fi
 command -v sdl-freerdp >/dev/null || { echo "sdl-freerdp is required" >&2; exit 2; }
+unset username password
 # shellcheck disable=SC1090
 source "$secret_file"
 : "${username:?credential file must define username}"
 : "${password:?credential file must define password}"
+export -n username password
 
 status="$($utmctl list | awk -v uuid="$utm_uuid" '$1 == uuid { print $2; exit }')"
 if [[ "$status" != "started" ]]; then
@@ -55,12 +62,14 @@ fi
 
 echo "Windows RDP: 127.0.0.1:$rdp_port"
 echo "Windows user: $username"
-sdl-freerdp \
-  /v:"127.0.0.1:$rdp_port" \
-  /u:"$username" /d:"$rdp_domain" /p:"$password" /cert:ignore \
-  /admin \
-  /size:"${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
-  +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution &
+# Keep the password out of process arguments and the environment. FreeRDP
+# consumes the option stream from a private inherited file descriptor.
+sdl-freerdp /args-from:fd:3 3< <(
+  printf '%s\n' \
+    "/v:127.0.0.1:$rdp_port" "/u:$username" "/d:$rdp_domain" "/p:$password" \
+    /cert:ignore /admin "/size:${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
+    +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution
+) &
 rdp_pid=$!
 # UTM may retain focus after starting the guest. Bring the visible RDP window
 # forward when macOS accessibility automation is available; failure is
