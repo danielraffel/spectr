@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('x86_64-win', 'arm64-win')]
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')]
     [string]$Architecture = 'arm64-win',
     [string]$ReaperIni = '',
     [string]$Receipt = '',

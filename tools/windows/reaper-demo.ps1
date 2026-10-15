@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('x86_64-win', 'arm64-win')]
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')]
     [string]$Architecture = 'arm64-win',
     [string]$Vst3Root = '',
     [string]$ReaperExe = '',
@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'reaper-architecture.ps1')
+$hostArchitecture = Get-ReaperHostArchitecture $Architecture
 
 if ([string]::IsNullOrWhiteSpace($Vst3Root)) {
     $Vst3Root = Join-Path $env:CommonProgramFiles ("VST3\Spectr.vst3\Contents\" + $Architecture)
@@ -24,7 +26,7 @@ if (-not (Test-Path -LiteralPath $plugin -PathType Leaf)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ReaperExe)) {
-    $directory = if ($Architecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
+    $directory = if ($hostArchitecture -eq 'arm64-win') { 'REAPER (arm64)' } else { 'REAPER (x64)' }
     $ReaperExe = Join-Path (Join-Path $env:ProgramFiles $directory) 'reaper.exe'
 }
 if (-not (Test-Path -LiteralPath $ReaperExe -PathType Leaf)) {
@@ -44,6 +46,7 @@ $receiptObject = [ordered]@{
     schema = 1
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
     architecture = $Architecture
+    host_architecture = $hostArchitecture
     reaper = (Get-Item -LiteralPath $ReaperExe).FullName
     reaper_sha256 = (Get-FileHash -LiteralPath $ReaperExe -Algorithm SHA256).Hash
     plugin = (Get-Item -LiteralPath $plugin).FullName
