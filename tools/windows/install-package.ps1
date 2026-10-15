@@ -4,11 +4,17 @@ param(
     [string]$Vst3Root = "$env:CommonProgramFiles\VST3",
     [string]$ClapRoot = "$env:CommonProgramFiles\CLAP",
     [string]$StandaloneRoot = "$env:ProgramFiles\Spectr",
+    [string]$Receipt = '',
     [switch]$NoShortcuts
 )
 
 $ErrorActionPreference = 'Stop'
 $Package = (Resolve-Path -LiteralPath $Package).Path
+if ([string]::IsNullOrWhiteSpace($Receipt)) { $Receipt = "$Package.install-receipt.json" }
+$Receipt = [IO.Path]::GetFullPath($Receipt)
+if ($Receipt.Equals($Package, [StringComparison]::OrdinalIgnoreCase)) { throw 'Receipt path must differ from package path' }
+# A failed retry must never leave an earlier success receipt at this path.
+if (Test-Path -LiteralPath $Receipt) { Remove-Item -LiteralPath $Receipt -Force }
 $validation = Join-Path $PSScriptRoot 'Spectr-PackageValidation.ps1'
 if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) {
     $validation = Join-Path $PSScriptRoot 'package-validation.ps1'
@@ -42,6 +48,36 @@ try {
     Copy-Item -LiteralPath $vst3Source -Destination $vst3Dest -Recurse
     Copy-Item -LiteralPath $clapSource -Destination $clapDest -Force
     Copy-Item -LiteralPath $standaloneSource -Destination $standaloneDest -Force
+    $installedFiles = @()
+    foreach ($entry in @($manifest.files)) {
+        $relative = ([string]$entry.path).Replace('/', '\')
+        $destination = $null
+        if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
+            $destination = Join-Path $Vst3Root $relative.Substring(5)
+        } elseif ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) {
+            $destination = $clapDest
+        } elseif ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) {
+            $destination = $standaloneDest
+        }
+        if ($null -eq $destination) { continue }
+        if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) { throw "Installed file is missing: $destination" }
+        $item = Get-Item -LiteralPath $destination
+        $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+        if ($item.Length -ne [Int64]$entry.bytes -or
+            -not $hash.Equals([string]$entry.sha256, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Installed file differs from package manifest: $destination"
+        }
+        $installedFiles += [ordered]@{
+            package_path = [string]$entry.path
+            destination = $item.FullName
+            bytes = $item.Length
+            sha256 = $hash
+        }
+    }
+    $expectedCount = @($manifest.files | Where-Object {
+        ([string]$_.path).Replace('/', '\') -match '^(?i:VST3\\Spectr\.vst3\\|CLAP\\Spectr\.clap$|Standalone\\Spectr\.exe$)'
+    }).Count
+    if ($installedFiles.Count -ne $expectedCount) { throw 'Installed file receipt is incomplete' }
     $shortcutPaths = @()
     if (-not $NoShortcuts) {
         $shell = New-Object -ComObject WScript.Shell
@@ -58,11 +94,34 @@ try {
             $shortcut.Save()
         }
     }
+    $receiptData = [ordered]@{
+        schema = 'spectr.windows.install.v1'
+        status = 'installed_files_match_manifest'
+        installed_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+        package = [ordered]@{
+            path = $Package
+            sha256 = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash
+            manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+            architecture = $architecture
+            artifact_architectures = $manifest.artifact_architectures
+        }
+        installed_files = $installedFiles
+    }
+    $receiptDir = Split-Path $Receipt -Parent
+    New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
+    $receiptTemp = Join-Path $receiptDir ('.spectr-install-' + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $receiptData | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptTemp -Encoding utf8
+        Move-Item -LiteralPath $receiptTemp -Destination $Receipt -Force
+    } finally {
+        if (Test-Path -LiteralPath $receiptTemp) { Remove-Item -LiteralPath $receiptTemp -Force }
+    }
     Write-Output "PASS: installed Spectr $architecture"
     Write-Output "VST3: $vst3Dest"
     Write-Output "CLAP: $clapDest"
     Write-Output "Standalone: $standaloneDest"
     if ($shortcutPaths.Count -gt 0) { Write-Output "Shortcut: $($shortcutPaths[0])" }
+    Write-Output "Install receipt: $Receipt"
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }

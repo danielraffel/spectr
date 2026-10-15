@@ -247,7 +247,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\windows\install-package.ps1 `
 ```
 
 The installer verifies every manifest hash before copying the standalone,
-VST3, and CLAP artifacts. It is a development installer script, not a signed
+VST3, and CLAP artifacts, then verifies their installed byte counts and
+SHA-256 hashes against the manifest. It writes a JSON receipt beside the ZIP
+(`.zip.install-receipt.json`), or at the path supplied with `-Receipt`. A
+failed retry removes the prior receipt at that path. The receipt proves the
+installed bytes at that moment; REAPER scan, editor, and audio behavior need
+separate evidence. It is a development installer script, not a signed
 MSI. An earlier UTM session accepted a different CLAP artifact; its exact
 hashes and render statistics remain in
 `docs/windows-receipts-2026-10-10/utm-health-receipt.json`. That historical

@@ -118,6 +118,8 @@ try {
     $traversal = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $traversal.files[0].path = '..\outside.exe'
     Assert-Fails { Assert-SpectrPackageManifest $expanded $traversal } 'manifest traversal path'
+    Assert-Fails { Get-SpectrPackagePath $expanded 'C:\outside.exe' } 'Windows absolute manifest path' 'Manifest path must be relative'
+    Assert-Fails { Get-SpectrPackagePath $expanded '\\server\share\outside.exe' } 'UNC manifest path' 'Manifest path must be relative'
 
     $missingRuntime = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $missingRuntime.runtime_sidecars = @()
@@ -128,7 +130,7 @@ try {
     $wrongSchema = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     Set-Content -LiteralPath $buildInfoPath -Value '{"schema":"wrong","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["arm64-win"]}}' -NoNewline
     foreach ($entry in @($wrongSchema.files)) {
-        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+        if ($entry.path.Replace('/', '\') -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
             $entry.bytes = (Get-Item $buildInfoPath).Length
             $entry.sha256 = (Get-FileHash $buildInfoPath -Algorithm SHA256).Hash
         }
@@ -137,7 +139,7 @@ try {
     $wrongSha = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     Set-Content -LiteralPath $buildInfoPath -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"bad"},"build":{"archs":["arm64-win"]}}' -NoNewline
     foreach ($entry in @($wrongSha.files)) {
-        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+        if ($entry.path.Replace('/', '\') -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
             $entry.bytes = (Get-Item $buildInfoPath).Length
             $entry.sha256 = (Get-FileHash $buildInfoPath -Algorithm SHA256).Hash
         }
@@ -146,7 +148,7 @@ try {
     $wrongBuildInfo = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     Set-Content -LiteralPath (Join-Path $expanded 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["x86_64-win"]}}' -NoNewline
     foreach ($entry in @($wrongBuildInfo.files)) {
-        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+        if ($entry.path.Replace('/', '\') -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
             $entry.bytes = (Get-Item (Join-Path $expanded $entry.path)).Length
             $entry.sha256 = (Get-FileHash (Join-Path $expanded $entry.path) -Algorithm SHA256).Hash
         }
@@ -178,11 +180,58 @@ try {
     Assert-Fails { & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $maliciousPackage -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -NoShortcuts } 'ZIP traversal entry'
     if (Test-Path -LiteralPath $outsideMarker) { throw 'ZIP traversal wrote outside the extraction stage' }
 
-    & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -NoShortcuts | Out-Null
+    $installReceipt = Join-Path $temp 'install-receipt.json'
+    & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null
     foreach ($path in @((Join-Path $installRoot 'VST3\Spectr.vst3'), (Join-Path $installRoot 'CLAP\Spectr.clap'), (Join-Path $installRoot 'Standalone\Spectr.exe'))) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Installer did not install $path" }
     }
-    Write-Output 'PASS: installer verifies and installs the generated package without shortcuts'
+    $receipt = Get-Content -LiteralPath $installReceipt -Raw | ConvertFrom-Json
+    if ($receipt.schema -ne 'spectr.windows.install.v1' -or $receipt.status -ne 'installed_files_match_manifest') { throw 'Install receipt has wrong schema or status' }
+    if ($receipt.package.sha256 -ne (Get-FileHash $package -Algorithm SHA256).Hash) { throw 'Install receipt package hash differs' }
+    if ($receipt.package.manifest_sha256 -ne (Get-FileHash (Join-Path $expanded 'manifest.json') -Algorithm SHA256).Hash) {
+        throw 'Install receipt manifest hash differs'
+    }
+    $installed = @($receipt.installed_files)
+    if ($installed.Count -lt 4) { throw 'Install receipt omitted VST3, metadata, CLAP or standalone files' }
+    foreach ($file in $installed) {
+        if (-not (Test-Path -LiteralPath $file.destination -PathType Leaf)) { throw "Install receipt names a missing destination: $($file.destination)" }
+        if ($file.sha256 -ne (Get-FileHash -LiteralPath $file.destination -Algorithm SHA256).Hash -or
+            $file.bytes -ne (Get-Item -LiteralPath $file.destination).Length) {
+            throw "Install receipt hash or size differs at destination: $($file.destination)"
+        }
+        $manifestEntry = @($manifest.files | Where-Object { $_.path -eq $file.package_path })
+        if ($manifestEntry.Count -ne 1 -or $manifestEntry[0].sha256 -ne $file.sha256) { throw "Install receipt is not tied to manifest: $($file.package_path)" }
+    }
+    Write-Output 'PASS: installer emits destination hashes tied to the package manifest'
+
+    $badPackage = Join-Path $temp 'missing-manifest.zip'
+    Compress-Archive -Path (Join-Path $build 'icudtl.dat') -DestinationPath $badPackage
+    Assert-Fails { & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $badPackage -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null } 'invalid package after successful install' 'Package manifest.json is missing'
+    if (Test-Path -LiteralPath $installReceipt) { throw 'Failed retry left a stale success receipt' }
+    Write-Output 'PASS: failed retry removes stale install receipt'
+
+    $corruptRoot = Join-Path $temp 'corrupt-install'
+    $corruptReceipt = Join-Path $temp 'corrupt-install-receipt.json'
+    $global:SpectrTestCorruptDestination = Join-Path $corruptRoot 'CLAP\Spectr.clap'
+    function Copy-Item {
+        param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force)
+        Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
+        if ($Destination -eq $global:SpectrTestCorruptDestination) {
+            Set-Content -LiteralPath $Destination -Value 'corrupted during copy' -NoNewline
+        }
+    }
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root (Join-Path $corruptRoot 'VST3') -ClapRoot (Join-Path $corruptRoot 'CLAP') `
+                -StandaloneRoot (Join-Path $corruptRoot 'Standalone') -Receipt $corruptReceipt -NoShortcuts | Out-Null
+        } 'destination changed during copy' 'Installed file differs from package manifest'
+    } finally {
+        Remove-Item Function:\Copy-Item
+        Remove-Variable SpectrTestCorruptDestination -Scope Global
+    }
+    if (Test-Path -LiteralPath $corruptReceipt) { throw 'Installer wrote success receipt after destination corruption' }
+    Write-Output 'PASS: destination corruption fails closed before receipt publication'
 } finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
