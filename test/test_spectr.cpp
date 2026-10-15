@@ -1110,13 +1110,13 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
     CHECK(snapshot.phase_per_second > 0.0);
     CHECK(snapshot.settings.enabled);
 
+    // The mask reads the LFO as its mean over the published block span; the
+    // same pure composition the editor draws from reproduces the field.
     const auto evaluate = [&](double seconds) {
         double phase = snapshot.phase + snapshot.phase_per_second * seconds;
         phase -= std::floor(phase);
-        return spectr::apply_internal_modulation(
-            snapshot.pre_field, snapshot.snapshots, snapshot.host_morph,
-            snapshot.settings,
-            spectr::lfo_value(snapshot.settings.shape, phase));
+        return spectr::snapshot_mask_field(snapshot, phase, snapshot.phase_2,
+                                           snapshot.shape_fade, snapshot.shape_2_fade);
     };
 
     const auto at_publication = evaluate(0.0);
@@ -1206,10 +1206,9 @@ TEST_CASE("Spectr crossfades an LFO shape change instead of jumping",
             CHECK(snapshot.shape_fade.to == spectr::LfoShape::Saw);
             CHECK(snapshot.shape_fade.mix > 0.0f);
             CHECK(snapshot.shape_fade.mix < 1.0f);
-            const auto drawn = spectr::apply_internal_modulation(
-                snapshot.pre_field, snapshot.snapshots, snapshot.host_morph,
-                snapshot.settings,
-                spectr::lfo_value(snapshot.shape_fade, snapshot.phase));
+            const auto drawn = spectr::snapshot_mask_field(
+                snapshot, snapshot.phase, snapshot.phase_2,
+                snapshot.shape_fade, snapshot.shape_2_fade);
             for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
                 INFO("band " << band);
                 CHECK(drawn.bands[band].gain_db

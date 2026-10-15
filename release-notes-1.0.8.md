@@ -11,10 +11,11 @@ Spectr 1.0.8 makes modulation more precise: each LFO is its own switch, any sele
 - **Preset steps through presets.** When an LFO drives the Preset target, the bands redraw for each neighbouring preset in menu order rather than blending between them.
 - **Right-click menus everywhere.** The remaining controls, Snapshot A and Snapshot B included, have the same right-click menu as the header controls: reset, the LFO 1 / LFO 2 switches with Shape and Rate, and the target rows.
 - **Steadier captions.** BANDS keeps its caption where it is while an LFO moves it, like LENGTH already did.
+- **Fast LFOs no longer alias.** A fast LFO used to fold into a random stepper once it outran the audio block. Bank and Output now follow the LFO exactly at any rate, up to 1/1024 beat, as a clean, band-limited modulation; the other targets fade smoothly past the block rate instead of aliasing. Measured across sample rates and buffer sizes, with nothing added above the unmodulated floor.
 
 ### Pro Tools
 - The AAX format is part of this release cycle and is handed out as its own installer while its signing is done by hand; the AU, VST3 and CLAP plug-ins and the standalone app in this package are the same build.
 
-Built with the Pulp v0.975.0 SDK.
+Built with the Pulp v0.980.0 SDK.
 
 **Having trouble?** Open **Spectr Diagnostics** from Applications. It saves a report you can email to support.

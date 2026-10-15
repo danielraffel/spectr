@@ -1,7 +1,7 @@
 {
   "asset": "pulp-sdk-darwin-arm64.tar.gz",
-  "asset_sha256": "7408ee762a0054b5717a632f482a88ca4cdd629a336a8c4c9fb5a00194828f5e",
+  "asset_sha256": "961fc9891e67f7f1ddc681819a01ad4d0edae8f1145ae9e7e68744a89617b0f9",
   "platform": "darwin-arm64",
-  "release_tag": "v0.975.0",
-  "source_git_sha": "1a8b0d56129a71eb3927cf5c2bcd4a69b8846928"
+  "release_tag": "v0.980.0",
+  "source_git_sha": "f66449d1ea2e0d05b6e736e3076b4161cfba6ed8"
 }
