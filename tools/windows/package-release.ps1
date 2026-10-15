@@ -1,12 +1,20 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
-    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Vst3Architecture = '',
     [string]$Output = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$validation = Join-Path $PSScriptRoot 'package-validation.ps1'
+if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
+. $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+if ([string]::IsNullOrWhiteSpace($Vst3Architecture)) { $Vst3Architecture = $Architecture }
+$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
+if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+[void](Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture)
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
 }
@@ -15,14 +23,14 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("spectr-package-" + [guid]::NewGu
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 try {
     $bin = Join-Path $stage 'Standalone\Spectr.exe'
-    $vst3 = Join-Path $stage "VST3\Spectr.vst3\Contents\$Architecture\Spectr.vst3"
+    $vst3 = Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.vst3"
     $clap = Join-Path $stage "CLAP\Spectr.clap"
     foreach ($path in @($bin, $vst3, $clap)) {
         New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
     }
 
     $standaloneSource = Join-Path $BuildDir 'Spectr.exe'
-    $vst3Source = Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Architecture\Spectr.vst3"
+    $vst3Source = Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.vst3"
     if (-not (Test-Path -LiteralPath $vst3Source -PathType Leaf)) {
         $vst3Source = Join-Path $BuildDir 'VST3\Spectr.dll'
     }
@@ -34,15 +42,20 @@ try {
     Copy-Item -LiteralPath $vst3Source -Destination $vst3
     Copy-Item -LiteralPath $clapSource -Destination $clap
 
+    $runtimeSidecars = @()
     foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-        $source = Join-Path $BuildDir $runtime
-        if (Test-Path -LiteralPath $source -PathType Leaf) {
+        $source = Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture
+        if ($null -ne $source) {
+            if ($runtime -eq 'wgpu_native.dll' -and $Architecture -ne $Vst3Architecture) {
+                throw 'Mixed-architecture packages cannot include one shared wgpu_native.dll; provide per-artifact runtime sources'
+            }
+            $runtimeSidecars += $runtime
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
             # The VST3 loader resolves its sidecar runtime beside the
             # architecture-specific binary. Keep the root copy for existing
             # handoffs, but also package the runtime inside the bundle so the
             # installer cannot silently omit it.
-            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Architecture\$runtime")
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime")
         }
     }
     # Carry the verified installer beside the artifacts so a handoff ZIP is
@@ -53,11 +66,30 @@ try {
         throw "Installer script is missing: $installerSource"
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
+    Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
+    if ($runtimeSidecars -notcontains 'icudtl.dat') { throw "Required runtime sidecar was not found: icudtl.dat" }
+    Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json")
+    Assert-SpectrPeArchitecture $bin $Architecture
+    Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
+    Assert-SpectrPeArchitecture $clap $Architecture
+    $wgpu = Join-Path $stage 'wgpu_native.dll'
+    if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
+        Assert-SpectrPeArchitecture $wgpu $Vst3Architecture
+    }
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
         schema = 1
         generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
         architecture = $Architecture
+        artifact_architectures = [ordered]@{
+            standalone = $Architecture
+            vst3 = $Vst3Architecture
+            clap = $Architecture
+            runtime = $Vst3Architecture
+        }
+        runtime_sidecars = @($runtimeSidecars)
+        runtime_architectures = [ordered]@{ wgpu_native_dll = $Vst3Architecture }
+        metadata_sidecars = @('Spectr.pulp-build-info.json')
         files = @($files | ForEach-Object {
             [ordered]@{ path = $_.FullName.Substring($stage.Length + 1); bytes = $_.Length; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         })

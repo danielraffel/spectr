@@ -230,7 +230,9 @@ The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
 `Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
 specific VST3 binary so the installed editor can resolve them; legacy root
-copies remain in the handoff ZIP. The installer verifies every manifest hash
+copies remain in the handoff ZIP. The VST3 slice also requires the matching
+`Spectr.pulp-build-info.json` provenance sidecar; its manifest entry includes
+the byte count and SHA-256. The installer verifies every manifest hash
 before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
@@ -256,6 +258,37 @@ Audio is healthy and the VST3 is discovered, but REAPER reports the exact
 plugin unavailable during project load. Current ARM64 plugin acceptance is
 therefore still open. Ableton remains a separate installation and acceptance
 step.
+
+The package and installer preflight every ZIP entry before extraction and
+reject a manifest with traversal paths, duplicate entries, incorrect byte
+counts or SHA-256 values, missing required files, or a PE machine type that
+does not match its declared `x86_64-win`, `arm64-win`, or `arm64ec-win` layout.
+The self-contained validation helper is
+included in each handoff ZIP. On a Windows guest, run the synthetic positive
+and negative controls with:
+
+```powershell
+.\tools\windows\test-package-validation.ps1
+```
+
+ARM64 Windows handoffs that use the ARM64X/ARM64EC VST3 slice alongside
+native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
+
+```powershell
+.\tools\windows\package-release.ps1 `
+  -BuildDir C:\builds\spectr-arm64-gpu `
+  -Architecture arm64-win `
+  -Vst3Architecture arm64ec-win
+```
+
+The manifest records each artifact architecture. ARM64EC validation requires
+the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected. The
+current GPU build requires `icudtl.dat`, discovered from the build's release
+sidecar directory and copied beside the VST3 binary; `wgpu_native.dll` is
+included and architecture-checked when a dynamically linked build provides it.
+Mixed native ARM64 plus ARM64EC packages fail closed when a shared
+`wgpu_native.dll` is present; provide separate per-artifact runtime sources
+before enabling that combination.
 
 ## Ableton Live 12 versus the installed Live 10 trial
 
