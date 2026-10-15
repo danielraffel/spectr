@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
-    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
     [string]$Output = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$validation = Join-Path $PSScriptRoot 'package-validation.ps1'
+if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
+. $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
@@ -53,6 +56,14 @@ try {
         throw "Installer script is missing: $installerSource"
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
+    Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
+    foreach ($path in @($bin, $vst3, $clap)) {
+        Assert-SpectrPeArchitecture $path $Architecture
+    }
+    $wgpu = Join-Path $stage 'wgpu_native.dll'
+    if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
+        Assert-SpectrPeArchitecture $wgpu $Architecture
+    }
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
         schema = 1

@@ -257,6 +257,17 @@ plugin unavailable during project load. Current ARM64 plugin acceptance is
 therefore still open. Ableton remains a separate installation and acceptance
 step.
 
+The package and installer reject a manifest with traversal paths, duplicate
+entries, incorrect byte counts or SHA-256 values, missing required files, or a
+PE machine type that does not match its declared `x86_64-win`, `arm64-win`,
+or `arm64ec-win` layout. The self-contained validation helper is
+included in each handoff ZIP. On a Windows guest, run the synthetic positive
+and negative controls with:
+
+```powershell
+.\tools\windows\test-package-validation.ps1
+```
+
 ## Ableton Live 12 versus the installed Live 10 trial
 
 The official Ableton Live 12.4.6 Windows trial package was copied to the UTM

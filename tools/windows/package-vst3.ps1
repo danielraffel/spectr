@@ -2,11 +2,14 @@
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
     [string]$Destination = '',
-    [ValidateSet('x86_64-win', 'arm64-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
     [string]$Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$validation = Join-Path $PSScriptRoot 'package-validation.ps1'
+if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
+. $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 if ([string]::IsNullOrWhiteSpace($Destination)) {
     $Destination = Join-Path $BuildDir 'VST3\\Spectr.vst3'
@@ -25,6 +28,7 @@ foreach ($candidate in @(
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $binary = Get-Item -LiteralPath $candidate; break }
 }
 if ($null -eq $binary) { throw "No Spectr VST3 binary found under $source" }
+Assert-SpectrPeArchitecture $binary.FullName $Architecture
 
 $package = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $package) { Remove-Item -LiteralPath $package -Recurse -Force }
