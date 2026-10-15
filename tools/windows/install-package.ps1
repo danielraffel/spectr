@@ -153,6 +153,20 @@ try {
         }
     }
     try {
+        $journalData = [ordered]@{
+            schema = 'spectr.windows.install.pending.v1'
+            id = $transactionId
+            destinations = @($plan | ForEach-Object { [ordered]@{ path = $_.destination; had_original = $_.had_original } })
+        }
+        $receiptDir = Split-Path $Receipt -Parent
+        New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
+        $journalTemp = Join-Path $receiptDir ('.spectr-install-' + $transactionId + '.pending.tmp')
+        try {
+            $journalData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $journalTemp -Encoding utf8
+            Move-Item -LiteralPath $journalTemp -Destination $pending
+        } finally {
+            Remove-SpectrPath $journalTemp
+        }
         foreach ($item in $plan) {
             Copy-Item -LiteralPath $item.source -Destination $item.staged -Recurse
         }
@@ -174,20 +188,6 @@ try {
                 (Get-FileHash -LiteralPath $stagedFile -Algorithm SHA256).Hash -ne [string]$entry.sha256) {
                 throw "Staged file differs from package manifest: $stagedFile"
             }
-        }
-        $journalData = [ordered]@{
-            schema = 'spectr.windows.install.pending.v1'
-            id = $transactionId
-            destinations = @($plan | ForEach-Object { [ordered]@{ path = $_.destination; had_original = $_.had_original } })
-        }
-        $receiptDir = Split-Path $Receipt -Parent
-        New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
-        $journalTemp = Join-Path $receiptDir ('.spectr-install-' + $transactionId + '.pending.tmp')
-        try {
-            $journalData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $journalTemp -Encoding utf8
-            Move-Item -LiteralPath $journalTemp -Destination $pending
-        } finally {
-            Remove-SpectrPath $journalTemp
         }
         foreach ($item in $plan) {
             if ($item.had_original) { Move-Item -LiteralPath $item.destination -Destination $item.backup }
