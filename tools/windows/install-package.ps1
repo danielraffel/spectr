@@ -22,8 +22,9 @@ function Remove-SpectrPath {
 
 function Restore-SpectrInstall {
     param([object[]]$Plan, [string]$JournalPath)
-    # A backup exists only after the old destination was moved. If no old
-    # destination existed, a missing stage means the new one was moved.
+    # A backup exists only after the old destination was moved. A fresh
+    # destination never contained prior user data, so remove it regardless of
+    # which step of the swap was interrupted.
     foreach ($item in $Plan) {
         if (Test-Path -LiteralPath $item.backup) {
             Remove-SpectrPath $item.destination
@@ -32,7 +33,7 @@ function Restore-SpectrInstall {
             if (-not (Test-Path -LiteralPath $item.destination)) {
                 throw "Cannot restore prior install; original and backup are missing: $($item.destination)"
             }
-        } elseif (-not (Test-Path -LiteralPath $item.staged)) {
+        } else {
             Remove-SpectrPath $item.destination
         }
         Remove-SpectrPath $item.staged
@@ -63,6 +64,20 @@ foreach ($destination in $canonicalDestinations) {
         $destination.Equals($pending, [StringComparison]::OrdinalIgnoreCase) -or
         $destination.Equals($Package, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Package and receipt paths must differ from install destinations'
+    }
+}
+$lockPaths = @($Vst3Root, $ClapRoot, $StandaloneRoot | ForEach-Object {
+    $root = [IO.Path]::GetFullPath($_)
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    Join-Path $root '.Spectr.install.lock'
+} | Sort-Object -Unique)
+$lockStreams = @()
+try {
+foreach ($lockPath in $lockPaths) {
+    try {
+        $lockStreams += [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch {
+        throw "Another Spectr installer holds a destination lock: $lockPath"
     }
 }
 if (Test-Path -LiteralPath $pending -PathType Leaf) {
@@ -283,4 +298,7 @@ try {
     Write-Output "Install receipt: $Receipt"
 } finally {
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+}
+} finally {
+    foreach ($stream in $lockStreams) { $stream.Dispose() }
 }

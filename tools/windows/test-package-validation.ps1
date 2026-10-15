@@ -301,6 +301,51 @@ try {
     if (Test-Path -LiteralPath "$installReceipt.pending.json" -PathType Leaf) { throw 'Interrupted swap journal was not cleared after recovery' }
     if (Test-Path -LiteralPath "$interruptedVst3.$interruptedId.backup") { throw 'Interrupted swap backup was not cleared after recovery' }
     Write-Output 'PASS: interrupted swap journal restores previous installed bytes on retry'
+
+    $freshRoot = Join-Path $temp 'fresh-install'
+    $freshVst3Root = Join-Path $freshRoot 'VST3'
+    $freshClapRoot = Join-Path $freshRoot 'CLAP'
+    $freshStandaloneRoot = Join-Path $freshRoot 'Standalone'
+    $freshReceipt = Join-Path $temp 'fresh-install-receipt.json'
+    New-Item -ItemType Directory -Force -Path $freshVst3Root | Out-Null
+    $heldLock = [IO.File]::Open((Join-Path $freshVst3Root '.Spectr.install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root $freshVst3Root -ClapRoot $freshClapRoot -StandaloneRoot $freshStandaloneRoot `
+                -Receipt $freshReceipt -NoShortcuts | Out-Null
+        } 'concurrent installer' 'Another Spectr installer holds a destination lock'
+    } finally { $heldLock.Dispose() }
+    if (Test-Path -LiteralPath $freshReceipt) { throw 'Lock rejection wrote a success receipt' }
+    Write-Output 'PASS: destination lock rejects a concurrent installer'
+
+    $global:SpectrTestFailSwap = Join-Path $freshClapRoot 'Spectr.clap'
+    function Move-Item {
+        param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+        if ($Destination -eq $global:SpectrTestFailSwap -and $LiteralPath.EndsWith('.new')) {
+            throw 'Injected fresh-install failure after VST3 swap'
+        }
+        Microsoft.PowerShell.Management\Move-Item @PSBoundParameters
+    }
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root $freshVst3Root -ClapRoot $freshClapRoot -StandaloneRoot $freshStandaloneRoot `
+                -Receipt $freshReceipt -NoShortcuts | Out-Null
+        } 'fresh mid-swap failure' 'Injected fresh-install failure after VST3 swap'
+    } finally {
+        Remove-Item Function:\Move-Item
+        Remove-Variable SpectrTestFailSwap -Scope Global
+    }
+    foreach ($destination in @((Join-Path $freshVst3Root 'Spectr.vst3'), (Join-Path $freshClapRoot 'Spectr.clap'), (Join-Path $freshStandaloneRoot 'Spectr.exe'))) {
+        if (Test-Path -LiteralPath $destination) { throw "Fresh failed install left an artifact: $destination" }
+    }
+    if (Test-Path -LiteralPath $freshReceipt) { throw 'Fresh failed install wrote a success receipt' }
+    if (Test-Path -LiteralPath "$freshReceipt.pending.json") { throw 'Fresh failed install left a pending journal' }
+    if (@(Get-ChildItem -LiteralPath $freshRoot -Recurse -Force | Where-Object { $_.Name -match '\.[0-9a-f]{32}\.(new|backup)$' }).Count -ne 0) {
+        throw 'Fresh failed install left staged or backup artifacts'
+    }
+    Write-Output 'PASS: fresh mid-swap failure removes new files and leaves no receipt'
 } finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
