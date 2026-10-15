@@ -19,6 +19,9 @@ if ([string]::IsNullOrWhiteSpace($Receipt)) {
 }
 $source = Join-Path $BuildDir 'VST3'
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "VST3 output directory is missing: $source" }
+$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Architecture
+if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+[void](Assert-SpectrBuildInfo $buildInfoSource $Architecture)
 
 $binary = $null
 foreach ($candidate in @(
@@ -48,8 +51,6 @@ foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
 if (-not (Test-Path -LiteralPath (Join-Path $archDir 'icudtl.dat') -PathType Leaf)) {
     throw 'Required runtime sidecar was not found: icudtl.dat'
 }
-$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Architecture
-if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
 Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $archDir 'Spectr.pulp-build-info.json')
 
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File)

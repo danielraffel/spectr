@@ -140,6 +140,24 @@ function Find-SpectrBuildInfoSource {
     return $null
 }
 
+function Assert-SpectrBuildInfo {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Path,
+        [Parameter(Mandatory = $true)] [string]$Vst3Architecture
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Build-info sidecar is missing: $Path" }
+    try { $buildInfo = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { throw "Build-info sidecar is not valid JSON: $Path" }
+    if ([string]$buildInfo.schema -ne 'pulp.build-info.v1') { throw 'Spectr.pulp-build-info.json has an unsupported schema' }
+    if ($null -eq $buildInfo.product -or [string]$buildInfo.product.source_git_sha -notmatch '^[0-9a-fA-F]{40}$') {
+        throw 'Spectr.pulp-build-info.json is missing product.source_git_sha provenance'
+    }
+    $declaredArchs = @($buildInfo.build.archs | ForEach-Object { [string]$_ })
+    if ($declaredArchs -notcontains $Vst3Architecture) {
+        throw "Spectr.pulp-build-info.json build.archs does not include $Vst3Architecture"
+    }
+    return $buildInfo
+}
+
 function Assert-SpectrPackageManifest {
     param(
         [Parameter(Mandatory = $true)] [string]$Stage,
@@ -159,6 +177,9 @@ function Assert-SpectrPackageManifest {
     $runtimeArchitecture = if ($null -eq $artifactArchitectures.runtime) { $architecture } else { [string]$artifactArchitectures.runtime }
     foreach ($artifactArchitecture in @($standaloneArchitecture, $vst3Architecture, $clapArchitecture, $runtimeArchitecture)) {
         [void](Get-SpectrMachineForArchitecture $artifactArchitecture)
+    }
+    if ($standaloneArchitecture -ne $architecture -or $clapArchitecture -ne $architecture) {
+        throw 'Package manifest standalone and CLAP architectures must match package architecture'
     }
     $entries = @($Manifest.files)
     if ($entries.Count -eq 0) { throw 'Package manifest has no files' }
@@ -209,15 +230,7 @@ function Assert-SpectrPackageManifest {
     $metadataSidecars = @($Manifest.metadata_sidecars)
     if ($metadataSidecars -notcontains 'Spectr.pulp-build-info.json') { throw 'Package manifest must include required Spectr.pulp-build-info.json sidecar' }
     if (-not $seen.Contains($buildInfoPath)) { throw "Manifest is missing metadata sidecar: $buildInfoPath" }
-    $buildInfo = Get-Content -LiteralPath (Join-Path $Stage $buildInfoPath) -Raw | ConvertFrom-Json
-    if ([string]$buildInfo.schema -ne 'pulp.build-info.v1') { throw 'Spectr.pulp-build-info.json has an unsupported schema' }
-    if ($null -eq $buildInfo.product -or [string]$buildInfo.product.source_git_sha -notmatch '^[0-9a-fA-F]{40}$') {
-        throw 'Spectr.pulp-build-info.json is missing product.source_git_sha provenance'
-    }
-    $declaredArchs = @($buildInfo.build.archs | ForEach-Object { [string]$_ })
-    if ($declaredArchs -notcontains $vst3Architecture) {
-        throw "Spectr.pulp-build-info.json build.archs does not include $vst3Architecture"
-    }
+    [void](Assert-SpectrBuildInfo (Join-Path $Stage $buildInfoPath) $vst3Architecture)
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'Standalone\Spectr.exe') $standaloneArchitecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3") $vst3Architecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'CLAP\Spectr.clap') $clapArchitecture

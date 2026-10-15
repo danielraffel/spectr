@@ -24,8 +24,11 @@ function Write-FakePe {
 }
 
 function Assert-Fails {
-    param([Parameter(Mandatory = $true)] [scriptblock]$Action, [Parameter(Mandatory = $true)] [string]$Name)
-    try { & $Action } catch { Write-Output "PASS: rejected $Name"; return }
+    param([Parameter(Mandatory = $true)] [scriptblock]$Action, [Parameter(Mandatory = $true)] [string]$Name, [string]$ExpectedText = '')
+    try { & $Action } catch {
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedText) -and $_.Exception.Message -notlike "*$ExpectedText*") { throw "Wrong failure for $Name`: $($_.Exception.Message)" }
+        Write-Output "PASS: rejected $Name"; return
+    }
     throw "Expected validation failure was accepted: $Name"
 }
 
@@ -59,10 +62,25 @@ try {
     Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Vst3Architecture arm64ec-win -Output (Join-Path $temp 'mixed-wgpu.zip') | Out-Null } 'mixed architecture shared wgpu runtime'
     Remove-Item -LiteralPath (Join-Path $build 'wgpu_native.dll') -Force
 
+    $sourceBuildInfo = Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json'
+    $sourceBuildInfoOriginal = Get-Content $sourceBuildInfo -Raw
+    Set-Content -LiteralPath $sourceBuildInfo -Value '{"schema":"wrong"}' -NoNewline
+    $invalidReleaseOutput = Join-Path $temp 'invalid-build-info.zip'
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $invalidReleaseOutput | Out-Null } 'package-release invalid build-info' 'unsupported schema'
+    if (Test-Path -LiteralPath $invalidReleaseOutput) { throw 'package-release wrote output before validating build-info' }
+    $invalidVst3Output = Join-Path $temp 'invalid-build-info.vst3'
+    $invalidVst3Receipt = Join-Path $temp 'invalid-build-info-receipt.json'
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-vst3.ps1') -BuildDir $build -Destination $invalidVst3Output -Receipt $invalidVst3Receipt | Out-Null } 'package-vst3 invalid build-info' 'unsupported schema'
+    if (Test-Path -LiteralPath $invalidVst3Output) { throw 'package-vst3 wrote output before validating build-info' }
+    if (Test-Path -LiteralPath $invalidVst3Receipt) { throw 'package-vst3 wrote receipt before validating build-info' }
+    Set-Content -LiteralPath $sourceBuildInfo -Value $sourceBuildInfoOriginal -NoNewline
+
     & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $package | Out-Null
     $expanded = Join-Path $temp 'expanded'
     Expand-Archive -LiteralPath $package -DestinationPath $expanded
     $manifest = Get-Content (Join-Path $expanded 'manifest.json') -Raw | ConvertFrom-Json
+    $buildInfoPath = Join-Path $expanded 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json'
+    $buildInfoOriginal = Get-Content $buildInfoPath -Raw
     if ((Assert-SpectrPackageManifest $expanded $manifest) -ne 'arm64-win') { throw 'Package architecture was not preserved' }
     Write-Output 'PASS: generated package has a verified ARM64 manifest and PE payloads'
 
@@ -83,7 +101,25 @@ try {
     Assert-Fails { Assert-SpectrPackageManifest $expanded $missingRuntime } 'missing required ICU sidecar'
     $missingMetadata = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $missingMetadata.metadata_sidecars = @()
-    Assert-Fails { Assert-SpectrPackageManifest $expanded $missingMetadata } 'missing required build-info sidecar'
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $missingMetadata } 'missing required build-info sidecar' 'required Spectr.pulp-build-info.json'
+    $wrongSchema = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    Set-Content -LiteralPath $buildInfoPath -Value '{"schema":"wrong","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["arm64-win"]}}' -NoNewline
+    foreach ($entry in @($wrongSchema.files)) {
+        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+            $entry.bytes = (Get-Item $buildInfoPath).Length
+            $entry.sha256 = (Get-FileHash $buildInfoPath -Algorithm SHA256).Hash
+        }
+    }
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongSchema } 'build-info schema mismatch' 'unsupported schema'
+    $wrongSha = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    Set-Content -LiteralPath $buildInfoPath -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"bad"},"build":{"archs":["arm64-win"]}}' -NoNewline
+    foreach ($entry in @($wrongSha.files)) {
+        if ($entry.path -eq 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') {
+            $entry.bytes = (Get-Item $buildInfoPath).Length
+            $entry.sha256 = (Get-FileHash $buildInfoPath -Algorithm SHA256).Hash
+        }
+    }
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongSha } 'build-info source SHA mismatch' 'source_git_sha provenance'
     $wrongBuildInfo = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     Set-Content -LiteralPath (Join-Path $expanded 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.pulp-build-info.json') -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["x86_64-win"]}}' -NoNewline
     foreach ($entry in @($wrongBuildInfo.files)) {
@@ -92,10 +128,15 @@ try {
             $entry.sha256 = (Get-FileHash (Join-Path $expanded $entry.path) -Algorithm SHA256).Hash
         }
     }
-    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongBuildInfo } 'build-info architecture mismatch'
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongBuildInfo } 'build-info architecture mismatch' 'build.archs does not include arm64-win'
+    Set-Content -LiteralPath $buildInfoPath -Value $buildInfoOriginal -NoNewline
+
+    $wrongArtifacts = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $wrongArtifacts.artifact_architectures.clap = 'x86_64-win'
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongArtifacts } 'standalone/CLAP architecture mismatch' 'standalone and CLAP architectures'
 
     Set-Content -LiteralPath (Join-Path $expanded 'unlisted.dll') -Value 'unlisted' -NoNewline
-    Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted extracted payload'
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted extracted payload' 'Unlisted package file'
 
     New-Item -ItemType Directory -Force -Path (Join-Path $expanded 'nested') | Out-Null
     Set-Content -LiteralPath (Join-Path $expanded 'nested\manifest.json') -Value '{}'

@@ -12,6 +12,9 @@ if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging
 . $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 if ([string]::IsNullOrWhiteSpace($Vst3Architecture)) { $Vst3Architecture = $Architecture }
+$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
+if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+[void](Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture)
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
 }
@@ -65,8 +68,6 @@ try {
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
     if ($runtimeSidecars -notcontains 'icudtl.dat') { throw "Required runtime sidecar was not found: icudtl.dat" }
-    $buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
-    if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
     Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json")
     Assert-SpectrPeArchitecture $bin $Architecture
     Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
