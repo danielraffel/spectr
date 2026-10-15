@@ -31,7 +31,8 @@ window titled **FreeRDP: 127.0.0.1:53390** is visible.
 
 1. Double-click **REAPER (ARM64)** in the Windows desktop.
 2. Create or select a track and click **FX**.
-3. Choose **CLAP: Spectr (Pulp)** and click **Add**.
+3. Choose **VST3: Spectr (Pulp)** and click **Add** to open the Skia/Dawn editor.
+   The CLAP entry may show REAPER's generic sliders.
 
 ## Test Ableton
 
