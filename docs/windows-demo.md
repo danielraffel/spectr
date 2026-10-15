@@ -230,7 +230,9 @@ The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
 `Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
 specific VST3 binary so the installed editor can resolve them; legacy root
-copies remain in the handoff ZIP. The installer verifies every manifest hash
+copies remain in the handoff ZIP. The VST3 slice also requires the matching
+`Spectr.pulp-build-info.json` provenance sidecar; its manifest entry includes
+the byte count and SHA-256. The installer verifies every manifest hash
 before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
@@ -280,7 +282,13 @@ native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
 ```
 
 The manifest records each artifact architecture. ARM64EC validation requires
-the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected.
+the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected. The
+current GPU build requires `icudtl.dat`, discovered from the build's release
+sidecar directory and copied beside the VST3 binary; `wgpu_native.dll` is
+included and architecture-checked when a dynamically linked build provides it.
+Mixed native ARM64 plus ARM64EC packages fail closed when a shared
+`wgpu_native.dll` is present; provide separate per-artifact runtime sources
+before enabling that combination.
 
 ## Ableton Live 12 versus the installed Live 10 trial
 

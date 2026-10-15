@@ -106,6 +106,40 @@ function Assert-SpectrArchiveEntries {
     }
 }
 
+function Find-SpectrRuntimeSource {
+    param(
+        [Parameter(Mandatory = $true)] [string]$BuildDir,
+        [Parameter(Mandatory = $true)] [string]$Runtime,
+        [Parameter(Mandatory = $true)] [string]$Vst3Architecture
+    )
+    foreach ($candidate in @(
+        (Join-Path $BuildDir $Runtime),
+        (Join-Path $BuildDir "Release\$Runtime"),
+        (Join-Path $BuildDir "VST3\$Runtime"),
+        (Join-Path $BuildDir "VST3\Release\$Runtime"),
+        (Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Vst3Architecture\$Runtime"),
+        (Join-Path $BuildDir "CLAP\Release\$Runtime")
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+    }
+    return $null
+}
+
+function Find-SpectrBuildInfoSource {
+    param(
+        [Parameter(Mandatory = $true)] [string]$BuildDir,
+        [Parameter(Mandatory = $true)] [string]$Vst3Architecture
+    )
+    foreach ($candidate in @(
+        (Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json"),
+        (Join-Path $BuildDir "VST3\Release\Spectr.pulp-build-info.json"),
+        (Join-Path $BuildDir "VST3\Spectr.pulp-build-info.json")
+    )) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+    }
+    return $null
+}
+
 function Assert-SpectrPackageManifest {
     param(
         [Parameter(Mandatory = $true)] [string]$Stage,
@@ -164,11 +198,30 @@ function Assert-SpectrPackageManifest {
     foreach ($relative in $required) {
         if (-not $seen.Contains($relative)) { throw "Manifest is missing required file: $relative" }
     }
+    $runtimeSidecars = @($Manifest.runtime_sidecars)
+    if ($runtimeSidecars -notcontains 'icudtl.dat') { throw 'Package manifest must include required icudtl.dat sidecar' }
+    foreach ($runtime in $runtimeSidecars) {
+        if ($runtime -notin @('icudtl.dat', 'wgpu_native.dll')) { throw "Unsupported runtime sidecar: $runtime" }
+        $runtimePath = "VST3\Spectr.vst3\Contents\$vst3Architecture\$runtime"
+        if (-not $seen.Contains($runtimePath)) { throw "Manifest is missing runtime sidecar: $runtimePath" }
+    }
+    $buildInfoPath = "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.pulp-build-info.json"
+    $metadataSidecars = @($Manifest.metadata_sidecars)
+    if ($metadataSidecars -notcontains 'Spectr.pulp-build-info.json') { throw 'Package manifest must include required Spectr.pulp-build-info.json sidecar' }
+    if (-not $seen.Contains($buildInfoPath)) { throw "Manifest is missing metadata sidecar: $buildInfoPath" }
+    $buildInfo = Get-Content -LiteralPath (Join-Path $Stage $buildInfoPath) -Raw | ConvertFrom-Json
+    if ($null -eq $buildInfo.source_sha -or [string]::IsNullOrWhiteSpace([string]$buildInfo.source_sha)) {
+        throw 'Spectr.pulp-build-info.json is missing source_sha provenance'
+    }
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'Standalone\Spectr.exe') $standaloneArchitecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3") $vst3Architecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'CLAP\Spectr.clap') $clapArchitecture
     foreach ($sidecar in @(Get-ChildItem -LiteralPath $Stage -Recurse -File -Filter 'wgpu_native.dll')) {
-        Assert-SpectrPeArchitecture $sidecar.FullName $runtimeArchitecture
+        $sidecarArchitecture = $runtimeArchitecture
+        if ($null -ne $Manifest.runtime_architectures -and $null -ne $Manifest.runtime_architectures.wgpu_native_dll) {
+            $sidecarArchitecture = [string]$Manifest.runtime_architectures.wgpu_native_dll
+        }
+        Assert-SpectrPeArchitecture $sidecar.FullName $sidecarArchitecture
     }
     return $architecture
 }

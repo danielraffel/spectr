@@ -39,11 +39,18 @@ New-Item -ItemType Directory -Force -Path $archDir, $resourcesDir | Out-Null
 $targetName = Join-Path $archDir 'Spectr.vst3'
 Copy-Item -LiteralPath $binary.FullName -Destination $targetName
 foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-    $runtimeSource = Join-Path $source $runtime
-    if (Test-Path -LiteralPath $runtimeSource -PathType Leaf) {
+    $runtimeSource = Find-SpectrRuntimeSource $BuildDir $runtime $Architecture
+    if ($null -ne $runtimeSource) {
+        if ($runtime -eq 'wgpu_native.dll') { Assert-SpectrPeArchitecture $runtimeSource $Architecture }
         Copy-Item -LiteralPath $runtimeSource -Destination (Join-Path $archDir $runtime)
     }
 }
+if (-not (Test-Path -LiteralPath (Join-Path $archDir 'icudtl.dat') -PathType Leaf)) {
+    throw 'Required runtime sidecar was not found: icudtl.dat'
+}
+$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Architecture
+if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $archDir 'Spectr.pulp-build-info.json')
 
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File)
 $receiptObject = [ordered]@{

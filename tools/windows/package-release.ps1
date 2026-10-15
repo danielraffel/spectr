@@ -39,9 +39,14 @@ try {
     Copy-Item -LiteralPath $vst3Source -Destination $vst3
     Copy-Item -LiteralPath $clapSource -Destination $clap
 
+    $runtimeSidecars = @()
     foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-        $source = Join-Path $BuildDir $runtime
-        if (Test-Path -LiteralPath $source -PathType Leaf) {
+        $source = Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture
+        if ($null -ne $source) {
+            if ($runtime -eq 'wgpu_native.dll' -and $Architecture -ne $Vst3Architecture) {
+                throw 'Mixed-architecture packages cannot include one shared wgpu_native.dll; provide per-artifact runtime sources'
+            }
+            $runtimeSidecars += $runtime
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
             # The VST3 loader resolves its sidecar runtime beside the
             # architecture-specific binary. Keep the root copy for existing
@@ -59,12 +64,16 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
+    if ($runtimeSidecars -notcontains 'icudtl.dat') { throw "Required runtime sidecar was not found: icudtl.dat" }
+    $buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
+    if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+    Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json")
     Assert-SpectrPeArchitecture $bin $Architecture
     Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
     Assert-SpectrPeArchitecture $clap $Architecture
     $wgpu = Join-Path $stage 'wgpu_native.dll'
     if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
-        Assert-SpectrPeArchitecture $wgpu $Architecture
+        Assert-SpectrPeArchitecture $wgpu $Vst3Architecture
     }
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
@@ -75,8 +84,11 @@ try {
             standalone = $Architecture
             vst3 = $Vst3Architecture
             clap = $Architecture
-            runtime = $Architecture
+            runtime = $Vst3Architecture
         }
+        runtime_sidecars = @($runtimeSidecars)
+        runtime_architectures = [ordered]@{ wgpu_native_dll = $Vst3Architecture }
+        metadata_sidecars = @('Spectr.pulp-build-info.json')
         files = @($files | ForEach-Object {
             [ordered]@{ path = $_.FullName.Substring($stage.Length + 1); bytes = $_.Length; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         })

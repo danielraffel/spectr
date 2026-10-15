@@ -9,12 +9,16 @@ $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'package-validation.ps1')
 
 function Write-FakePe {
-    param([Parameter(Mandatory = $true)] [string]$Path, [Parameter(Mandatory = $true)] [int]$Machine)
+    param([Parameter(Mandatory = $true)] [string]$Path, [Parameter(Mandatory = $true)] [int]$Machine, [switch]$Arm64X)
     $bytes = New-Object byte[] 512
     $bytes[0] = 0x4D; $bytes[1] = 0x5A
     [BitConverter]::GetBytes([int]0x80).CopyTo($bytes, 0x3C)
     $bytes[0x80] = 0x50; $bytes[0x81] = 0x45
     [BitConverter]::GetBytes([UInt16]$Machine).CopyTo($bytes, 0x84)
+    if ($Arm64X) {
+        [BitConverter]::GetBytes([UInt16]1).CopyTo($bytes, 0x86)
+        [Text.Encoding]::ASCII.GetBytes('.a64xrm').CopyTo($bytes, 0x98)
+    }
     New-Item -ItemType Directory -Force -Path (Split-Path $Path -Parent) | Out-Null
     [IO.File]::WriteAllBytes($Path, $bytes)
 }
@@ -35,6 +39,9 @@ try {
     Write-FakePe (Join-Path $build 'Spectr.exe') $machine
     Write-FakePe (Join-Path $build 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3') $machine
     Write-FakePe (Join-Path $build 'CLAP\Spectr.clap') $machine
+    Set-Content -LiteralPath (Join-Path $build 'icudtl.dat') -Value 'synthetic ICU sidecar' -NoNewline
+    New-Item -ItemType Directory -Force -Path (Join-Path $build 'VST3\Release') | Out-Null
+    Set-Content -LiteralPath (Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json') -Value '{"source_sha":"synthetic"}' -NoNewline
     if (-not [string]::IsNullOrWhiteSpace($Arm64EcBinary)) {
         Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $Arm64EcBinary).Path) 'arm64ec-win'
         Write-Output 'PASS: real ARM64X/ARM64EC PE positive accepted'
@@ -43,6 +50,14 @@ try {
         Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $X64Binary).Path) 'x86_64-win'
         Assert-Fails { Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $X64Binary).Path) 'arm64ec-win' } 'ordinary x64 as ARM64EC'
     }
+    $arm64xArm64 = Join-Path $temp 'arm64x-arm64.vst3'
+    Write-FakePe $arm64xArm64 0xAA64 -Arm64X
+    Assert-SpectrPeArchitecture $arm64xArm64 'arm64ec-win'
+    Write-Output 'PASS: synthetic AA64 ARM64X PE positive accepted'
+
+    Set-Content -LiteralPath (Join-Path $build 'wgpu_native.dll') -Value 'synthetic runtime' -NoNewline
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Vst3Architecture arm64ec-win -Output (Join-Path $temp 'mixed-wgpu.zip') | Out-Null } 'mixed architecture shared wgpu runtime'
+    Remove-Item -LiteralPath (Join-Path $build 'wgpu_native.dll') -Force
 
     & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $package | Out-Null
     $expanded = Join-Path $temp 'expanded'
@@ -62,6 +77,13 @@ try {
     $traversal = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $traversal.files[0].path = '..\outside.exe'
     Assert-Fails { Assert-SpectrPackageManifest $expanded $traversal } 'manifest traversal path'
+
+    $missingRuntime = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $missingRuntime.runtime_sidecars = @()
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $missingRuntime } 'missing required ICU sidecar'
+    $missingMetadata = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $missingMetadata.metadata_sidecars = @()
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $missingMetadata } 'missing required build-info sidecar'
 
     Set-Content -LiteralPath (Join-Path $expanded 'unlisted.dll') -Value 'unlisted' -NoNewline
     Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted extracted payload'
