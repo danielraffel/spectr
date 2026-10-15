@@ -64,6 +64,7 @@
 #include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
+#include "spectr/lfo_sampling.hpp"
 #include "spectr/modulation.hpp"
 
 #ifndef SPECTR_EDITOR_BACKGROUND_RGB
