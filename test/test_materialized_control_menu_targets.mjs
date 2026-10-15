@@ -109,7 +109,8 @@ const lane = (() => { const g = {}; new Function('globalThis', routeLane)(g); re
 // ── The header menu ──────────────────────────────────────────────────────
 // Every control that has a menu, and the target it must name.
 const EXPECTED = { freeze: 'freeze', mix: 'mix', intensity: 'intensity', output: 'output',
-                   length: 'length', bands: 'bands', morph: 'morph', preset: 'preset' };
+                   length: 'length', bands: 'bands', morph: 'morph', preset: 'preset',
+                   snapshotA: 'a', snapshotB: 'b' };
 
 function mountControlMenu(modulation) {
   const { React, reset, flush } = makeReact();

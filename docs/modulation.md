@@ -352,15 +352,19 @@ escape hatch (plays the user's count, lanes kept); it is off.
 
 ## Preset
 
-The Preset target morphs the composed field (after Morph, the snapshots, Bank
-and the macros) toward the presets next to the current one in the preset
-menu's order (factory, then user): the coordinate x 4 is a continuous position
-in presets, and between two presets each band's gain interpolates, the
-morph's own rule. Position 0 is **the field as it stands, the user's edits
-included**: the target never discards an edit, it moves away from the current
-sound toward its neighbours and back. Mutes never move
-(`preserve_authored_mutes`); a band a preset floors goes to -24 dB. At the
-ends of the list it stops at the last neighbour that exists.
+The Preset target steps the composed field (after Morph, the snapshots, Bank
+and the macros) through the presets next to the current one in the preset
+menu's order (factory, then user): the coordinate x 4 is a position in
+presets, rounded to the nearest whole one, and that preset's gains play as
+they are. A sine LFO walks the list one shape at a time -- flat, then the
+next, then the one after -- and a square flips between two; what the
+dropdown names is exactly what plays, never a blend of two presets. Between
+steps the field does not change, so the overlay has nothing new to draw.
+Position 0 is **the field as it stands, the user's edits included**: the
+target never discards an edit, it steps away from the current sound to its
+neighbours and back. Mutes never move (`preserve_authored_mutes`); a band a
+preset floors goes to -24 dB. At the ends of the list it stops at the last
+neighbour that exists.
 
 The neighbourhood is the editor's: when a preset is applied, the band count
 changes or the user library changes, it resolves the presets four either side
@@ -378,8 +382,10 @@ measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
 
 ## Header controls: context menus
 
-Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
-the preset button opens a small menu in the band menu's style:
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH,
+the preset button or a SNAPSHOT capture button (A, B -- the Snapshot A and
+Snapshot B targets; the recall buttons keep their right-click, which empties
+a filled slot) opens a small menu in the band menu's style:
 
 - the control's name and **Reset to** its default (Live, 100 %, 0.0 dB,
   1 bar, 32 bands, A; the preset has none);

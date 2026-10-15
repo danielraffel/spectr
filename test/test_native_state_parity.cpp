@@ -11941,7 +11941,7 @@ TEST_CASE("a header control's menu shows and toggles only its own LFO target",
     require_home(rig);
     struct Control { const char* selector; const char* name; const char* key;
                      const char* label; unsigned target; };
-    const std::array<Control, 8> controls{{
+    const std::array<Control, 10> controls{{
         {"[data-spectr-freeze-toggle]", "freeze", "freeze", "Freeze", 6},
         {"[data-spectr-length-trigger]", "length", "length", "Length", 7},
         {"[data-spectr-dropdown=\"bands\"]", "bands", "bands", "Bands", 11},
@@ -11950,6 +11950,12 @@ TEST_CASE("a header control's menu shows and toggles only its own LFO target",
         {"[data-spectr-output-trim]", "output", "output", "Output", 10},
         {"[data-spectr-morph]", "morph", "morph", "Morph", 3},
         {"[data-spectr-dropdown=\"pattern\"]", "preset", "preset", "Preset", 12},
+        // The snapshot CAPTURE buttons: the slot is the target. (Recall keeps
+        // its own right-click, which empties a filled slot.)
+        {"[data-spectr-snapshot-action=\"capture\"][data-spectr-snapshot-slot=\"A\"]",
+         "snapshotA", "a", "Snapshot A", 1},
+        {"[data-spectr-snapshot-action=\"capture\"][data-spectr-snapshot-slot=\"B\"]",
+         "snapshotB", "b", "Snapshot B", 2},
     }};
     const auto routes = [&] {
         std::vector<float> values;
