@@ -1531,9 +1531,11 @@ void Spectr::publish_modulation_frame_() {
     // Extrapolating the published phase makes the painted value a continuous
     // function of display time.
     //
-    // This calls the same pure `lfo_value` / `apply_internal_modulation` the
-    // audio owner calls, over the inputs the audio owner published, so no DSP
-    // is duplicated and the drawn field cannot drift from the audible one.
+    // This calls the same pure composition the audio owner calls
+    // (`snapshot_audible_field`: the mask's mean-read waves plus Bank's
+    // handed-over per-sample share), over the inputs the audio owner
+    // published, so no DSP is duplicated and the drawn field cannot drift
+    // from the audible one.
     const bool reconstructable =
         modulated.active && modulated.published_ns != 0;
     double phase_1 = modulated.phase;
@@ -1587,10 +1589,8 @@ void Spectr::publish_modulation_frame_() {
 
     const BandField* drawn = &modulated.field;
     if (reconstructable) {
-        native_modulation_drawn_ = compose_internal_modulation(
-            modulated.pre_field, modulated.snapshots, modulated.host_morph,
-            modulated.settings, lfo_value(fade_1, phase_1),
-            lfo_value(fade_2, phase_2)).field;
+        native_modulation_drawn_ = snapshot_audible_field(
+            modulated, phase_1, phase_2, fade_1, fade_2);
         drawn = &native_modulation_drawn_;
     }
 

@@ -10096,6 +10096,57 @@ void press_menu_slider(NativeEditorRig& rig, std::string_view action, double rat
 
 }  // namespace
 
+TEST_CASE("a released Rate drag holds its value while an LFO drives a band group",
+          "[native-n1][state-parity][modulation][automation][band-group]") {
+    // The band menu's Rate slider is a gesture (Touch/Release to a host) around
+    // param_edit writes; the shared modulation state keeps the written value
+    // until the processor reports it, so the live payloads an LFO-driven band
+    // group republishes every frame cannot pull the thumb back to a stale
+    // value after the pointer is released. A host that moves the lane AFTER
+    // the release (Pro Tools in Touch, returning to its playlist) is the only
+    // thing that may move it, and that is the host's call, not a snap-back.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE(rig.processor.set_band_group(0x3ull << 10, 0, true, 0.5f));
+    open_band_menu(rig);
+    ModulationEditRecorder recorder(rig.store);
+    activate(rig, "[data-spectr-band-action=\"lfo1-enable\"]");
+    CHECK(recorder.take() == "begin 4000, set 4000=1, end 4000");
+    REQUIRE(rig.processor.apply_surface_params(false));
+    settle(rig.clock, 8);
+
+    const auto track = std::string("[data-spectr-menu-slider-track=\"lfo1-rate\"]");
+    activate(rig, track, "pointerdown", slider_press_at(0.2, track));
+    activate(rig, track, "pointermove", slider_press_at(0.6, track));
+    activate(rig, track, "pointerup", slider_press_at(0.6, track));
+    {
+        const auto log = recorder.take();
+        INFO(log);
+        CHECK(log.rfind("begin 4002, ", 0) == 0);
+        CHECK(log.find("set 4002=8") != std::string::npos);
+        CHECK(log.substr(log.size() - std::string("end 4002").size()) == "end 4002");
+    }
+    // 0.6 of 23 stops is index 13: 8 beats.
+    CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(8.0f));
+
+    // The LFO runs, the group moves two bands, and every frame republishes
+    // the modulation block; the released value stays what the pointer left.
+    REQUIRE(rig.processor.apply_surface_params(false));
+    feed_audio_blocks(rig, 90);
+    settle(rig.clock, 16);
+    CHECK(rig.store.get_value(spectr::kParamLfoRate) == Catch::Approx(8.0f));
+    const auto shown = runtime_value(rig,
+        "(() => { const n = document.querySelector('[data-spectr-band-action=\"lfo1-rate\"]');"
+        " return n ? String(n.getAttribute('aria-valuenow')) + ' ' + String(n.getAttribute('aria-valuetext'))"
+        " : 'closed'; })()",
+        "spectr-rate-after-release");
+    INFO(shown);
+    CHECK(shown == "13 8");
+    CHECK(runtime_value(rig, "String((globalThis.__spectrModulationLast || {}).rate)",
+                        "spectr-rate-native") == "8");
+}
+
 TEST_CASE("a band group reaches the editor's modulation payload with its bands and per-LFO rows",
           "[native-n1][state-parity][modulation][band-group]") {
     // The band menu's selection row reads `modulation.groups` from the live

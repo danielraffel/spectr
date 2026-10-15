@@ -4,10 +4,16 @@ Spectr has two tempo-synced LFOs. An LFO defines a **movement** -- its Shape
 and its Rate in beats -- and nothing else. The Rate runs from 1/1024 to 4096
 beats per cycle; the menus step through the powers of two and show the stop
 as one token ("1/1024" .. "4096", the unit named once in the section head),
-a host can automate any value between. The LFO is sampled once per audio
-block, so a cycle shorter than a block (below about 1/32 beat at 120 BPM and
-256-sample blocks) plays as a block-rate stepper, not an audio-rate wave; at
-the other end 4096 beats is 34 minutes at 120 BPM. What it moves, and how far, is set
+a host can automate any value between; at the far end 4096 beats is 34
+minutes at 120 BPM. How a destination samples the LFO depends on how often it
+can take a value, and neither way aliases (see [Sampling](#sampling-the-lfos)
+below): a destination that takes one value per audio block -- every spectral
+target, the Freeze gate and the Length / Bands / Preset steps -- reads the
+waveform's mean over that block, so a cycle shorter than the block fades to
+the wave's average rather than folding into a block-rate stepper; the Output
+gain, which takes a value every sample, follows the LFO at audio rate with
+band-limited waveforms, so a 1/1024-beat LFO on Output is a true
+amplitude modulation. What it moves, and how far, is set
 per **target**: each LFO drives any set of targets at once, and each target
 has its own **Depth**. This page is the contract for how targets combine, what
 each one does, how the controls record and play back, and how sessions and
@@ -51,7 +57,9 @@ show their Depth rows together; a switched-off target keeps its stored Depth
 for when it is switched on again. Switching a target never moves the row under
 the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
-with). A fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
+with; for Freeze that is half of every cycle frozen), and each LFO's Rate opens
+at 1 beat, one cycle per beat, so a fresh LFO follows the host tempo as is. A
+fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
 LFOs on and a target is switched on separately, and neither control writes
 the other. An LFO that is on with nothing routed reads "On, no target"; a
 target that is on under an LFO that is off reads "On, LFO off". (A session
@@ -449,6 +457,70 @@ again** turns the Setting off. The dialog is generic
 (`window.spectrOverrideModulated(control, target, lfos, action, options)`;
 `options.keepApplies === false` drops the action on Keep); the Mix,
 Intensity and Output knobs ask it in their own names.
+
+## Sampling the LFOs
+
+An LFO is a continuous function of phase; what can alias is how a destination
+samples it. Two regimes, both from Pulp's `pulp/signal/lfo_sampling.hpp`:
+
+- **One value per block** (the band groups, Snapshot A / B, Morph, Band
+  shift, Band spread, Intensity, Mix, the Freeze gate, Length, Bands, Preset,
+  and Bank below 1/32 cycle per block):
+  the value is the exact mean of the waveform over the block's phase interval
+  (`lfo_mean`), a box filter one block wide. Below the block Nyquist (half the
+  block rate: 94 Hz at 256-sample blocks and 48 kHz) it is the value at the
+  block's centre to within the box's rolloff; above it the swing collapses to
+  the wave's average -- a 2 kHz LFO on a band group fades to nothing, by
+  design, rather than painting a random stepper (Bank itself is handed to the
+  per-sample path, below). The Freeze gate on the sine, triangle and
+  saw compares that mean with its threshold; on the square it is on when more
+  than half the block lies inside the gate's window. Closed form, so a fast
+  LFO costs what a slow one does.
+- **Every sample** (Output, and Bank once handed over): above 1/32 cycle
+  per block the gain reads each LFO's band-limited waveform at every sample (`lfo_bandlimited`: polyBLEP at
+  the square's and saw's edges, polyBLAMP at the triangle's corners, the sine
+  exact), phase-continuous with the block phase and at the increment the
+  block advance uses. Below that the previous ramp between block ends is
+  within 0.5 % of the curve and costs nothing per sample, so a slow LFO pays
+  nothing new. **Bank is handed over** to this path: it moves every band
+  together, which is a broadband gain, so from 1/32 cycle per block its share
+  through the mask shrinks and its share as the per-sample gain grows (whole
+  by 1/16 cycle per block). Sweeping Rate across the handover moves nothing,
+  and once handed over the mask holds no Bank at all, so Bank follows the LFO
+  exactly at any rate rather than fading. The per-sample share is scaled as
+  the mask would scale it, by Intensity and by Mix; the per-band clamp the
+  mask applies does not reach it.
+
+Measured (`test/test_modulation_freeze.cpp`, `[lfo-alias]`, Pulp's
+`measure_modulation_sidebands`: a 1 kHz tone, the energy at the carrier +/- k
+times the LFO frequency against the energy anywhere else in 20 Hz .. 20 kHz,
+both re the carrier; `SPECTR_MODULATION_PLANT=lfo-point-sample` restores the
+one-phase-per-block read as the negative control):
+
+| Target, LFO rate at 120 BPM (48 kHz, 256-sample blocks: block rate 187.5 Hz) | Point-sample read (before): sidebands / elsewhere | Shipping: sidebands / elsewhere |
+| --- | --- | --- |
+| Bank, 1 beat (2 Hz; lines inside the carrier's own line at this resolution) | -40.4 / -52.2 dB | -40.4 / -52.2 dB |
+| Bank, 1/32 beat (64 Hz) | -11.7 / -11.8 dB | -6.6 / -115.1 dB |
+| Bank, 1/42 beat (84 Hz, just below the block Nyquist) | -15.5 / -9.7 dB | -6.6 / -113.9 dB |
+| Bank, 1/61 beat (122 Hz, just above it) | -19.7 / -9.0 dB | -6.6 / -113.9 dB |
+| Bank, 1/256 beat (512 Hz) | -12.9 / -10.2 dB | -6.6 / -113.6 dB |
+| Bank, 1/1024 beat (2048 Hz) | -33.9 / -6.8 dB | -6.6 / -113.8 dB |
+| Output, sine, 1/256 beat | -11.7 / -11.3 dB | -6.6 / -113.5 dB |
+| Output, sine, 1/1024 beat | -44.5 / -6.8 dB | -6.6 / -113.8 dB |
+| Output, square, 1/256 beat | -9.9 / -7.8 dB | -4.5 / -43.5 dB |
+| Output, square, 1/1024 beat | -19.2 / -5.2 dB | -4.7 / -38.4 dB |
+| Unmodulated control: elsewhere | -114.3 dB | -114.3 dB |
+
+A Bank LFO at Depth 50 % is a +/-6 dB swing, which is the -6.6 dB the
+sidebands read once the modulation is reproduced; "elsewhere" at the control's
+floor means the path added nothing. The same rows hold at 44.1 and 96 kHz and
+at 64- and 1024-sample blocks, and at 42, 52, 84, 122 and 253 Hz on the
+187.5 Hz block rate, where a one-block box alone is weakest. The square's
+remaining -38 .. -58 dB is polyBLEP's own reach. Bank's law is pinned by a
+fit of the tone's envelope: 6.00 dB of swing through the mask at 1 beat,
+5.84 dB as the per-sample gain at 1/64 beat, each with a 0.07 dB fit
+residual. Per 256-sample block, median: 32 us with no LFO, 60 us with a 1-beat
+Bank LFO (the mask restage, as before), 32 us with a 1-beat Output LFO.
 
 ## Smoothness
 
