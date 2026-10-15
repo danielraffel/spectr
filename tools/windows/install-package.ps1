@@ -44,17 +44,24 @@ function Restore-SpectrInstall {
 $vst3Dest = Join-Path $Vst3Root 'Spectr.vst3'
 $clapDest = Join-Path $ClapRoot 'Spectr.clap'
 $standaloneDest = Join-Path $StandaloneRoot 'Spectr.exe'
-$destinations = @($vst3Dest, $clapDest, $standaloneDest)
+$shortcutPaths = @()
+if (-not $NoShortcuts) {
+    $shortcutPaths = @(
+        (Join-Path $env:PUBLIC 'Desktop\Spectr.lnk'),
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Spectr.lnk')
+    )
+}
+$destinations = @($vst3Dest, $clapDest, $standaloneDest) + $shortcutPaths
 $canonicalDestinations = @($destinations | ForEach-Object { [IO.Path]::GetFullPath($_) })
 $vst3Prefix = $canonicalDestinations[0].TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-for ($index = 0; $index -lt 3; $index++) {
-    for ($other = $index + 1; $other -lt 3; $other++) {
+for ($index = 0; $index -lt $destinations.Count; $index++) {
+    for ($other = $index + 1; $other -lt $destinations.Count; $other++) {
         if ($canonicalDestinations[$index].Equals($canonicalDestinations[$other], [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Install destinations must be distinct'
         }
     }
 }
-foreach ($path in @($canonicalDestinations[1], $canonicalDestinations[2], $Receipt, $pending, $Package)) {
+foreach ($path in @($canonicalDestinations | Select-Object -Skip 1) + @($Receipt, $pending, $Package)) {
     if ($path.StartsWith($vst3Prefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Install destination or receipt lies inside the VST3 bundle: $path"
     }
@@ -66,36 +73,50 @@ foreach ($destination in $canonicalDestinations) {
         throw 'Package and receipt paths must differ from install destinations'
     }
 }
-$lockPaths = @($Vst3Root, $ClapRoot, $StandaloneRoot | ForEach-Object {
+$lockRoots = @($Vst3Root, $ClapRoot, $StandaloneRoot) + @($shortcutPaths | ForEach-Object { Split-Path $_ -Parent })
+$lockPaths = @($lockRoots | ForEach-Object {
     $root = [IO.Path]::GetFullPath($_)
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     Join-Path $root '.Spectr.install.lock'
-} | Sort-Object -Unique)
+}) + @("$Receipt.lock", "$pending.lock")
+$receiptDir = Split-Path $Receipt -Parent
+New-Item -ItemType Directory -Force -Path $receiptDir | Out-Null
+$lockPaths = @($lockPaths | Sort-Object -Unique)
+foreach ($lockPath in $lockPaths) {
+    foreach ($path in @($Receipt, $pending, $Package)) {
+        if ([IO.Path]::GetFullPath($path).Equals([IO.Path]::GetFullPath($lockPath), [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Package, receipt, and journal paths must differ from install locks: $path"
+        }
+    }
+}
 $lockStreams = @()
 try {
 foreach ($lockPath in $lockPaths) {
     try {
         $lockStreams += [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     } catch {
-        throw "Another Spectr installer holds a destination lock: $lockPath"
+        throw "Another Spectr installer holds an install lock: $lockPath"
     }
 }
 if (Test-Path -LiteralPath $pending -PathType Leaf) {
     $journal = Get-Content -LiteralPath $pending -Raw | ConvertFrom-Json
     if ($journal.schema -ne 'spectr.windows.install.pending.v1' -or
-        [string]$journal.id -notmatch '^[0-9a-f]{32}$' -or @($journal.destinations).Count -ne 3) {
+        [string]$journal.id -notmatch '^[0-9a-f]{32}$' -or @($journal.destinations).Count -ne $destinations.Count) {
         throw "Cannot safely recover invalid install journal: $pending"
     }
     $recoveryPlan = @()
-    for ($index = 0; $index -lt 3; $index++) {
+    for ($index = 0; $index -lt $destinations.Count; $index++) {
         $destination = [IO.Path]::GetFullPath($destinations[$index])
         if (-not $destination.Equals([string]$journal.destinations[$index].path, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Install roots differ from pending transaction; recover with the original roots: $pending"
         }
+        if ($journal.destinations[$index].had_original -isnot [bool]) {
+            throw "Cannot safely recover journal with invalid prior-install state: $pending"
+        }
         $recoveryPlan += [pscustomobject]@{
             destination = $destination
-            staged = "$destination.$($journal.id).new"
-            backup = "$destination.$($journal.id).backup"
+            staged = if ($index -lt 3) { "$destination.$($journal.id).new" } else { "$destination.$($journal.id).new.lnk" }
+            backup = if ($index -lt 3) { "$destination.$($journal.id).backup" } else { "$destination.$($journal.id).backup.lnk" }
             had_original = [bool]$journal.destinations[$index].had_original
         }
     }
@@ -104,9 +125,13 @@ if (Test-Path -LiteralPath $pending -PathType Leaf) {
     $committed = $false
     if (Test-Path -LiteralPath $Receipt -PathType Leaf) {
         $previousReceipt = Get-Content -LiteralPath $Receipt -Raw | ConvertFrom-Json
-        if ($previousReceipt.transaction_id -eq $journal.id) {
+        if ($previousReceipt.schema -eq 'spectr.windows.install.v1' -and
+            $previousReceipt.status -eq 'installed_files_match_manifest' -and
+            $previousReceipt.transaction_id -eq $journal.id -and
+            @($previousReceipt.installed_files).Count -gt 0 -and
+            @($previousReceipt.shortcuts).Count -eq $shortcutPaths.Count) {
             $committed = $true
-            foreach ($file in @($previousReceipt.installed_files)) {
+            foreach ($file in @($previousReceipt.installed_files) + @($previousReceipt.shortcuts)) {
                 if (-not (Test-Path -LiteralPath $file.destination -PathType Leaf) -or
                     (Get-FileHash -LiteralPath $file.destination -Algorithm SHA256).Hash -ne $file.sha256) {
                     $committed = $false
@@ -157,14 +182,15 @@ try {
     $transactionId = [guid]::NewGuid().ToString('N')
     $sources = @($vst3Source, $clapSource, $standaloneSource)
     $plan = @()
-    for ($index = 0; $index -lt 3; $index++) {
+    for ($index = 0; $index -lt $destinations.Count; $index++) {
         $destination = [IO.Path]::GetFullPath($destinations[$index])
         $plan += [pscustomobject]@{
-            source = $sources[$index]
+            source = if ($index -lt 3) { $sources[$index] } else { $null }
             destination = $destination
-            staged = "$destination.$transactionId.new"
-            backup = "$destination.$transactionId.backup"
+            staged = if ($index -lt 3) { "$destination.$transactionId.new" } else { "$destination.$transactionId.new.lnk" }
+            backup = if ($index -lt 3) { "$destination.$transactionId.backup" } else { "$destination.$transactionId.backup.lnk" }
             had_original = (Test-Path -LiteralPath $destination)
+            expected_hash = ''
         }
     }
     try {
@@ -182,8 +208,20 @@ try {
         } finally {
             Remove-SpectrPath $journalTemp
         }
-        foreach ($item in $plan) {
+        foreach ($item in @($plan | Select-Object -First 3)) {
             Copy-Item -LiteralPath $item.source -Destination $item.staged -Recurse
+        }
+        if ($shortcutPaths.Count -gt 0) {
+            $shell = New-Object -ComObject WScript.Shell
+            foreach ($item in @($plan | Select-Object -Skip 3)) {
+                $shortcut = $shell.CreateShortcut($item.staged)
+                $shortcut.TargetPath = $standaloneDest
+                $shortcut.WorkingDirectory = $StandaloneRoot
+                $shortcut.IconLocation = "$standaloneDest,0"
+                $shortcut.Save()
+                if (-not (Test-Path -LiteralPath $item.staged -PathType Leaf)) { throw "Staged shortcut is missing: $($item.staged)" }
+                $item.expected_hash = (Get-FileHash -LiteralPath $item.staged -Algorithm SHA256).Hash
+            }
         }
         # All sources are staged on the destination volume before any live
         # artifact moves. This also catches a damaged copy before swap.
@@ -238,21 +276,12 @@ try {
         ([string]$_.path).Replace('/', '\') -match '^(?i:VST3\\Spectr\.vst3\\|CLAP\\Spectr\.clap$|Standalone\\Spectr\.exe$)'
     }).Count
     if ($installedFiles.Count -ne $expectedCount) { throw 'Installed file receipt is incomplete' }
-    $shortcutPaths = @()
-    if (-not $NoShortcuts) {
-        $shell = New-Object -ComObject WScript.Shell
-        $shortcutPaths = @(
-            (Join-Path $env:PUBLIC 'Desktop\Spectr.lnk'),
-            (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Spectr.lnk')
-        )
-        foreach ($shortcutPath in $shortcutPaths) {
-            New-Item -ItemType Directory -Force -Path (Split-Path $shortcutPath -Parent) | Out-Null
-            $shortcut = $shell.CreateShortcut($shortcutPath)
-            $shortcut.TargetPath = $standaloneDest
-            $shortcut.WorkingDirectory = $StandaloneRoot
-            $shortcut.IconLocation = "$standaloneDest,0"
-            $shortcut.Save()
-        }
+    $installedShortcuts = @()
+    foreach ($item in @($plan | Select-Object -Skip 3)) {
+        if (-not (Test-Path -LiteralPath $item.destination -PathType Leaf)) { throw "Installed shortcut is missing: $($item.destination)" }
+        $hash = (Get-FileHash -LiteralPath $item.destination -Algorithm SHA256).Hash
+        if ($hash -ne $item.expected_hash) { throw "Installed shortcut differs from staged shortcut: $($item.destination)" }
+        $installedShortcuts += [ordered]@{ destination = $item.destination; sha256 = $hash }
     }
     $receiptData = [ordered]@{
         schema = 'spectr.windows.install.v1'
@@ -267,6 +296,7 @@ try {
             artifact_architectures = $manifest.artifact_architectures
         }
         installed_files = $installedFiles
+        shortcuts = $installedShortcuts
     }
     $receiptTemp = Join-Path $receiptDir ('.spectr-install-' + [guid]::NewGuid().ToString('N') + '.json')
     try {

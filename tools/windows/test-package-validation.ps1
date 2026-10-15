@@ -314,10 +314,33 @@ try {
             & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
                 -Vst3Root $freshVst3Root -ClapRoot $freshClapRoot -StandaloneRoot $freshStandaloneRoot `
                 -Receipt $freshReceipt -NoShortcuts | Out-Null
-        } 'concurrent installer' 'Another Spectr installer holds a destination lock'
+        } 'concurrent installer' 'Another Spectr installer holds an install lock'
     } finally { $heldLock.Dispose() }
     if (Test-Path -LiteralPath $freshReceipt) { throw 'Lock rejection wrote a success receipt' }
     Write-Output 'PASS: destination lock rejects a concurrent installer'
+
+    $otherRoot = Join-Path $temp 'different-roots-same-receipt'
+    $heldReceiptLock = [IO.File]::Open("$freshReceipt.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root (Join-Path $otherRoot 'VST3') -ClapRoot (Join-Path $otherRoot 'CLAP') `
+                -StandaloneRoot (Join-Path $otherRoot 'Standalone') -Receipt $freshReceipt -NoShortcuts | Out-Null
+        } 'different roots sharing a receipt' 'Another Spectr installer holds an install lock'
+    } finally { $heldReceiptLock.Dispose() }
+    if (Test-Path -LiteralPath $freshReceipt) { throw 'Shared-receipt lock rejection wrote a success receipt' }
+    if (Test-Path -LiteralPath "$freshReceipt.pending.json") { throw 'Shared-receipt lock rejection wrote a journal' }
+    Write-Output 'PASS: receipt lock rejects different roots sharing one receipt path'
+
+    $heldPendingLock = [IO.File]::Open("$freshReceipt.pending.json.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root (Join-Path $otherRoot 'VST3') -ClapRoot (Join-Path $otherRoot 'CLAP') `
+                -StandaloneRoot (Join-Path $otherRoot 'Standalone') -Receipt $freshReceipt -NoShortcuts | Out-Null
+        } 'pending journal identity lock' 'Another Spectr installer holds an install lock'
+    } finally { $heldPendingLock.Dispose() }
+    Write-Output 'PASS: pending journal identity is locked before install'
 
     $global:SpectrTestFailSwap = Join-Path $freshClapRoot 'Spectr.clap'
     function Move-Item {
@@ -346,6 +369,79 @@ try {
         throw 'Fresh failed install left staged or backup artifacts'
     }
     Write-Output 'PASS: fresh mid-swap failure removes new files and leaves no receipt'
+
+    # The COM shortcut implementation is Windows-only. Mock only its file
+    # creation here so rollback of both shortcut paths runs under pwsh too.
+    $oldPublic = $env:PUBLIC
+    $oldProgramData = $env:ProgramData
+    $env:PUBLIC = Join-Path $temp 'mock-public'
+    $env:ProgramData = Join-Path $temp 'mock-programdata'
+    function New-Object {
+        param([Parameter(Position = 0)] [string]$TypeName, [string]$ComObject, [object[]]$ArgumentList)
+        if ([string]::IsNullOrEmpty($ComObject)) { return Microsoft.PowerShell.Utility\New-Object @PSBoundParameters }
+        if ($ComObject -ne 'WScript.Shell') { throw "Unexpected COM mock request: $ComObject" }
+        $shell = [pscustomobject]@{}
+        $shell | Add-Member -MemberType ScriptMethod -Name CreateShortcut -Value {
+            param($path)
+            $link = [pscustomobject]@{ Path = $path; TargetPath = ''; WorkingDirectory = ''; IconLocation = '' }
+            $link | Add-Member -MemberType ScriptMethod -Name Save -Value {
+                [IO.File]::WriteAllText($this.Path, "$($this.TargetPath)|$($this.WorkingDirectory)|$($this.IconLocation)")
+            }
+            return $link
+        }
+        return $shell
+    }
+    $shortcutRoot = Join-Path $temp 'shortcut-install'
+    $shortcutReceipt = Join-Path $temp 'shortcut-install-receipt.json'
+    $shortcutArgs = @{
+        Package = $package
+        Vst3Root = (Join-Path $shortcutRoot 'VST3')
+        ClapRoot = (Join-Path $shortcutRoot 'CLAP')
+        StandaloneRoot = (Join-Path $shortcutRoot 'Standalone')
+        Receipt = $shortcutReceipt
+    }
+    try {
+        & (Join-Path $PSScriptRoot 'install-package.ps1') @shortcutArgs | Out-Null
+        $shortcutReceiptData = Get-Content -LiteralPath $shortcutReceipt -Raw | ConvertFrom-Json
+        if (@($shortcutReceiptData.shortcuts).Count -ne 2) { throw 'Shortcut install receipt lacks two hashes' }
+        $shortcutDestinations = @($shortcutReceiptData.shortcuts | ForEach-Object { [string]$_.destination })
+        $priorPaths = @(
+            (Join-Path $shortcutRoot 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3'),
+            (Join-Path $shortcutRoot 'CLAP\Spectr.clap'),
+            (Join-Path $shortcutRoot 'Standalone\Spectr.exe')
+        ) + $shortcutDestinations
+        $priorHashes = @()
+        for ($index = 0; $index -lt $priorPaths.Count; $index++) {
+            Set-Content -LiteralPath $priorPaths[$index] -Value "previous shortcut transaction $index" -NoNewline
+            $priorHashes += (Get-FileHash -LiteralPath $priorPaths[$index] -Algorithm SHA256).Hash
+        }
+        $global:SpectrTestFailSwap = $shortcutDestinations[1]
+        function Move-Item {
+            param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+            if ($Destination -eq $global:SpectrTestFailSwap -and $LiteralPath.EndsWith('.new.lnk')) {
+                throw 'Injected failure after first shortcut swap'
+            }
+            Microsoft.PowerShell.Management\Move-Item @PSBoundParameters
+        }
+        try {
+            Assert-Fails { & (Join-Path $PSScriptRoot 'install-package.ps1') @shortcutArgs | Out-Null } 'shortcut mid-swap failure' 'Injected failure after first shortcut swap'
+        } finally {
+            Remove-Item Function:\Move-Item
+            Remove-Variable SpectrTestFailSwap -Scope Global
+        }
+        for ($index = 0; $index -lt $priorPaths.Count; $index++) {
+            if ((Get-FileHash -LiteralPath $priorPaths[$index] -Algorithm SHA256).Hash -ne $priorHashes[$index]) {
+                throw "Shortcut failure did not restore prior artifact: $($priorPaths[$index])"
+            }
+        }
+        if (Test-Path -LiteralPath $shortcutReceipt) { throw 'Shortcut failure wrote a success receipt' }
+        if (Test-Path -LiteralPath "$shortcutReceipt.pending.json") { throw 'Shortcut failure left a pending journal' }
+        Write-Output 'PASS: shortcut failure restores previous plugin and shortcut bytes'
+    } finally {
+        Remove-Item Function:\New-Object
+        $env:PUBLIC = $oldPublic
+        $env:ProgramData = $oldProgramData
+    }
 } finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
