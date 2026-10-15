@@ -84,6 +84,29 @@ try {
     if ((Assert-SpectrPackageManifest $expanded $manifest) -ne 'arm64-win') { throw 'Package architecture was not preserved' }
     Write-Output 'PASS: generated package has a verified ARM64 manifest and PE payloads'
 
+    $multiBuild = Join-Path $temp 'multi-config-build'
+    New-Item -ItemType Directory -Force -Path (Join-Path $multiBuild 'Release'), (Join-Path $multiBuild 'CLAP\Release') | Out-Null
+    Set-Content -LiteralPath (Join-Path $multiBuild 'CMakeCache.txt') -Value 'CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026' -NoNewline
+    Copy-Item -LiteralPath (Join-Path $build 'Spectr.exe') -Destination (Join-Path $multiBuild 'Release\Spectr.exe')
+    Copy-Item -LiteralPath (Join-Path $build 'CLAP\Spectr.clap') -Destination (Join-Path $multiBuild 'CLAP\Release\Spectr.clap')
+    Copy-Item -LiteralPath (Join-Path $build 'VST3') -Destination (Join-Path $multiBuild 'VST3') -Recurse
+    Copy-Item -LiteralPath (Join-Path $build 'icudtl.dat') -Destination (Join-Path $multiBuild 'VST3\Release\icudtl.dat')
+    $multiPackage = Join-Path $temp 'multi-config.zip'
+    & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $multiBuild -Architecture arm64-win -Output $multiPackage | Out-Null
+    $multiExpanded = Join-Path $temp 'multi-config-expanded'
+    Expand-Archive -LiteralPath $multiPackage -DestinationPath $multiExpanded
+    if ((Assert-SpectrPackageManifest $multiExpanded (Get-Content (Join-Path $multiExpanded 'manifest.json') -Raw | ConvertFrom-Json)) -ne 'arm64-win') {
+        throw 'Visual Studio Release layout did not produce a verified package'
+    }
+    Write-Output 'PASS: Visual Studio Release layout packages and validates'
+
+    Copy-Item -LiteralPath (Join-Path $build 'Spectr.exe') -Destination (Join-Path $multiBuild 'Spectr.exe')
+    Remove-Item -LiteralPath (Join-Path $multiBuild 'Release\Spectr.exe') -Force
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $multiBuild -Architecture arm64-win -Output (Join-Path $temp 'stale-root.zip') | Out-Null } 'multi-config stale-root fallback' 'Missing build artifact for'
+    Copy-Item -LiteralPath (Join-Path $build 'Spectr.exe') -Destination (Join-Path $multiBuild 'Release\Spectr.exe')
+    Remove-Item -LiteralPath (Join-Path $multiBuild 'CMakeCache.txt') -Force
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $multiBuild -Architecture arm64-win -Output (Join-Path $temp 'ambiguous.zip') | Out-Null } 'cacheless ambiguous layout' 'Ambiguous staged build artifact'
+
     $tampered = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $tampered.files[0].sha256 = ('0' * 64)
     Assert-Fails { Assert-SpectrPackageManifest $expanded $tampered } 'tampered manifest hash'
