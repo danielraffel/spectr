@@ -349,9 +349,10 @@ void register_surface_params(pulp::state::StateStore& store) {
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
         // Shaped so a host's normalised slider spends half its travel under
-        // 2 beats (the geometric middle of 1/1024 .. 4096).
+        // 2 beats (the geometric middle of 1/1024 .. 4096). Opens at 1 beat:
+        // one cycle per beat, so a fresh LFO follows the host tempo as is.
         info.range = pulp::state::ParamRange::with_center(
-            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 4.0f);
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 1.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -404,9 +405,10 @@ void register_surface_params(pulp::state::StateStore& store) {
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
         // Shaped so a host's normalised slider spends half its travel under
-        // 2 beats (the geometric middle of 1/1024 .. 4096).
+        // 2 beats (the geometric middle of 1/1024 .. 4096). Opens at 1 beat:
+        // one cycle per beat, so a fresh LFO follows the host tempo as is.
         info.range = pulp::state::ParamRange::with_center(
-            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 4.0f);
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 1.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -484,7 +486,8 @@ void register_surface_params(pulp::state::StateStore& store) {
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t]
                 + " Depth";
             // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a
-            // target switched on sounds as that LFO did.
+            // target switched on sounds as that LFO did, and for Freeze (whose
+            // Depth is the frozen duty) half the cycle frozen, half live.
             info.range = {0.0f, 1.0f, 0.5f};
             info.group_id = kGroupModulation;
             info.to_string = [](float v) { return percent_string(v); };

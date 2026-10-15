@@ -400,7 +400,7 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(shape->value_labels.size() == 4);
     CHECK(rate->range.min == Approx(spectr::kLfoBeatsMin));
     CHECK(rate->range.max == Approx(spectr::kLfoBeatsMax));
-    CHECK(rate->range.default_value == Approx(4.0f));
+    CHECK(rate->range.default_value == Approx(1.0f));
     CHECK(depth->range.min == Approx(0.0f));
     CHECK(depth->range.max == Approx(1.0f));
     CHECK(target->kind == pulp::state::ParamKind::Enum);
@@ -704,7 +704,7 @@ TEST_CASE("the LFO Rate runs from 1/1024 to 4096 beats and reads as a fraction b
     REQUIRE(info != nullptr);
     CHECK(info->range.min == Approx(1.0f / 1024.0f));
     CHECK(info->range.max == Approx(4096.0f));
-    CHECK(info->range.default_value == Approx(4.0f));
+    CHECK(info->range.default_value == Approx(1.0f));
     // A host's normalised midpoint lands on 2 beats, the geometric middle.
     CHECK(info->range.denormalize(0.5f) == Approx(2.0f).margin(0.01f));
     // The display string the host prints, and what it parses back.
