@@ -15,6 +15,6 @@ Spectr 1.0.8 makes modulation more precise: each LFO is its own switch, any sele
 ### Pro Tools
 - The AAX format is part of this release cycle and is handed out as its own installer while its signing is done by hand; the AU, VST3 and CLAP plug-ins and the standalone app in this package are the same build.
 
-Built with the Pulp PULP_SDK_TAG SDK.
+Built with the Pulp v0.975.0 SDK.
 
 **Having trouble?** Open **Spectr Diagnostics** from Applications. It saves a report you can email to support.

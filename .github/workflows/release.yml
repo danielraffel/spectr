@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PULP_ROOT_REF: v0.915.0
+      PULP_ROOT_REF: v0.975.0
       RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
       # Identity hashes are public selectors, not private credentials. The
       # signing keychain and notarization profile stay on the trusted runner.
