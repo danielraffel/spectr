@@ -18,6 +18,7 @@
 #include <cassert>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -56,6 +57,18 @@ bool modulation_plants_level_target_step() noexcept {
     return planted;
 }
 
+// SPECTR_MODULATION_PLANT=lfo-point-sample: every destination reads each LFO
+// at one phase per slice and the Output gain ramps between slice ends -- the
+// sampling that folded a fast LFO into a slice-rate stepper. The alias gates
+// must fail with it.
+bool modulation_plants_lfo_point_sample() noexcept {
+    static const bool planted = [] {
+        const char* value = SPECTR_TEST_ENV("SPECTR_MODULATION_PLANT");
+        return value != nullptr && std::string_view(value) == "lfo-point-sample";
+    }();
+    return planted;
+}
+
 // Every negative-control seam the audio thread reads. Called from the
 // constructor and from prepare(), never from process().
 // SPECTR_PLANT_CALLBACK_BURST=<iterations>: once every 512 samples, burn a
@@ -76,6 +89,7 @@ void prime_negative_control_seams() noexcept {
     AutoGainMaterial::prime_plants();
     (void)modulation_plants_route_step();
     (void)modulation_plants_level_target_step();
+    (void)modulation_plants_lfo_point_sample();
     (void)level_plant("");
 }
 
@@ -1233,7 +1247,8 @@ double Spectr::freeze_hold_seconds_at_(double tempo_bpm, int numerator,
 
 double Spectr::freeze_length_at_phases_(double tempo_bpm, int numerator, int denominator,
                                         const double phases[2], int* index,
-                                        double* reach_seconds) const noexcept {
+                                        double* reach_seconds,
+                                        const double* spans) const noexcept {
     const double base = freeze_hold_seconds_at_(tempo_bpm, numerator, denominator);
     *index = -1;
     if (reach_seconds) *reach_seconds = base;
@@ -1253,7 +1268,10 @@ double Spectr::freeze_length_at_phases_(double tempo_bpm, int numerator, int den
         driven = true;
         const float depth = std::clamp(
             store->get_value(lfo_route_amount_param_id(lfo, kLength)), 0.0f, 1.0f);
-        coordinate += lfo_value(*fades[lfo], phases[lfo]) * depth;
+        const float wave = spans
+            ? lfo_mean(*fades[lfo], phases[lfo], phases[lfo] + spans[lfo])
+            : lfo_value(*fades[lfo], phases[lfo]);
+        coordinate += wave * depth;
         reach += depth;
     }
     if (!driven) return base;
@@ -2191,6 +2209,61 @@ void Spectr::process(
                     audio_lfo_2_shape_fade_ = retarget_lfo_shape(
                         audio_lfo_2_shape_fade_,
                         modulation_settings.lfo2_shape);
+                    // ── The LFOs over this slice ────────────────────────
+                    // Each LFO's phase interval across the slice, in cycles.
+                    // Every destination that takes ONE value per slice (the
+                    // spectral targets, the Freeze gate, the Length / Bands /
+                    // Preset steps) reads the waveform's MEAN over its
+                    // interval (`lfo_mean`): a cycle shorter than the slice
+                    // collapses to the wave's average instead of folding
+                    // into a slice-rate stepper, and a slow LFO reads the
+                    // value at the slice's centre. The Output gain, which
+                    // takes a value every sample, reads the band-limited
+                    // waveform at audio rate below. The point-sample plant
+                    // restores the one-phase-per-slice read.
+                    const std::array<double, 2> lfo_slice_cycles = [&] {
+                        const double rate = ctx.sample_rate > 0.0
+                            ? ctx.sample_rate : sample_rate_;
+                        const double bpm = ctx.tempo_bpm > 0.0
+                            ? ctx.tempo_bpm : 120.0;
+                        const double slice_beats =
+                            static_cast<double>(out_slice.num_samples())
+                            * bpm / (60.0 * rate);
+                        const double beats_1 = std::max(
+                            static_cast<double>(kLfoBeatsMin),
+                            static_cast<double>(modulation_settings.beats_per_cycle));
+                        const double beats_2 = std::max(
+                            static_cast<double>(kLfoBeatsMin),
+                            static_cast<double>(modulation_settings.lfo2_beats_per_cycle));
+                        return std::array<double, 2>{slice_beats / beats_1,
+                                                     slice_beats / beats_2};
+                    }();
+                    const bool lfo_point_sample = modulation_plants_lfo_point_sample();
+                    // Above 1/32 cycle a slice the slice-rate read no longer
+                    // follows the waveform, so the Output gain and Bank move
+                    // to the per-sample path below. Bank hands over
+                    // gradually (fully by 1/16 cycle a slice): its share
+                    // through the mask shrinks as its share as a per-sample
+                    // gain grows, so sweeping Rate across the handover moves
+                    // nothing, and once handed over the mask holds no Bank
+                    // at all -- the renderer's IR crossfade then has no Bank
+                    // step to smear, and the per-sample gain is the whole of
+                    // the modulation, band-limited, at any rate.
+                    constexpr double kAudioRateLfoCyclesPerSlice = 1.0 / 32.0;
+                    const double lfo_max_slice_cycles =
+                        std::max(lfo_slice_cycles[0], lfo_slice_cycles[1]);
+                    const bool lfo_fast = !lfo_point_sample
+                        && lfo_max_slice_cycles > kAudioRateLfoCyclesPerSlice;
+                    const float bank_fast_weight = lfo_fast
+                        ? static_cast<float>(std::clamp(
+                              (lfo_max_slice_cycles - kAudioRateLfoCyclesPerSlice)
+                                  / kAudioRateLfoCyclesPerSlice, 0.0, 1.0))
+                        : 0.0f;
+                    const auto lfo_slice_wave = [&](const LfoShapeFade& fade, double phase,
+                                                    double cycles) {
+                        return lfo_point_sample ? lfo_value(fade, phase)
+                                                : lfo_mean(fade, phase, phase + cycles);
+                    };
                     // ── Freeze target ───────────────────────────────────
                     // A gate per LFO (the target's Depth is the frozen duty),
                     // OR-ed. Read before the level slew below: the freeze
@@ -2210,8 +2283,11 @@ void Spectr::process(
                             const auto& route = modulation_settings.routes[lfo][kFreeze];
                             if (!lfo_on[lfo] || !route.enabled) continue;
                             driven = true;
-                            gate = gate || lfo_freeze_gate(fades[lfo]->to, phases[lfo],
-                                                           route.amount);
+                            gate = gate || (lfo_point_sample
+                                ? lfo_freeze_gate(fades[lfo]->to, phases[lfo], route.amount)
+                                : lfo_freeze_gate(fades[lfo]->to, phases[lfo],
+                                                  phases[lfo] + lfo_slice_cycles[lfo],
+                                                  route.amount));
                         }
                         // Hold for Length: a rising edge of the gate latches
                         // the freeze for exactly the effective Length at that
@@ -2289,7 +2365,8 @@ void Spectr::process(
                                 freeze_hold_seconds_ = freeze_length_at_phases_(
                                     transport_tempo_bpm(), transport_time_sig_numerator(),
                                     transport_time_sig_denominator(), length_phases,
-                                    &latched_index, nullptr);
+                                    &latched_index, nullptr,
+                                    lfo_point_sample ? nullptr : lfo_slice_cycles.data());
                                 freeze_source_.set_hold_seconds(freeze_hold_seconds_);
                                 freeze_hold_latched_seconds_.store(
                                     freeze_hold_seconds_, std::memory_order_relaxed);
@@ -2388,16 +2465,25 @@ void Spectr::process(
                             audio_lfo_level_[1] > 0.0f;
                         modulation_settings.lfo2_depth = audio_lfo_level_[1];
                     }
-                    const float wave = lfo_value(
-                        audio_lfo_shape_fade_, audio_modulation_phase_);
-                    const float wave2 = lfo_value(
-                        audio_lfo_2_shape_fade_, audio_modulation_phase_2_);
+                    const float wave = lfo_slice_wave(
+                        audio_lfo_shape_fade_, audio_modulation_phase_,
+                        lfo_slice_cycles[0]);
+                    const float wave2 = lfo_slice_wave(
+                        audio_lfo_2_shape_fade_, audio_modulation_phase_2_,
+                        lfo_slice_cycles[1]);
                     // Both LFOs, every routed destination, one composition:
                     // the same pure function the editor evaluates at frame
                     // time, so what is drawn is what is heard.
+                    ModulationSettings mask_settings = modulation_settings;
+                    if (bank_fast_weight > 0.0f) {
+                        constexpr auto kBank = static_cast<std::size_t>(
+                            ModulationTarget::WholeBank);
+                        for (auto& routes : mask_settings.routes)
+                            routes[kBank].amount *= 1.0f - bank_fast_weight;
+                    }
                     const auto composed = compose_internal_modulation(
                         host_field, audio_modulation.snapshots, host_morph,
-                        modulation_settings, wave, wave2);
+                        mask_settings, wave, wave2);
                     // ── Preset destination ──────────────────────────────
                     // Moves the composed field toward the neighbouring
                     // presets' band gains (menu order) by the coordinate x
@@ -2545,6 +2631,9 @@ void Spectr::process(
                                 slot.phase_2   = phase_2;
                                 slot.phase_per_second   = rate_1;
                                 slot.phase_2_per_second = rate_2;
+                                slot.phase_span   = lfo_point_sample ? 0.0 : lfo_slice_cycles[0];
+                                slot.phase_2_span = lfo_point_sample ? 0.0 : lfo_slice_cycles[1];
+                                slot.bank_mask_share = 1.0f - bank_fast_weight;
                                 slot.shape_fade = audio_lfo_shape_fade_;
                                 slot.shape_2_fade = audio_lfo_2_shape_fade_;
                                 slot.published_ns = published_ns;
@@ -2841,6 +2930,43 @@ void Spectr::process(
                     audio_output_mod_primed_ = true;
                     const bool output_modulated =
                         output_mod_start_db != 0.0f || output_mod_end_db != 0.0f;
+                    // Audio-rate Output. Above 1/32 cycle a slice the ramp
+                    // between slice ends no longer follows the waveform (its
+                    // error grows with the square of the cycles a slice
+                    // spans, and past half a cycle it folds), so the gain
+                    // reads each LFO's band-limited waveform at EVERY
+                    // sample -- phase-continuous with the slice phase, at
+                    // the increment the slice advance below uses. Below
+                    // that the ramp is within 0.5 % of the curve and costs
+                    // nothing per sample, so a slow LFO pays nothing new.
+                    const bool output_routed =
+                        modulation_settings.routes[0][output_route].enabled
+                        || modulation_settings.routes[1][output_route].enabled;
+                    // Bank moves every band together: a broadband gain. Its
+                    // handed-over share (bank_fast_weight) rides this
+                    // per-sample gain, band-limited, so Bank follows the LFO
+                    // exactly at any rate instead of fading past the slice
+                    // Nyquist. Scaled as the mask would scale it: by the
+                    // slewed Intensity (a uniform offset times the factor)
+                    // and by Mix (only the wet path carries the bank); the
+                    // per-band clamp the mask applies does not reach here.
+                    constexpr auto kBankRoute = static_cast<std::size_t>(
+                        ModulationTarget::WholeBank);
+                    const bool bank_routed =
+                        modulation_settings.routes[0][kBankRoute].enabled
+                        || modulation_settings.routes[1][kBankRoute].enabled;
+                    const bool output_audio_rate = output_routed && lfo_fast;
+                    const bool bank_audio_rate = bank_routed && bank_fast_weight > 0.0f;
+                    const float bank_residual_scale = bank_audio_rate
+                        ? bank_fast_weight * kModulationBankExcursionDb
+                              * std::clamp(audio_intensity_, 0.0f, 1.0f)
+                              * std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f)
+                        : 0.0f;
+                    const double lfo_sample_cycles[2] = {
+                        lfo_slice_cycles[0] / static_cast<double>(
+                            std::max<std::size_t>(out_slice.num_samples(), 1)),
+                        lfo_slice_cycles[1] / static_cast<double>(
+                            std::max<std::size_t>(out_slice.num_samples(), 1))};
                     if (param_store_) {
                         if (output_route_audible) {
                             const auto last = static_cast<int32_t>(
@@ -2942,18 +3068,45 @@ void Spectr::process(
                             // Gain and the trim: Auto Gain never sees it, and
                             // the trim plus the LFO stay inside the lane's
                             // range.
-                            if (output_modulated) {
-                                const float along =
-                                    static_cast<float>(sample + 1)
-                                    / static_cast<float>(out_slice.num_samples());
-                                const float mod_db = output_mod_start_db
-                                    + (output_mod_end_db - output_mod_start_db) * along;
+                            if (output_modulated || output_audio_rate || bank_audio_rate) {
+                                float mod_db = 0.0f;
+                                float bank_residual_db = 0.0f;
+                                if (output_audio_rate || bank_audio_rate) {
+                                    const double step = static_cast<double>(sample);
+                                    const float w1 = lfo_bandlimited(
+                                        audio_lfo_shape_fade_,
+                                        audio_modulation_phase_ + lfo_sample_cycles[0] * step,
+                                        lfo_sample_cycles[0]);
+                                    const float w2 = lfo_bandlimited(
+                                        audio_lfo_2_shape_fade_,
+                                        audio_modulation_phase_2_ + lfo_sample_cycles[1] * step,
+                                        lfo_sample_cycles[1]);
+                                    if (output_audio_rate)
+                                        mod_db = output_modulation_coordinate(
+                                                     modulation_settings, w1, w2)
+                                               * kModulationOutputExcursionDb;
+                                    else
+                                        mod_db = output_mod_start_db
+                                            + (output_mod_end_db - output_mod_start_db)
+                                                  * static_cast<float>(sample + 1)
+                                                  / static_cast<float>(out_slice.num_samples());
+                                    if (bank_audio_rate)
+                                        bank_residual_db =
+                                            bank_modulation_coordinate(modulation_settings, w1, w2)
+                                            * bank_residual_scale;
+                                } else {
+                                    const float along =
+                                        static_cast<float>(sample + 1)
+                                        / static_cast<float>(out_slice.num_samples());
+                                    mod_db = output_mod_start_db
+                                        + (output_mod_end_db - output_mod_start_db) * along;
+                                }
                                 const float trim_db =
                                     cursor.value_at(kOutputTrim, absolute_sample);
                                 const float applied_db = std::clamp(
                                     trim_db + mod_db, kOutputTrimMinDb,
                                     kOutputTrimMaxDb) - trim_db;
-                                gain *= std::pow(10.0f, applied_db * 0.05f);
+                                gain *= std::pow(10.0f, (applied_db + bank_residual_db) * 0.05f);
                             }
                             for (std::size_t channel = 0;
                                  channel < out_slice.num_channels(); ++channel)

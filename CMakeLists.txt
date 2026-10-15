@@ -1388,6 +1388,25 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
+# The LFO sampling gates (test/test_modulation_freeze.cpp, [lfo-alias]). With
+# every destination reading one phase per block and Output ramping between
+# block ends (SPECTR_MODULATION_PLANT=lfo-point-sample: the read that folded a
+# fast LFO), a spectral target above the block Nyquist must fail the no-fold
+# gate and the Output target must fail its audio-rate gate, so each gate is
+# proven able to see the fold it exists to catch.
+add_test(NAME Spectr-lfo-alias-spectral-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=lfo-point-sample
+        $<TARGET_FILE:Spectr-test> "a spectral target reads the LFO's block mean*")
+set_tests_properties(Spectr-lfo-alias-spectral-negative-control PROPERTIES
+    TIMEOUT 900
+    PASS_REGULAR_EXPRESSION "CHECK\\( run\\.report\\.residual_db < control\\.report\\.residual_db \\+ 3\\.0 \\)")
+add_test(NAME Spectr-lfo-alias-output-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=lfo-point-sample
+        $<TARGET_FILE:Spectr-test> "the Output target follows a fast LFO at audio rate*")
+set_tests_properties(Spectr-lfo-alias-output-negative-control PROPERTIES
+    TIMEOUT 900
+    PASS_REGULAR_EXPRESSION "CHECK\\( run\\.report\\.sideband_db - run\\.report\\.residual_db > 20\\.0 \\)")
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins

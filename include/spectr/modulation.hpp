@@ -402,6 +402,48 @@ inline float output_modulation_db(const ModulationCoordinates& coords) noexcept 
     return std::isfinite(c) ? c * kModulationOutputExcursionDb : 0.0f;
 }
 
+/// The Output destination's coordinate alone -- what `modulation_coordinates`
+/// would put in `coords[ModulationTarget::Output]` for @p wave1 / @p wave2 --
+/// for the per-sample path that evaluates the LFOs at audio rate and must not
+/// pay for every other target each sample. Pinned equal to the full
+/// composition by test.
+inline float output_modulation_coordinate(const ModulationSettings& settings,
+                                          float wave1, float wave2) noexcept {
+    constexpr auto kOutput = static_cast<std::size_t>(ModulationTarget::Output);
+    float coordinate = 0.0f;
+    const float levels[kLfoCount] = {settings.enabled ? settings.depth : 0.0f,
+                                     settings.lfo2_enabled ? settings.lfo2_depth : 0.0f};
+    const float waves[kLfoCount] = {std::clamp(wave1, -1.0f, 1.0f),
+                                    std::clamp(wave2, -1.0f, 1.0f)};
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+        const auto& route = settings.routes[lfo][kOutput];
+        if (!route.enabled || !(levels[lfo] > 0.0f)) continue;
+        coordinate += waves[lfo] * std::clamp(levels[lfo], 0.0f, 1.0f)
+                    * std::clamp(route.amount, 0.0f, 1.0f);
+    }
+    return coordinate;
+}
+
+/// The Bank destination's coordinate alone -- `coords[WholeBank]` for
+/// @p wave1 / @p wave2 -- for the per-sample path that renders Bank's fast
+/// residual as a broadband gain. Pinned equal to the full composition by test.
+inline float bank_modulation_coordinate(const ModulationSettings& settings,
+                                        float wave1, float wave2) noexcept {
+    constexpr auto kBank = static_cast<std::size_t>(ModulationTarget::WholeBank);
+    float coordinate = 0.0f;
+    const float levels[kLfoCount] = {settings.enabled ? settings.depth : 0.0f,
+                                     settings.lfo2_enabled ? settings.lfo2_depth : 0.0f};
+    const float waves[kLfoCount] = {std::clamp(wave1, -1.0f, 1.0f),
+                                    std::clamp(wave2, -1.0f, 1.0f)};
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+        const auto& route = settings.routes[lfo][kBank];
+        if (!route.enabled || !(levels[lfo] > 0.0f)) continue;
+        coordinate += waves[lfo] * std::clamp(levels[lfo], 0.0f, 1.0f)
+                    * std::clamp(route.amount, 0.0f, 1.0f);
+    }
+    return coordinate;
+}
+
 /// Output trim in dB after the Output destination, clamped to the lane range.
 inline float modulated_output_trim_db(float base_db,
                                       const ModulationCoordinates& coords) noexcept {
