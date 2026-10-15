@@ -69,14 +69,17 @@ function Get-SpectrPackagePath {
         [Parameter(Mandatory = $true)] [string]$RelativePath
     )
 
-    if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath)) {
+    if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath) -or
+        $RelativePath -match '^[A-Za-z]:' -or $RelativePath.StartsWith('\')) {
         throw "Manifest path must be relative: $RelativePath"
     }
-    $relative = $RelativePath -replace '/', '\'
-    if ($relative -match '(^|\\)\.\.?($|\\)') {
+    $normalized = $RelativePath.Replace('/', '\')
+    if ($normalized -match '(^|\\)\.\.?($|\\)') {
         throw "Manifest path contains a traversal component: $RelativePath"
     }
-    $root = ([IO.Path]::GetFullPath($Stage)).TrimEnd('\') + '\'
+    $relative = $normalized.Replace('\', [IO.Path]::DirectorySeparatorChar)
+    $separator = [string][IO.Path]::DirectorySeparatorChar
+    $root = ([IO.Path]::GetFullPath($Stage)).TrimEnd($separator) + $separator
     $candidate = [IO.Path]::GetFullPath((Join-Path $Stage $relative))
     if (-not $candidate.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Manifest path escapes package root: $RelativePath"
@@ -97,7 +100,7 @@ function Assert-SpectrArchiveEntries {
         foreach ($entry in $archive.Entries) {
             $name = [string]$entry.FullName
             if ([string]::IsNullOrWhiteSpace($name)) { throw 'ZIP contains an empty entry name' }
-            $normalized = $name -replace '/', '\'
+            $normalized = $name.Replace('/', '\')
             if (-not $seen.Add($normalized)) { throw "ZIP contains duplicate entry: $name" }
             [void](Get-SpectrPackagePath $Stage $normalized)
         }
@@ -186,7 +189,7 @@ function Assert-SpectrPackageManifest {
 
     $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $entries) {
-        $relative = [string]$entry.path
+        $relative = ([string]$entry.path).Replace('/', '\')
         if (-not $seen.Add($relative)) { throw "Duplicate manifest path: $relative" }
         $source = Get-SpectrPackagePath $Stage $relative
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Manifest file is missing: $relative" }
@@ -201,12 +204,13 @@ function Assert-SpectrPackageManifest {
         if (-not $actual.Equals($hash, [StringComparison]::OrdinalIgnoreCase)) { throw "Manifest hash mismatch: $relative" }
     }
 
-    $stageRoot = ([IO.Path]::GetFullPath($Stage)).TrimEnd('\') + '\'
+    $separator = [string][IO.Path]::DirectorySeparatorChar
+    $stageRoot = ([IO.Path]::GetFullPath($Stage)).TrimEnd($separator) + $separator
     $topLevelManifest = [IO.Path]::GetFullPath((Join-Path $Stage 'manifest.json'))
     foreach ($item in @(Get-ChildItem -LiteralPath $Stage -Recurse -File)) {
         if ($item.FullName.Equals($topLevelManifest, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $relative = $item.FullName.Substring($stageRoot.Length)
-        if (-not $seen.Contains($relative)) { throw "Unlisted package file: $relative" }
+        if (-not $seen.Contains($relative.Replace('/', '\'))) { throw "Unlisted package file: $relative" }
     }
 
     $required = @(
@@ -230,7 +234,7 @@ function Assert-SpectrPackageManifest {
     $metadataSidecars = @($Manifest.metadata_sidecars)
     if ($metadataSidecars -notcontains 'Spectr.pulp-build-info.json') { throw 'Package manifest must include required Spectr.pulp-build-info.json sidecar' }
     if (-not $seen.Contains($buildInfoPath)) { throw "Manifest is missing metadata sidecar: $buildInfoPath" }
-    [void](Assert-SpectrBuildInfo (Join-Path $Stage $buildInfoPath) $vst3Architecture)
+    [void](Assert-SpectrBuildInfo (Get-SpectrPackagePath $Stage $buildInfoPath) $vst3Architecture)
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'Standalone\Spectr.exe') $standaloneArchitecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3") $vst3Architecture
     Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'CLAP\Spectr.clap') $clapArchitecture
