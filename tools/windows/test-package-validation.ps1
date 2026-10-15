@@ -216,7 +216,8 @@ try {
     function Copy-Item {
         param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force)
         Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
-        if ($Destination -eq $global:SpectrTestCorruptDestination) {
+        if ($Destination.StartsWith(($global:SpectrTestCorruptDestination + '.'), [StringComparison]::OrdinalIgnoreCase) -and
+            $Destination.EndsWith('.new', [StringComparison]::OrdinalIgnoreCase)) {
             Set-Content -LiteralPath $Destination -Value 'corrupted during copy' -NoNewline
         }
     }
@@ -225,13 +226,81 @@ try {
             & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
                 -Vst3Root (Join-Path $corruptRoot 'VST3') -ClapRoot (Join-Path $corruptRoot 'CLAP') `
                 -StandaloneRoot (Join-Path $corruptRoot 'Standalone') -Receipt $corruptReceipt -NoShortcuts | Out-Null
-        } 'destination changed during copy' 'Installed file differs from package manifest'
+        } 'destination changed during copy' 'Staged file differs from package manifest'
     } finally {
         Remove-Item Function:\Copy-Item
         Remove-Variable SpectrTestCorruptDestination -Scope Global
     }
     if (Test-Path -LiteralPath $corruptReceipt) { throw 'Installer wrote success receipt after destination corruption' }
     Write-Output 'PASS: destination corruption fails closed before receipt publication'
+
+    $oldFiles = @(
+        (Join-Path $installRoot 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3'),
+        (Join-Path $installRoot 'CLAP\Spectr.clap'),
+        (Join-Path $installRoot 'Standalone\Spectr.exe')
+    )
+    $oldHashes = @()
+    for ($index = 0; $index -lt $oldFiles.Count; $index++) {
+        Set-Content -LiteralPath $oldFiles[$index] -Value "prior install $index" -NoNewline
+        $oldHashes += (Get-FileHash -LiteralPath $oldFiles[$index] -Algorithm SHA256).Hash
+    }
+    $global:SpectrTestFailSwap = Join-Path $installRoot 'CLAP\Spectr.clap'
+    function Move-Item {
+        param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+        if ($Destination -eq $global:SpectrTestFailSwap -and $LiteralPath.EndsWith('.new')) {
+            throw 'Injected failure after VST3 swap'
+        }
+        Microsoft.PowerShell.Management\Move-Item @PSBoundParameters
+    }
+    try {
+        Assert-Fails {
+            & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package `
+                -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') `
+                -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null
+        } 'mid-swap copy failure' 'Injected failure after VST3 swap'
+    } finally {
+        Remove-Item Function:\Move-Item
+        Remove-Variable SpectrTestFailSwap -Scope Global
+    }
+    for ($index = 0; $index -lt $oldFiles.Count; $index++) {
+        if ((Get-FileHash -LiteralPath $oldFiles[$index] -Algorithm SHA256).Hash -ne $oldHashes[$index]) {
+            throw "Previous installed artifact was not restored: $($oldFiles[$index])"
+        }
+    }
+    if (Test-Path -LiteralPath $installReceipt) { throw 'Mid-swap failure wrote a success receipt' }
+    if (Test-Path -LiteralPath "$installReceipt.pending.json") { throw 'Mid-swap failure left a pending journal' }
+    if (@(Get-ChildItem -LiteralPath $installRoot -Recurse -Force | Where-Object { $_.Name -match '\.[0-9a-f]{32}\.(new|backup)$' }).Count -ne 0) {
+        throw 'Mid-swap failure left staged or backup artifacts'
+    }
+    Write-Output 'PASS: mid-swap failure restores previous VST3, CLAP and standalone bytes'
+
+    $interruptedId = [guid]::NewGuid().ToString('N')
+    $interruptedVst3 = Join-Path $installRoot 'VST3\Spectr.vst3'
+    Move-Item -LiteralPath $interruptedVst3 -Destination "$interruptedVst3.$interruptedId.backup"
+    Copy-Item -LiteralPath (Join-Path $expanded 'VST3\Spectr.vst3') -Destination $interruptedVst3 -Recurse
+    $interruptedJournal = [ordered]@{
+        schema = 'spectr.windows.install.pending.v1'
+        id = $interruptedId
+        destinations = @(
+            [ordered]@{ path = [IO.Path]::GetFullPath($interruptedVst3); had_original = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'CLAP\Spectr.clap')); had_original = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'Standalone\Spectr.exe')); had_original = $true }
+        )
+    }
+    $interruptedJournal | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$installReceipt.pending.json"
+    Assert-Fails {
+        & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $badPackage `
+            -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') `
+            -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null
+    } 'recovery before invalid package validation' 'Package manifest.json is missing'
+    for ($index = 0; $index -lt $oldFiles.Count; $index++) {
+        if ((Get-FileHash -LiteralPath $oldFiles[$index] -Algorithm SHA256).Hash -ne $oldHashes[$index]) {
+            throw "Interrupted swap did not restore prior artifact: $($oldFiles[$index])"
+        }
+    }
+    if (Test-Path -LiteralPath "$installReceipt.pending.json" -PathType Leaf) { throw 'Interrupted swap journal was not cleared after recovery' }
+    if (Test-Path -LiteralPath "$interruptedVst3.$interruptedId.backup") { throw 'Interrupted swap backup was not cleared after recovery' }
+    Write-Output 'PASS: interrupted swap journal restores previous installed bytes on retry'
 } finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

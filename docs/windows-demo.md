@@ -252,7 +252,11 @@ SHA-256 hashes against the manifest. It writes a JSON receipt beside the ZIP
 (`.zip.install-receipt.json`), or at the path supplied with `-Receipt`. A
 failed retry removes the prior receipt at that path. The receipt proves the
 installed bytes at that moment; REAPER scan, editor, and audio behavior need
-separate evidence. It is a development installer script, not a signed
+separate evidence. The installer stages new files beside each destination,
+backs up the prior files during replacement, and rolls back on a failed
+install. An interrupted replacement leaves a `.pending.json` journal beside
+the receipt; rerun with the same roots and receipt path to recover before a
+new install. It is a development installer script, not a signed
 MSI. An earlier UTM session accepted a different CLAP artifact; its exact
 hashes and render statistics remain in
 `docs/windows-receipts-2026-10-10/utm-health-receipt.json`. That historical
