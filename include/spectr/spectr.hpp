@@ -1052,6 +1052,12 @@ public:
     /// around it in menu order (index kPresetModulationSteps is the current
     /// one), and how many exist each way. Persisted in the plugin state, so
     /// the target keeps working when a session reopens.
+    /// Band groups: route @p lfo to the bands in @p mask with @p enabled and
+    /// @p amount. A group is keyed by its mask: the same selection edits the
+    /// same group, a new selection takes a free slot (false when none is
+    /// free), and a group neither LFO drives is forgotten.
+    bool set_band_group(std::uint64_t mask, std::size_t lfo, bool enabled, float amount);
+    BandGroups band_groups() const;
     bool set_preset_modulation(std::string centre_id,
                                const std::array<std::string, kPresetNeighbourCount>& names,
                                const PresetModulationNeighbours& neighbours);
@@ -1441,6 +1447,7 @@ private:
     // Guarded by processing_state_mutex_: the Preset destination's
     // neighbourhood, published through AudioModulationState.
     PresetModulationNeighbours preset_neighbours_{};
+    BandGroups band_groups_{};
     std::array<std::string, kPresetNeighbourCount> preset_names_{};
     std::string preset_centre_id_;
     bool freeze_hold_gate_last_ = false;

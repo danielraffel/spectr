@@ -3,6 +3,7 @@
 export const SPECTR_COMMANDS = Object.freeze([
   "ab_toggle",
   "band_field_set",
+  "band_group_set",
   "build_info_copy",
   "build_info_get",
   "capture_snapshot",
@@ -70,6 +71,7 @@ export function createSpectrRuntimeClient(dispatch) {
     request,
     abToggle(payload = {}, id = '') { return request("ab_toggle", payload, id); },
     bandFieldSet(payload = {}, id = '') { return request("band_field_set", payload, id); },
+    bandGroupSet(payload = {}, id = '') { return request("band_group_set", payload, id); },
     buildInfoCopy(payload = {}, id = '') { return request("build_info_copy", payload, id); },
     buildInfoGet(payload = {}, id = '') { return request("build_info_get", payload, id); },
     captureSnapshot(payload = {}, id = '') { return request("capture_snapshot", payload, id); },

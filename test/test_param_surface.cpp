@@ -730,6 +730,83 @@ TEST_CASE("the LFO Rate runs from 1/1024 to 4096 beats and reads as a fraction b
     CHECK(w.proc->modulation_settings().lfo2_beats_per_cycle == Approx(4096.0f));
 }
 
+TEST_CASE("a band group moves only its bands, on top of Bank, and rides the session",
+          "[modulation][band-group]") {
+    // The pure composition: a group of bands 12..15 driven by LFO 1 at full
+    // Depth moves those four by the full +12 dB excursion and no other band;
+    // with Bank on as well the four hear Bank plus the group (clamped at the
+    // band range) and the rest hear Bank alone.
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.groups[0].mask = 0xFull << 12;
+    settings.groups[0].lfo[0] = {true, 1.0f};
+    spectr::BandField flat{};
+    spectr::SnapshotBank none{};
+    auto coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    CHECK(coords.group[0] == Approx(1.0f));
+    CHECK(coords.group_mask[0] == (0xFull << 12));
+    auto field = spectr::apply_field_modulation(flat, none, 0.0f, coords);
+    for (std::size_t b = 0; b < spectr::kMaxBands; ++b) {
+        INFO("band " << b);
+        CHECK(field.bands[b].gain_db == Approx(b >= 12 && b <= 15 ? 12.0f : 0.0f));
+    }
+    settings.routes[0][0] = {true, 0.5f};  // Bank at half depth: +6 dB everywhere
+    coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    field = spectr::apply_field_modulation(flat, none, 0.0f, coords);
+    for (std::size_t b = 0; b < spectr::kMaxBands; ++b) {
+        INFO("band " << b);
+        CHECK(field.bands[b].gain_db == Approx(b >= 12 && b <= 15 ? 18.0f : 6.0f));
+    }
+    // An LFO that is off drives no group, whatever the group says.
+    settings.enabled = false;
+    coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    CHECK(coords.group[0] == 0.0f);
+    CHECK(spectr::modulation_audible(settings) == false);
+    settings.enabled = true;
+    settings.routes[0][0].enabled = false;
+    CHECK(spectr::modulation_audible(settings));  // the group alone keeps the overlay alive
+
+    // The processor: groups are keyed by their bands, each LFO has its own
+    // switch and Depth, a group nobody drives is forgotten, and the session
+    // blob carries them.
+    Wired w;
+    const std::uint64_t four = 0xFull << 12;
+    REQUIRE(w.proc->set_band_group(four, 0, true, 0.75f));
+    REQUIRE(w.proc->set_band_group(1ull << 20, 1, true, 0.25f));
+    auto groups = w.proc->band_groups();
+    CHECK(groups[0].mask == four);
+    CHECK(groups[0].lfo[0].enabled);
+    CHECK(groups[0].lfo[0].amount == Approx(0.75f));
+    CHECK_FALSE(groups[0].lfo[1].enabled);
+    CHECK(groups[1].mask == (1ull << 20));
+    CHECK(groups[1].lfo[1].amount == Approx(0.25f));
+    // The same selection edits the same group rather than taking a slot.
+    REQUIRE(w.proc->set_band_group(four, 1, true, 0.5f));
+    groups = w.proc->band_groups();
+    CHECK(groups[0].lfo[1].enabled);
+    CHECK(groups[2].mask == 0);
+    // Both LFOs off: the group is gone.
+    REQUIRE(w.proc->set_band_group(four, 0, false, 0.75f));
+    REQUIRE(w.proc->set_band_group(four, 1, false, 0.5f));
+    CHECK(w.proc->band_groups()[0].mask == 0);
+    // Four slots at most (the LFO 2 group still holds one; let it go first).
+    REQUIRE(w.proc->set_band_group(1ull << 20, 1, false, 0.25f));
+    CHECK(w.proc->band_groups()[1].mask == 0);
+    for (int g = 0; g < 4; ++g) REQUIRE(w.proc->set_band_group(1ull << g, 0, true, 0.5f));
+    CHECK_FALSE(w.proc->set_band_group(1ull << 10, 0, true, 0.5f));
+    // Round trip.
+    const auto blob = w.proc->serialize_plugin_state();
+    Wired reopened;
+    REQUIRE(reopened.proc->deserialize_plugin_state(blob));
+    const auto again = reopened.proc->band_groups();
+    for (int g = 0; g < 4; ++g) {
+        CHECK(again[static_cast<std::size_t>(g)].mask == (1ull << g));
+        CHECK(again[static_cast<std::size_t>(g)].lfo[0].enabled);
+    }
+    CHECK(reopened.proc->modulation_settings().groups[3].mask == (1ull << 3));
+}
+
 TEST_CASE("an LFO switch and its targets are independent controls") {
     Wired w;
     w.proc->apply_surface_params(false);

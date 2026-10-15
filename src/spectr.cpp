@@ -2059,6 +2059,7 @@ void Spectr::process(
                     }
 
                     ModulationSettings modulation_settings;
+                    modulation_settings.groups = audio_modulation.settings.groups;
                     modulation_settings.enabled =
                         cursor.value(kParamLfoEnabled) >= 0.5f;
                     modulation_settings.shape = static_cast<LfoShape>(
@@ -3232,6 +3233,30 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
         preset.addMember("gains", gains);
         root.addMember("preset_modulation", preset);
     }
+    // Band groups: the bands as a list of indices (a 64-bit mask does not
+    // round-trip through JSON numbers), each LFO's switch and Depth. Absent on
+    // an older writer; readers treat absence as none.
+    {
+        auto groups = choc::value::createEmptyArray();
+        for (const auto& group : band_groups_) {
+            if (!group.defined()) continue;
+            auto g = choc::value::createObject("SpectrBandGroup");
+            auto bands = choc::value::createEmptyArray();
+            for (std::size_t b = 0; b < kMaxBands; ++b)
+                if ((group.mask >> b) & 1ull) bands.addArrayElement(static_cast<std::int32_t>(b));
+            g.addMember("bands", bands);
+            auto lfos = choc::value::createEmptyArray();
+            for (const auto& route : group.lfo) {
+                auto r = choc::value::createObject("SpectrBandGroupRoute");
+                r.addMember("on", route.enabled);
+                r.addMember("amount", static_cast<double>(route.amount));
+                lfos.addArrayElement(r);
+            }
+            g.addMember("lfo", lfos);
+            groups.addArrayElement(g);
+        }
+        root.addMember("band_groups", groups);
+    }
     // Level controls. `level_controls` marks a writer that knows Intensity
     // and Auto Gain: a session WITHOUT it predates them, and opens with Auto
     // Gain off so its level does not change on reload (the parameters
@@ -3685,6 +3710,32 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     // The Preset destination's neighbourhood; a malformed one is dropped
     // rather than failing the whole state (it is rebuilt on the next preset).
     PresetModulationNeighbours new_preset_neighbours{};
+    BandGroups new_band_groups{};
+    if (root.hasObjectMember("band_groups") && root["band_groups"].isArray()) {
+        const auto& groups = root["band_groups"];
+        std::size_t at = 0;
+        for (std::uint32_t i = 0; i < groups.size() && at < kBandGroupCount; ++i) {
+            const auto& g = groups[i];
+            if (!g.isObject() || !g.hasObjectMember("bands") || !g["bands"].isArray()
+                || !g.hasObjectMember("lfo") || !g["lfo"].isArray()) continue;
+            BandGroup group{};
+            for (std::uint32_t b = 0; b < g["bands"].size(); ++b) {
+                const auto& v = g["bands"][b];
+                const double band = (v.isInt32() || v.isInt64() || v.isFloat32() || v.isFloat64())
+                    ? v.getWithDefault<double>(-1.0) : -1.0;
+                if (band >= 0.0 && band < static_cast<double>(kMaxBands))
+                    group.mask |= 1ull << static_cast<unsigned>(band);
+            }
+            for (std::uint32_t l = 0; l < g["lfo"].size() && l < kLfoCount; ++l) {
+                const auto& r = g["lfo"][l];
+                if (!r.isObject()) continue;
+                group.lfo[l].enabled = r.hasObjectMember("on") && r["on"].isBool() && r["on"].getBool();
+                group.lfo[l].amount = std::clamp(static_cast<float>(
+                    r.hasObjectMember("amount") ? r["amount"].getWithDefault<double>(0.5) : 0.5), 0.0f, 1.0f);
+            }
+            if (group.defined()) new_band_groups[at++] = group;
+        }
+    }
     std::array<std::string, kPresetNeighbourCount> new_preset_names{};
     std::string new_preset_centre;
     if (root.hasObjectMember("preset_modulation")) {
@@ -3913,6 +3964,8 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         show_tooltips_ = new_show_tooltips;
         ask_before_override_ = new_ask_before_override;
         preset_neighbours_ = new_preset_neighbours;
+        band_groups_ = new_band_groups;
+        modulation_.groups = band_groups_;
         preset_names_ = new_preset_names;
         preset_centre_id_ = new_preset_centre;
         editor_range_db_ = new_editor_range_db;

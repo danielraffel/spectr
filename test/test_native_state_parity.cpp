@@ -10096,6 +10096,31 @@ void press_menu_slider(NativeEditorRig& rig, std::string_view action, double rat
 
 }  // namespace
 
+TEST_CASE("a band group reaches the editor's modulation payload with its bands and per-LFO rows",
+          "[native-n1][state-parity][modulation][band-group]") {
+    // The band menu's selection row reads `modulation.groups` from the live
+    // payload to show each group's switch and Depth; this proves the payload
+    // carries what the processor holds, and empties when the group is gone.
+    PatternStoragePoison storage;
+    NativeEditorRig rig;
+    require_home(rig);
+    REQUIRE(rig.processor.set_band_group(0xFull << 11, 0, true, 0.8f));
+    settle(rig.clock, 8);
+    const auto listed = runtime_value(rig,
+        "JSON.stringify((globalThis.__spectrModulationLast || {}).groups)",
+        "spectr-band-groups-listed");
+    INFO(listed);
+    CHECK(listed.find("\"bands\":[11,12,13,14]") != std::string::npos);
+    CHECK(listed.find("\"on\":true") != std::string::npos);
+    CHECK(listed.find("\"amount\":0.8") != std::string::npos);
+    REQUIRE(rig.processor.set_band_group(0xFull << 11, 0, false, 0.8f));
+    settle(rig.clock, 8);
+    CHECK(runtime_value(rig,
+        "JSON.stringify((globalThis.__spectrModulationLast || {}).groups)",
+        "spectr-band-groups-empty") == "[]");
+    storage.require_unchanged();
+}
+
 TEST_CASE("every LFO edit in the band menu records as a host gesture",
           "[native-n1][state-parity][modulation][automation]") {
     PatternStoragePoison storage;

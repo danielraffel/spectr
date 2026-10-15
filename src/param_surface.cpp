@@ -587,6 +587,8 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     // single-target API sees what LFO 1 is actually driving.
     settings.target_mask = static_cast<std::uint8_t>(
         route_mask(settings.routes[0]) & kModulationTargetMaskAll);
+    // Band groups are session state with no lanes: they ride along.
+    settings.groups = band_groups_;
     return settings;
 }
 
@@ -930,6 +932,39 @@ int Spectr::freeze_shown_length_index() const noexcept {
         if (engaged >= 0) return engaged;
     }
     return freeze_modulated_length_index();
+}
+
+bool Spectr::set_band_group(std::uint64_t mask, std::size_t lfo, bool enabled, float amount) {
+    if (mask == 0 || lfo >= kLfoCount || !std::isfinite(amount)) return false;
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    auto& groups = band_groups_;
+    std::size_t at = kBandGroupCount;
+    for (std::size_t g = 0; g < kBandGroupCount; ++g)
+        if (groups[g].mask == mask) { at = g; break; }
+    if (at == kBandGroupCount) {
+        if (!enabled) return true;  // nothing to switch off
+        for (std::size_t g = 0; g < kBandGroupCount; ++g)
+            if (!groups[g].defined()) { at = g; break; }
+        if (at == kBandGroupCount) return false;
+        groups[at] = BandGroup{};
+        groups[at].mask = mask;
+    }
+    groups[at].lfo[lfo].enabled = enabled;
+    groups[at].lfo[lfo].amount = std::clamp(amount, 0.0f, 1.0f);
+    if (!groups[at].defined()) groups[at] = BandGroup{};
+    modulation_.groups = groups;
+    publish_audio_modulation_state_();
+    // The editor reads groups off the live projection; a new external
+    // mutation makes the next frame republish it (the macro setter's rule).
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
+}
+
+BandGroups Spectr::band_groups() const {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return band_groups_;
 }
 
 bool Spectr::set_preset_modulation(
