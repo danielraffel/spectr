@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Vst3Architecture = '',
     [string]$Output = ''
 )
 
@@ -10,6 +11,7 @@ $validation = Join-Path $PSScriptRoot 'package-validation.ps1'
 if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
 . $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+if ([string]::IsNullOrWhiteSpace($Vst3Architecture)) { $Vst3Architecture = $Architecture }
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
 }
@@ -18,14 +20,14 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("spectr-package-" + [guid]::NewGu
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 try {
     $bin = Join-Path $stage 'Standalone\Spectr.exe'
-    $vst3 = Join-Path $stage "VST3\Spectr.vst3\Contents\$Architecture\Spectr.vst3"
+    $vst3 = Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.vst3"
     $clap = Join-Path $stage "CLAP\Spectr.clap"
     foreach ($path in @($bin, $vst3, $clap)) {
         New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
     }
 
     $standaloneSource = Join-Path $BuildDir 'Spectr.exe'
-    $vst3Source = Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Architecture\Spectr.vst3"
+    $vst3Source = Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.vst3"
     if (-not (Test-Path -LiteralPath $vst3Source -PathType Leaf)) {
         $vst3Source = Join-Path $BuildDir 'VST3\Spectr.dll'
     }
@@ -45,7 +47,7 @@ try {
             # architecture-specific binary. Keep the root copy for existing
             # handoffs, but also package the runtime inside the bundle so the
             # installer cannot silently omit it.
-            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Architecture\$runtime")
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime")
         }
     }
     # Carry the verified installer beside the artifacts so a handoff ZIP is
@@ -57,9 +59,9 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
-    foreach ($path in @($bin, $vst3, $clap)) {
-        Assert-SpectrPeArchitecture $path $Architecture
-    }
+    Assert-SpectrPeArchitecture $bin $Architecture
+    Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
+    Assert-SpectrPeArchitecture $clap $Architecture
     $wgpu = Join-Path $stage 'wgpu_native.dll'
     if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
         Assert-SpectrPeArchitecture $wgpu $Architecture
@@ -69,6 +71,12 @@ try {
         schema = 1
         generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
         architecture = $Architecture
+        artifact_architectures = [ordered]@{
+            standalone = $Architecture
+            vst3 = $Vst3Architecture
+            clap = $Architecture
+            runtime = $Architecture
+        }
         files = @($files | ForEach-Object {
             [ordered]@{ path = $_.FullName.Substring($stage.Length + 1); bytes = $_.Length; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
         })

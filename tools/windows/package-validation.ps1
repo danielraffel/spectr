@@ -27,6 +27,23 @@ function Get-SpectrPeMachine {
     return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
 }
 
+function Test-SpectrArm64XPe {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+    $sectionCount = [BitConverter]::ToUInt16($bytes, $peOffset + 6)
+    $optionalSize = [BitConverter]::ToUInt16($bytes, $peOffset + 20)
+    $sectionTable = $peOffset + 24 + $optionalSize
+    for ($index = 0; $index -lt $sectionCount; $index++) {
+        $offset = $sectionTable + ($index * 40)
+        if ($offset -lt 0 -or $offset + 8 -gt $bytes.Length) { break }
+        $name = [Text.Encoding]::ASCII.GetString($bytes, $offset, 8).Trim([char]0)
+        if ($name -eq '.a64xrm') { return $true }
+    }
+    return $false
+}
+
 function Assert-SpectrPeArchitecture {
     param(
         [Parameter(Mandatory = $true)] [string]$Path,
@@ -35,6 +52,12 @@ function Assert-SpectrPeArchitecture {
 
     $expected = Get-SpectrMachineForArchitecture $Architecture
     $actual = Get-SpectrPeMachine $Path
+    if ($Architecture -eq 'arm64ec-win') {
+        if (($actual -eq 0x8664 -or $actual -eq 0xAA64) -and (Test-SpectrArm64XPe $Path)) {
+            return
+        }
+        throw "Architecture mismatch for ${Path}: ARM64EC payload lacks ARM64X .a64xrm metadata"
+    }
     if ($actual -ne $expected) {
         throw "Architecture mismatch for ${Path}: expected $Architecture (machine 0x$('{0:X4}' -f $expected)), got machine 0x$('{0:X4}' -f $actual)"
     }
@@ -94,6 +117,15 @@ function Assert-SpectrPackageManifest {
     }
     $architecture = [string]$Manifest.architecture
     [void](Get-SpectrMachineForArchitecture $architecture)
+    $artifactArchitectures = $Manifest.artifact_architectures
+    if ($null -eq $artifactArchitectures) { throw 'Package manifest lacks per-artifact architectures' }
+    $standaloneArchitecture = [string]$artifactArchitectures.standalone
+    $vst3Architecture = [string]$artifactArchitectures.vst3
+    $clapArchitecture = [string]$artifactArchitectures.clap
+    $runtimeArchitecture = if ($null -eq $artifactArchitectures.runtime) { $architecture } else { [string]$artifactArchitectures.runtime }
+    foreach ($artifactArchitecture in @($standaloneArchitecture, $vst3Architecture, $clapArchitecture, $runtimeArchitecture)) {
+        [void](Get-SpectrMachineForArchitecture $artifactArchitecture)
+    }
     $entries = @($Manifest.files)
     if ($entries.Count -eq 0) { throw 'Package manifest has no files' }
 
@@ -124,7 +156,7 @@ function Assert-SpectrPackageManifest {
 
     $required = @(
         "Standalone\Spectr.exe",
-        "VST3\Spectr.vst3\Contents\$architecture\Spectr.vst3",
+        "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3",
         'CLAP\Spectr.clap',
         'Install-Spectr.ps1',
         'Spectr-PackageValidation.ps1'
@@ -132,11 +164,11 @@ function Assert-SpectrPackageManifest {
     foreach ($relative in $required) {
         if (-not $seen.Contains($relative)) { throw "Manifest is missing required file: $relative" }
     }
-    foreach ($relative in @("Standalone\Spectr.exe", "VST3\Spectr.vst3\Contents\$architecture\Spectr.vst3", 'CLAP\Spectr.clap')) {
-        Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage $relative) $architecture
-    }
+    Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'Standalone\Spectr.exe') $standaloneArchitecture
+    Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3") $vst3Architecture
+    Assert-SpectrPeArchitecture (Get-SpectrPackagePath $Stage 'CLAP\Spectr.clap') $clapArchitecture
     foreach ($sidecar in @(Get-ChildItem -LiteralPath $Stage -Recurse -File -Filter 'wgpu_native.dll')) {
-        Assert-SpectrPeArchitecture $sidecar.FullName $architecture
+        Assert-SpectrPeArchitecture $sidecar.FullName $runtimeArchitecture
     }
     return $architecture
 }

@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$Arm64EcBinary = '',
+    [string]$X64Binary = ''
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -32,6 +35,14 @@ try {
     Write-FakePe (Join-Path $build 'Spectr.exe') $machine
     Write-FakePe (Join-Path $build 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3') $machine
     Write-FakePe (Join-Path $build 'CLAP\Spectr.clap') $machine
+    if (-not [string]::IsNullOrWhiteSpace($Arm64EcBinary)) {
+        Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $Arm64EcBinary).Path) 'arm64ec-win'
+        Write-Output 'PASS: real ARM64X/ARM64EC PE positive accepted'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($X64Binary)) {
+        Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $X64Binary).Path) 'x86_64-win'
+        Assert-Fails { Assert-SpectrPeArchitecture ((Resolve-Path -LiteralPath $X64Binary).Path) 'arm64ec-win' } 'ordinary x64 as ARM64EC'
+    }
 
     & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $package | Out-Null
     $expanded = Join-Path $temp 'expanded'
@@ -45,7 +56,7 @@ try {
     Assert-Fails { Assert-SpectrPackageManifest $expanded $tampered } 'tampered manifest hash'
 
     $wrongArchitecture = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json
-    $wrongArchitecture.architecture = 'x86_64-win'
+    $wrongArchitecture.artifact_architectures.vst3 = 'x86_64-win'
     Assert-Fails { Assert-SpectrPackageManifest $expanded $wrongArchitecture } 'architecture/path mismatch'
 
     $traversal = $manifest | ConvertTo-Json -Depth 8 | ConvertFrom-Json

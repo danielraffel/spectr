@@ -269,6 +269,19 @@ and negative controls with:
 .\tools\windows\test-package-validation.ps1
 ```
 
+ARM64 Windows handoffs that use the ARM64X/ARM64EC VST3 slice alongside
+native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
+
+```powershell
+.\tools\windows\package-release.ps1 `
+  -BuildDir C:\builds\spectr-arm64-gpu `
+  -Architecture arm64-win `
+  -Vst3Architecture arm64ec-win
+```
+
+The manifest records each artifact architecture. ARM64EC validation requires
+the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected.
+
 ## Ableton Live 12 versus the installed Live 10 trial
 
 The official Ableton Live 12.4.6 Windows trial package was copied to the UTM
