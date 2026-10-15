@@ -389,6 +389,26 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
         routes.addArrayElement(route);
     }
     modulation.addMember("routes", routes);
+    // Band groups: bands as indices, each LFO's switch and Depth.
+    auto groups = choc::value::createEmptyArray();
+    for (const auto& group : modulation_state.groups) {
+        if (!group.defined()) continue;
+        auto g = choc::value::createObject("SpectrBandGroup");
+        auto bands = choc::value::createEmptyArray();
+        for (std::size_t b = 0; b < kMaxBands; ++b)
+            if ((group.mask >> b) & 1ull) bands.addArrayElement(static_cast<std::int32_t>(b));
+        g.addMember("bands", bands);
+        auto lfos = choc::value::createEmptyArray();
+        for (const auto& route : group.lfo) {
+            auto r = choc::value::createObject("SpectrBandGroupRoute");
+            r.addMember("on", route.enabled);
+            r.addMember("amount", static_cast<double>(route.amount));
+            lfos.addArrayElement(r);
+        }
+        g.addMember("lfo", lfos);
+        groups.addArrayElement(g);
+    }
+    modulation.addMember("groups", groups);
     // Freeze "Hold for Length" (4140): shown under the Freeze target.
     modulation.addMember("freeze_hold_for_length", plugin.freeze_hold_for_length());
     return modulation;
@@ -1232,6 +1252,34 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // it would write -- and sends their names and gains here whenever the
     // current preset, the band count or the library changes.
     //   { centre: id, below: n, above: n, names: [9], gains: [9][<=64] }
+    // Band groups: {bands: [indices], lfo: 1|2, on: bool, amount?: 0..1}.
+    bridge.add_handler("band_group_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("bands") || !p["bands"].isArray()
+                || !p.hasObjectMember("lfo") || !p.hasObjectMember("on") || !p["on"].isBool())
+                return EditorBridge::err_response("bands, lfo and on required");
+            std::uint64_t mask = 0;
+            for (std::uint32_t i = 0; i < p["bands"].size(); ++i) {
+                const auto& v = p["bands"][i];
+                const double band = (v.isInt32() || v.isInt64() || v.isFloat32() || v.isFloat64())
+                    ? v.getWithDefault<double>(-1.0) : -1.0;
+                if (!(band >= 0.0) || band >= static_cast<double>(kMaxBands)
+                    || band != std::floor(band))
+                    return EditorBridge::err_response("bands must be indices 0..63");
+                mask |= 1ull << static_cast<unsigned>(band);
+            }
+            const auto& lfo_value = p["lfo"];
+            const auto lfo = static_cast<std::int64_t>(
+                (lfo_value.isInt32() || lfo_value.isInt64() || lfo_value.isFloat32() || lfo_value.isFloat64())
+                    ? lfo_value.getWithDefault<double>(0.0) : 0.0);
+            if (lfo < 1 || lfo > static_cast<std::int64_t>(kLfoCount))
+                return EditorBridge::err_response("lfo must be 1 or 2");
+            const float amount = static_cast<float>(
+                p.hasObjectMember("amount") ? p["amount"].getWithDefault<double>(0.5) : 0.5);
+            if (!plugin.set_band_group(mask, static_cast<std::size_t>(lfo - 1), p["on"].getBool(), amount))
+                return EditorBridge::err_response("no free band group (4 at most) or empty selection");
+            return EditorBridge::ok_response();
+        });
     bridge.add_handler("preset_modulation_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("centre") || !p["centre"].isString()

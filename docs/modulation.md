@@ -58,6 +58,25 @@ target that is on under an LFO that is off reads "On, LFO off". (A session
 saved by 1.0.x, which had no routing lanes, keeps its single target: it is
 migrated on restore, not defaulted.)
 
+## Band groups: modulating a selection
+
+Bank moves every band together. To move only some, select them in the
+plot and open their band menu: its Modulation submenu lists the selection
+as its own target above Bank -- "Band 12" for one band, "Bands 12-15" for a
+run, "4 bands" otherwise -- with a switch and a Depth per LFO, exactly like
+the other targets. Switching it on makes a **band group**: those bands,
+driven by that LFO at that Depth. A session holds up to four groups; each
+keeps its own Depth per LFO, so one group can breathe gently while another
+is thrown around. The same selection always edits the same group (select
+the bands again to change its Depth or switch its other LFO on), and a group
+neither LFO drives is forgotten.
+
+A group does its own thing: it offsets its bands by wave x Depth x 12 dB
+the way Bank does, **on top of** Bank. A band in a group under both hears
+Bank plus its group; a band in no group hears Bank alone. Groups ride the
+session (they are not host parameters: a band set is not an automation
+lane), and the LFO switches gate them like every other target.
+
 ## How stacked targets combine
 
 Deterministic, independent of which LFO is evaluated first, and level-safe:

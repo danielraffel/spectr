@@ -5,14 +5,14 @@
   "sources": {
     "services": {
       "path": "native-ui/materialized/spectr-native-services.js",
-      "sha256": "893d3e89cbe91a1da6b3a9de595b8555570d4237668f265ace2ec8238ae6d24d",
-      "bytes": 23222
+      "sha256": "b1efe3ad4690f1f73a51b6d064019d72dbb50fbc160e0b45b2d9a8d7e10f68d2",
+      "bytes": 23244
     },
     "bridges": [
       {
         "path": "src/editor_bridge.cpp",
-        "sha256": "0970972d21ac13cd3796f1afffdbf7065c9cef6ea81d23e426d759aee32ded30",
-        "bytes": 75852
+        "sha256": "8ffb534781bb64ed7e4dc4f0ba8183db1a1fc5bfce850868acba65348a16b9e6",
+        "bytes": 78708
       },
       {
         "path": "src/ui/native_editor.cpp",
@@ -32,6 +32,13 @@
     {
       "name": "band_field_set",
       "method": "bandFieldSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
+      "name": "band_group_set",
+      "method": "bandGroupSet",
       "sources": [
         "src/editor_bridge.cpp"
       ]
@@ -421,18 +428,18 @@
   "generated": {
     "spectr-runtime-client.mjs": {
       "path": "spectr-runtime-client.mjs",
-      "sha256": "16acb165a9313d1ec4de942cd3754ce0fd625dab164c148498408f387cf20c85",
-      "bytes": 6930
+      "sha256": "816a288ec2e15e70ced4fe7e36966a1e7a834432d07e14f077145b2bc261276b",
+      "bytes": 7042
     },
     "spectr-runtime-client.d.ts": {
       "path": "spectr-runtime-client.d.ts",
-      "sha256": "6fab749769b285171cc28973aabb6c6a079f220e54f3dbcc232529faba0a4ce7",
-      "bytes": 7083
+      "sha256": "d5de9f18e4e0c612df9973de4fa4cf2dc9283a7768197a205928532c27f0125c",
+      "bytes": 7199
     },
     "spectr-runtime-client.inline.js": {
       "path": "spectr-runtime-client.inline.js",
-      "sha256": "fd2dd7d5a6159307a7538f841314dfc3980addd013d0e71cf8bd7f690d27dac8",
-      "bytes": 1987
+      "sha256": "9061b7129a91f1c22b2e5f1fe34a25499cc7d89c6df83fe51c22016cffc24990",
+      "bytes": 2009
     }
   }
 }
