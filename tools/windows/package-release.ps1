@@ -12,6 +12,35 @@ if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging
 . $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 if ([string]::IsNullOrWhiteSpace($Vst3Architecture)) { $Vst3Architecture = $Architecture }
+
+function Resolve-SpectrCMakeArtifact {
+    param(
+        [Parameter(Mandatory = $true)] [string]$BuildDir,
+        [Parameter(Mandatory = $true)] [string]$SingleConfigPath,
+        [Parameter(Mandatory = $true)] [string]$ReleasePath
+    )
+
+    $single = Join-Path $BuildDir $SingleConfigPath
+    $release = Join-Path $BuildDir $ReleasePath
+    $cache = Join-Path $BuildDir 'CMakeCache.txt'
+    if (Test-Path -LiteralPath $cache -PathType Leaf) {
+        $generator = Get-Content -LiteralPath $cache | Where-Object { $_ -match '^CMAKE_GENERATOR:INTERNAL=' } | Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace($generator)) { throw "CMake generator is missing from $cache" }
+        $candidate = if ($generator -match '^CMAKE_GENERATOR:INTERNAL=(Visual Studio|Ninja Multi-Config|Xcode)') { $release } else { $single }
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Missing build artifact for $generator`: $candidate" }
+        return $candidate
+    }
+
+    # A staged input without a CMake cache is useful for verified release
+    # handoffs. Never guess if both layouts contain potentially different files.
+    $singleExists = Test-Path -LiteralPath $single -PathType Leaf
+    $releaseExists = Test-Path -LiteralPath $release -PathType Leaf
+    if ($singleExists -and $releaseExists) { throw "Ambiguous staged build artifact: $single and $release" }
+    if ($singleExists) { return $single }
+    if ($releaseExists) { return $release }
+    throw "Missing build artifact: $single or $release"
+}
+
 $buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
 if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
 [void](Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture)
@@ -29,12 +58,12 @@ try {
         New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
     }
 
-    $standaloneSource = Join-Path $BuildDir 'Spectr.exe'
+    $standaloneSource = Resolve-SpectrCMakeArtifact $BuildDir 'Spectr.exe' 'Release\Spectr.exe'
     $vst3Source = Join-Path $BuildDir "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.vst3"
     if (-not (Test-Path -LiteralPath $vst3Source -PathType Leaf)) {
         $vst3Source = Join-Path $BuildDir 'VST3\Spectr.dll'
     }
-    $clapSource = Join-Path $BuildDir 'CLAP\Spectr.clap'
+    $clapSource = Resolve-SpectrCMakeArtifact $BuildDir 'CLAP\Spectr.clap' 'CLAP\Release\Spectr.clap'
     foreach ($path in @($standaloneSource, $vst3Source, $clapSource)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing build artifact: $path" }
     }
