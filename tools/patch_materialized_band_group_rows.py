@@ -28,14 +28,19 @@ EDITS = [
     ("""  spectrReadModulationRoutes(modulation, next);
 """,
      """  spectrReadModulationRoutes(modulation, next);
-    if (Array.isArray(modulation.groups))
-      next.groups = modulation.groups.map((g) => ({
+    if (Array.isArray(modulation.groups)) {
+      const parsed = modulation.groups.map((g) => ({
         bands: Array.isArray(g && g.bands) ? g.bands.map(Number).filter(Number.isFinite) : [],
         lfo: [0, 1].map((i) => ({
           on: !!(g && g.lfo && g.lfo[i] && g.lfo[i].on === true),
           amount: Number.isFinite(Number(g && g.lfo && g.lfo[i] && g.lfo[i].amount))
             ? Math.max(0, Math.min(1, Number(g.lfo[i].amount))) : 0.5 }))
       })).filter((g) => g.bands.length > 0);
+      // Same content, same object: a fresh array every frame reads as a
+      // change to the state hook and re-commits the whole editor each frame.
+      const last = globalThis.__spectrModulationLast && globalThis.__spectrModulationLast.groups;
+      next.groups = Array.isArray(last) && JSON.stringify(last) === JSON.stringify(parsed) ? last : parsed;
+    }
 """),
     # 2. the rows: the selection first, then the other groups
     ("""  const modulationWheel = (event) => {
