@@ -55,6 +55,23 @@ try {
     Set-Content -LiteralPath (Join-Path $expanded 'unlisted.dll') -Value 'unlisted' -NoNewline
     Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted extracted payload'
 
+    New-Item -ItemType Directory -Force -Path (Join-Path $expanded 'nested') | Out-Null
+    Set-Content -LiteralPath (Join-Path $expanded 'nested\manifest.json') -Value '{}'
+    Assert-Fails { Assert-SpectrPackageManifest $expanded $manifest } 'unlisted nested manifest'
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $maliciousPackage = Join-Path $temp 'malicious-traversal.zip'
+    $outsideMarker = Join-Path ([IO.Path]::GetTempPath()) 'spectr-package-validation-outside-marker.txt'
+    if (Test-Path -LiteralPath $outsideMarker) { Remove-Item -LiteralPath $outsideMarker -Force }
+    $maliciousArchive = [IO.Compression.ZipFile]::Open($maliciousPackage, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $maliciousEntry = $maliciousArchive.CreateEntry('..\spectr-package-validation-outside-marker.txt')
+        $writer = New-Object IO.StreamWriter($maliciousEntry.Open())
+        try { $writer.Write('must not be extracted') } finally { $writer.Dispose() }
+    } finally { $maliciousArchive.Dispose() }
+    Assert-Fails { & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $maliciousPackage -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -NoShortcuts } 'ZIP traversal entry'
+    if (Test-Path -LiteralPath $outsideMarker) { throw 'ZIP traversal wrote outside the extraction stage' }
+
     & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -NoShortcuts | Out-Null
     foreach ($path in @((Join-Path $installRoot 'VST3\Spectr.vst3'), (Join-Path $installRoot 'CLAP\Spectr.clap'), (Join-Path $installRoot 'Standalone\Spectr.exe'))) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Installer did not install $path" }

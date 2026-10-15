@@ -61,6 +61,28 @@ function Get-SpectrPackagePath {
     return $candidate
 }
 
+function Assert-SpectrArchiveEntries {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Package,
+        [Parameter(Mandatory = $true)] [string]$Stage
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($Package)
+    try {
+        $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($entry in $archive.Entries) {
+            $name = [string]$entry.FullName
+            if ([string]::IsNullOrWhiteSpace($name)) { throw 'ZIP contains an empty entry name' }
+            $normalized = $name -replace '/', '\'
+            if (-not $seen.Add($normalized)) { throw "ZIP contains duplicate entry: $name" }
+            [void](Get-SpectrPackagePath $Stage $normalized)
+        }
+    } finally {
+        $archive.Dispose()
+    }
+}
+
 function Assert-SpectrPackageManifest {
     param(
         [Parameter(Mandatory = $true)] [string]$Stage,
@@ -93,8 +115,9 @@ function Assert-SpectrPackageManifest {
     }
 
     $stageRoot = ([IO.Path]::GetFullPath($Stage)).TrimEnd('\') + '\'
+    $topLevelManifest = [IO.Path]::GetFullPath((Join-Path $Stage 'manifest.json'))
     foreach ($item in @(Get-ChildItem -LiteralPath $Stage -Recurse -File)) {
-        if ($item.Name -eq 'manifest.json') { continue }
+        if ($item.FullName.Equals($topLevelManifest, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $relative = $item.FullName.Substring($stageRoot.Length)
         if (-not $seen.Contains($relative)) { throw "Unlisted package file: $relative" }
     }

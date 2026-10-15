@@ -20,6 +20,7 @@ if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) {
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("spectr-install-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 try {
+    Assert-SpectrArchiveEntries $Package $stage
     Expand-Archive -LiteralPath $Package -DestinationPath $stage -Force
     $manifestPath = Join-Path $stage 'manifest.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Package manifest.json is missing' }
