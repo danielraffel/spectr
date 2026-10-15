@@ -12,7 +12,7 @@
   },
   "artifact": {
     "path": "native-ui/materialized/materialized-document.runtime.json",
-    "sha256": "990c0302134e3be3dd028d5bff6f1ccf923871177f0cddf1cf7ac74c7c0ad76b",
-    "bytes": 1157583
+    "sha256": "b6ed30cdd54ecedbe649c7eba88f3879674c2703ca3f2a2cea395b346d5d66e9",
+    "bytes": 1158578
   }
 }

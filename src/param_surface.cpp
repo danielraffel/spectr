@@ -119,15 +119,33 @@ float parse_octaves(std::string_view text) {
 }
 
 // LFO rate in the units the editor shows: "4 beats", "0.25 beats", "1 beat".
+// "1/1024 beat" .. "4096 beats": a sub-beat rate whose reciprocal is whole
+// reads as the fraction the editor shows, anything else as a decimal.
 std::string beats_string(float beats) {
     char buf[40];
+    if (beats > 0.0f && beats < 1.0f) {
+        const double per_beat = 1.0 / static_cast<double>(beats);
+        const double whole = std::round(per_beat);
+        if (std::abs(per_beat - whole) < 1e-3 * whole) {
+            std::snprintf(buf, sizeof(buf), "1/%.0f beat", whole);
+            return buf;
+        }
+    }
     std::snprintf(buf, sizeof(buf), "%g %s", static_cast<double>(beats),
                   beats == 1.0f ? "beat" : "beats");
     return buf;
 }
 
+// Accepts the fraction form too ("1/1024", "1/4 beat").
 float parse_beats(std::string_view text) {
     std::string s(text);
+    float numerator = 0.0f, denominator = 0.0f;
+    if (std::sscanf(s.c_str(), "%f/%f", &numerator, &denominator) == 2) {
+        if (!std::isfinite(numerator) || !std::isfinite(denominator)
+            || denominator <= 0.0f)
+            return 0.0f;
+        return numerator / denominator;
+    }
     float beats = 0.0f;
     if (std::sscanf(s.c_str(), "%f", &beats) != 1 || !std::isfinite(beats))
         return 0.0f;
@@ -330,7 +348,10 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {0.25f, 16.0f, 4.0f};
+        // Shaped so a host's normalised slider spends half its travel under
+        // 2 beats (the geometric middle of 1/1024 .. 4096).
+        info.range = pulp::state::ParamRange::with_center(
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 4.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -382,7 +403,10 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {0.25f, 16.0f, 4.0f};
+        // Shaped so a host's normalised slider spends half its travel under
+        // 2 beats (the geometric middle of 1/1024 .. 4096).
+        info.range = pulp::state::ParamRange::with_center(
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 4.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -538,7 +562,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
     settings.beats_per_cycle = std::clamp(
-        store->get_value(kParamLfoRate), 0.25f, 16.0f);
+        store->get_value(kParamLfoRate), kLfoBeatsMin, kLfoBeatsMax);
     settings.depth = std::clamp(
         store->get_value(kParamLfoDepth), 0.0f, 1.0f);
     settings.target = static_cast<ModulationTarget>(std::clamp(
@@ -547,7 +571,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.lfo2_shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
     settings.lfo2_beats_per_cycle = std::clamp(
-        store->get_value(kParamLfo2Rate), 0.25f, 16.0f);
+        store->get_value(kParamLfo2Rate), kLfoBeatsMin, kLfoBeatsMax);
     settings.lfo2_depth = std::clamp(
         store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
