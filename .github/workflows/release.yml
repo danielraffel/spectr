@@ -1,9 +1,11 @@
 name: Spectr Release
 
-# A release is dispatched only after the exact-head Windows ARM64EC and x64
-# packages have been staged on the trusted runner. This is deliberately
-# manual: the macOS runner cannot manufacture or retain Windows assets, so an
-# automatic release/v* trigger could publish a macOS-only release.
+# A release is dispatched only after exact-head Windows ARM64EC and x64 ZIPs
+# are available at public HTTPS URLs (normally immutable GitHub release
+# assets). The transient Tart guest downloads and verifies them before doing
+# any macOS work. This is deliberately manual: the macOS runner cannot
+# manufacture or retain Windows assets, so an automatic release/v* trigger
+# could publish a macOS-only release.
 on:
   workflow_dispatch:
     inputs:
@@ -13,7 +15,7 @@ on:
         default: release-notes.md
         type: string
       windows_arm64ec_url:
-        description: HTTPS URL for the exact-head Spectr-windows-arm64ec-X.Y.Z.zip
+        description: Public HTTPS URL for an exact-head GitHub release asset (no credentials or presigned query)
         required: true
         type: string
       windows_arm64ec_sha256:
@@ -21,7 +23,7 @@ on:
         required: true
         type: string
       windows_x64_url:
-        description: HTTPS URL for the exact-head Spectr-windows-x64-X.Y.Z.zip
+        description: Public HTTPS URL for an exact-head GitHub release asset (no credentials or presigned query)
         required: true
         type: string
       windows_x64_sha256:
@@ -97,11 +99,16 @@ jobs:
           [[ "$WINDOWS_ARM64EC_URL" == https://* && "$WINDOWS_X64_URL" == https://* ]] || {
             echo "Windows asset URLs must use HTTPS" >&2; exit 1;
           }
+          case "$WINDOWS_ARM64EC_URL" in https://github.com/*|https://api.github.com/*) ;; *) echo "ARM64EC URL must be a public GitHub URL" >&2; exit 1 ;; esac
+          case "$WINDOWS_X64_URL" in https://github.com/*|https://api.github.com/*) ;; *) echo "x64 URL must be a public GitHub URL" >&2; exit 1 ;; esac
+          [[ "$WINDOWS_ARM64EC_URL" != *\?* && "$WINDOWS_X64_URL" != *\?* ]] || {
+            echo "Windows asset URLs must not contain query credentials" >&2; exit 1;
+          }
           [[ "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
             echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
           }
-          curl --fail --location --retry 3 --output "$arm" "$WINDOWS_ARM64EC_URL"
-          curl --fail --location --retry 3 --output "$x64" "$WINDOWS_X64_URL"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --output "$arm" "$WINDOWS_ARM64EC_URL"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --output "$x64" "$WINDOWS_X64_URL"
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
           python3 tools/ship/check_windows_release.py \
