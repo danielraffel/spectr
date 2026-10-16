@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Vst3Architecture = '',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$RuntimeArchitecture = '',
     [string]$Output = ''
 )
 
@@ -12,6 +13,11 @@ if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging
 . $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 if ([string]::IsNullOrWhiteSpace($Vst3Architecture)) { $Vst3Architecture = $Architecture }
+# ARM64EC artifacts commonly use the native ARM64 wgpu runtime. Validate this
+# separate PE using its own architecture rather than the plugin architecture.
+if ([string]::IsNullOrWhiteSpace($RuntimeArchitecture)) {
+    $RuntimeArchitecture = if ($Vst3Architecture -eq 'arm64ec-win') { 'arm64-win' } else { $Vst3Architecture }
+}
 
 function Resolve-SpectrCMakeArtifact {
     param(
@@ -103,7 +109,7 @@ try {
     Assert-SpectrPeArchitecture $clap $Architecture
     $wgpu = Join-Path $stage 'wgpu_native.dll'
     if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
-        Assert-SpectrPeArchitecture $wgpu $Vst3Architecture
+        Assert-SpectrPeArchitecture $wgpu $RuntimeArchitecture
     }
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
@@ -114,10 +120,10 @@ try {
             standalone = $Architecture
             vst3 = $Vst3Architecture
             clap = $Architecture
-            runtime = $Vst3Architecture
+            runtime = $RuntimeArchitecture
         }
         runtime_sidecars = @($runtimeSidecars)
-        runtime_architectures = [ordered]@{ wgpu_native_dll = $Vst3Architecture }
+        runtime_architectures = [ordered]@{ wgpu_native_dll = $RuntimeArchitecture }
         metadata_sidecars = @('Spectr.pulp-build-info.json')
         files = @($files | ForEach-Object {
             [ordered]@{ path = $_.FullName.Substring($stage.Length + 1); bytes = $_.Length; sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }

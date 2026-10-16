@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
     [string]$Destination = '',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$RuntimeArchitecture = '',
     [string]$Receipt = ''
 )
 
@@ -11,6 +12,9 @@ $validation = Join-Path $PSScriptRoot 'package-validation.ps1'
 if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
 . $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+if ([string]::IsNullOrWhiteSpace($RuntimeArchitecture)) {
+    $RuntimeArchitecture = if ($Architecture -eq 'arm64ec-win') { 'arm64-win' } else { $Architecture }
+}
 if ([string]::IsNullOrWhiteSpace($Destination)) {
     $Destination = Join-Path $BuildDir 'VST3\\Spectr.vst3'
 }
@@ -44,7 +48,7 @@ Copy-Item -LiteralPath $binary.FullName -Destination $targetName
 foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
     $runtimeSource = Find-SpectrRuntimeSource $BuildDir $runtime $Architecture
     if ($null -ne $runtimeSource) {
-        if ($runtime -eq 'wgpu_native.dll') { Assert-SpectrPeArchitecture $runtimeSource $Architecture }
+        if ($runtime -eq 'wgpu_native.dll') { Assert-SpectrPeArchitecture $runtimeSource $RuntimeArchitecture }
         Copy-Item -LiteralPath $runtimeSource -Destination (Join-Path $archDir $runtime)
     }
 }
