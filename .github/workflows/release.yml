@@ -1,11 +1,10 @@
 name: Spectr Release
 
 # A release is dispatched only after exact-head Windows ARM64EC and x64 ZIPs
-# are available at public HTTPS URLs (normally immutable GitHub release
-# assets). The transient Tart guest downloads and verifies them before doing
-# any macOS work. This is deliberately manual: the macOS runner cannot
-# manufacture or retain Windows assets, so an automatic release/v* trigger
-# could publish a macOS-only release.
+# are available as authenticated assets on a pre-created draft vX.Y.Z release
+# targeted at the same commit. The transient Tart guest downloads and verifies
+# them before doing any macOS work, then the publisher fills and publishes
+# that draft atomically.
 on:
   workflow_dispatch:
     inputs:
@@ -15,7 +14,7 @@ on:
         default: release-notes.md
         type: string
       windows_arm64ec_url:
-        description: Public HTTPS URL for an exact-head GitHub release asset (no credentials or presigned query)
+        description: GitHub API URL for an asset on the pre-created draft release
         required: true
         type: string
       windows_arm64ec_sha256:
@@ -23,7 +22,7 @@ on:
         required: true
         type: string
       windows_x64_url:
-        description: Public HTTPS URL for an exact-head GitHub release asset (no credentials or presigned query)
+        description: GitHub API URL for an asset on the pre-created draft release
         required: true
         type: string
       windows_x64_sha256:
@@ -93,22 +92,24 @@ jobs:
             exit 1
           }
           [[ -s "$RELEASE_NOTES_FILE" ]]
+          draft=$(gh release view "v$version" --repo danielraffel/spectr --json isDraft --jq '.isDraft')
+          [[ "$draft" == true ]] || { echo "v$version must already be a draft" >&2; exit 1; }
+          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
+          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag target differs from GITHUB_SHA" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
           arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
           x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
-          [[ "$WINDOWS_ARM64EC_URL" == https://* && "$WINDOWS_X64_URL" == https://* ]] || {
-            echo "Windows asset URLs must use HTTPS" >&2; exit 1;
+          [[ "$WINDOWS_ARM64EC_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_X64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
+            echo "Windows asset URLs must be GitHub release asset API URLs" >&2; exit 1;
           }
-          case "$WINDOWS_ARM64EC_URL" in https://github.com/*|https://api.github.com/*) ;; *) echo "ARM64EC URL must be a public GitHub URL" >&2; exit 1 ;; esac
-          case "$WINDOWS_X64_URL" in https://github.com/*|https://api.github.com/*) ;; *) echo "x64 URL must be a public GitHub URL" >&2; exit 1 ;; esac
           [[ "$WINDOWS_ARM64EC_URL" != *\?* && "$WINDOWS_X64_URL" != *\?* ]] || {
             echo "Windows asset URLs must not contain query credentials" >&2; exit 1;
           }
           [[ "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
             echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
           }
-          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --output "$arm" "$WINDOWS_ARM64EC_URL"
-          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --output "$x64" "$WINDOWS_X64_URL"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$x64" "$WINDOWS_X64_URL"
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
           python3 tools/ship/check_windows_release.py \
@@ -213,4 +214,5 @@ jobs:
             --appcast artifacts/appcast.xml \
             --notes "${{ steps.version.outputs.notes }}" \
             --windows-arm64ec "${{ steps.version.outputs.arm }}" \
-            --windows-x64 "${{ steps.version.outputs.x64 }}"
+            --windows-x64 "${{ steps.version.outputs.x64 }}" \
+            --reuse-draft

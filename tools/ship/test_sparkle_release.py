@@ -168,6 +168,16 @@ class PublishOrdering(unittest.TestCase):
         self.assertIn(str(arm), steps[1])
         self.assertIn(str(x64), steps[1])
 
+    def test_reuse_draft_never_creates_or_publishes_partial_assets(self) -> None:
+        steps = publish_release.plan("1.0.9", Path("a/Spectr-1.0.9.pkg"),
+                                     Path("a/appcast.xml"), Path("n.md"),
+                                     "a" * 40, windows=(
+                                         Path("a/Spectr-windows-arm64ec-1.0.9.zip"),
+                                         Path("a/Spectr-windows-x64-1.0.9.zip")),
+                                     reuse_draft=True)
+        self.assertEqual([s[2] if s[0] == "gh" else "verify" for s in steps],
+                         ["upload", "edit", "verify"])
+
     def test_expect_version_reads_the_newest_item(self) -> None:
         feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
                 '<channel><item><sparkle:version>1.0.6</sparkle:version>'

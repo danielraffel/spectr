@@ -46,14 +46,15 @@ LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 
 def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
          title: str | None = None,
-         windows: tuple[Path, Path] | None = None) -> list[list[str]]:
+         windows: tuple[Path, Path] | None = None,
+         reuse_draft: bool = False) -> list[list[str]]:
     tag = f"v{version}"
     if appcast.name != "appcast.xml":
         raise SystemExit("the release feed asset must be named appcast.xml")
-    return [
-        ["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
+    steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
-         "--notes-file", str(notes)],
+         "--notes-file", str(notes)]]
+    steps += [
         ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast),
          *([str(asset) for asset in windows] if windows else [])],
         ["gh", "release", "edit", tag, "--repo", REPO_SLUG, "--draft=false", "--latest"],
@@ -61,6 +62,7 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
          "--appcast", f"{LATEST}/appcast.xml", "--pkg", f"{LATEST}/{pkg.name}",
          "--expect-version", version, "--channel", "release", "--require-notes"],
     ]
+    return steps
 
 
 def main() -> int:
@@ -78,6 +80,8 @@ def main() -> int:
     ap.add_argument("--verify-attempts", type=int, default=12,
                     help="live-feed checks, 15 s apart, before calling the publish broken")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--reuse-draft", action="store_true",
+                    help="upload into an existing draft vX.Y.Z release")
     args = ap.parse_args()
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
@@ -94,7 +98,7 @@ def main() -> int:
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
         ).stdout.strip()
     steps = plan(args.version, args.pkg, args.appcast, args.notes, target,
-                 args.title, windows)
+                 args.title, windows, args.reuse_draft)
     if args.dry_run:
         for cmd in steps:
             print(" ".join(cmd))
