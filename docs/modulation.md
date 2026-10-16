@@ -483,12 +483,25 @@ samples it. Two regimes, both from Pulp's `pulp/signal/lfo_sampling.hpp`:
   block advance uses. Below that the previous ramp between block ends is
   within 0.5 % of the curve and costs nothing per sample, so a slow LFO pays
   nothing new. **Bank is handed over** to this path: it moves every band
-  together, which is a broadband gain, so from 1/32 cycle per block its share
-  through the mask shrinks and its share as the per-sample gain grows (whole
-  by 1/16 cycle per block). Sweeping Rate across the handover moves nothing,
-  and once handed over the mask holds no Bank at all, so Bank follows the LFO
-  exactly at any rate rather than fading. The per-sample share is scaled as
-  the mask would scale it, by Intensity and by Mix; the per-band clamp the
+  together, which is a broadband gain, so from 1/32 cycle per hold interval
+  its share through the mask shrinks and its share as the per-sample gain
+  grows (whole by 1/16). The hold interval is how long the mask keeps a
+  value: the block in Tracking, where the convolver adopts a restage every
+  block, but the analysis hop (2048 samples) in linear phase, where the
+  frame engine adopts only at a hop boundary and its window smears anything
+  faster -- so in linear phase Bank hands over from about 0.7 Hz and is whole
+  by about 1.5 Hz at 48 kHz, before the window can smear it. The handover is
+  keyed per destination on the LFOs that are on and routed to it, so an LFO
+  left at a fast Rate while off, or driving another target, hands nothing
+  over. Sweeping Rate across the handover moves nothing, and once handed over
+  the mask holds no Bank at all, so Bank follows the LFO exactly at any rate
+  rather than fading. The per-sample share is read the renderer's latency
+  behind the block phase, so a handover in progress sums with the mask's
+  share rather than partly cancelling. It is scaled by the slewed Intensity
+  as the mask would scale it, and it reaches the WET path only, at any Mix:
+  the dry input, delayed by the renderer's latency, is subtracted out of the
+  output before the gain and added back after, so below 100 % Mix the dry
+  path stays as still as it does on the mask path. The per-band clamp the
   mask applies does not reach it.
 
 Measured (`test/test_modulation_freeze.cpp`, `[lfo-alias]`, Pulp's
@@ -520,7 +533,11 @@ remaining -38 .. -58 dB is polyBLEP's own reach. Bank's law is pinned by a
 fit of the tone's envelope: 6.00 dB of swing through the mask at 1 beat,
 5.84 dB as the per-sample gain at 1/64 beat, each with a 0.07 dB fit
 residual. Per 256-sample block, median: 32 us with no LFO, 60 us with a 1-beat
-Bank LFO (the mask restage, as before), 32 us with a 1-beat Output LFO.
+Bank LFO (the mask restage, as before), 32 us with a 1-beat Output LFO. In
+linear phase the same envelope fit reads 5.7 dB at 1 beat, 6.0 dB at 1/6 beat
+and 5.8 dB at 1/64 beat; keyed on the block instead of the hop, 1/4 beat read
+2.0 dB there, which is what the hop keying exists to catch. At Mix 25 % the
+mask path and the handed-over path both read the wet quarter's 3.1 dB swing.
 
 ## Smoothness
 

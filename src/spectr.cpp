@@ -1161,6 +1161,13 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     output_gain_.set_ramp_time(0.01f, static_cast<float>(sample_rate_));
     output_gain_.set_immediate(std::pow(
         10.0f, state().get_value(kOutputTrim) * 0.05f));
+    // Bank's wet-only per-sample gain reads the dry input this far back:
+    // the renderer's latency (a frame plus a hop at most) plus a block.
+    {
+        constexpr std::size_t kBankDryRing = 1u << 16;
+        for (auto& ring : bank_dry_ring_) ring.assign(kBankDryRing, 0.0f);
+        bank_dry_write_ = 0;
+    }
     // Level controls: the first block adopts Intensity and the Auto Gain level
     // without a ramp.
     auto_gain_.set_ramp_time(kAutoGainRampSeconds, static_cast<float>(sample_rate_));
@@ -2249,14 +2256,46 @@ void Spectr::process(
                     // at all -- the renderer's IR crossfade then has no Bank
                     // step to smear, and the per-sample gain is the whole of
                     // the modulation, band-limited, at any rate.
+                    // Keyed per destination on the LFOs that are on AND routed
+                    // to it: an LFO left at a fast Rate while off, or driving
+                    // another target, must not hand a slow Bank over.
                     constexpr double kAudioRateLfoCyclesPerSlice = 1.0 / 32.0;
-                    const double lfo_max_slice_cycles =
-                        std::max(lfo_slice_cycles[0], lfo_slice_cycles[1]);
+                    const auto routed_slice_cycles = [&](ModulationTarget target) {
+                        const auto t = static_cast<std::size_t>(target);
+                        const bool on[2] = {modulation_settings.enabled,
+                                            modulation_settings.lfo2_enabled};
+                        double cycles = 0.0;
+                        for (std::size_t lfo = 0; lfo < 2; ++lfo)
+                            if (on[lfo] && modulation_settings.routes[lfo][t].enabled)
+                                cycles = std::max(cycles, lfo_slice_cycles[lfo]);
+                        return cycles;
+                    };
+                    // Bank's handover is keyed on the interval the MASK holds
+                    // a value for: the slice in Tracking, where the convolver
+                    // adopts a restage every block, but the analysis hop in
+                    // linear phase, where the frame engine adopts a staged
+                    // layout only at a hop boundary and its window smears
+                    // anything faster -- measured: a 1/4-beat Bank half-way
+                    // through a slice-keyed handover swung 2 dB of its 6 there.
+                    // Output never goes through the mask, so its key stays
+                    // the slice.
+                    const double bank_hold_samples =
+                        render_mode_ == MaskRenderMode::linear_phase
+                            ? std::max(static_cast<double>(out_slice.num_samples()),
+                                       static_cast<double>(kSpectralAnalysisHop))
+                            : static_cast<double>(out_slice.num_samples());
+                    const double bank_slice_cycles =
+                        routed_slice_cycles(ModulationTarget::WholeBank)
+                        * bank_hold_samples
+                        / static_cast<double>(std::max<std::size_t>(out_slice.num_samples(), 1));
+                    const double output_slice_cycles =
+                        routed_slice_cycles(ModulationTarget::Output);
                     const bool lfo_fast = !lfo_point_sample
-                        && lfo_max_slice_cycles > kAudioRateLfoCyclesPerSlice;
-                    const float bank_fast_weight = lfo_fast
+                        && output_slice_cycles > kAudioRateLfoCyclesPerSlice;
+                    const float bank_fast_weight = (!lfo_point_sample
+                        && bank_slice_cycles > kAudioRateLfoCyclesPerSlice)
                         ? static_cast<float>(std::clamp(
-                              (lfo_max_slice_cycles - kAudioRateLfoCyclesPerSlice)
+                              (bank_slice_cycles - kAudioRateLfoCyclesPerSlice)
                                   / kAudioRateLfoCyclesPerSlice, 0.0, 1.0))
                         : 0.0f;
                     const auto lfo_slice_wave = [&](const LfoShapeFade& fade, double phase,
@@ -2957,16 +2996,47 @@ void Spectr::process(
                         || modulation_settings.routes[1][kBankRoute].enabled;
                     const bool output_audio_rate = output_routed && lfo_fast;
                     const bool bank_audio_rate = bank_routed && bank_fast_weight > 0.0f;
+                    // Scaled by the slewed Intensity as the mask would scale
+                    // it; applied to the WET path alone below, so Mix needs
+                    // no scaling and the dry path never moves.
                     const float bank_residual_scale = bank_audio_rate
                         ? bank_fast_weight * kModulationBankExcursionDb
                               * std::clamp(audio_intensity_, 0.0f, 1.0f)
-                              * std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f)
                         : 0.0f;
+                    const float bank_dry_share = 1.0f
+                        - std::clamp(cursor.value(kMix) / 100.0f, 0.0f, 1.0f);
+                    // The dry input of this slice goes into the ring first,
+                    // so a sample's aligned dry sits `lag` behind its own
+                    // write position whatever the slice length.
+                    const std::size_t bank_ring_size = bank_dry_ring_[0].size();
+                    const std::size_t bank_ring_start = bank_dry_write_;
+                    if (bank_ring_size > 0) {
+                        const std::size_t channels = std::min<std::size_t>(
+                            2, std::min(out_slice.num_channels(), in_slice.num_channels()));
+                        for (std::size_t sample = 0; sample < out_slice.num_samples(); ++sample) {
+                            const std::size_t at = (bank_ring_start + sample) % bank_ring_size;
+                            for (std::size_t channel = 0; channel < channels; ++channel)
+                                bank_dry_ring_[channel][at] = in_slice.channel(channel)[sample];
+                        }
+                        bank_dry_write_ = (bank_ring_start + out_slice.num_samples()) % bank_ring_size;
+                    }
+                    const std::size_t bank_dry_lag = std::min<std::size_t>(
+                        static_cast<std::size_t>(std::max(0, latency_samples())),
+                        bank_ring_size > 0 ? bank_ring_size - 1 : 0);
                     const double lfo_sample_cycles[2] = {
                         lfo_slice_cycles[0] / static_cast<double>(
                             std::max<std::size_t>(out_slice.num_samples(), 1)),
                         lfo_slice_cycles[1] / static_cast<double>(
                             std::max<std::size_t>(out_slice.num_samples(), 1))};
+                    // The mask's share of a modulation reaches the output
+                    // after the renderer's latency; the per-sample share is
+                    // applied at the output now. Reading the per-sample LFO
+                    // that many samples behind the slice phase keeps the two
+                    // shares in phase, so a handover in progress sums rather
+                    // than partly cancels -- a few milliseconds in Tracking,
+                    // a frame plus a hop in linear phase.
+                    const double lfo_sample_lag = static_cast<double>(
+                        std::max(0, latency_samples()));
                     if (param_store_) {
                         if (output_route_audible) {
                             const auto last = static_cast<int32_t>(
@@ -3068,11 +3138,13 @@ void Spectr::process(
                             // Gain and the trim: Auto Gain never sees it, and
                             // the trim plus the LFO stay inside the lane's
                             // range.
+                            float g_bank = 1.0f;
                             if (output_modulated || output_audio_rate || bank_audio_rate) {
                                 float mod_db = 0.0f;
                                 float bank_residual_db = 0.0f;
                                 if (output_audio_rate || bank_audio_rate) {
-                                    const double step = static_cast<double>(sample);
+                                    const double step =
+                                        static_cast<double>(sample) - lfo_sample_lag;
                                     const float w1 = lfo_bandlimited(
                                         audio_lfo_shape_fade_,
                                         audio_modulation_phase_ + lfo_sample_cycles[0] * step,
@@ -3106,11 +3178,27 @@ void Spectr::process(
                                 const float applied_db = std::clamp(
                                     trim_db + mod_db, kOutputTrimMinDb,
                                     kOutputTrimMaxDb) - trim_db;
-                                gain *= std::pow(10.0f, (applied_db + bank_residual_db) * 0.05f);
+                                gain *= std::pow(10.0f, applied_db * 0.05f);
+                                if (bank_residual_db != 0.0f)
+                                    g_bank = std::pow(10.0f, bank_residual_db * 0.05f);
                             }
                             for (std::size_t channel = 0;
-                                 channel < out_slice.num_channels(); ++channel)
-                                output_channels_[channel][sample] *= gain;
+                                 channel < out_slice.num_channels(); ++channel) {
+                                float y = output_channels_[channel][sample];
+                                // Bank's handed-over gain reaches the wet path
+                                // only: y = (1 - mix) dry + mix wet, so
+                                // y + (g - 1)(y - (1 - mix) dry) is
+                                // (1 - mix) dry + mix wet g, with the dry
+                                // read the renderer's latency back.
+                                if (g_bank != 1.0f && channel < 2 && bank_ring_size > 0) {
+                                    const std::size_t at =
+                                        (bank_ring_start + sample + bank_ring_size - bank_dry_lag)
+                                        % bank_ring_size;
+                                    const float dry = bank_dry_ring_[channel][at];
+                                    y += (g_bank - 1.0f) * (y - bank_dry_share * dry);
+                                }
+                                output_channels_[channel][sample] = y * gain;
+                            }
                         }
                     }
                     // A frame that completed on the slice's last sample moves

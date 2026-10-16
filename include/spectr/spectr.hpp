@@ -1570,6 +1570,11 @@ private:
     // automation redraws immediately without echoing every editor-originated
     // paint receipt back through a full hydration.
     std::atomic<EditorRevision> host_automation_revision_{0};
+    /// The dry input, delayed by the renderer's latency, so Bank's handed-over
+    /// per-sample gain can be applied to the wet path alone at any Mix:
+    /// y' = y + (g - 1) (y - (1 - mix) dry). Sized at prepare; two channels.
+    std::array<std::vector<float>, 2> bank_dry_ring_{};
+    std::size_t bank_dry_write_ = 0;
     // The canonical state as last pushed to the parameters — the sync delta
     // base. Morph updates it silently (morph moves the morph parameter only;
     // pushing 64 resulting band lanes per morph move would double-drive the
