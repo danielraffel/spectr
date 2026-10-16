@@ -84,10 +84,11 @@ jobs:
           asset=$(python3 -c 'import json; print(json.load(open("'$pin'"))["asset"])')
           digest=$(python3 -c 'import json; print(json.load(open("'$pin'"))["asset_sha256"])')
           sdk_sha=$(python3 -c 'import json; print(json.load(open("'$pin'"))["source_git_sha"])')
+          sdk_tag=$(python3 -c 'import json; print(json.load(open("'$pin'"))["release_tag"])')
           sdk_root="$RUNNER_TEMP/spectr-sdk-$sdk_sha"
           archive="$RUNNER_TEMP/$asset"
           curl --fail --location --retry 3 --output "$archive" \
-            "https://github.com/Generous-Corp/pulp/releases/download/v0.915.0/$asset"
+            "https://github.com/Generous-Corp/pulp/releases/download/$sdk_tag/$asset"
           printf '%s  %s\n' "$digest" "$archive" | shasum -a 256 --check
           mkdir -p "$sdk_root"
           tar -xzf "$archive" -C "$sdk_root" --strip-components=1

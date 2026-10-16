@@ -2,8 +2,9 @@
 
 Spectr.app checks for new versions with [Sparkle 2](https://sparkle-project.org)
 and installs them from the same signed, notarized installer package a user
-downloads by hand. That package carries every format (AU, VST3, CLAP, the
-standalone app and Spectr Diagnostics), so updating the app updates everything.
+downloads by hand. That package carries every format (AU, VST3, CLAP, AAX
+when the release was packaged with a PACE-signed one, the standalone app and
+Spectr Diagnostics), so updating the app updates everything.
 
 Only Spectr.app contains the updater. The plug-in bundles never do: they run
 inside a DAW's process, and a self-updater there would be both wrong and

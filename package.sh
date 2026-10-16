@@ -239,6 +239,27 @@ if [[ -n "${DIAG_APP:-}" ]]; then
   done
   args+=(--app "Diagnostics app" "$DIAG_STAGED" "$DIAG_ENT")
 fi
+# Optional Pro Tools format. An AAX cannot be signed here: PACE's wraptool
+# wraps the executable and seals the bundle under the Developer ID identity
+# in one step, and the installer recipe only verifies it (a `codesign
+# --force` after wraptool strips the wrap, and Pro Tools refuses the
+# plugin). SPECTR_AAX_SIGNED names an already wrapped and signed
+# Spectr.aaxplugin built from this exact source; unset, the package carries
+# no AAX, as the release workflow's runner has no wraptool. A set path that
+# does not verify is an error, never a silent omission.
+if [[ -n "${SPECTR_AAX_SIGNED:-}" ]]; then
+  [[ -d "$SPECTR_AAX_SIGNED" ]] || { echo "SPECTR_AAX_SIGNED does not exist: $SPECTR_AAX_SIGNED" >&2; exit 2; }
+  grep -q 'aax) echo "/Library/Application Support/Avid/Audio/Plug-Ins"' \
+    "$PULP_ROOT/tools/scripts/build_combined_installer.sh" || {
+    echo "PULP_ROOT's installer recipe has no aax plugin kind: $PULP_ROOT" >&2; exit 2; }
+  codesign --verify --deep --strict "$SPECTR_AAX_SIGNED" || {
+    echo "SPECTR_AAX_SIGNED is not signed; wrap and sign it with wraptool first" >&2; exit 2; }
+  AAX_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$SPECTR_AAX_SIGNED/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$AAX_VER" == "$VER" ]] || {
+    echo "SPECTR_AAX_SIGNED is version '${AAX_VER:-unknown}', the package is $VER" >&2; exit 2; }
+  args+=(--plugin aax "$SPECTR_AAX_SIGNED")
+fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
 # Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Sign the source
@@ -274,8 +295,9 @@ python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 # Each signed bundle declares the macOS floor its binaries are built for.
 MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' "$CACHE" | tail -1)"
 [[ -n "$MIN_OS" ]] || { echo "build cache names no CMAKE_OSX_DEPLOYMENT_TARGET" >&2; exit 2; }
-python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" \
-  --bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP"
+min_os_bundles=(--bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP")
+[[ -n "${SPECTR_AAX_SIGNED:-}" ]] && min_os_bundles+=(--bundle "$SPECTR_AAX_SIGNED")
+python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" "${min_os_bundles[@]}"
 
 # The updater lives in the app and nowhere else, and the signed app's nested
 # Sparkle code carries the Developer ID signature notarization requires.
