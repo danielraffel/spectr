@@ -2794,7 +2794,12 @@ if(SPECTR_NODE_EXECUTABLE)
             stacking-submenus
             escape-closes-all
             no-escape
-            unanswerable-dismisses)
+            unanswerable-dismisses
+            pointer-isolation
+            lifted-pointer-isolation
+            pointerdown-isolation
+            pointerup-isolation
+            click-isolation)
         add_test(NAME Spectr-materialized-band-menu-dismissal-${plant}-control
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_menu_dismissal.mjs

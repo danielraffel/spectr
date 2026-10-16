@@ -17,6 +17,11 @@ submenu can open, and its `__pulpId` is the widget id the bridge speaks. When
 the name cannot be read the prop is omitted, which is exactly the undeclared
 claim -- never a guess.
 
+The same sibling boundary applies to pointer bubbling: a submenu press cannot
+bubble through the root menu because the panels are separate native views.
+Each lifted panel therefore owns pointerdown, pointerup, and click propagation
+stops, matching the root menu's gesture isolation.
+
 The vendored runtime only forwards the declaration after
 tools/patch_materialized_runtime_overlay_parent.py; the two scripts are one
 change in two artifacts and both must be applied.
@@ -35,7 +40,7 @@ HELPER = ("  // The lifted submenus stack on the band menu rather than replacing
           + N + "  // see tools/patch_materialized_band_submenu_overlay_parent.py." + N
           + "  const submenuOverlayParent = () => ref.current && ref.current.__pulpId" + N
           + "    ? String(ref.current.__pulpId) : undefined;" + N)
-EDITS = [
+PARENT_EDITS = [
     ("submenu parent helper", HELPER_ANCHOR, HELPER + HELPER_ANCHOR),
     ("macros panel", "ref: macrosRef," + N,
      "ref: macrosRef," + N + "        overlayParent: submenuOverlayParent()," + N),
@@ -44,21 +49,64 @@ EDITS = [
 ]
 MARKER = "const submenuOverlayParent = () =>"
 
+POINTER_ISOLATION = (
+    "        onPointerDown: (event) => event.stopPropagation()," + N
+    + "        onPointerUp: (event) => event.stopPropagation()," + N
+    + "        onClick: (event) => event.stopPropagation()," + N
+)
+POINTER_MARKER = "        onPointerDown: (event) => event.stopPropagation(),"
+POINTER_EDITS = [
+    ("macros pointer isolation",
+     "        overlayParent: submenuOverlayParent()," + N
+     + "        onDismiss: () => closeSubmenuLevel(\\\"macros\\\")," + N,
+     "        overlayParent: submenuOverlayParent()," + N
+     + POINTER_ISOLATION
+     + "        onDismiss: () => closeSubmenuLevel(\\\"macros\\\")," + N),
+    ("modulation pointer isolation",
+     "        overlayParent: submenuOverlayParent()," + N
+     + "        onDismiss: () => closeSubmenuLevel(\\\"modulation\\\")," + N,
+     "        overlayParent: submenuOverlayParent()," + N
+     + POINTER_ISOLATION
+     + "        onDismiss: () => closeSubmenuLevel(\\\"modulation\\\")," + N),
+]
+
 
 def main():
     raw = PATH.read_text(encoding="utf-8")
-    if MARKER in raw:
-        print("band submenus already declare their overlay parent")
-        return 0
-    for name, old, new in EDITS:
-        count = raw.count(old)
-        if count != 1:
-            sys.exit("FAIL: %s anchor occurs %d times, expected 1" % (name, count))
-        raw = raw.replace(old, new, 1)
+    changed = False
+    if MARKER not in raw:
+        for name, old, new in PARENT_EDITS:
+            count = raw.count(old)
+            if count != 1:
+                sys.exit("FAIL: %s anchor occurs %d times, expected 1" % (name, count))
+            raw = raw.replace(old, new, 1)
+        changed = True
+        print("band submenus now stack on the band menu")
+    elif raw.count("overlayParent: submenuOverlayParent()") != 2:
+        sys.exit("FAIL: expected exactly two submenu declarations")
+
+    if raw.count(POINTER_MARKER) == 0:
+        for name, old, new in POINTER_EDITS:
+            count = raw.count(old)
+            if count != 1:
+                sys.exit("FAIL: %s anchor occurs %d times, expected 1" % (name, count))
+            raw = raw.replace(old, new, 1)
+        changed = True
+        print("lifted submenu pointer gestures now stop at their own panels")
+    elif raw.count(POINTER_MARKER) != 2:
+        sys.exit("FAIL: expected exactly two lifted submenu pointer isolation handlers")
+
     if raw.count("overlayParent: submenuOverlayParent()") != 2:
         sys.exit("FAIL: expected exactly two submenu declarations after patching")
-    PATH.write_text(raw, encoding="utf-8")
-    print("band submenus now stack on the band menu")
+    if raw.count(POINTER_MARKER) != 2:
+        sys.exit("FAIL: expected exactly two lifted submenu pointer isolation handlers")
+    for name, _old, new in POINTER_EDITS:
+        if raw.count(new) != 1:
+            sys.exit("FAIL: %s declaration is missing or duplicated" % name)
+    if changed:
+        PATH.write_text(raw, encoding="utf-8")
+    else:
+        print("band submenus already declare parent and pointer isolation")
     return 0
 
 
