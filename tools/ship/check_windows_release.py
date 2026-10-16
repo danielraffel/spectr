@@ -11,9 +11,29 @@ import argparse
 import hashlib
 import json
 import re
+import struct
 import sys
 import zipfile
 from pathlib import Path
+
+
+def check_pe(data: bytes, arch: str, name: str) -> None:
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        raise ValueError(f"{name}: missing PE header")
+    offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if offset + 24 > len(data) or data[offset:offset + 4] != b"PE\0\0":
+        raise ValueError(f"{name}: missing PE signature")
+    machine, sections = struct.unpack_from("<HH", data, offset + 4)
+    if arch == "arm64ec-win":
+        optional_size = struct.unpack_from("<H", data, offset + 20)[0]
+        section_table = offset + 24 + optional_size
+        names = [data[section_table + index * 40:section_table + index * 40 + 8]
+                 for index in range(sections)
+                 if section_table + (index + 1) * 40 <= len(data)]
+        if machine not in (0x8664, 0xAA64) or b".a64xrm\0" not in names:
+            raise ValueError(f"{name}: ARM64EC binary lacks ARM64X section")
+    elif machine != {"x86_64-win": 0x8664, "arm64-win": 0xAA64}[arch]:
+        raise ValueError(f"{name}: PE machine differs from {arch}")
 
 
 def check_package(path: Path, arch: str, version: str, source_sha: str) -> str:
@@ -50,6 +70,20 @@ def check_package(path: Path, arch: str, version: str, source_sha: str) -> str:
             raise ValueError(f"{path}: ZIP contents differ from manifest")
         if build_info_path not in recorded:
             raise ValueError(f"{path}: missing VST3 build provenance")
+        vdir = f"VST3/Spectr.vst3/Contents/{arch}"
+        for name, target_arch in (
+            ("Standalone/Spectr.exe", arch),
+            ("CLAP/Spectr.clap", arch),
+            (f"{vdir}/Spectr.vst3", arch),
+            ("wgpu_native.dll", expected_runtime),
+            (f"{vdir}/wgpu_native.dll", expected_runtime),
+        ):
+            if name not in recorded:
+                raise ValueError(f"{path}: missing release binary: {name}")
+            check_pe(archive.read(name), target_arch, name)
+        for name in ("icudtl.dat", f"{vdir}/icudtl.dat"):
+            if name not in recorded:
+                raise ValueError(f"{path}: missing Skia runtime: {name}")
         info = json.loads(archive.read(build_info_path))
         product = info.get("product", {})
         build = info.get("build", {})
