@@ -21,7 +21,7 @@ import fs from 'node:fs';
 const PLANTS = ['--plant-document-outside', '--plant-menu-only-containment',
                 '--plant-stacking-submenus', '--plant-escape-closes-all',
                 '--plant-no-escape', '--plant-unanswerable-dismisses',
-                '--plant-pointer-isolation'];
+                '--plant-pointer-isolation', '--plant-lifted-pointer-isolation'];
 // NOT a plant, deliberately: making `< Back` clear only its own flag cannot be
 // detected from here, and a control that cannot go red is worse than none.
 // Once one-submenu-at-a-time holds, the other flag is already false by the
@@ -80,6 +80,12 @@ if (plant === '--plant-pointer-isolation')
   replaceOnce('      onPointerDown: (event) => event.stopPropagation(),\n' +
               '      onPointerUp: (event) => event.stopPropagation(),\n' +
               '      onClick: (event) => event.stopPropagation(),\n', '');
+if (plant === '--plant-lifted-pointer-isolation')
+  replaceOnce('        onPointerDown: (event) => event.stopPropagation(),\n' +
+              '        onPointerUp: (event) => event.stopPropagation(),\n' +
+              '        onClick: (event) => event.stopPropagation(),\n' +
+              '        onDismiss: () => closeSubmenuLevel("macros"),\n',
+              '        onDismiss: () => closeSubmenuLevel("macros"),\n');
 
 // ── A DOM shim that keeps `document` and `document.body` distinct ─────────
 //
@@ -138,7 +144,7 @@ function makeDom() {
   };
 }
 
-function mount(scale = 1) {
+function mount() {
   const slots = [], effects = [], pending = [];
   let cursor = 0, tree, closed = 0;
   const native = { enabled: false, lfo2_enabled: false, target: 0, target_mask: 1 };
@@ -171,6 +177,7 @@ function mount(scale = 1) {
     muted: new Array(64).fill(false),
     captures: 0,
     underlyingMutations: 0,
+    underlyingBands: [],
   };
   const window = { pulp: {
     on(type, callback) {
@@ -247,6 +254,49 @@ function mount(scale = 1) {
     assert(found, 'visible button ' + action);
     return found;
   };
+  function pathTo(target, node = tree, path = [], seen = new Set()) {
+    if (!node || typeof node !== 'object') return null;
+    if (seen.has(node)) return null;
+    seen.add(node);
+    const next = path.concat(node);
+    if (node === target) return next;
+    for (const child of node.children || []) {
+      const found = pathTo(target, child, next, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  function bubble(target, type) {
+    const event = {
+      target,
+      currentTarget: null,
+      type,
+      stopped: false,
+      stopPropagation() { this.stopped = true; },
+    };
+    const handler = {
+      pointerdown: 'onPointerDown',
+      pointerup: 'onPointerUp',
+      click: 'onClick',
+    }[type];
+    const path = pathTo(target);
+    assert(path, 'event target is mounted in the React tree');
+    for (let i = path.length - 1; i >= 0; --i) {
+      event.currentTarget = path[i];
+      path[i].props?.[handler]?.(event);
+      if (event.stopped) break;
+    }
+    // The canvas is an ancestor outside this React tree. It only sees a
+    // pointerdown that reaches the end of the bubble path. This is a
+    // structural event model: no screen geometry or transformed hit-test is
+    // executed here, so the harness band comes from the mounted menu props.
+    if (type === 'pointerdown' && !event.stopped) {
+      model.captures++;
+      model.underlyingMutations++;
+      model.underlyingBands.push(props.band);
+    }
+    return event;
+  }
   const panel = marker => nodes(tree).find(n => n.props[marker]);
   render();
   return {
@@ -269,30 +319,15 @@ function mount(scale = 1) {
     refOf(marker) { return panel(marker)?.props?.ref?.current ?? null; },
     model,
     menuPress(action) {
-      const root = panel('data-spectr-band-context-menu');
       const row = button(action);
-      assert(root, 'context menu root mounted');
       assert(row, 'context menu action mounted');
-      const pointerEvent = () => ({
-        stopped: false,
-        stopPropagation() { this.stopped = true; },
-      });
-      const down = pointerEvent();
-      root.props.onPointerDown?.(down);
-      if (!down.stopped) model.captures++;
-      const click = pointerEvent();
-      row.props.onClick(click);
-      root.props.onClick?.(click);
-      const up = pointerEvent();
-      root.props.onPointerUp?.(up);
-      if (model.captures) {
-        // The real canvas maps the captured screen point differently at each
-        // design scale; either way, it is an underlying band, never the
-        // menu's intended Band 14 action.
-        const underlyingBand = scale === 1 ? 15 : 16;
-        model.muted[underlyingBand] = !model.muted[underlyingBand];
-        model.underlyingMutations++;
-      }
+      // Browser pointer activation is ordered pointerdown, pointerup, click.
+      // Each event bubbles from the selected row through its actual mounted
+      // panel; lifted submenus are siblings, so their own panel handlers are
+      // required to stop the path before it reaches the canvas ancestor.
+      bubble(row, 'pointerdown');
+      bubble(row, 'pointerup');
+      bubble(row, 'click');
       render();
     },
     // Escape as each host delivers it. Both route it to the overlay stack,
@@ -475,26 +510,42 @@ function check() {
     assert.equal(menu.dom.live(), 0, 'no listener outlives the menu');
   }
 
-  // ── Menu actions must not capture and mutate the canvas underneath ───────
-  // This models the actual React bubble path: the menu button invokes Reset,
-  // then the menu root must stop pointerdown/up/click before FilterBank's
-  // ancestor can establish pointer capture. Run it at unit and transformed
-  // design scale; the latter is where the live Windows report exposed the
-  // wrong underlying band most clearly.
-  for (const scale of [1, 0.75]) {
-    const menu = mount(scale);
+  // ── Menu and lifted submenu actions must not reach the canvas underneath ─
+  // This dispatches the real React bubble order (pointerdown, pointerup,
+  // click) through the selected row and its mounted panel. The macros and
+  // modulation panels are siblings of the root menu, so each needs its own
+  // stopPropagation handlers. This is a structural event model: it executes
+  // no screen geometry or transformed hit-test.
+  {
+    const menu = mount();
     const before = menu.model.muted.slice();
     menu.menuPress('reset-band');
-    assert.equal(menu.model.gains[8], 0.5,
-                 'control: the harness band is not the intended Band 14');
     assert.equal(menu.model.gains[14], 0,
-                 `scale ${scale}: Reset must change Band 14 only`);
+                 'control: Reset must change the mounted Band 14 action');
     assert.deepEqual(menu.model.muted, before,
-                     `scale ${scale}: Reset must not mutate an underlying band`);
+                     'root menu action must not mutate the canvas');
     assert.equal(menu.model.captures, 0,
-                 `scale ${scale}: menu press must not establish canvas capture`);
+                 'root menu press must not establish canvas capture');
     assert.equal(menu.model.underlyingMutations, 0,
-                 `scale ${scale}: no underlying canvas mutation is allowed`);
+                 'root menu press must not reach the canvas');
+
+    menu.click('macros-toggle');
+    assert(menu.panel('data-spectr-macros-panel'), 'macros panel open');
+    menu.menuPress('macros-back');
+    assert.equal(menu.model.captures, 0,
+                 'lifted macros press must not establish canvas capture');
+    assert.equal(menu.model.underlyingMutations, 0,
+                 'lifted macros press must not reach the canvas');
+
+    menu.click('modulation-toggle');
+    assert(menu.panel('data-spectr-modulation-panel'), 'modulation panel open');
+    menu.menuPress('modulation-back');
+    assert.equal(menu.model.captures, 0,
+                 'lifted modulation press must not establish canvas capture');
+    assert.equal(menu.model.underlyingMutations, 0,
+                 'lifted modulation press must not reach the canvas');
+    assert.deepEqual(menu.model.underlyingBands, [],
+                     'structural menu presses have no underlying band hit');
     menu.unmount();
   }
 }
