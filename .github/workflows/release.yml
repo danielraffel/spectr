@@ -12,12 +12,20 @@ on:
         required: true
         default: release-notes.md
         type: string
-      windows_arm64ec_asset:
-        description: Absolute path to the exact-head Spectr-windows-arm64ec-X.Y.Z.zip on the trusted runner
+      windows_arm64ec_url:
+        description: HTTPS URL for the exact-head Spectr-windows-arm64ec-X.Y.Z.zip
         required: true
         type: string
-      windows_x64_asset:
-        description: Absolute path to the exact-head Spectr-windows-x64-X.Y.Z.zip on the trusted runner
+      windows_arm64ec_sha256:
+        description: SHA-256 for the exact-head ARM64EC ZIP
+        required: true
+        type: string
+      windows_x64_url:
+        description: HTTPS URL for the exact-head Spectr-windows-x64-X.Y.Z.zip
+        required: true
+        type: string
+      windows_x64_sha256:
+        description: SHA-256 for the exact-head x64 ZIP
         required: true
         type: string
 
@@ -37,8 +45,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PULP_ROOT_REF: v0.980.0
       RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
-      WINDOWS_ARM64EC_ASSET: ${{ inputs.windows_arm64ec_asset }}
-      WINDOWS_X64_ASSET: ${{ inputs.windows_x64_asset }}
+      WINDOWS_ARM64EC_URL: ${{ inputs.windows_arm64ec_url }}
+      WINDOWS_ARM64EC_SHA256: ${{ inputs.windows_arm64ec_sha256 }}
+      WINDOWS_X64_URL: ${{ inputs.windows_x64_url }}
+      WINDOWS_X64_SHA256: ${{ inputs.windows_x64_sha256 }}
       # Identity hashes are public selectors, not private credentials. The
       # signing keychain and notarization profile stay on the trusted runner.
       APP_ID: ${{ vars.SPECTR_DEVELOPER_ID_APPLICATION_HASH }}
@@ -76,12 +86,33 @@ jobs:
           print(match.group(1))
           PY
           )
-          [[ "$GITHUB_REF_NAME" == "release/v$version" || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ "$GITHUB_REF_NAME" == "release/v$version" ]] || {
+            echo "release dispatch must target release/v$version (got $GITHUB_REF_NAME)" >&2
+            exit 1
+          }
           [[ -s "$RELEASE_NOTES_FILE" ]]
-          [[ -f "$WINDOWS_ARM64EC_ASSET" ]] || { echo "missing exact-head Windows ARM64EC asset: $WINDOWS_ARM64EC_ASSET" >&2; exit 1; }
-          [[ -f "$WINDOWS_X64_ASSET" ]] || { echo "missing exact-head Windows x64 asset: $WINDOWS_X64_ASSET" >&2; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "notes=$RELEASE_NOTES_FILE" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
+          arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
+          x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
+          [[ "$WINDOWS_ARM64EC_URL" == https://* && "$WINDOWS_X64_URL" == https://* ]] || {
+            echo "Windows asset URLs must use HTTPS" >&2; exit 1;
+          }
+          [[ "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+            echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
+          }
+          curl --fail --location --retry 3 --output "$arm" "$WINDOWS_ARM64EC_URL"
+          curl --fail --location --retry 3 --output "$x64" "$WINDOWS_X64_URL"
+          printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
+          printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
+          python3 tools/ship/check_windows_release.py \
+            --version "$version" --source-sha "$GITHUB_SHA" \
+            --arm64ec "$arm" --x64 "$x64"
+          {
+            echo "arm=$arm"
+            echo "x64=$x64"
+            echo "version=$version"
+            echo "notes=$RELEASE_NOTES_FILE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download and verify the exact released Pulp SDK
         id: sdk
@@ -174,5 +205,5 @@ jobs:
             --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
             --appcast artifacts/appcast.xml \
             --notes "${{ steps.version.outputs.notes }}" \
-            --windows-arm64ec "$WINDOWS_ARM64EC_ASSET" \
-            --windows-x64 "$WINDOWS_X64_ASSET"
+            --windows-arm64ec "${{ steps.version.outputs.arm }}" \
+            --windows-x64 "${{ steps.version.outputs.x64 }}"
