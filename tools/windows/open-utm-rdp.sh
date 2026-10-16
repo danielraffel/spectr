@@ -40,6 +40,18 @@ if ! nc -z 127.0.0.1 "$ssh_port" >/dev/null 2>&1 \
   rdp_port=53389
 fi
 
+# Windows can open its forwarded TCP port before OpenSSH is ready after boot.
+echo 'Waiting for Windows sign-in services...'
+deadline=$((SECONDS + ${SPECTR_WINDOWS_READY_TIMEOUT:-120}))
+until SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
+    "$repo_root/tools/windows/ssh-qemu.sh" 'echo SPECTR_WINDOWS_READY' >/dev/null 2>&1; do
+  if (( SECONDS >= deadline )); then
+    echo 'Windows SSH did not become ready; check the VM in UTM and try again.' >&2
+    exit 1
+  fi
+  sleep 2
+done
+
 SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
   SPECTR_WINDOWS_RDP_PORT="$rdp_port" \
   "$repo_root/tools/windows/ensure-rdp-over-ssh.sh" >/dev/null
@@ -49,8 +61,9 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
 # already-authenticated SSH channel before opening RDP.
 ssh_key="${SPECTR_WINDOWS_SSH_KEY:-$HOME/.ssh/id_ed25519_macstudio}"
 [[ -f "$ssh_key" ]] || ssh_key="$HOME/.ssh/id_ed25519"
-if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
-  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes \
+if [[ "${SPECTR_WINDOWS_PREPARE_REAPER:-0}" == 1 &&
+      -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
+  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
     -o StrictHostKeyChecking=no -i "$ssh_key" \
     "$repo_root/tools/windows/prepare-reaper-demo.ps1" \
     "admin@127.0.0.1:/Users/admin/prepare-reaper-demo.ps1"

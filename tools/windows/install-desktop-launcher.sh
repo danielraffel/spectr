@@ -20,12 +20,17 @@ cat >"$readme" <<EOF
 ## Open Windows
 
 1. Double-click **Spectr Windows Demo.command** on this Desktop.
-2. Wait up to 30 seconds for a window titled **FreeRDP: 127.0.0.1:53390**.
+2. Wait for a window titled **FreeRDP: 127.0.0.1:53390**. A cold Windows boot
+   can take up to two minutes. Sign-in is automatic using the protected local credential.
 3. Use that window as Windows. The black UTM window is only the VM console;
    leave it open and ignore it.
 
 If the FreeRDP window is behind another app, use **Command-Tab** until the
 window titled **FreeRDP: 127.0.0.1:53390** is visible.
+
+If Jump Desktop opens a saved connection named **spectr-qemu-local**, close it
+and use this launcher instead; that saved connection can point at an old port.
+You do not need to approve an SSH key or enter a password for this launcher.
 
 ## Test Spectr in REAPER
 
@@ -33,6 +38,9 @@ window titled **FreeRDP: 127.0.0.1:53390** is visible.
 2. Create or select a track and click **FX**.
 3. Choose **VST3: Spectr (Pulp)** and click **Add** to open the Skia/Dawn editor.
    The CLAP entry may show REAPER's generic sliders.
+
+Windows plugin GUI, audio, and performance validation is still in progress.
+Opening Windows does not establish that the installed plugin is the latest build.
 
 ## Test Ableton
 
