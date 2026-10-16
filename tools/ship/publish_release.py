@@ -31,6 +31,9 @@ the current latest never becomes latest, and step 4 says so.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 import subprocess
 import sys
 import time
@@ -44,23 +47,75 @@ REPO_SLUG = "danielraffel/spectr"
 LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 
 
+def _digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return "sha256:" + h.hexdigest()
+
+
+def check_draft(version: str, target: str, windows: tuple[Path, Path],
+                macos: tuple[Path, Path] | None = None,
+                allow_existing_macos: bool = False) -> None:
+    """Refuse a changed draft, tag, or asset set before any publication step."""
+    tag = f"v{version}"
+    result = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", REPO_SLUG,
+         "--json", "isDraft,assets"], capture_output=True, text=True, check=True)
+    release = json.loads(result.stdout)
+    tag_ref = subprocess.run(
+        ["gh", "api", f"repos/{REPO_SLUG}/git/ref/tags/{tag}",
+         "--jq", ".object.sha"], capture_output=True, text=True, check=True)
+    if release.get("isDraft") is not True or tag_ref.stdout.strip() != target:
+        raise ValueError(f"{tag}: draft state or tag target changed")
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError(f"{tag}: release assets are unavailable")
+    by_name = {}
+    for asset in assets:
+        name = asset.get("name")
+        if not isinstance(name, str) or name in by_name:
+            raise ValueError(f"{tag}: duplicate or invalid release asset name")
+        by_name[name] = asset
+    expected = {path.name: _digest(path) for path in windows}
+    if macos:
+        expected.update({path.name: _digest(path) for path in macos})
+    for name, digest in expected.items():
+        if by_name.get(name, {}).get("digest") != digest:
+            raise ValueError(f"{tag}: missing or changed draft asset {name}")
+    allowed = {path.name for path in windows}
+    if macos or allow_existing_macos:
+        allowed.update((f"Spectr-{version}.pkg", "appcast.xml"))
+    if not (set(by_name) <= allowed if allow_existing_macos and not macos
+            else set(by_name) == allowed):
+        raise ValueError(f"{tag}: unexpected draft asset set")
+
+
 def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
          title: str | None = None,
-         windows: tuple[Path, Path] | None = None) -> list[list[str]]:
+         windows: tuple[Path, Path] | None = None,
+         reuse_draft: bool = False) -> list[list[str]]:
     tag = f"v{version}"
     if appcast.name != "appcast.xml":
         raise SystemExit("the release feed asset must be named appcast.xml")
-    return [
-        ["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
+    steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
-         "--notes-file", str(notes)],
-        ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast),
-         *([str(asset) for asset in windows] if windows else [])],
+         "--notes-file", str(notes)]]
+    upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG]
+    if reuse_draft:
+        upload.append("--clobber")
+    upload.extend((str(pkg), str(appcast)))
+    if not reuse_draft and windows:
+        upload.extend(str(asset) for asset in windows)
+    steps += [
+        upload,
         ["gh", "release", "edit", tag, "--repo", REPO_SLUG, "--draft=false", "--latest"],
         [sys.executable, str(HERE / "check_sparkle.py"), "appcast",
          "--appcast", f"{LATEST}/appcast.xml", "--pkg", f"{LATEST}/{pkg.name}",
          "--expect-version", version, "--channel", "release", "--require-notes"],
     ]
+    return steps
 
 
 def main() -> int:
@@ -78,6 +133,8 @@ def main() -> int:
     ap.add_argument("--verify-attempts", type=int, default=12,
                     help="live-feed checks, 15 s apart, before calling the publish broken")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--reuse-draft", action="store_true",
+                    help="upload into an existing draft vX.Y.Z release")
     args = ap.parse_args()
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
@@ -94,7 +151,7 @@ def main() -> int:
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
         ).stdout.strip()
     steps = plan(args.version, args.pkg, args.appcast, args.notes, target,
-                 args.title, windows)
+                 args.title, windows, args.reuse_draft)
     if args.dry_run:
         for cmd in steps:
             print(" ".join(cmd))
@@ -110,13 +167,20 @@ def main() -> int:
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
                   check_windows_package(asset, arch, args.version, target), flush=True)
-    for cmd in steps[:3]:
+    if args.reuse_draft:
+        if not windows or not re.fullmatch(r"[0-9a-f]{40}", target):
+            raise SystemExit("--reuse-draft requires both Windows assets and an exact target SHA")
+        check_draft(args.version, target, windows, allow_existing_macos=True)
+    mutation_steps = steps[:2] if args.reuse_draft else steps[:3]
+    for index, cmd in enumerate(mutation_steps):
+        if args.reuse_draft and index == 1:
+            check_draft(args.version, target, windows, (args.pkg, args.appcast))
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "
                   "last step above was the publish", file=sys.stderr)
             return 1
-    verify = steps[3]
+    verify = steps[2] if args.reuse_draft else steps[3]
     for attempt in range(1, args.verify_attempts + 1):
         print(f"+ ({attempt}/{args.verify_attempts}) " + " ".join(verify), flush=True)
         if subprocess.run(verify).returncode == 0:

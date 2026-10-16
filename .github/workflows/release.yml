@@ -1,20 +1,33 @@
 name: Spectr Release
 
-# A release is cut by pushing a prepared release/vX.Y.Z branch. The package,
-# Sparkle feed and GitHub release are made on one exact head; nothing is
-# published until the draft contains both assets and the live latest feed
-# verifies the package signature. workflow_dispatch is retained for a rerun
-# after an infrastructure failure, never for an arbitrary main commit.
+# A release is dispatched only after exact-head Windows ARM64EC and x64 ZIPs
+# are available as authenticated assets on a pre-created draft vX.Y.Z release
+# targeted at the same commit. The transient Tart guest downloads and verifies
+# them before doing any macOS work, then the publisher fills and publishes
+# that draft atomically.
 on:
-  push:
-    branches:
-      - 'release/v*'
   workflow_dispatch:
     inputs:
       release_notes_file:
         description: Path to the checked-in Markdown release notes
         required: true
         default: release-notes.md
+        type: string
+      windows_arm64ec_url:
+        description: GitHub API URL for an asset on the pre-created draft release
+        required: true
+        type: string
+      windows_arm64ec_sha256:
+        description: SHA-256 for the exact-head ARM64EC ZIP
+        required: true
+        type: string
+      windows_x64_url:
+        description: GitHub API URL for an asset on the pre-created draft release
+        required: true
+        type: string
+      windows_x64_sha256:
+        description: SHA-256 for the exact-head x64 ZIP
+        required: true
         type: string
 
 concurrency:
@@ -33,6 +46,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PULP_ROOT_REF: v0.980.0
       RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
+      WINDOWS_ARM64EC_URL: ${{ inputs.windows_arm64ec_url }}
+      WINDOWS_ARM64EC_SHA256: ${{ inputs.windows_arm64ec_sha256 }}
+      WINDOWS_X64_URL: ${{ inputs.windows_x64_url }}
+      WINDOWS_X64_SHA256: ${{ inputs.windows_x64_sha256 }}
       # Identity hashes are public selectors, not private credentials. The
       # signing keychain and notarization profile stay on the trusted runner.
       APP_ID: ${{ vars.SPECTR_DEVELOPER_ID_APPLICATION_HASH }}
@@ -70,10 +87,57 @@ jobs:
           print(match.group(1))
           PY
           )
-          [[ "$GITHUB_REF_NAME" == "release/v$version" || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ "$GITHUB_REF_NAME" == "release/v$version" ]] || {
+            echo "release dispatch must target release/v$version (got $GITHUB_REF_NAME)" >&2
+            exit 1
+          }
           [[ -s "$RELEASE_NOTES_FILE" ]]
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "notes=$RELEASE_NOTES_FILE" >> "$GITHUB_OUTPUT"
+          draft=$(gh release view "v$version" --repo danielraffel/spectr --json isDraft --jq '.isDraft')
+          [[ "$draft" == true ]] || { echo "v$version must already be a draft" >&2; exit 1; }
+          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
+          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag target differs from GITHUB_SHA" >&2; exit 1; }
+          mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
+          arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
+          x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
+          [[ "$WINDOWS_ARM64EC_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_X64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
+            echo "Windows asset URLs must be GitHub release asset API URLs" >&2; exit 1;
+          }
+          [[ "$WINDOWS_ARM64EC_URL" != *\?* && "$WINDOWS_X64_URL" != *\?* ]] || {
+            echo "Windows asset URLs must not contain query credentials" >&2; exit 1;
+          }
+          [[ "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+            echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
+          }
+          draft_assets=$(gh release view "v$version" --repo danielraffel/spectr --json assets)
+          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" python3 - <<'PY'
+          import json, os, sys
+          assets = json.loads(os.environ['DRAFT_ASSETS'])['assets']
+          expected = {
+              f"Spectr-windows-arm64ec-{os.environ['RELEASE_VERSION']}.zip": (
+                  os.environ['WINDOWS_ARM64EC_URL'], os.environ['WINDOWS_ARM64EC_SHA256']),
+              f"Spectr-windows-x64-{os.environ['RELEASE_VERSION']}.zip": (
+                  os.environ['WINDOWS_X64_URL'], os.environ['WINDOWS_X64_SHA256']),
+          }
+          if len(assets) != 2 or {a.get('name') for a in assets} != set(expected):
+              sys.exit('draft must contain exactly the two named Windows assets')
+          for asset in assets:
+              url, digest = expected[asset['name']]
+              if asset.get('apiUrl') != url or asset.get('digest') != 'sha256:' + digest.lower():
+                  sys.exit(f"draft asset identity or digest differs: {asset['name']}")
+          PY
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$x64" "$WINDOWS_X64_URL"
+          printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
+          printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
+          python3 tools/ship/check_windows_release.py \
+            --version "$version" --source-sha "$GITHUB_SHA" \
+            --arm64ec "$arm" --x64 "$x64"
+          {
+            echo "arm=$arm"
+            echo "x64=$x64"
+            echo "version=$version"
+            echo "notes=$RELEASE_NOTES_FILE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download and verify the exact released Pulp SDK
         id: sdk
@@ -165,4 +229,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
             --appcast artifacts/appcast.xml \
-            --notes "${{ steps.version.outputs.notes }}"
+            --notes "${{ steps.version.outputs.notes }}" \
+            --windows-arm64ec "${{ steps.version.outputs.arm }}" \
+            --windows-x64 "${{ steps.version.outputs.x64 }}" \
+            --reuse-draft
