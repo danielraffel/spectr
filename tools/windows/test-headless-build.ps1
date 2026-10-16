@@ -21,13 +21,22 @@ $governedFixture | Set-Content -LiteralPath $GovernedBuild -Encoding ascii
 $bash = 'C:\Program Files\Git\bin\bash.exe'
 $vsVars = 'C:\VS18BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
 
-function Invoke-Helper([string]$Target, [string]$Receipt) {
+function Invoke-Helper(
+    [string]$Target,
+    [string]$Receipt,
+    [string]$InvokeSource = $SourceDir,
+    [string]$InvokeBuild = $BuildDir,
+    [string]$InvokeGovernedBuild = $GovernedBuild,
+    [string]$InvokeTestCase = 'Spectr processes audio',
+    [string]$InvokeTestExecutable = ''
+) {
     $output = Join-Path $FixtureRoot ("$Target-helper-output.log")
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Helper `
-        -SourceDir $SourceDir -BuildDir $BuildDir -VsVars $vsVars `
-        -GovernedBuild $GovernedBuild -Bash $bash -TargetArchitecture $Target `
+        -SourceDir $InvokeSource -BuildDir $InvokeBuild -VsVars $vsVars `
+        -GovernedBuild $InvokeGovernedBuild -Bash $bash -TargetArchitecture $Target `
+        -TestCase $InvokeTestCase -TestExecutable $InvokeTestExecutable `
         -Receipt $Receipt *> $output
     $code = $LASTEXITCODE
     $ErrorActionPreference = $saved
@@ -82,12 +91,26 @@ function Set-PeMachine([string]$Path, [UInt16]$Machine, [bool]$Arm64X) {
     [IO.File]::WriteAllBytes($Path, $bytes)
 }
 
+function New-GitSourceFixture([string]$Path) {
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    'fixture source' | Set-Content -LiteralPath (Join-Path $Path 'source-marker.txt') -Encoding ascii
+    & git -C $Path init --quiet
+    if ($LASTEXITCODE -ne 0) { throw "unable to initialize source fixture: $Path" }
+    & git -C $Path config user.name 'headless fixture'
+    & git -C $Path config user.email 'headless-fixture@example.invalid'
+    & git -C $Path add source-marker.txt
+    if ($LASTEXITCODE -ne 0) { throw "unable to stage source fixture: $Path" }
+    & git -C $Path commit --quiet -m 'fixture source'
+    if ($LASTEXITCODE -ne 0) { throw "unable to commit source fixture: $Path" }
+}
+
 $spaceBuild = Join-Path $FixtureRoot 'build with spaces'
 Copy-FixtureBuild $spaceBuild $SourceDir
 $BuildDir = $spaceBuild
 
 $positiveReceipt = Join-Path $FixtureRoot 'positive-receipt.json'
-$positiveExit = Invoke-Helper 'arm64' $positiveReceipt
+$positiveTestExecutable = Join-Path $spaceBuild 'Spectr-test.exe'
+$positiveExit = Invoke-Helper 'arm64' $positiveReceipt $SourceDir $spaceBuild $GovernedBuild 'Spectr processes audio' $positiveTestExecutable
 if ($positiveExit -ne 0) { throw "positive fixture failed with exit $positiveExit" }
 $positive = Get-Content -LiteralPath $positiveReceipt -Raw | ConvertFrom-Json
 if ($positive.status -ne 'PASS') { throw 'positive fixture did not produce PASS receipt' }
@@ -100,11 +123,32 @@ if ((Get-Content -LiteralPath $invocationPath -Raw) -match '--parallel|-j') {
 if ((Get-Content -LiteralPath $invocationPath -Raw) -notmatch [regex]::Escape($spaceBuild)) {
     throw 'governed invocation did not preserve the space-containing build path as one argument'
 }
+if ($positive.focused_test.command_line -notmatch [regex]::Escape('"' + $positiveTestExecutable + '"') -or
+    $positive.focused_test.command_line -notmatch [regex]::Escape('"Spectr processes audio"')) {
+    throw 'focused test command did not preserve quoted executable and test-case arguments'
+}
 if ($positive.toolchain.host_architecture -notin @('arm64', 'x64') -or $positive.toolchain.target_architecture -ne 'arm64') {
     throw 'positive receipt lacks explicit tool-host/target selection'
 }
 foreach ($artifact in $positive.artifacts.psobject.Properties.Value) {
     if ($artifact.pe_machine -ne '0xAA64') { throw "positive artifact machine mismatch: $($artifact.pe_machine)" }
+}
+
+$unsafeCaseReceipt = Join-Path $FixtureRoot 'unsafe-test-case-negative-receipt.json'
+$unsafeCaseExit = Invoke-Helper 'arm64' $unsafeCaseReceipt $SourceDir $spaceBuild $GovernedBuild 'Spectr processes audio & echo injected'
+if ($unsafeCaseExit -eq 0) { throw 'unsafe TestCase fixture unexpectedly passed' }
+$unsafeCase = Get-Content -LiteralPath $unsafeCaseReceipt -Raw | ConvertFrom-Json
+if ($unsafeCase.status -ne 'FAIL' -or $unsafeCase.failure.phase -ne 'provenance' -or $unsafeCase.failure.message -notmatch 'TestCase contains unsupported shell metacharacters') {
+    throw 'unsafe TestCase fixture lacks command-argument validation evidence'
+}
+
+$unsafeExecutableReceipt = Join-Path $FixtureRoot 'unsafe-test-executable-negative-receipt.json'
+$unsafeExecutable = "$positiveTestExecutable`&invalid"
+$unsafeExecutableExit = Invoke-Helper 'arm64' $unsafeExecutableReceipt $SourceDir $spaceBuild $GovernedBuild 'Spectr processes audio' $unsafeExecutable
+if ($unsafeExecutableExit -eq 0) { throw 'unsafe TestExecutable fixture unexpectedly passed' }
+$unsafeExecutableResult = Get-Content -LiteralPath $unsafeExecutableReceipt -Raw | ConvertFrom-Json
+if ($unsafeExecutableResult.status -ne 'FAIL' -or $unsafeExecutableResult.failure.phase -ne 'provenance' -or $unsafeExecutableResult.failure.message -notmatch 'TestExecutable contains unsupported shell metacharacters') {
+    throw 'unsafe TestExecutable fixture lacks command-argument validation evidence'
 }
 
 $arm64ecBuild = Join-Path $FixtureRoot 'arm64ec build'
@@ -157,14 +201,63 @@ if ($mismatch.status -ne 'FAIL' -or $mismatch.failure.phase -ne 'provenance' -or
     throw 'cache mismatch receipt lacks source binding evidence'
 }
 
+$mutationId = [guid]::NewGuid().ToString('N')
+$mutationSource = Join-Path $FixtureRoot "mutation-source-$mutationId"
+New-GitSourceFixture $mutationSource
+
+$mutationBuild = Join-Path $FixtureRoot "mutation-build-$mutationId"
+Copy-FixtureBuild $mutationBuild $mutationSource
+$mutationMarker = Join-Path $mutationSource 'source-marker.txt'
+$mutationMarkerPosix = ($mutationMarker -replace '\', '/') -replace '^C:', '/c'
+$mutationGoverned = Join-Path $FixtureRoot 'mutation-governed.sh'
+@"
+#!/usr/bin/env bash
+printf 'mutated during build\n' > "$mutationMarkerPosix"
+exit 0
+"@ | Set-Content -LiteralPath $mutationGoverned -Encoding ascii
+$mutationReceipt = Join-Path $FixtureRoot 'source-mutation-negative-receipt.json'
+$mutationExit = Invoke-Helper 'arm64' $mutationReceipt $mutationSource $mutationBuild $mutationGoverned
+if ($mutationExit -eq 0) { throw 'source mutation fixture unexpectedly passed' }
+$mutation = Get-Content -LiteralPath $mutationReceipt -Raw | ConvertFrom-Json
+if ($mutation.status -ne 'FAIL' -or $mutation.failure.phase -ne 'source-revalidation-after-build' -or $mutation.failure.message -notmatch 'Source checkout changed during build') {
+    throw 'source mutation receipt lacks post-build provenance evidence'
+}
+
+$headMoveId = [guid]::NewGuid().ToString('N')
+$headMoveSource = Join-Path $FixtureRoot "head-move-source-$headMoveId"
+New-GitSourceFixture $headMoveSource
+$headMoveBuild = Join-Path $FixtureRoot "head-move-build-$headMoveId"
+Copy-FixtureBuild $headMoveBuild $headMoveSource
+$headMoveMarkerPosix = ((Join-Path $headMoveSource 'source-marker.txt') -replace '\', '/') -replace '^C:', '/c'
+$headMoveSourcePosix = ($headMoveSource -replace '\', '/') -replace '^C:', '/c'
+$headMoveGoverned = Join-Path $FixtureRoot "head-move-governed-$headMoveId.sh"
+@"
+#!/usr/bin/env bash
+printf 'head moved during build\n' > "$headMoveMarkerPosix"
+git -C "$headMoveSourcePosix" add source-marker.txt
+git -C "$headMoveSourcePosix" commit --quiet -m 'head moved during build'
+exit 0
+"@ | Set-Content -LiteralPath $headMoveGoverned -Encoding ascii
+$headMoveReceipt = Join-Path $FixtureRoot 'source-head-move-negative-receipt.json'
+$headMoveExit = Invoke-Helper 'arm64' $headMoveReceipt $headMoveSource $headMoveBuild $headMoveGoverned
+if ($headMoveExit -eq 0) { throw 'source HEAD move fixture unexpectedly passed' }
+$headMove = Get-Content -LiteralPath $headMoveReceipt -Raw | ConvertFrom-Json
+if ($headMove.status -ne 'FAIL' -or $headMove.failure.phase -ne 'source-revalidation-after-build' -or $headMove.failure.message -notmatch 'Source HEAD changed during build') {
+    throw 'source HEAD move receipt lacks SHA revalidation evidence'
+}
+
 [ordered]@{
     schema = 1
     status = 'PASS'
     positive_receipt = $positiveReceipt
+    unsafe_test_case_negative_receipt = $unsafeCaseReceipt
+    unsafe_test_executable_negative_receipt = $unsafeExecutableReceipt
     arm64ec_positive_receipt = $arm64ecReceipt
     x64_positive_receipt = $x64Receipt
     plain_x64_negative_receipt = $negativeReceipt
     cache_mismatch_negative_receipt = $mismatchReceipt
+    source_mutation_negative_receipt = $mutationReceipt
+    source_head_move_negative_receipt = $headMoveReceipt
     governed_invocation = (Get-Content -LiteralPath $invocationPath -Raw).Trim()
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $FixtureRoot 'fixture-receipt.json') -Encoding utf8
 Write-Output "PASS: $FixtureRoot"

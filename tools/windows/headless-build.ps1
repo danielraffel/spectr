@@ -34,7 +34,7 @@ $receiptObject = [ordered]@{
     run_id = $runId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
     evidence_dir = $runDir
-    source = [ordered]@{ directory = $SourceDir; git_sha = $null; clean = $false; cmake_home_directory = $null }
+    source = [ordered]@{ directory = $SourceDir; git_sha = $null; clean = $false; git_sha_after_build = $null; clean_after_build = $false; git_sha_final = $null; clean_final = $false; cmake_home_directory = $null }
     host = [ordered]@{
         architecture = $null
         process_architecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')
@@ -43,7 +43,7 @@ $receiptObject = [ordered]@{
     target = [ordered]@{ requested_architecture = $TargetArchitecture; package_policy = $null; pe_machines = @(); arm64x_section_required = $false }
     toolchain = [ordered]@{ vcvars = $VsVars; vcvars_arguments = $null; governed_build = $GovernedBuild; governed_build_sha256 = $null; bash = $Bash; host_architecture = $null; target_architecture = $null }
     build = [ordered]@{ exit = $null; arguments = $null; command_line = $null; log = $buildLog }
-    focused_test = [ordered]@{ name = $TestCase; executable = $null; sha256 = $null; exit = $null; summary = $null; assertions = $null; test_cases = $null; log = $testLog }
+    focused_test = [ordered]@{ name = $TestCase; executable = $null; sha256 = $null; exit = $null; summary = $null; assertions = $null; test_cases = $null; command_line = $null; log = $testLog }
     artifacts = [ordered]@{}
     limitations = @('Headless build/test proves compilation and focused DSP behavior only.', 'It does not claim DAW loading, GUI, screenshot, modulation, audio-device behavior, or release acceptance.')
 }
@@ -75,7 +75,7 @@ function Get-CanonicalPath([string]$Path) {
 }
 
 function Assert-SafeCommandArgument([string]$Value, [string]$Label) {
-    if ($Value -match '[&|<>^%!"`]') { throw "$Label contains unsupported shell metacharacters: $Value" }
+    if ($null -eq $Value -or $Value -match '[\x00-\x1F\x7F&|<>^%!"`]') { throw "$Label contains unsupported shell metacharacters: $Value" }
 }
 
 function Quote-CmdArgument([string]$Value, [string]$Label) {
@@ -109,6 +109,18 @@ function Assert-CMakeSource([string]$Build, [string]$Source) {
     return $cacheSource
 }
 
+function Assert-SourceUnchanged([string]$ExpectedSha, [string]$Checkpoint) {
+    $actualSha = Invoke-Git @('-C', $SourceDir, 'rev-parse', '--verify', 'HEAD')
+    $sourceStatus = Invoke-Git @('-C', $SourceDir, 'status', '--porcelain')
+    if ($sourceStatus) {
+        throw "Source checkout changed during $Checkpoint: $SourceDir ($sourceStatus)"
+    }
+    if ($actualSha -ne $ExpectedSha) {
+        throw "Source HEAD changed during $Checkpoint: expected $ExpectedSha, got $actualSha"
+    }
+    return $actualSha
+}
+
 $receiptObject.host.architecture = Get-HostArchitecture
 $receiptObject.toolchain.host_architecture = if ($ToolHostArchitecture -eq 'auto') { if ($receiptObject.host.architecture -match '^ARM64$') { 'arm64' } else { 'x64' } } else { $ToolHostArchitecture }
 $receiptObject.toolchain.target_architecture = if ($TargetArchitecture -eq 'x64') { 'x64' } else { 'arm64' }
@@ -127,6 +139,8 @@ try {
     foreach ($pathInfo in @(@{ value = $VsVars; label = 'VsVars' }, @{ value = $GovernedBuild; label = 'GovernedBuild' }, @{ value = $Bash; label = 'Bash' }, @{ value = $BuildDir; label = 'BuildDir' })) {
         Assert-SafeCommandArgument $pathInfo.value $pathInfo.label
     }
+    Assert-SafeCommandArgument $TestCase 'TestCase'
+    if ($TestExecutable) { Assert-SafeCommandArgument $TestExecutable 'TestExecutable' }
     $receiptObject.toolchain.governed_build_sha256 = (Get-FileHash $GovernedBuild -Algorithm SHA256).Hash
     $sourceSha = Invoke-Git @('-C', $SourceDir, 'rev-parse', '--verify', 'HEAD')
     $sourceStatus = Invoke-Git @('-C', $SourceDir, 'status', '--porcelain')
@@ -153,6 +167,9 @@ try {
     if ($toolHostMatch.Groups[1].Value.Trim().ToLowerInvariant() -ne $receiptObject.toolchain.host_architecture -or $toolTargetMatch.Groups[1].Value.Trim().ToLowerInvariant() -ne $receiptObject.toolchain.target_architecture) {
         throw "Visual Studio selected host/target $($toolHostMatch.Groups[1].Value.Trim())/$($toolTargetMatch.Groups[1].Value.Trim()), expected $($receiptObject.toolchain.host_architecture)/$($receiptObject.toolchain.target_architecture)"
     }
+    $phase = 'source-revalidation-after-build'
+    $receiptObject.source.git_sha_after_build = Assert-SourceUnchanged $sourceSha 'build'
+    $receiptObject.source.clean_after_build = $true
     $receiptObject.source.cmake_home_directory = Assert-CMakeSource $BuildDir $SourceDir
 
     $phase = 'focused-test'
@@ -161,7 +178,9 @@ try {
     $testItem = Get-Item -LiteralPath $testExe
     $receiptObject.focused_test.executable = $testItem.FullName
     $receiptObject.focused_test.sha256 = (Get-FileHash -LiteralPath $testItem.FullName -Algorithm SHA256).Hash
-    @('@echo off', "call `"$VsVars`" $($receiptObject.toolchain.vcvars_arguments)", 'if errorlevel 1 exit /b %ERRORLEVEL%', "`"$testExe`" `"$TestCase`" --reporter compact", 'exit /b %ERRORLEVEL%') |
+    $testLine = ((Quote-CmdArgument $testItem.FullName 'TestExecutable'), (Quote-CmdArgument $TestCase 'TestCase'), '--reporter', 'compact') -join ' '
+    $receiptObject.focused_test.command_line = $testLine
+    @('@echo off', "call `"$VsVars`" $($receiptObject.toolchain.vcvars_arguments)", 'if errorlevel 1 exit /b %ERRORLEVEL%', $testLine, 'exit /b %ERRORLEVEL%') |
         Set-Content -LiteralPath $testCmd -Encoding ascii
     & cmd.exe /d /c "`"$testCmd`" >`"$testLog`" 2>&1"
     $testExit = $LASTEXITCODE
@@ -189,6 +208,9 @@ try {
         $receiptObject.artifacts[$item.name] = [ordered]@{ path = $file.FullName; bytes = $file.Length; sha256 = (Get-FileHash $file.FullName -Algorithm SHA256).Hash; pe_machine = ('0x{0:X4}' -f $machine); arm64x_section = $arm64x }
     }
 
+    $phase = 'source-revalidation-final'
+    $receiptObject.source.git_sha_final = Assert-SourceUnchanged $sourceSha 'finalization'
+    $receiptObject.source.clean_final = $true
     $receiptObject.status = 'PASS'
     Write-Receipt
     Write-Output "PASS: $Receipt"
