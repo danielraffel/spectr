@@ -61,6 +61,10 @@ try {
     Set-Content -LiteralPath (Join-Path $build 'wgpu_native.dll') -Value 'synthetic runtime' -NoNewline
     Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Vst3Architecture arm64ec-win -Output (Join-Path $temp 'mixed-wgpu.zip') | Out-Null } 'mixed architecture shared wgpu runtime'
     Remove-Item -LiteralPath (Join-Path $build 'wgpu_native.dll') -Force
+    $missingGpuOutput = Join-Path $temp 'missing-gpu.zip'
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $missingGpuOutput | Out-Null } 'package-release missing GPU runtime' 'Required runtime sidecar was not found: wgpu_native.dll'
+    if (Test-Path -LiteralPath $missingGpuOutput) { throw 'package-release wrote output without the GPU runtime' }
+    Write-FakePe (Join-Path $build 'wgpu_native.dll') $machine
 
     $sourceBuildInfo = Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json'
     $sourceBuildInfoOriginal = Get-Content $sourceBuildInfo -Raw
@@ -112,6 +116,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $build 'CLAP\Spectr.clap') -Destination (Join-Path $multiBuild 'CLAP\Release\Spectr.clap')
     Copy-Item -LiteralPath (Join-Path $build 'VST3') -Destination (Join-Path $multiBuild 'VST3') -Recurse
     Copy-Item -LiteralPath (Join-Path $build 'icudtl.dat') -Destination (Join-Path $multiBuild 'VST3\Release\icudtl.dat')
+    Copy-Item -LiteralPath (Join-Path $build 'wgpu_native.dll') -Destination (Join-Path $multiBuild 'VST3\Release\wgpu_native.dll')
     $multiPackage = Join-Path $temp 'multi-config.zip'
     & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $multiBuild -Architecture arm64-win -Output $multiPackage | Out-Null
     $multiExpanded = Join-Path $temp 'multi-config-expanded'

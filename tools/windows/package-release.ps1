@@ -102,15 +102,17 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
-    if ($runtimeSidecars -notcontains 'icudtl.dat') { throw "Required runtime sidecar was not found: icudtl.dat" }
+    foreach ($requiredRuntime in @('icudtl.dat', 'wgpu_native.dll')) {
+        if ($runtimeSidecars -notcontains $requiredRuntime) {
+            throw "Required runtime sidecar was not found: $requiredRuntime"
+        }
+    }
     Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json")
     Assert-SpectrPeArchitecture $bin $Architecture
     Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
     Assert-SpectrPeArchitecture $clap $Architecture
     $wgpu = Join-Path $stage 'wgpu_native.dll'
-    if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
-        Assert-SpectrPeArchitecture $wgpu $RuntimeArchitecture
-    }
+    Assert-SpectrPeArchitecture $wgpu $RuntimeArchitecture
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
         schema = 1
