@@ -8,6 +8,27 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Assert-PowerShellParses([string]$Path) {
+    $resolved = Resolve-Path -LiteralPath $Path
+    $tokens = $null
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $resolved,
+        [ref]$tokens,
+        [ref]$parseErrors) | Out-Null
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+        $details = ($parseErrors | ForEach-Object { "$($_.Extent): $($_.Message)" }) -join '; '
+        throw "PowerShell parse failed for $resolved`: $details"
+    }
+}
+
+# Keep the Windows fixture fail-closed before it creates any source/build
+# fixtures. This catches parser regressions in both the helper and this test
+# harness instead of discarding Parser::ParseFile's error output.
+Assert-PowerShellParses $Helper
+Assert-PowerShellParses $PSCommandPath
+
 New-Item -ItemType Directory -Force -Path $FixtureRoot | Out-Null
 $invocationPath = Join-Path $FixtureRoot 'governed-invocation.txt'
 $fixturePosix = ($FixtureRoot -replace '\\', '/') -replace '^C:', '/c'
