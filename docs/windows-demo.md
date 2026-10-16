@@ -296,9 +296,9 @@ native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
 
 The manifest records each artifact architecture. ARM64EC validation requires
 the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected. The
-current GPU build requires `icudtl.dat`, discovered from the build's release
-sidecar directory and copied beside the VST3 binary; `wgpu_native.dll` is
-included and architecture-checked when a dynamically linked build provides it.
+release package requires both `icudtl.dat` and `wgpu_native.dll`, discovered
+from the build sidecar directories and copied beside the VST3 binary. Packaging
+fails if either is missing; the GPU runtime's PE architecture is checked.
 Mixed native ARM64 plus ARM64EC packages fail closed when a shared
 `wgpu_native.dll` is present; provide separate per-artifact runtime sources
 before enabling that combination.
