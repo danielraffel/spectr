@@ -5,9 +5,12 @@ param(
     [string]$VsVars = 'C:\VS18BuildTools\VC\Auxiliary\Build\vcvarsall.bat',
     [ValidateSet('arm64', 'arm64ec', 'x64')]
     [string]$TargetArchitecture = 'arm64',
+    [ValidateSet('auto', 'arm64', 'x64')]
+    [string]$ToolHostArchitecture = 'auto',
     [string]$GovernedBuild = $(if ($env:SPECTR_GOVERNED_BUILD) { $env:SPECTR_GOVERNED_BUILD } else { 'C:\pulp\tools\ci\governed-build.sh' }),
     [string]$Bash = 'C:\Program Files\Git\bin\bash.exe',
     [string]$TestCase = 'Spectr processes audio',
+    [string]$TestExecutable = '',
     [string]$Receipt = 'C:\builds\spectr-arm64-gpu\headless-build-receipt.json'
 )
 
@@ -26,21 +29,21 @@ $phase = 'initialization'
 $buildExit = $null
 $testExit = $null
 $receiptObject = [ordered]@{
-    schema = 2
+    schema = 3
     status = 'FAIL'
     run_id = $runId
     generated_at_utc = (Get-Date).ToUniversalTime().ToString('o')
     evidence_dir = $runDir
-    source = [ordered]@{ directory = $SourceDir; git_sha = $null; clean = $false }
+    source = [ordered]@{ directory = $SourceDir; git_sha = $null; clean = $false; cmake_home_directory = $null }
     host = [ordered]@{
         architecture = $null
         process_architecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')
         process_architecture_override = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432')
     }
-    target = [ordered]@{ requested_architecture = $TargetArchitecture; pe_machine = $null; compiler_environment_target = $null }
-    toolchain = [ordered]@{ vcvars = $VsVars; governed_build = $GovernedBuild; governed_build_sha256 = $null; bash = $Bash }
-    build = [ordered]@{ exit = $null; command = $null; log = $buildLog }
-    focused_test = [ordered]@{ name = $TestCase; exit = $null; summary = $null; assertions = $null; test_cases = $null; log = $testLog }
+    target = [ordered]@{ requested_architecture = $TargetArchitecture; package_policy = $null; pe_machines = @(); arm64x_section_required = $false }
+    toolchain = [ordered]@{ vcvars = $VsVars; vcvars_arguments = $null; governed_build = $GovernedBuild; governed_build_sha256 = $null; bash = $Bash; host_architecture = $null; target_architecture = $null }
+    build = [ordered]@{ exit = $null; arguments = $null; command_line = $null; log = $buildLog }
+    focused_test = [ordered]@{ name = $TestCase; executable = $null; exit = $null; summary = $null; assertions = $null; test_cases = $null; log = $testLog }
     artifacts = [ordered]@{}
     limitations = @('Headless build/test proves compilation and focused DSP behavior only.', 'It does not claim DAW loading, GUI, screenshot, modulation, audio-device behavior, or release acceptance.')
 }
@@ -59,32 +62,70 @@ function Invoke-Git([string[]]$Arguments) {
 
 function Get-HostArchitecture {
     $override = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432')
-    if ($override) { return $override }
-    return [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')
+    if ($override) { return $override.ToUpperInvariant() }
+    return ([Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')).ToUpperInvariant()
 }
 
-function Get-PeMachine([string]$Path) {
-    $stream = [IO.File]::OpenRead($Path)
-    try {
-        $reader = New-Object IO.BinaryReader($stream)
-        if ($reader.ReadUInt16() -ne 0x5a4d) { throw "Not a PE file: $Path" }
-        $stream.Position = 0x3c
-        $peOffset = $reader.ReadInt32()
-        $stream.Position = $peOffset
-        if ($reader.ReadUInt32() -ne 0x00004550) { throw "Invalid PE signature: $Path" }
-        return ('0x{0:X4}' -f $reader.ReadUInt16())
-    } finally { $stream.Dispose() }
+function Get-CanonicalPath([string]$Path) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (Test-Path -LiteralPath $Path) {
+        $fullPath = (Resolve-Path -LiteralPath $Path).Path
+    }
+    return $fullPath.TrimEnd('\', '/')
 }
 
-$machineByArchitecture = @{ arm64 = '0xAA64'; arm64ec = '0xA641'; x64 = '0x8664' }
+function Assert-SafeCommandArgument([string]$Value, [string]$Label) {
+    if ($Value -match '[&|<>^%!"`]') { throw "$Label contains unsupported shell metacharacters: $Value" }
+}
+
+function Quote-CmdArgument([string]$Value, [string]$Label) {
+    Assert-SafeCommandArgument $Value $Label
+    return '"' + $Value + '"'
+}
+
+function Get-VsInvocation([string]$HostArch, [string]$TargetArch) {
+    $hostFamily = if ($HostArch -match '^ARM64$') { 'arm64' } else { 'x64' }
+    $targetFamily = if ($TargetArch -eq 'x64') { 'x64' } else { 'arm64' }
+    if ($hostFamily -eq $targetFamily) { return $targetFamily }
+    return "$hostFamily`_$targetFamily"
+}
+
+function Get-CMakeHomeDirectory([string]$Path) {
+    $cache = Join-Path $Path 'CMakeCache.txt'
+    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { throw "CMakeCache.txt is missing: $cache" }
+    $line = Get-Content -LiteralPath $cache | Where-Object { $_ -match '^CMAKE_HOME_DIRECTORY(?::[^=]+)?=' } | Select-Object -First 1
+    if (-not $line) { throw "CMakeCache.txt lacks CMAKE_HOME_DIRECTORY: $cache" }
+    $value = ($line -split '=', 2)[1].Trim().Trim('"')
+    if (-not [IO.Path]::IsPathRooted($value)) { throw "CMAKE_HOME_DIRECTORY is not absolute: $value" }
+    return (Get-CanonicalPath $value)
+}
+
+function Assert-CMakeSource([string]$Build, [string]$Source) {
+    $cacheSource = Get-CMakeHomeDirectory $Build
+    $canonicalSource = Get-CanonicalPath $Source
+    if (-not [String]::Equals($cacheSource, $canonicalSource, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "CMakeCache source $cacheSource does not match SourceDir $canonicalSource"
+    }
+    return $cacheSource
+}
+
 $receiptObject.host.architecture = Get-HostArchitecture
-$receiptObject.target.pe_machine = $machineByArchitecture[$TargetArchitecture]
-$receiptObject.target.compiler_environment_target = if ($TargetArchitecture -eq 'arm64ec') { 'arm64' } else { $TargetArchitecture }
+$receiptObject.toolchain.host_architecture = if ($ToolHostArchitecture -eq 'auto') { if ($receiptObject.host.architecture -match '^ARM64$') { 'arm64' } else { 'x64' } } else { $ToolHostArchitecture }
+$receiptObject.toolchain.target_architecture = if ($TargetArchitecture -eq 'x64') { 'x64' } else { 'arm64' }
+$receiptObject.toolchain.vcvars_arguments = Get-VsInvocation $receiptObject.toolchain.host_architecture $receiptObject.toolchain.target_architecture
+$policyByTarget = @{ arm64 = 'arm64-win'; arm64ec = 'arm64ec-win'; x64 = 'x86_64-win' }
+$receiptObject.target.package_policy = $policyByTarget[$TargetArchitecture]
+$receiptObject.target.arm64x_section_required = ($TargetArchitecture -eq 'arm64ec')
 
 try {
     $phase = 'provenance'
-    foreach ($path in @($SourceDir, $BuildDir, $VsVars, $GovernedBuild, $Bash)) {
+    $packageValidation = Join-Path $PSScriptRoot 'package-validation.ps1'
+    foreach ($path in @($SourceDir, $BuildDir, $VsVars, $GovernedBuild, $Bash, $packageValidation)) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Required path is missing: $path" }
+    }
+    . $packageValidation
+    foreach ($pathInfo in @(@{ value = $VsVars; label = 'VsVars' }, @{ value = $GovernedBuild; label = 'GovernedBuild' }, @{ value = $Bash; label = 'Bash' }, @{ value = $BuildDir; label = 'BuildDir' })) {
+        Assert-SafeCommandArgument $pathInfo.value $pathInfo.label
     }
     $receiptObject.toolchain.governed_build_sha256 = (Get-FileHash $GovernedBuild -Algorithm SHA256).Hash
     $sourceSha = Invoke-Git @('-C', $SourceDir, 'rev-parse', '--verify', 'HEAD')
@@ -92,22 +133,33 @@ try {
     if ($sourceStatus) { throw "Source checkout is not clean: $SourceDir" }
     $receiptObject.source.git_sha = $sourceSha
     $receiptObject.source.clean = $true
+    $receiptObject.source.cmake_home_directory = Assert-CMakeSource $BuildDir $SourceDir
 
     $phase = 'build'
-    $vsTarget = $receiptObject.target.compiler_environment_target
     $buildArguments = @('cmake', '--build', $BuildDir, '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
-    $receiptObject.build.command = "bash `"$GovernedBuild`" $($buildArguments -join ' ')"
-    @('@echo off', "call `"$VsVars`" $vsTarget", 'if errorlevel 1 exit /b %ERRORLEVEL%', "`"$Bash`" `"$GovernedBuild`" $($buildArguments -join ' ')", 'exit /b %ERRORLEVEL%') |
+    $quotedBuildArguments = @('cmake', '--build', (Quote-CmdArgument $BuildDir 'BuildDir'), '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
+    $buildLine = ((Quote-CmdArgument $Bash 'Bash'), (Quote-CmdArgument $GovernedBuild 'GovernedBuild') + $quotedBuildArguments) -join ' '
+    $receiptObject.build.arguments = $buildArguments
+    $receiptObject.build.command_line = $buildLine
+    @('@echo off', "call `"$VsVars`" $($receiptObject.toolchain.vcvars_arguments)", 'if errorlevel 1 exit /b %ERRORLEVEL%', 'echo SPECTR_TOOL_HOST_ARCH=%VSCMD_ARG_HOST_ARCH%', 'echo SPECTR_TOOL_TARGET_ARCH=%VSCMD_ARG_TGT_ARCH%', $buildLine, 'exit /b %ERRORLEVEL%') |
         Set-Content -LiteralPath $buildCmd -Encoding ascii
     & cmd.exe /d /c "`"$buildCmd`" >`"$buildLog`" 2>&1"
     $buildExit = $LASTEXITCODE
     $receiptObject.build.exit = $buildExit
     if ($buildExit -ne 0) { throw "governed Windows build failed with exit $buildExit; see $buildLog" }
+    $toolHostMatch = [regex]::Match((Get-Content -LiteralPath $buildLog -Raw), '(?m)^SPECTR_TOOL_HOST_ARCH=([^\r\n]*)')
+    $toolTargetMatch = [regex]::Match((Get-Content -LiteralPath $buildLog -Raw), '(?m)^SPECTR_TOOL_TARGET_ARCH=([^\r\n]*)')
+    if (-not $toolHostMatch.Success -or -not $toolTargetMatch.Success) { throw "Build log lacks Visual Studio host/target selection evidence; see $buildLog" }
+    if ($toolHostMatch.Groups[1].Value.Trim().ToLowerInvariant() -ne $receiptObject.toolchain.host_architecture -or $toolTargetMatch.Groups[1].Value.Trim().ToLowerInvariant() -ne $receiptObject.toolchain.target_architecture) {
+        throw "Visual Studio selected host/target $($toolHostMatch.Groups[1].Value.Trim())/$($toolTargetMatch.Groups[1].Value.Trim()), expected $($receiptObject.toolchain.host_architecture)/$($receiptObject.toolchain.target_architecture)"
+    }
+    $receiptObject.source.cmake_home_directory = Assert-CMakeSource $BuildDir $SourceDir
 
     $phase = 'focused-test'
-    $testExe = Join-Path $BuildDir 'Spectr-test.exe'
+    $testExe = if ($TestExecutable) { $TestExecutable } else { Join-Path $BuildDir 'Spectr-test.exe' }
     if (-not (Test-Path -LiteralPath $testExe -PathType Leaf)) { throw "Missing test executable: $testExe" }
-    @('@echo off', "call `"$VsVars`" $vsTarget", 'if errorlevel 1 exit /b %ERRORLEVEL%', "`"$testExe`" `"$TestCase`" --reporter compact", 'exit /b %ERRORLEVEL%') |
+    $receiptObject.focused_test.executable = (Get-Item -LiteralPath $testExe).FullName
+    @('@echo off', "call `"$VsVars`" $($receiptObject.toolchain.vcvars_arguments)", 'if errorlevel 1 exit /b %ERRORLEVEL%', "`"$testExe`" `"$TestCase`" --reporter compact", 'exit /b %ERRORLEVEL%') |
         Set-Content -LiteralPath $testCmd -Encoding ascii
     & cmd.exe /d /c "`"$testCmd`" >`"$testLog`" 2>&1"
     $testExit = $LASTEXITCODE
@@ -128,9 +180,11 @@ try {
     )) {
         if (-not (Test-Path -LiteralPath $item.path -PathType Leaf)) { throw "Missing artifact: $($item.path)" }
         $file = Get-Item -LiteralPath $item.path
-        $machine = Get-PeMachine $file.FullName
-        if ($machine -ne $receiptObject.target.pe_machine) { throw "$($item.name) PE machine $machine does not match target $TargetArchitecture ($($receiptObject.target.pe_machine))" }
-        $receiptObject.artifacts[$item.name] = [ordered]@{ path = $file.FullName; bytes = $file.Length; sha256 = (Get-FileHash $file.FullName -Algorithm SHA256).Hash; pe_machine = $machine }
+        Assert-SpectrPeArchitecture -Path $file.FullName -Architecture $receiptObject.target.package_policy
+        $machine = Get-SpectrPeMachine -Path $file.FullName
+        $arm64x = Test-SpectrArm64XPe -Path $file.FullName
+        $receiptObject.target.pe_machines += ('0x{0:X4}' -f $machine)
+        $receiptObject.artifacts[$item.name] = [ordered]@{ path = $file.FullName; bytes = $file.Length; sha256 = (Get-FileHash $file.FullName -Algorithm SHA256).Hash; pe_machine = ('0x{0:X4}' -f $machine); arm64x_section = $arm64x }
     }
 
     $receiptObject.status = 'PASS'
