@@ -33,14 +33,8 @@ if [[ "$status" != "started" ]]; then
   "$utmctl" start "$utm_uuid" >/dev/null
 fi
 
-# A direct disposable QEMU session may be the live guest after a restart.
-if ! nc -z 127.0.0.1 "$ssh_port" >/dev/null 2>&1 \
-    && nc -z 127.0.0.1 50375 >/dev/null 2>&1; then
-  ssh_port=50375
-  rdp_port=53389
-fi
-
 # Windows can open its forwarded TCP port before OpenSSH is ready after boot.
+# Wait for this guest: another QEMU guest on 50375 may have different credentials.
 echo 'Waiting for Windows sign-in services...'
 deadline=$((SECONDS + ${SPECTR_WINDOWS_READY_TIMEOUT:-120}))
 until SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
