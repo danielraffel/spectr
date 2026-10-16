@@ -247,7 +247,9 @@ publishing. Pass the exact macOS release commit, version, and both ZIPs through
 requires each embedded VST3 build-info sidecar to name that same clean Release
 source and target architecture. `publish_release.py` accepts
 `--windows-arm64ec <zip> --windows-x64 <zip>` together; it repeats the check
-before creating the draft and uploads both ZIPs with the macOS package and
+and expands the signed macOS package to verify the installed app, AU, VST3,
+and CLAP build-info against that same commit before creating the draft. It
+uploads both ZIPs with the macOS package and
 appcast before making the release public. The automated release workflow above
 currently publishes macOS alone; use the combined publication path when the
 Windows packages have passed their separate host UI, audio, and trace gates.

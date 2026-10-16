@@ -36,7 +36,8 @@ import sys
 import time
 from pathlib import Path
 
-from check_windows_release import check_package
+from check_macos_release import check_package as check_macos_package
+from check_windows_release import check_package as check_windows_package
 
 HERE = Path(__file__).resolve().parent
 REPO_SLUG = "danielraffel/spectr"
@@ -101,12 +102,14 @@ def main() -> int:
     for f in (args.pkg, args.appcast, args.notes):
         if not f.is_file():
             raise SystemExit(f"missing {f}")
+    check_macos_package(args.pkg, args.version, target)
+    print(f"verified macOS package source={target}", flush=True)
     if windows:
         for asset, arch in zip(windows, ("arm64ec-win", "x86_64-win")):
             if not asset.is_file():
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
-                  check_package(asset, arch, args.version, target), flush=True)
+                  check_windows_package(asset, arch, args.version, target), flush=True)
     for cmd in steps[:3]:
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
