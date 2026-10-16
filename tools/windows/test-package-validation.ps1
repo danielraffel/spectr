@@ -84,6 +84,27 @@ try {
     if ((Assert-SpectrPackageManifest $expanded $manifest) -ne 'arm64-win') { throw 'Package architecture was not preserved' }
     Write-Output 'PASS: generated package has a verified ARM64 manifest and PE payloads'
 
+    # ARM64EC plugins may use the native ARM64 wgpu runtime. Keep the package
+    # architecture and VST3 architecture aligned, while validating the runtime
+    # against its explicitly recorded native architecture.
+    $ecBuild = Join-Path $temp 'arm64ec-build'
+    Write-FakePe (Join-Path $ecBuild 'Spectr.exe') 0x8664 -Arm64X
+    Write-FakePe (Join-Path $ecBuild 'VST3\Spectr.vst3\Contents\arm64ec-win\Spectr.vst3') 0x8664 -Arm64X
+    Write-FakePe (Join-Path $ecBuild 'CLAP\Spectr.clap') 0x8664 -Arm64X
+    Write-FakePe (Join-Path $ecBuild 'wgpu_native.dll') 0xAA64
+    Set-Content -LiteralPath (Join-Path $ecBuild 'icudtl.dat') -Value 'synthetic ICU sidecar' -NoNewline
+    Set-Content -LiteralPath (Join-Path $ecBuild 'VST3\Spectr.vst3\Contents\arm64ec-win\Spectr.pulp-build-info.json') -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["arm64ec-win"]}}' -NoNewline
+    $ecPackage = Join-Path $temp 'Spectr-arm64ec.zip'
+    & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $ecBuild -Architecture arm64ec-win -Vst3Architecture arm64ec-win -Output $ecPackage | Out-Null
+    $ecExpanded = Join-Path $temp 'arm64ec-expanded'
+    Expand-Archive -LiteralPath $ecPackage -DestinationPath $ecExpanded
+    $ecManifest = Get-Content (Join-Path $ecExpanded 'manifest.json') -Raw | ConvertFrom-Json
+    if ((Assert-SpectrPackageManifest $ecExpanded $ecManifest) -ne 'arm64ec-win' -or
+        [string]$ecManifest.runtime_architectures.wgpu_native_dll -ne 'arm64-win') {
+        throw 'ARM64EC package did not preserve the native ARM64 runtime architecture'
+    }
+    Write-Output 'PASS: ARM64EC package validates with native ARM64 wgpu runtime'
+
     $multiBuild = Join-Path $temp 'multi-config-build'
     New-Item -ItemType Directory -Force -Path (Join-Path $multiBuild 'Release'), (Join-Path $multiBuild 'CLAP\Release') | Out-Null
     Set-Content -LiteralPath (Join-Path $multiBuild 'CMakeCache.txt') -Value 'CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026' -NoNewline
