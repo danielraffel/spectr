@@ -54,11 +54,35 @@ function Invoke-Helper(
     $output = Join-Path $FixtureRoot ("$Target-helper-output.log")
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Helper `
-        -SourceDir $InvokeSource -BuildDir $InvokeBuild -VsVars $vsVars `
-        -GovernedBuild $InvokeGovernedBuild -Bash $bash -TargetArchitecture $Target `
-        -TestCase $InvokeTestCase -TestExecutable $InvokeTestExecutable `
-        -Receipt $Receipt *> $output
+    # PowerShell 5's native argument forwarding drops an empty string. Build
+    # the argument vector explicitly and append the optional executable only
+    # when supplied, so the helper's optional parameter remains optional.
+    $helperArguments = @(
+        '-NoProfile'
+        '-ExecutionPolicy'
+        'Bypass'
+        '-File'
+        $Helper
+        '-SourceDir'
+        $InvokeSource
+        '-BuildDir'
+        $InvokeBuild
+        '-VsVars'
+        $vsVars
+        '-GovernedBuild'
+        $InvokeGovernedBuild
+        '-Bash'
+        $bash
+        '-TargetArchitecture'
+        $Target
+        '-TestCase'
+        $InvokeTestCase
+    )
+    if ($InvokeTestExecutable) {
+        $helperArguments += @('-TestExecutable', $InvokeTestExecutable)
+    }
+    $helperArguments += @('-Receipt', $Receipt)
+    & powershell.exe @helperArguments *> $output
     $code = $LASTEXITCODE
     $ErrorActionPreference = $saved
     return $code
