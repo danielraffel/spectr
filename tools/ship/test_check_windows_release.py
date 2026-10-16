@@ -29,7 +29,7 @@ def pe(machine: int, arm64x=False) -> bytes:
 
 
 def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH,
-                 declare_wgpu=True, include_wgpu=True):
+                 declare_wgpu=True, include_wgpu=True, windows_names=False):
     info = {
         "schema": "pulp.build-info.v1",
         "product": {"name": "Spectr", "version": "1.0.9",
@@ -61,11 +61,30 @@ def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH,
     }
     with zipfile.ZipFile(path, "w") as archive:
         for name, payload in contents.items():
-            archive.writestr(name, payload + (b"tampered" if tamper and name == INFO else b""))
+            archive_name = name.replace("/", "\\") if windows_names else name
+            archive.writestr(archive_name, payload + (b"tampered" if tamper and name == INFO else b""))
+        if windows_names:
+            archive.writestr("VST3\\Spectr.vst3\\", b"")
         archive.writestr("manifest.json", json.dumps(manifest))
 
 
 class WindowsReleaseTest(unittest.TestCase):
+    def test_power_shell_zip_backslash_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "arm.zip"
+            make_package(path, declare_wgpu=False, include_wgpu=False, windows_names=True)
+            self.assertEqual(check_package(path, ARCH, "1.0.9", SHA),
+                             hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_mixed_separator_duplicate_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "arm.zip"
+            make_package(path, windows_names=True)
+            with zipfile.ZipFile(path, "a") as archive:
+                archive.writestr("CLAP/Spectr.clap", pe(0x8664, arm64x=True))
+            with self.assertRaisesRegex(ValueError, "duplicate ZIP entry"):
+                check_package(path, ARCH, "1.0.9", SHA)
+
     def test_skia_dawn_package_without_wgpu_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "arm.zip"
