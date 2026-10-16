@@ -2845,7 +2845,7 @@ window.PatternManager = PatternManager;`,
       'deterministic shift mute brush move');
     replaceSpectrSource(
       '    <div ref={ref}\n      style={{',
-      '    <div ref={ref} data-spectr-overlay="true" data-spectr-band-context-menu="true" role="menu" aria-label="Band actions"\n      style={{',
+      '    <div ref={ref} data-spectr-overlay="true" data-spectr-band-context-menu="true" role="menu" aria-label="Band actions"\n      onPointerDown={event => event.stopPropagation()}\n      onPointerUp={event => event.stopPropagation()}\n      onClick={event => event.stopPropagation()}\n      style={{',
       'context menu shortcut ownership');
     replaceSpectrSource(
       '  const Item = ({ label, hint, onClick, disabled, danger, sub }) => (\n    <button\n      onClick=',

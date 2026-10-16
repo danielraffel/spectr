@@ -20,7 +20,8 @@ import fs from 'node:fs';
 
 const PLANTS = ['--plant-document-outside', '--plant-menu-only-containment',
                 '--plant-stacking-submenus', '--plant-escape-closes-all',
-                '--plant-no-escape', '--plant-unanswerable-dismisses'];
+                '--plant-no-escape', '--plant-unanswerable-dismisses',
+                '--plant-pointer-isolation'];
 // NOT a plant, deliberately: making `< Back` clear only its own flag cannot be
 // detected from here, and a control that cannot go red is worse than none.
 // Once one-submenu-at-a-time holds, the other flag is already false by the
@@ -75,6 +76,10 @@ if (plant === '--plant-escape-closes-all')
               '        if (submenu) closeSubmenus(); else onClose();');
 if (plant === '--plant-no-escape')
   replaceOnce('doc.addEventListener("keydown", onEscapeKey, true);', '');
+if (plant === '--plant-pointer-isolation')
+  replaceOnce('      onPointerDown: (event) => event.stopPropagation(),\n' +
+              '      onPointerUp: (event) => event.stopPropagation(),\n' +
+              '      onClick: (event) => event.stopPropagation(),\n', '');
 
 // ── A DOM shim that keeps `document` and `document.body` distinct ─────────
 //
@@ -133,7 +138,7 @@ function makeDom() {
   };
 }
 
-function mount() {
+function mount(scale = 1) {
   const slots = [], effects = [], pending = [];
   let cursor = 0, tree, closed = 0;
   const native = { enabled: false, lfo2_enabled: false, target: 0, target_mask: 1 };
@@ -161,6 +166,12 @@ function mount() {
     },
   };
   const dom = makeDom();
+  const model = {
+    gains: new Array(64).fill(0.5),
+    muted: new Array(64).fill(false),
+    captures: 0,
+    underlyingMutations: 0,
+  };
   const window = { pulp: {
     on(type, callback) {
       if (!listeners.has(type)) listeners.set(type, new Set());
@@ -190,9 +201,11 @@ function mount() {
     hook + '\n' + component + '\nreturn ContextMenu;')(
       React, window, dom.document, () => ({}), fakeSetTimeout, fakeClearTimeout);
   const noop = () => {};
-  const props = { x: 300, y: 300, band: 8, N: 64, selection: new Set([1, 2]),
+  const props = { x: 300, y: 300, band: 14, N: 64, selection: new Set([1, 2]),
     macros: [], editMode: 'sculpt', onClose: () => closed++, onEditMode: noop,
-    onMuteBand: noop, onZeroBand: noop, onSoloBand: noop, onSelectAll: noop,
+    onMuteBand: band => { model.muted[band] = !model.muted[band]; },
+    onZeroBand: band => { model.gains[band] = 0; },
+    onSoloBand: noop, onSelectAll: noop,
     onSelectNone: noop, onZeroSel: noop, onMuteSel: noop, onFitView: noop,
     onUndo: noop, onRedo: noop, onMacroMembers: noop };
   function expand(node) {
@@ -254,6 +267,34 @@ function mount() {
       render();
     },
     refOf(marker) { return panel(marker)?.props?.ref?.current ?? null; },
+    model,
+    menuPress(action) {
+      const root = panel('data-spectr-band-context-menu');
+      const row = button(action);
+      assert(root, 'context menu root mounted');
+      assert(row, 'context menu action mounted');
+      const pointerEvent = () => ({
+        stopped: false,
+        stopPropagation() { this.stopped = true; },
+      });
+      const down = pointerEvent();
+      root.props.onPointerDown?.(down);
+      if (!down.stopped) model.captures++;
+      const click = pointerEvent();
+      row.props.onClick(click);
+      root.props.onClick?.(click);
+      const up = pointerEvent();
+      root.props.onPointerUp?.(up);
+      if (model.captures) {
+        // The real canvas maps the captured screen point differently at each
+        // design scale; either way, it is an underlying band, never the
+        // menu's intended Band 14 action.
+        const underlyingBand = scale === 1 ? 15 : 16;
+        model.muted[underlyingBand] = !model.muted[underlyingBand];
+        model.underlyingMutations++;
+      }
+      render();
+    },
     // Escape as each host delivers it. Both route it to the overlay stack,
     // which pops the TOP claim and fires that claim's onDismiss; an open
     // submenu stacks on the menu, so it is the top. The standalone offers the
@@ -432,6 +473,29 @@ function check() {
     assert(menu.dom.live() > 0, 'control: listeners were registered');
     menu.unmount();
     assert.equal(menu.dom.live(), 0, 'no listener outlives the menu');
+  }
+
+  // ── Menu actions must not capture and mutate the canvas underneath ───────
+  // This models the actual React bubble path: the menu button invokes Reset,
+  // then the menu root must stop pointerdown/up/click before FilterBank's
+  // ancestor can establish pointer capture. Run it at unit and transformed
+  // design scale; the latter is where the live Windows report exposed the
+  // wrong underlying band most clearly.
+  for (const scale of [1, 0.75]) {
+    const menu = mount(scale);
+    const before = menu.model.muted.slice();
+    menu.menuPress('reset-band');
+    assert.equal(menu.model.gains[8], 0.5,
+                 'control: the harness band is not the intended Band 14');
+    assert.equal(menu.model.gains[14], 0,
+                 `scale ${scale}: Reset must change Band 14 only`);
+    assert.deepEqual(menu.model.muted, before,
+                     `scale ${scale}: Reset must not mutate an underlying band`);
+    assert.equal(menu.model.captures, 0,
+                 `scale ${scale}: menu press must not establish canvas capture`);
+    assert.equal(menu.model.underlyingMutations, 0,
+                 `scale ${scale}: no underlying canvas mutation is allowed`);
+    menu.unmount();
   }
 }
 
