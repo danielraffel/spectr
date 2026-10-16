@@ -1236,13 +1236,21 @@ TEST_CASE("a param sync loses to the mask the audio path claimed, however fast i
 // (Spectr-lfo-alias-negative-control).
 namespace {
 
+std::unique_ptr<pulp::format::Processor> create_linear() {
+    auto p = spectr::create_spectr();
+    REQUIRE(static_cast<spectr::Spectr*>(p.get())->set_render_mode(
+        spectr::MaskRenderMode::linear_phase));
+    return p;
+}
+
 struct AliasRig {
     double rate;
     std::size_t block;
-    pulp::format::HeadlessHost host{create_tracking};
+    pulp::format::HeadlessHost host;
     spectr::Spectr* plugin = nullptr;
     std::uint64_t n = 0;
-    AliasRig(double sample_rate, std::size_t block_size) : rate(sample_rate), block(block_size) {
+    AliasRig(double sample_rate, std::size_t block_size, bool linear = false)
+        : rate(sample_rate), block(block_size), host(linear ? create_linear : create_tracking) {
         host.prepare(rate, block);
         plugin = dynamic_cast<spectr::Spectr*>(host.processor());
         REQUIRE(plugin != nullptr);
@@ -1381,16 +1389,25 @@ TEST_CASE("Bank's handed-over gain is numerically the law the mask path plays",
     // the LFO's frequency: both must swing 6 dB, and the fit must explain the
     // envelope (a small residual), so the handed-over gain is the mask's law
     // and not merely energy near the right frequency.
-    const auto envelope_fit = [](double beats) {
-        AliasRig rig(48000.0, 256);
+    const auto envelope_fit = [](double beats, bool linear = false, bool lfo2_fast = false,
+                                 float* mask_share = nullptr, float mix_percent = 100.0f) {
+        AliasRig rig(48000.0, 256, linear);
+        rig.set(spectr::kMix, mix_percent);
         rig.set(spectr::kParamLfoEnabled, 1.0f);
         rig.set(spectr::kParamLfoShape, 0.0f);
         rig.set(spectr::kParamLfoRate, static_cast<float>(beats));
         rig.set(spectr::lfo_route_enabled_param_id(0, kAliasTargetBank), 1.0f);
         rig.set(spectr::lfo_route_amount_param_id(0, kAliasTargetBank), 0.5f);
+        if (lfo2_fast) {
+            // LFO 2 off, parked at 1/256 beat: it must not key Bank's handover.
+            rig.set(spectr::kParamLfo2Enabled, 0.0f);
+            rig.set(spectr::kParamLfo2Rate, 1.0f / 256.0f);
+            rig.set(spectr::lfo_route_enabled_param_id(1, kAliasTargetBank), 1.0f);
+        }
         std::vector<float> out;
         for (int b = 0; b < int(3.0 * 48000.0 / 256.0); ++b)
             rig.block_cost_us(kAliasCarrierHz, &out);
+        if (mask_share) *mask_share = rig.plugin->read_modulated_field().bank_mask_share;
         // One envelope value per carrier cycle (48 samples), after a second.
         constexpr std::size_t kCycle = 48;
         std::vector<double> env_db;
@@ -1421,15 +1438,41 @@ TEST_CASE("Bank's handed-over gain is numerically the law the mask path plays",
         residual = std::sqrt(residual / double(env_db.size()));
         return std::pair<double, double>{amp_db, residual};
     };
-    const auto slow = envelope_fit(1.0);
-    const auto fast = envelope_fit(1.0 / 64);
-    std::printf("[lfo-alias] bank law: mask path (1 beat) swings %.2f dB, residual %.2f dB; "
-                "per-sample path (1/64 beat) swings %.2f dB, residual %.2f dB\n",
-                slow.first, slow.second, fast.first, fast.second);
-    CHECK(slow.first == Approx(6.0).margin(0.5));
-    CHECK(fast.first == Approx(6.0).margin(0.5));
-    CHECK(fast.first == Approx(slow.first).margin(0.3));
-    CHECK(fast.second < 0.3);
+    // Both render modes, at the mask path (1 beat), inside the handover band
+    // (1/4 and 1/6 beat: 0.04 and 0.06 cycle a block, where both shares
+    // play and the renderer's latency separates them) and fully handed over.
+    for (bool linear : {false, true})
+        for (double beats : {1.0, 1.0 / 4, 1.0 / 6, 1.0 / 64}) {
+            const auto fit = envelope_fit(beats, linear);
+            std::printf("[lfo-alias] bank law %s 1/%-3.0f beat: swings %.2f dB, residual %.2f dB\n",
+                        linear ? "linear-phase" : "tracking    ", 1.0 / beats, fit.first, fit.second);
+            INFO((linear ? "linear-phase " : "tracking ") << "beats " << beats);
+            CHECK(fit.first == Approx(6.0).margin(0.5));
+            CHECK(fit.second < 0.3);
+        }
+    // Keying: LFO 2 switched off but parked at a fast Rate keys nothing, so a
+    // 1-beat Bank stays on the mask path with the same law.
+    float share = 0.0f;
+    const auto keyed = envelope_fit(1.0, false, true, &share);
+    std::printf("[lfo-alias] bank law with LFO 2 off at 1/256: swings %.2f dB, mask share %.2f\n",
+                keyed.first, share);
+    CHECK(share == 1.0f);
+    CHECK(keyed.first == Approx(6.0).margin(0.5));
+    // Wet-only: at Mix 25 % the mask moves only the wet share of the output,
+    // a smaller swing of the sum (1.5 dB under the mixer's law). The
+    // handed-over gain must reach that same share, through the
+    // latency-aligned dry, and read the same swing in both render modes --
+    // a gain on the whole output would read the full 6 dB here.
+    const auto slow_mix = envelope_fit(1.0, false, false, nullptr, 25.0f);
+    const auto fast_mix = envelope_fit(1.0 / 64, false, false, nullptr, 25.0f);
+    const auto fast_mix_linear = envelope_fit(1.0 / 64, true, false, nullptr, 25.0f);
+    std::printf("[lfo-alias] bank law at Mix 25 %%: mask path swings %.2f dB, per-sample %.2f dB, "
+                "per-sample linear-phase %.2f dB\n",
+                slow_mix.first, fast_mix.first, fast_mix_linear.first);
+    CHECK(slow_mix.first < 4.0);
+    CHECK(slow_mix.first > 0.5);
+    CHECK(fast_mix.first == Approx(slow_mix.first).margin(0.4));
+    CHECK(fast_mix_linear.first == Approx(slow_mix.first).margin(0.4));
 }
 
 TEST_CASE("the Output target follows a fast LFO at audio rate, band-limited",
@@ -1464,10 +1507,17 @@ TEST_CASE("a slow LFO costs no more per block than it did", "[modulation][lfo-al
     const auto control = render_alias(48000.0, 256, 0.0, kAliasTargetBank, 0, 0.5f);
     const auto bank = render_alias(48000.0, 256, 1.0, kAliasTargetBank, 0, 0.5f);
     const auto output = render_alias(48000.0, 256, 1.0, kAliasTargetOutput, 0, 1.0f);
-    std::printf("[lfo-alias] cost per 256-sample block, median: control %.0f us, Bank LFO %.0f us, Output LFO %.0f us\n",
-                control.median_block_us, bank.median_block_us, output.median_block_us);
-    CHECK(bank.median_block_us < 2.0 * control.median_block_us + 50.0);
-    CHECK(output.median_block_us < 2.0 * control.median_block_us + 50.0);
+    const auto bank_fast = render_alias(48000.0, 256, 1.0 / 256, kAliasTargetBank, 0, 0.5f);
+    const auto output_fast = render_alias(48000.0, 256, 1.0 / 256, kAliasTargetOutput, 0, 1.0f);
+    std::printf("[lfo-alias] cost per 256-sample block, median: control %.0f us; 1-beat Bank %.0f us, Output %.0f us; "
+                "1/256-beat Bank %.0f us, Output %.0f us\n",
+                control.median_block_us, bank.median_block_us, output.median_block_us,
+                bank_fast.median_block_us, output_fast.median_block_us);
+    // Tracked, loosely gated: a shared host's load moves these by 2-3x
+    // between runs, so the bound catches an order-of-magnitude regression
+    // and nothing finer (the numbers above are the record).
+    for (const auto* run : {&bank, &output, &bank_fast, &output_fast})
+        CHECK(run->median_block_us < 5.0 * control.median_block_us + 200.0);
 }
 
 TEST_CASE("the Output and Bank coordinates alone equal the full composition's",

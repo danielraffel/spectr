@@ -275,7 +275,7 @@ Render render(std::size_t blocks, const Schedule& schedule, bool tracking = fals
         const auto& snap = plugin->read_modulated_field();
         if (snap.sequence != last_sequence) {
             last_sequence = snap.sequence;
-            last_band = snap.active ? snap.field.bands[0].gain_db : -12.0f;
+            last_band = snap.active ? spectr::snapshot_audible_field(snap, snap.phase, snap.phase_2, snap.shape_fade, snap.shape_2_fade).bands[0].gain_db : -12.0f;
             const auto& v = snap.active ? snap.viewport : snap.base_viewport;
             last_center = 0.5f * (std::log10(v.min_hz) + std::log10(v.max_hz));
         }

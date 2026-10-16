@@ -1128,14 +1128,24 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
               == snapshot.field.bands[band].muted);
     }
 
+    // What a frame draws is the AUDIBLE field: the mask's share plus Bank's
+    // handed-over per-sample share, which at this rate in this render mode
+    // is where Bank lives, so motion is read there.
+    const auto evaluate_audible = [&](double seconds) {
+        double phase = snapshot.phase + snapshot.phase_per_second * seconds;
+        phase -= std::floor(phase);
+        return spectr::snapshot_audible_field(snapshot, phase, snapshot.phase_2,
+                                              snapshot.shape_fade, snapshot.shape_2_fade);
+    };
+    const auto audible_at_publication = evaluate_audible(0.0);
     // Half a block of elapsed time -- a position the producer never sampled
     // and the held field therefore cannot represent at all.
     const double half_block_seconds =
         static_cast<double>(block_size) / sample_rate * 0.5;
-    const auto between = evaluate(half_block_seconds);
+    const auto between = evaluate_audible(half_block_seconds);
     bool moved = false;
     for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
-        if (between.bands[band].gain_db != at_publication.bands[band].gain_db) {
+        if (between.bands[band].gain_db != audible_at_publication.bands[band].gain_db) {
             moved = true;
             break;
         }
@@ -1144,11 +1154,11 @@ TEST_CASE("Spectr publishes LFO inputs the editor can evaluate at frame time",
 
     // A whole cycle returns to the same place, so the motion above is the LFO
     // being evaluated rather than the extrapolation running away.
-    const auto full_cycle = evaluate(1.0 / snapshot.phase_per_second);
+    const auto full_cycle = evaluate_audible(1.0 / snapshot.phase_per_second);
     for (std::size_t band = 0; band < spectr::kMaxBands; ++band) {
         INFO("band " << band);
         CHECK(full_cycle.bands[band].gain_db
-              == Catch::Approx(at_publication.bands[band].gain_db).margin(1e-4));
+              == Catch::Approx(audible_at_publication.bands[band].gain_db).margin(1e-4));
     }
 }
 
@@ -1197,7 +1207,7 @@ TEST_CASE("Spectr crossfades an LFO shape change instead of jumping",
         host.process(output, input, events);
         const auto& snapshot = plugin->read_modulated_field();
         REQUIRE(snapshot.active);
-        gains.push_back(snapshot.field.bands[0].gain_db);
+        gains.push_back(spectr::snapshot_audible_field(snapshot, snapshot.phase, snapshot.phase_2, snapshot.shape_fade, snapshot.shape_2_fade).bands[0].gain_db);
 
         if (block == switch_block + 2) {
             // Mid-fade, the editor's reconstruction from the published inputs
@@ -1279,7 +1289,7 @@ std::vector<float> render_audible_band_gain(
         const auto& snapshot = plugin->read_modulated_field();
         const bool fresh = snapshot.sequence != last_sequence;
         last_sequence = snapshot.sequence;
-        gains.push_back(fresh && snapshot.active ? snapshot.field.bands[0].gain_db
+        gains.push_back(fresh && snapshot.active ? spectr::snapshot_audible_field(snapshot, snapshot.phase, snapshot.phase_2, snapshot.shape_fade, snapshot.shape_2_fade).bands[0].gain_db
                                                  : -12.0f);
     }
     return gains;
