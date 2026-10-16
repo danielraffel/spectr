@@ -4,13 +4,18 @@ set -euo pipefail
 # Install a double-clickable macOS launcher for the retained Windows demo VM.
 repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 desktop_dir="${SPECTR_WINDOWS_DESKTOP_DIR:-$HOME/Desktop}"
+runtime_root="${SPECTR_WINDOWS_RUNTIME_DIR:-$HOME/Library/Application Support/Pulp/WindowsDemo}"
 launcher="$desktop_dir/Spectr Windows Demo.command"
 readme="$desktop_dir/Spectr Windows Demo - How to Use.md"
-mkdir -p "$desktop_dir"
+mkdir -p "$desktop_dir" "$runtime_root/tools/windows"
+# Keep routine desktop access working after the development worktree is removed.
+for helper in open-utm-rdp.sh ensure-rdp-over-ssh.sh ssh-qemu.sh prepare-reaper-demo.ps1; do
+  cp "$repo_root/tools/windows/$helper" "$runtime_root/tools/windows/$helper"
+done
 cat >"$launcher" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$repo_root"
+cd "$runtime_root"
 exec tools/windows/open-utm-rdp.sh
 EOF
 chmod +x "$launcher"
@@ -53,4 +58,5 @@ Run **Spectr Windows Demo.command** again. It starts or reuses the guest,
 repairs the RDP connection, and retries transient reconnects automatically.
 EOF
 printf 'Installed: %s\n' "$launcher"
+printf 'Connection helpers: %s\n' "$runtime_root"
 printf 'Instructions: %s\n' "$readme"
