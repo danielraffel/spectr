@@ -43,7 +43,7 @@ $receiptObject = [ordered]@{
     target = [ordered]@{ requested_architecture = $TargetArchitecture; package_policy = $null; pe_machines = @(); arm64x_section_required = $false }
     toolchain = [ordered]@{ vcvars = $VsVars; vcvars_arguments = $null; governed_build = $GovernedBuild; governed_build_sha256 = $null; bash = $Bash; host_architecture = $null; target_architecture = $null }
     build = [ordered]@{ exit = $null; arguments = $null; command_line = $null; log = $buildLog }
-    focused_test = [ordered]@{ name = $TestCase; executable = $null; exit = $null; summary = $null; assertions = $null; test_cases = $null; log = $testLog }
+    focused_test = [ordered]@{ name = $TestCase; executable = $null; sha256 = $null; exit = $null; summary = $null; assertions = $null; test_cases = $null; log = $testLog }
     artifacts = [ordered]@{}
     limitations = @('Headless build/test proves compilation and focused DSP behavior only.', 'It does not claim DAW loading, GUI, screenshot, modulation, audio-device behavior, or release acceptance.')
 }
@@ -158,7 +158,9 @@ try {
     $phase = 'focused-test'
     $testExe = if ($TestExecutable) { $TestExecutable } else { Join-Path $BuildDir 'Spectr-test.exe' }
     if (-not (Test-Path -LiteralPath $testExe -PathType Leaf)) { throw "Missing test executable: $testExe" }
-    $receiptObject.focused_test.executable = (Get-Item -LiteralPath $testExe).FullName
+    $testItem = Get-Item -LiteralPath $testExe
+    $receiptObject.focused_test.executable = $testItem.FullName
+    $receiptObject.focused_test.sha256 = (Get-FileHash -LiteralPath $testItem.FullName -Algorithm SHA256).Hash
     @('@echo off', "call `"$VsVars`" $($receiptObject.toolchain.vcvars_arguments)", 'if errorlevel 1 exit /b %ERRORLEVEL%', "`"$testExe`" `"$TestCase`" --reporter compact", 'exit /b %ERRORLEVEL%') |
         Set-Content -LiteralPath $testCmd -Encoding ascii
     & cmd.exe /d /c "`"$testCmd`" >`"$testLog`" 2>&1"
