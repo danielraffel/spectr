@@ -253,7 +253,7 @@ New-GitSourceFixture $mutationSource
 $mutationBuild = Join-Path $FixtureRoot "mutation-build-$mutationId"
 Copy-FixtureBuild $mutationBuild $mutationSource
 $mutationMarker = Join-Path $mutationSource 'source-marker.txt'
-$mutationMarkerPosix = ($mutationMarker -replace '\', '/') -replace '^C:', '/c'
+$mutationMarkerPosix = $mutationMarker.Replace('\', '/') -replace '^C:', '/c'
 $mutationGoverned = Join-Path $FixtureRoot 'mutation-governed.sh'
 @"
 #!/usr/bin/env bash
@@ -273,8 +273,8 @@ $headMoveSource = Join-Path $FixtureRoot "head-move-source-$headMoveId"
 New-GitSourceFixture $headMoveSource
 $headMoveBuild = Join-Path $FixtureRoot "head-move-build-$headMoveId"
 Copy-FixtureBuild $headMoveBuild $headMoveSource
-$headMoveMarkerPosix = ((Join-Path $headMoveSource 'source-marker.txt') -replace '\', '/') -replace '^C:', '/c'
-$headMoveSourcePosix = ($headMoveSource -replace '\', '/') -replace '^C:', '/c'
+$headMoveMarkerPosix = (Join-Path $headMoveSource 'source-marker.txt').Replace('\', '/') -replace '^C:', '/c'
+$headMoveSourcePosix = $headMoveSource.Replace('\', '/') -replace '^C:', '/c'
 $headMoveGoverned = Join-Path $FixtureRoot "head-move-governed-$headMoveId.sh"
 @"
 #!/usr/bin/env bash
