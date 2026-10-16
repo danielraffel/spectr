@@ -241,6 +241,17 @@ package, generates the feed, then runs the draft → upload → publish → live
 verification sequence. A manual dispatch is available for an infrastructure
 rerun and still requires an explicit notes file.
 
+For a release that includes Windows, finish the ARM64EC and x64 ZIPs before
+publishing. Pass the exact macOS release commit, version, and both ZIPs through
+`tools/ship/check_windows_release.py`. It rehashes every manifest entry and
+requires each embedded VST3 build-info sidecar to name that same clean Release
+source and target architecture. `publish_release.py` accepts
+`--windows-arm64ec <zip> --windows-x64 <zip>` together; it repeats the check
+before creating the draft and uploads both ZIPs with the macOS package and
+appcast before making the release public. The automated release workflow above
+currently publishes macOS alone; use the combined publication path when the
+Windows packages have passed their separate host UI, audio, and trace gates.
+
 The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
 serves release assets with `Content-Disposition: attachment`, which Sparkle's
 web view would receive as a download, not a page.
