@@ -70,6 +70,18 @@ Then double-click `/Users/danielraffel/Desktop/Spectr Windows Demo.command`.
 It starts or reuses the UTM guest, repairs RDP, and opens the Windows desktop;
 the RDP client retries transient reconnects automatically.
 
+The VM SSH helpers use the explicit local key with `IdentityAgent=none`, so
+1Password approval is not required on each connection. The RDP launcher waits
+up to two minutes for Windows SSH after boot and reads the protected local
+credential for automatic sign-in. Opening the desktop preserves REAPER's
+preferences; set `SPECTR_WINDOWS_PREPARE_REAPER=1` only when intentionally
+resetting its startup project and selecting the deterministic dummy audio mode.
+It waits for the retained guest rather than switching to a disposable QEMU
+guest on another port during boot.
+The installer copies the connection helpers into
+`~/Library/Application Support/Pulp/WindowsDemo`; removing the development
+worktree does not break the Desktop launcher. Rerun the installer to update them.
+
 The verified application inventory and executable hashes are recorded in
 [`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
 

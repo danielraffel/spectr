@@ -41,7 +41,7 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
 ssh_key="${SPECTR_WINDOWS_SSH_KEY:-$HOME/.ssh/id_ed25519_macstudio}"
 [[ -f "$ssh_key" ]] || ssh_key="$HOME/.ssh/id_ed25519"
 if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
-  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes \
+  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
     -o StrictHostKeyChecking=no -i "$ssh_key" \
     "$repo_root/tools/windows/prepare-reaper-demo.ps1" \
     "admin@127.0.0.1:/Users/admin/prepare-reaper-demo.ps1"
