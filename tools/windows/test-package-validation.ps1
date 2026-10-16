@@ -68,6 +68,16 @@ try {
     Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $missingGpuOutput | Out-Null } 'package-release missing GPU runtime' 'Required runtime sidecar was not found: wgpu_native.dll'
     if (Test-Path -LiteralPath $missingGpuOutput) { throw 'package-release wrote output without the GPU runtime' }
     Set-Content -LiteralPath $sourceBuildInfo -Value $sourceBuildInfoOriginal -NoNewline
+    $dawnPackage = Join-Path $temp 'dawn-without-wgpu.zip'
+    & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $dawnPackage | Out-Null
+    $dawnExpanded = Join-Path $temp 'dawn-expanded'
+    Expand-Archive -LiteralPath $dawnPackage -DestinationPath $dawnExpanded
+    $dawnManifest = Get-Content (Join-Path $dawnExpanded 'manifest.json') -Raw | ConvertFrom-Json
+    if (@($dawnManifest.runtime_sidecars) -contains 'wgpu_native.dll' -or
+        (Assert-SpectrPackageManifest $dawnExpanded $dawnManifest) -ne 'arm64-win') {
+        throw 'Skia Dawn package without a declared wgpu runtime was rejected'
+    }
+    Write-Output 'PASS: Skia Dawn package without wgpu runtime validates'
     Write-FakePe (Join-Path $build 'wgpu_native.dll') $machine
 
     Set-Content -LiteralPath $sourceBuildInfo -Value '{"schema":"wrong"}' -NoNewline
