@@ -113,10 +113,10 @@ function Assert-SourceUnchanged([string]$ExpectedSha, [string]$Checkpoint) {
     $actualSha = Invoke-Git @('-C', $SourceDir, 'rev-parse', '--verify', 'HEAD')
     $sourceStatus = Invoke-Git @('-C', $SourceDir, 'status', '--porcelain')
     if ($sourceStatus) {
-        throw "Source checkout changed during $Checkpoint: $SourceDir ($sourceStatus)"
+        throw "Source checkout changed during ${Checkpoint}: $SourceDir ($sourceStatus)"
     }
     if ($actualSha -ne $ExpectedSha) {
-        throw "Source HEAD changed during $Checkpoint: expected $ExpectedSha, got $actualSha"
+        throw "Source HEAD changed during ${Checkpoint}: expected $ExpectedSha, got $actualSha"
     }
     return $actualSha
 }
