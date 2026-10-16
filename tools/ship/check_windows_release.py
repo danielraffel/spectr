@@ -38,10 +38,24 @@ def check_pe(data: bytes, arch: str, name: str) -> None:
 
 def check_package(path: Path, arch: str, version: str, source_sha: str) -> str:
     with zipfile.ZipFile(path) as archive:
-        names = archive.namelist()
-        if len(names) != len(set(names)):
-            raise ValueError(f"{path}: duplicate ZIP entry")
-        manifest = json.loads(archive.read("manifest.json"))
+        archive_names = {}
+        seen_names = set()
+        for raw_name in archive.namelist():
+            name = raw_name.replace("\\", "/")
+            if (not name or name.startswith("/") or re.match(r"^[A-Za-z]:", name)
+                    or any(part in (".", "..") for part in name.split("/"))):
+                raise ValueError(f"{path}: unsafe ZIP entry: {raw_name}")
+            folded = name.casefold()
+            if folded in seen_names:
+                raise ValueError(f"{path}: duplicate ZIP entry: {raw_name}")
+            seen_names.add(folded)
+            if not name.endswith("/"):
+                archive_names[name] = raw_name
+        if "manifest.json" not in archive_names:
+            raise ValueError(f"{path}: missing manifest.json")
+        def read(name: str) -> bytes:
+            return archive.read(archive_names[name])
+        manifest = json.loads(read("manifest.json"))
         if manifest.get("schema") != 1 or manifest.get("architecture") != arch:
             raise ValueError(f"{path}: wrong package schema or architecture")
         artifact_archs = manifest.get("artifact_architectures", {})
@@ -63,28 +77,37 @@ def check_package(path: Path, arch: str, version: str, source_sha: str) -> str:
             if name in recorded or name.startswith("/") or ".." in name.split("/"):
                 raise ValueError(f"{path}: duplicate or unsafe manifest path: {name}")
             recorded.add(name)
-            data = archive.read(name)
+            if name not in archive_names:
+                raise ValueError(f"{path}: manifest file is missing from ZIP: {name}")
+            data = read(name)
             if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest().lower() != entry["sha256"].lower():
                 raise ValueError(f"{path}: manifest hash/size mismatch: {name}")
-        if {name for name in names if not name.endswith("/")} != recorded | {"manifest.json"}:
+        if set(archive_names) != recorded | {"manifest.json"}:
             raise ValueError(f"{path}: ZIP contents differ from manifest")
         if build_info_path not in recorded:
             raise ValueError(f"{path}: missing VST3 build provenance")
         vdir = f"VST3/Spectr.vst3/Contents/{arch}"
+        info = json.loads(read(build_info_path))
+        declared_runtimes = {entry.get("file") for entry in info.get("bundled_runtime_libraries", [])}
+        wgpu_paths = ("wgpu_native.dll", f"{vdir}/wgpu_native.dll")
+        if "wgpu_native.dll" in declared_runtimes and not all(name in recorded for name in wgpu_paths):
+            raise ValueError(f"{path}: missing declared wgpu_native.dll runtime")
+        if any(name in recorded for name in wgpu_paths) and not all(name in recorded for name in wgpu_paths):
+            raise ValueError(f"{path}: incomplete wgpu_native.dll runtime pair")
         for name, target_arch in (
             ("Standalone/Spectr.exe", arch),
             ("CLAP/Spectr.clap", arch),
             (f"{vdir}/Spectr.vst3", arch),
-            ("wgpu_native.dll", expected_runtime),
-            (f"{vdir}/wgpu_native.dll", expected_runtime),
         ):
             if name not in recorded:
                 raise ValueError(f"{path}: missing release binary: {name}")
-            check_pe(archive.read(name), target_arch, name)
+            check_pe(read(name), target_arch, name)
+        for name in wgpu_paths:
+            if name in recorded:
+                check_pe(read(name), expected_runtime, name)
         for name in ("icudtl.dat", f"{vdir}/icudtl.dat"):
             if name not in recorded:
                 raise ValueError(f"{path}: missing Skia runtime: {name}")
-        info = json.loads(archive.read(build_info_path))
         product = info.get("product", {})
         build = info.get("build", {})
         if info.get("schema") != "pulp.build-info.v1":
