@@ -71,20 +71,27 @@ def check_package(path: Path, arch: str, version: str, source_sha: str) -> str:
         if build_info_path not in recorded:
             raise ValueError(f"{path}: missing VST3 build provenance")
         vdir = f"VST3/Spectr.vst3/Contents/{arch}"
+        info = json.loads(archive.read(build_info_path))
+        declared_runtimes = {entry.get("file") for entry in info.get("bundled_runtime_libraries", [])}
+        wgpu_paths = ("wgpu_native.dll", f"{vdir}/wgpu_native.dll")
+        if "wgpu_native.dll" in declared_runtimes and not all(name in recorded for name in wgpu_paths):
+            raise ValueError(f"{path}: missing declared wgpu_native.dll runtime")
+        if any(name in recorded for name in wgpu_paths) and not all(name in recorded for name in wgpu_paths):
+            raise ValueError(f"{path}: incomplete wgpu_native.dll runtime pair")
         for name, target_arch in (
             ("Standalone/Spectr.exe", arch),
             ("CLAP/Spectr.clap", arch),
             (f"{vdir}/Spectr.vst3", arch),
-            ("wgpu_native.dll", expected_runtime),
-            (f"{vdir}/wgpu_native.dll", expected_runtime),
         ):
             if name not in recorded:
                 raise ValueError(f"{path}: missing release binary: {name}")
             check_pe(archive.read(name), target_arch, name)
+        for name in wgpu_paths:
+            if name in recorded:
+                check_pe(archive.read(name), expected_runtime, name)
         for name in ("icudtl.dat", f"{vdir}/icudtl.dat"):
             if name not in recorded:
                 raise ValueError(f"{path}: missing Skia runtime: {name}")
-        info = json.loads(archive.read(build_info_path))
         product = info.get("product", {})
         build = info.get("build", {})
         if info.get("schema") != "pulp.build-info.v1":

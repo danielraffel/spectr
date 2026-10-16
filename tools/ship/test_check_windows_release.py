@@ -28,12 +28,14 @@ def pe(machine: int, arm64x=False) -> bytes:
     return bytes(data)
 
 
-def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH):
+def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH,
+                 declare_wgpu=True, include_wgpu=True):
     info = {
         "schema": "pulp.build-info.v1",
         "product": {"name": "Spectr", "version": "1.0.9",
                     "source_git_sha": source, "source_git_dirty": False},
         "build": {"type": "Release", "archs": [arch]},
+        "bundled_runtime_libraries": ([{"file": "wgpu_native.dll"}] if declare_wgpu else []),
     }
     data = json.dumps(info).encode()
     vdir = f"VST3/Spectr.vst3/Contents/{arch}"
@@ -42,11 +44,12 @@ def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH):
         "Standalone/Spectr.exe": pe(0x8664, arm64x=True),
         "CLAP/Spectr.clap": pe(0x8664, arm64x=True),
         f"{vdir}/Spectr.vst3": pe(0x8664, arm64x=True),
-        "wgpu_native.dll": pe(0xAA64),
-        f"{vdir}/wgpu_native.dll": pe(0xAA64),
         "icudtl.dat": b"icu data",
         f"{vdir}/icudtl.dat": b"icu data",
     }
+    if include_wgpu:
+        contents["wgpu_native.dll"] = pe(0xAA64)
+        contents[f"{vdir}/wgpu_native.dll"] = pe(0xAA64)
     manifest = {
         "schema": 1,
         "architecture": arch,
@@ -63,6 +66,20 @@ def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH):
 
 
 class WindowsReleaseTest(unittest.TestCase):
+    def test_skia_dawn_package_without_wgpu_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "arm.zip"
+            make_package(path, declare_wgpu=False, include_wgpu=False)
+            self.assertEqual(check_package(path, ARCH, "1.0.9", SHA),
+                             hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_declared_wgpu_runtime_must_be_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "arm.zip"
+            make_package(path, include_wgpu=False)
+            with self.assertRaisesRegex(ValueError, "missing declared wgpu_native.dll"):
+                check_package(path, ARCH, "1.0.9", SHA)
+
     def test_matching_package(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "arm.zip"

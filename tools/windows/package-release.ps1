@@ -49,7 +49,11 @@ function Resolve-SpectrCMakeArtifact {
 
 $buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
 if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
-[void](Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture)
+$buildInfo = Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture
+$declaredRuntimeFiles = @()
+if ($null -ne $buildInfo.PSObject.Properties['bundled_runtime_libraries']) {
+    $declaredRuntimeFiles = @($buildInfo.bundled_runtime_libraries | ForEach-Object { [string]$_.file })
+}
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
 }
@@ -102,7 +106,9 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
-    foreach ($requiredRuntime in @('icudtl.dat', 'wgpu_native.dll')) {
+    $requiredRuntimes = @('icudtl.dat')
+    if ($declaredRuntimeFiles -contains 'wgpu_native.dll') { $requiredRuntimes += 'wgpu_native.dll' }
+    foreach ($requiredRuntime in $requiredRuntimes) {
         if ($runtimeSidecars -notcontains $requiredRuntime) {
             throw "Required runtime sidecar was not found: $requiredRuntime"
         }
@@ -112,7 +118,9 @@ try {
     Assert-SpectrPeArchitecture $vst3 $Vst3Architecture
     Assert-SpectrPeArchitecture $clap $Architecture
     $wgpu = Join-Path $stage 'wgpu_native.dll'
-    Assert-SpectrPeArchitecture $wgpu $RuntimeArchitecture
+    if (Test-Path -LiteralPath $wgpu -PathType Leaf) {
+        Assert-SpectrPeArchitecture $wgpu $RuntimeArchitecture
+    }
     $files = @(Get-ChildItem -LiteralPath $stage -Recurse -File)
     $manifest = [ordered]@{
         schema = 1

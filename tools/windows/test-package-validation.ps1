@@ -62,12 +62,14 @@ try {
     Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Vst3Architecture arm64ec-win -Output (Join-Path $temp 'mixed-wgpu.zip') | Out-Null } 'mixed architecture shared wgpu runtime'
     Remove-Item -LiteralPath (Join-Path $build 'wgpu_native.dll') -Force
     $missingGpuOutput = Join-Path $temp 'missing-gpu.zip'
-    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $missingGpuOutput | Out-Null } 'package-release missing GPU runtime' 'Required runtime sidecar was not found: wgpu_native.dll'
-    if (Test-Path -LiteralPath $missingGpuOutput) { throw 'package-release wrote output without the GPU runtime' }
-    Write-FakePe (Join-Path $build 'wgpu_native.dll') $machine
-
     $sourceBuildInfo = Join-Path $build 'VST3\Release\Spectr.pulp-build-info.json'
     $sourceBuildInfoOriginal = Get-Content $sourceBuildInfo -Raw
+    Set-Content -LiteralPath $sourceBuildInfo -Value '{"schema":"pulp.build-info.v1","product":{"source_git_sha":"c064d1e146cc8a7ed274286e45aa6990e25cb426"},"build":{"archs":["arm64-win"]},"bundled_runtime_libraries":[{"file":"wgpu_native.dll"}]}' -NoNewline
+    Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $missingGpuOutput | Out-Null } 'package-release missing GPU runtime' 'Required runtime sidecar was not found: wgpu_native.dll'
+    if (Test-Path -LiteralPath $missingGpuOutput) { throw 'package-release wrote output without the GPU runtime' }
+    Set-Content -LiteralPath $sourceBuildInfo -Value $sourceBuildInfoOriginal -NoNewline
+    Write-FakePe (Join-Path $build 'wgpu_native.dll') $machine
+
     Set-Content -LiteralPath $sourceBuildInfo -Value '{"schema":"wrong"}' -NoNewline
     $invalidReleaseOutput = Join-Path $temp 'invalid-build-info.zip'
     Assert-Fails { & (Join-Path $PSScriptRoot 'package-release.ps1') -BuildDir $build -Architecture arm64-win -Output $invalidReleaseOutput | Out-Null } 'package-release invalid build-info' 'unsupported schema'
