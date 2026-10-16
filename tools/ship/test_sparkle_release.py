@@ -158,6 +158,16 @@ class PublishOrdering(unittest.TestCase):
         self.assertIn(f"{publish_release.LATEST}/Spectr-1.0.7.pkg", verify)
         self.assertEqual(verify[verify.index("--expect-version") + 1], "1.0.7")
 
+    def test_windows_assets_join_the_draft_before_publication(self) -> None:
+        arm = Path("a/Spectr-windows-arm64ec-1.0.9.zip")
+        x64 = Path("a/Spectr-windows-x64-1.0.9.zip")
+        steps = publish_release.plan("1.0.9", Path("a/Spectr-1.0.9.pkg"),
+                                     Path("a/appcast.xml"), Path("n.md"),
+                                     "a" * 40, windows=(arm, x64))
+        self.assertLess(steps.index(steps[1]), steps.index(steps[2]))
+        self.assertIn(str(arm), steps[1])
+        self.assertIn(str(x64), steps[1])
+
     def test_expect_version_reads_the_newest_item(self) -> None:
         feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
                 '<channel><item><sparkle:version>1.0.6</sparkle:version>'
