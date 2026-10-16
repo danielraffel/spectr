@@ -54,9 +54,11 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
     steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
          "--notes-file", str(notes)]]
+    upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast)]
+    if not reuse_draft and windows:
+        upload.extend(str(asset) for asset in windows)
     steps += [
-        ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast),
-         *([str(asset) for asset in windows] if windows else [])],
+        upload,
         ["gh", "release", "edit", tag, "--repo", REPO_SLUG, "--draft=false", "--latest"],
         [sys.executable, str(HERE / "check_sparkle.py"), "appcast",
          "--appcast", f"{LATEST}/appcast.xml", "--pkg", f"{LATEST}/{pkg.name}",
@@ -114,13 +116,14 @@ def main() -> int:
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
                   check_windows_package(asset, arch, args.version, target), flush=True)
-    for cmd in steps[:3]:
+    mutation_steps = steps[:2] if args.reuse_draft else steps[:3]
+    for cmd in mutation_steps:
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "
                   "last step above was the publish", file=sys.stderr)
             return 1
-    verify = steps[3]
+    verify = steps[2] if args.reuse_draft else steps[3]
     for attempt in range(1, args.verify_attempts + 1):
         print(f"+ ({attempt}/{args.verify_attempts}) " + " ".join(verify), flush=True)
         if subprocess.run(verify).returncode == 0:

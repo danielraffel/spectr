@@ -177,6 +177,8 @@ class PublishOrdering(unittest.TestCase):
                                      reuse_draft=True)
         self.assertEqual([s[2] if s[0] == "gh" else "verify" for s in steps],
                          ["upload", "edit", "verify"])
+        self.assertNotIn(str(Path("a/Spectr-windows-arm64ec-1.0.9.zip")), steps[0])
+        self.assertNotIn(str(Path("a/Spectr-windows-x64-1.0.9.zip")), steps[0])
 
     def test_expect_version_reads_the_newest_item(self) -> None:
         feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
