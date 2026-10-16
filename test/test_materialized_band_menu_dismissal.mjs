@@ -21,7 +21,9 @@ import fs from 'node:fs';
 const PLANTS = ['--plant-document-outside', '--plant-menu-only-containment',
                 '--plant-stacking-submenus', '--plant-escape-closes-all',
                 '--plant-no-escape', '--plant-unanswerable-dismisses',
-                '--plant-pointer-isolation', '--plant-lifted-pointer-isolation'];
+                '--plant-pointer-isolation', '--plant-lifted-pointer-isolation',
+                '--plant-pointerdown-isolation', '--plant-pointerup-isolation',
+                '--plant-click-isolation'];
 // NOT a plant, deliberately: making `< Back` clear only its own flag cannot be
 // detected from here, and a control that cannot go red is worse than none.
 // Once one-submenu-at-a-time holds, the other flag is already false by the
@@ -86,6 +88,50 @@ if (plant === '--plant-lifted-pointer-isolation')
               '        onClick: (event) => event.stopPropagation(),\n' +
               '        onDismiss: () => closeSubmenuLevel("macros"),\n',
               '        onDismiss: () => closeSubmenuLevel("macros"),\n');
+
+// Remove one propagation guard from every mounted panel. The positive path
+// dispatches all three browser activation phases in order; the ancestor model
+// records any phase that escapes, so each phase has its own red control.
+function removeLiftedPhaseGuard(phase, panel) {
+  const line = {
+    pointerdown: '        onPointerDown: (event) => event.stopPropagation(),\n',
+    pointerup: '        onPointerUp: (event) => event.stopPropagation(),\n',
+    click: '        onClick: (event) => event.stopPropagation(),\n',
+  }[phase];
+  assert(line, 'unknown phase ' + phase);
+  const marker = `        onDismiss: () => closeSubmenuLevel("${panel}"),\n`;
+  const block =
+    '        onPointerDown: (event) => event.stopPropagation(),\n' +
+    '        onPointerUp: (event) => event.stopPropagation(),\n' +
+    '        onClick: (event) => event.stopPropagation(),\n' +
+    marker;
+  replaceOnce(block, block.replace(line, ''));
+}
+function removeEveryPanelPhaseGuard(phase) {
+  const rootLine = {
+    pointerdown: '      onPointerDown: (event) => event.stopPropagation(),\n',
+    pointerup: '      onPointerUp: (event) => event.stopPropagation(),\n',
+    click: '      onClick: (event) => event.stopPropagation(),\n',
+  }[phase];
+  assert(rootLine, 'unknown phase ' + phase);
+  // The root and both lifted panels share the same indentation. Anchor the
+  // root removal to its authored aria label and the complete handler block so
+  // this plant cannot accidentally remove only one sibling or phase.
+  const rootBlock =
+    '      onPointerDown: (event) => event.stopPropagation(),\n' +
+    '      onPointerUp: (event) => event.stopPropagation(),\n' +
+    '      onClick: (event) => event.stopPropagation(),\n' +
+    '      overlay: true,\n' +
+    '      onDismiss: onClose,\n';
+  const rootSnippet = '      "aria-label": "Band actions",\n' + rootBlock;
+  replaceOnce(rootSnippet,
+              '      "aria-label": "Band actions",\n' + rootBlock.replace(rootLine, ''));
+  removeLiftedPhaseGuard(phase, 'macros');
+  removeLiftedPhaseGuard(phase, 'modulation');
+}
+if (plant === '--plant-pointerdown-isolation') removeEveryPanelPhaseGuard('pointerdown');
+if (plant === '--plant-pointerup-isolation') removeEveryPanelPhaseGuard('pointerup');
+if (plant === '--plant-click-isolation') removeEveryPanelPhaseGuard('click');
 
 // ── A DOM shim that keeps `document` and `document.body` distinct ─────────
 //
@@ -177,6 +223,7 @@ function mount() {
     muted: new Array(64).fill(false),
     captures: 0,
     underlyingMutations: 0,
+    underlyingPhases: [],
     underlyingBands: [],
   };
   const window = { pulp: {
@@ -286,14 +333,18 @@ function mount() {
       path[i].props?.[handler]?.(event);
       if (event.stopped) break;
     }
-    // The canvas is an ancestor outside this React tree. It only sees a
-    // pointerdown that reaches the end of the bubble path. This is a
-    // structural event model: no screen geometry or transformed hit-test is
-    // executed here, so the harness band comes from the mounted menu props.
-    if (type === 'pointerdown' && !event.stopped) {
-      model.captures++;
+    // The canvas is an ancestor outside this React tree. Every un-stopped
+    // phase reaches it; pointerdown additionally establishes capture and
+    // mutates the mounted band. This is a structural event model: no screen
+    // geometry or transformed hit-test is executed here, so the harness band
+    // comes from the mounted menu props.
+    if (!event.stopped) {
+      model.underlyingPhases.push(type);
       model.underlyingMutations++;
-      model.underlyingBands.push(props.band);
+      if (type === 'pointerdown') {
+        model.captures++;
+        model.underlyingBands.push(props.band);
+      }
     }
     return event;
   }
@@ -544,6 +595,8 @@ function check() {
                  'lifted modulation press must not establish canvas capture');
     assert.equal(menu.model.underlyingMutations, 0,
                  'lifted modulation press must not reach the canvas');
+    assert.deepEqual(menu.model.underlyingPhases, [],
+                     'no pointerdown, pointerup, or click phase may reach the canvas');
     assert.deepEqual(menu.model.underlyingBands, [],
                      'structural menu presses have no underlying band hit');
     menu.unmount();
