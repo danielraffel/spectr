@@ -204,6 +204,21 @@ try {
     }
     Write-Output 'PASS: installer emits destination hashes tied to the package manifest'
 
+    # The default receipt path is part of the routine one-command installer
+    # flow. Keep this unqualified so a PowerShell property-expression typo
+    # cannot collapse the receipt to the current drive root.
+    $defaultPackage = Join-Path $temp 'default-receipt-package.zip'
+    Copy-Item -LiteralPath $package -Destination $defaultPackage
+    $defaultInstallRoot = Join-Path $temp 'default-receipt-install'
+    $defaultReceipt = "${defaultPackage}.install-receipt.json"
+    & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $defaultPackage `
+        -Vst3Root (Join-Path $defaultInstallRoot 'VST3') -ClapRoot (Join-Path $defaultInstallRoot 'CLAP') `
+        -StandaloneRoot (Join-Path $defaultInstallRoot 'Standalone') -NoShortcuts | Out-Null
+    if (-not (Test-Path -LiteralPath $defaultReceipt -PathType Leaf)) {
+        throw "Installer default receipt was not written beside the package: $defaultReceipt"
+    }
+    Write-Output 'PASS: installer default receipt is written beside the package'
+
     $badPackage = Join-Path $temp 'missing-manifest.zip'
     Compress-Archive -Path (Join-Path $build 'icudtl.dat') -DestinationPath $badPackage
     Assert-Fails { & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $badPackage -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null } 'invalid package after successful install' 'Package manifest.json is missing'

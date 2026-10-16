@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Package = (Resolve-Path -LiteralPath $Package).Path
-if ([string]::IsNullOrWhiteSpace($Receipt)) { $Receipt = "$Package.install-receipt.json" }
+if ([string]::IsNullOrWhiteSpace($Receipt)) { $Receipt = "${Package}.install-receipt.json" }
 $Receipt = [IO.Path]::GetFullPath($Receipt)
 if ($Receipt.Equals($Package, [StringComparison]::OrdinalIgnoreCase)) { throw 'Receipt path must differ from package path' }
 $pending = "$Receipt.pending.json"
