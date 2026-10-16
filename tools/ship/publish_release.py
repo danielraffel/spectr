@@ -31,6 +31,9 @@ the current latest never becomes latest, and step 4 says so.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 import subprocess
 import sys
 import time
@@ -44,6 +47,51 @@ REPO_SLUG = "danielraffel/spectr"
 LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 
 
+def _digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return "sha256:" + h.hexdigest()
+
+
+def check_draft(version: str, target: str, windows: tuple[Path, Path],
+                macos: tuple[Path, Path] | None = None,
+                allow_existing_macos: bool = False) -> None:
+    """Refuse a changed draft, tag, or asset set before any publication step."""
+    tag = f"v{version}"
+    result = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", REPO_SLUG,
+         "--json", "isDraft,assets"], capture_output=True, text=True, check=True)
+    release = json.loads(result.stdout)
+    tag_ref = subprocess.run(
+        ["gh", "api", f"repos/{REPO_SLUG}/git/ref/tags/{tag}",
+         "--jq", ".object.sha"], capture_output=True, text=True, check=True)
+    if release.get("isDraft") is not True or tag_ref.stdout.strip() != target:
+        raise ValueError(f"{tag}: draft state or tag target changed")
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError(f"{tag}: release assets are unavailable")
+    by_name = {}
+    for asset in assets:
+        name = asset.get("name")
+        if not isinstance(name, str) or name in by_name:
+            raise ValueError(f"{tag}: duplicate or invalid release asset name")
+        by_name[name] = asset
+    expected = {path.name: _digest(path) for path in windows}
+    if macos:
+        expected.update({path.name: _digest(path) for path in macos})
+    for name, digest in expected.items():
+        if by_name.get(name, {}).get("digest") != digest:
+            raise ValueError(f"{tag}: missing or changed draft asset {name}")
+    allowed = {path.name for path in windows}
+    if macos or allow_existing_macos:
+        allowed.update((f"Spectr-{version}.pkg", "appcast.xml"))
+    if not (set(by_name) <= allowed if allow_existing_macos and not macos
+            else set(by_name) == allowed):
+        raise ValueError(f"{tag}: unexpected draft asset set")
+
+
 def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
          title: str | None = None,
          windows: tuple[Path, Path] | None = None,
@@ -54,7 +102,10 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
     steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
          "--notes-file", str(notes)]]
-    upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast)]
+    upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG]
+    if reuse_draft:
+        upload.append("--clobber")
+    upload.extend((str(pkg), str(appcast)))
     if not reuse_draft and windows:
         upload.extend(str(asset) for asset in windows)
     steps += [
@@ -116,8 +167,14 @@ def main() -> int:
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
                   check_windows_package(asset, arch, args.version, target), flush=True)
+    if args.reuse_draft:
+        if not windows or not re.fullmatch(r"[0-9a-f]{40}", target):
+            raise SystemExit("--reuse-draft requires both Windows assets and an exact target SHA")
+        check_draft(args.version, target, windows, allow_existing_macos=True)
     mutation_steps = steps[:2] if args.reuse_draft else steps[:3]
-    for cmd in mutation_steps:
+    for index, cmd in enumerate(mutation_steps):
+        if args.reuse_draft and index == 1:
+            check_draft(args.version, target, windows, (args.pkg, args.appcast))
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "

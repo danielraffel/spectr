@@ -9,6 +9,8 @@ seed's public key exactly as they verify release items against SUPublicEDKey.
 from __future__ import annotations
 
 import base64
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -179,6 +181,85 @@ class PublishOrdering(unittest.TestCase):
                          ["upload", "edit", "verify"])
         self.assertNotIn(str(Path("a/Spectr-windows-arm64ec-1.0.9.zip")), steps[0])
         self.assertNotIn(str(Path("a/Spectr-windows-x64-1.0.9.zip")), steps[0])
+        self.assertIn("--clobber", steps[0])
+
+    def test_reuse_draft_rechecks_asset_identity_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            arm = root / "Spectr-windows-arm64ec-1.0.9.zip"
+            x64 = root / "Spectr-windows-x64-1.0.9.zip"
+            pkg = root / "Spectr-1.0.9.pkg"
+            appcast = root / "appcast.xml"
+            notes = root / "notes.md"
+            for path in (arm, x64, pkg, appcast, notes):
+                path.write_bytes(path.name.encode())
+            target = "a" * 40
+            windows = (arm, x64)
+            expected = {path.name: publish_release._digest(path)
+                        for path in (arm, x64, pkg, appcast)}
+            calls = []
+
+            def gh(cmd, **kwargs):
+                calls.append(cmd)
+                if cmd[:3] == ["gh", "release", "view"]:
+                    names = [arm.name, x64.name]
+                    if any(c[:3] == ["gh", "release", "upload"] for c in calls):
+                        names += [pkg.name, appcast.name]
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps({
+                        "isDraft": True,
+                        "assets": [{"name": name, "digest": expected[name]}
+                                   for name in names],
+                    }))
+                if cmd[:2] == ["gh", "api"]:
+                    return subprocess.CompletedProcess(cmd, 0, target + "\n")
+                return subprocess.CompletedProcess(cmd, 0, "")
+
+            argv = ["publish_release.py", "--version", "1.0.9", "--target", target,
+                    "--pkg", str(pkg), "--appcast", str(appcast), "--notes", str(notes),
+                    "--windows-arm64ec", str(arm), "--windows-x64", str(x64),
+                    "--reuse-draft", "--verify-attempts", "1"]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(publish_release, "check_macos_package"), \
+                    mock.patch.object(publish_release, "check_windows_package", return_value="digest"), \
+                    mock.patch.object(publish_release.subprocess, "run", side_effect=gh):
+                self.assertEqual(publish_release.main(), 0)
+            self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "view"]]), 2)
+            self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "edit"]]), 1)
+            self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "create"]]), 0)
+
+            def wrong_tag(cmd, **kwargs):
+                result = gh(cmd, **kwargs)
+                if cmd[:2] == ["gh", "api"]:
+                    return subprocess.CompletedProcess(cmd, 0, "b" * 40)
+                return result
+
+            calls.clear()
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(publish_release, "check_macos_package"), \
+                    mock.patch.object(publish_release, "check_windows_package", return_value="digest"), \
+                    mock.patch.object(publish_release.subprocess, "run", side_effect=wrong_tag):
+                with self.assertRaises(ValueError):
+                    publish_release.main()
+            self.assertFalse(any(c[:3] == ["gh", "release", "edit"] for c in calls))
+
+            def changed_after_upload(cmd, **kwargs):
+                result = gh(cmd, **kwargs)
+                if cmd[:3] == ["gh", "release", "view"] and any(
+                        c[:3] == ["gh", "release", "upload"] for c in calls):
+                    payload = json.loads(result.stdout)
+                    payload["assets"][-1]["digest"] = "sha256:" + "0" * 64
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps(payload))
+                return result
+
+            calls.clear()
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(publish_release, "check_macos_package"), \
+                    mock.patch.object(publish_release, "check_windows_package", return_value="digest"), \
+                    mock.patch.object(publish_release.subprocess, "run", side_effect=changed_after_upload):
+                with self.assertRaises(ValueError):
+                    publish_release.main()
+            self.assertTrue(any(c[:3] == ["gh", "release", "upload"] for c in calls))
+            self.assertFalse(any(c[:3] == ["gh", "release", "edit"] for c in calls))
 
     def test_expect_version_reads_the_newest_item(self) -> None:
         feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'

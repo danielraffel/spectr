@@ -108,6 +108,23 @@ jobs:
           [[ "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
             echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
           }
+          draft_assets=$(gh release view "v$version" --repo danielraffel/spectr --json assets)
+          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" python3 - <<'PY'
+          import json, os, sys
+          assets = json.loads(os.environ['DRAFT_ASSETS'])['assets']
+          expected = {
+              f"Spectr-windows-arm64ec-{os.environ['RELEASE_VERSION']}.zip": (
+                  os.environ['WINDOWS_ARM64EC_URL'], os.environ['WINDOWS_ARM64EC_SHA256']),
+              f"Spectr-windows-x64-{os.environ['RELEASE_VERSION']}.zip": (
+                  os.environ['WINDOWS_X64_URL'], os.environ['WINDOWS_X64_SHA256']),
+          }
+          if len(assets) != 2 or {a.get('name') for a in assets} != set(expected):
+              sys.exit('draft must contain exactly the two named Windows assets')
+          for asset in assets:
+              url, digest = expected[asset['name']]
+              if asset.get('apiUrl') != url or asset.get('digest') != 'sha256:' + digest.lower():
+                  sys.exit(f"draft asset identity or digest differs: {asset['name']}")
+          PY
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$x64" "$WINDOWS_X64_URL"
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check

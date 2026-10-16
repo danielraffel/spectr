@@ -234,25 +234,25 @@ number.
    minutes (CDN propagation) and fails loudly if "latest" never moves -- a
    prerelease, a missing asset, or a tag on an older commit.
 
-The supported release path is automated by `.github/workflows/release.yml`:
-push a prepared `release/vX.Y.Z` branch with its checked-in `release-notes.md`,
-and CI builds the exact head against the pinned Pulp SDK, signs and notarizes the
-package, generates the feed, then runs the draft → upload → publish → live-feed
-verification sequence. A manual dispatch is available for an infrastructure
-rerun and still requires an explicit notes file.
+The combined release workflow is manually dispatched on a prepared
+`release/vX.Y.Z` branch with checked-in `release-notes.md`. A push alone does
+not publish anything. First build both Windows ZIPs from that exact, clean
+branch head and complete the separate ARM64EC and x64 DAW UI, audio, and trace
+checks. Run `tools/ship/check_windows_release.py` against the branch SHA and
+version. Create a **draft** `vX.Y.Z` release targeted at that SHA and upload
+only the two Windows ZIPs. Keep it a draft while the macOS job runs.
 
-For a release that includes Windows, finish the ARM64EC and x64 ZIPs before
-publishing. Pass the exact macOS release commit, version, and both ZIPs through
-`tools/ship/check_windows_release.py`. It rehashes every manifest entry and
-requires each embedded VST3 build-info sidecar to name that same clean Release
-source and target architecture. `publish_release.py` accepts
-`--windows-arm64ec <zip> --windows-x64 <zip>` together; it repeats the check
-and expands the signed macOS package to verify the installed app, AU, VST3,
-and CLAP build-info against that same commit before creating the draft. It
-uploads both ZIPs with the macOS package and
-appcast before making the release public. The automated release workflow above
-currently publishes macOS alone; use the combined publication path when the
-Windows packages have passed their separate host UI, audio, and trace gates.
+Use `gh release view vX.Y.Z --json assets` to obtain each staged ZIP's
+`apiUrl` and `digest` (without putting credentials in workflow inputs).
+Dispatch `.github/workflows/release.yml` on `release/vX.Y.Z` with
+`windows_arm64ec_url`, `windows_arm64ec_sha256`, `windows_x64_url`, and
+`windows_x64_sha256`. The transient Tart guest authenticates to the draft,
+requires the tag and both asset identities to match the exact branch head,
+downloads the ZIPs, checks their digests and embedded source, then builds,
+signs, and notarizes the macOS package. `publish_release.py --reuse-draft`
+checks the draft again, uploads only the macOS package and appcast, verifies
+the complete draft, publishes it, and checks the live Sparkle feed. A failure
+before publication leaves the draft for inspection and a safe rerun.
 
 The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
 serves release assets with `Content-Disposition: attachment`, which Sparkle's
