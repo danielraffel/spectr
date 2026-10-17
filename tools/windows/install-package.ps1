@@ -310,7 +310,7 @@ try {
             } elseif ($relative.Equals('CLAP\wgpu_native.dll', [StringComparison]::OrdinalIgnoreCase)) {
                 $stagedFile = $plan[3].staged
             } elseif ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) {
-                $stagedFile = $plan[3].staged
+                $stagedFile = $plan[4].staged
             } elseif ($relative.Equals('Standalone\icudtl.dat', [StringComparison]::OrdinalIgnoreCase)) {
                 $stagedFile = $plan[5].staged
             } elseif ($relative.Equals('Standalone\wgpu_native.dll', [StringComparison]::OrdinalIgnoreCase)) {
