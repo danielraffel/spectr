@@ -25,7 +25,7 @@ function Restore-SpectrInstall {
     # A backup exists only after the old destination was moved. A fresh
     # destination never contained prior user data, so remove it regardless of
     # which step of the swap was interrupted.
-    foreach ($item in $Plan) {
+    foreach ($item in @($Plan | Where-Object { $_.active })) {
         if (Test-Path -LiteralPath $item.backup) {
             Remove-SpectrPath $item.destination
             Move-Item -LiteralPath $item.backup -Destination $item.destination
@@ -66,7 +66,19 @@ if (-not $NoShortcuts) {
         (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Spectr.lnk')
     )
 }
-$destinations = @($vst3Dest, $ClapRoot, $StandaloneRoot) + $shortcutPaths
+# Keep the shared CLAP root intact.  The plugin and each target-local runtime
+# are separate transaction items so installing Spectr cannot move or remove
+# other CLAP plugins that happen to live beside it.
+$destinations = @(
+    $vst3Dest,
+    $clapDest,
+    (Join-Path $ClapRoot 'icudtl.dat'),
+    (Join-Path $ClapRoot 'wgpu_native.dll'),
+    $standaloneDest,
+    (Join-Path $StandaloneRoot 'icudtl.dat'),
+    (Join-Path $StandaloneRoot 'wgpu_native.dll')
+) + $shortcutPaths
+$artifactCount = 7
 $canonicalDestinations = @($destinations | ForEach-Object { [IO.Path]::GetFullPath($_) })
 $vst3Prefix = $canonicalDestinations[0].TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 for ($index = 0; $index -lt $destinations.Count; $index++) {
@@ -88,11 +100,7 @@ foreach ($destination in $canonicalDestinations) {
         throw 'Package and receipt paths must differ from install destinations'
     }
 }
-# CLAP and standalone are swapped as complete directories so their sidecars
-# move atomically with the binary. Their locks must therefore live in the
-# parent directory; a lock file inside a directory being moved would prevent
-# Move-Item on Windows.
-$lockRoots = @($Vst3Root, (Split-Path $ClapRoot -Parent), (Split-Path $StandaloneRoot -Parent)) + @($shortcutPaths | ForEach-Object { Split-Path $_ -Parent })
+$lockRoots = @($Vst3Root, $ClapRoot, $StandaloneRoot) + @($shortcutPaths | ForEach-Object { Split-Path $_ -Parent })
 $lockPaths = @($lockRoots | ForEach-Object {
     $root = [IO.Path]::GetFullPath($_)
     New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -129,14 +137,16 @@ if (Test-Path -LiteralPath $pending -PathType Leaf) {
         if (-not $destination.Equals([string]$journal.destinations[$index].path, [StringComparison]::OrdinalIgnoreCase)) {
             throw "Install roots differ from pending transaction; recover with the original roots: $pending"
         }
-        if ($journal.destinations[$index].had_original -isnot [bool]) {
+        if ($journal.destinations[$index].had_original -isnot [bool] -or
+            ($journal.destinations[$index].active -isnot [bool])) {
             throw "Cannot safely recover journal with invalid prior-install state: $pending"
         }
         $recoveryPlan += [pscustomobject]@{
             destination = $destination
-            staged = if ($index -lt 3) { "$destination.$($journal.id).new" } else { "$destination.$($journal.id).new.lnk" }
-            backup = if ($index -lt 3) { "$destination.$($journal.id).backup" } else { "$destination.$($journal.id).backup.lnk" }
+            staged = if ($index -lt $artifactCount) { "$destination.$($journal.id).new" } else { "$destination.$($journal.id).new.lnk" }
+            backup = if ($index -lt $artifactCount) { "$destination.$($journal.id).backup" } else { "$destination.$($journal.id).backup.lnk" }
             had_original = [bool]$journal.destinations[$index].had_original
+            active = [bool]$journal.destinations[$index].active
         }
     }
     # A receipt with this transaction ID means all installed hashes were
@@ -170,7 +180,7 @@ if (Test-Path -LiteralPath $pending -PathType Leaf) {
             if ($committed) {
                 for ($index = 0; $index -lt $shortcutPaths.Count; $index++) {
                     $file = $previousReceipt.shortcuts[$index]
-                    if (-not ([string]$file.destination).Equals([string]$recoveryPlan[$index + 3].destination, [StringComparison]::OrdinalIgnoreCase) -or
+                    if (-not ([string]$file.destination).Equals([string]$recoveryPlan[$index + $artifactCount].destination, [StringComparison]::OrdinalIgnoreCase) -or
                         -not (Test-Path -LiteralPath $file.destination -PathType Leaf) -or
                         (Get-FileHash -LiteralPath $file.destination -Algorithm SHA256).Hash -ne $file.sha256) {
                         $committed = $false
@@ -220,22 +230,28 @@ try {
 
     New-Item -ItemType Directory -Force -Path $Vst3Root, $ClapRoot, $StandaloneRoot | Out-Null
     $transactionId = [guid]::NewGuid().ToString('N')
-    # Stage each artifact's complete install directory so target-local
-    # runtime sidecars are swapped atomically with the binary they serve.
+    # Stage each artifact and its target-local runtime as separate transaction
+    # items.  This preserves unrelated files in the shared CLAP directory.
     $sources = @(
         $vst3Source,
-        (Split-Path $clapSource -Parent),
-        (Split-Path $standaloneSource -Parent)
+        $clapSource,
+        (Join-Path $stage 'CLAP\icudtl.dat'),
+        (Join-Path $stage 'CLAP\wgpu_native.dll'),
+        $standaloneSource,
+        (Join-Path $stage 'Standalone\icudtl.dat'),
+        (Join-Path $stage 'Standalone\wgpu_native.dll')
     )
     $plan = @()
     for ($index = 0; $index -lt $destinations.Count; $index++) {
+        $source = if ($index -lt $artifactCount -and (Test-Path -LiteralPath $sources[$index])) { $sources[$index] } else { $null }
         $destination = [IO.Path]::GetFullPath($destinations[$index])
         $plan += [pscustomobject]@{
-            source = if ($index -lt 3) { $sources[$index] } else { $null }
+            source = $source
             destination = $destination
-            staged = if ($index -lt 3) { "$destination.$transactionId.new" } else { "$destination.$transactionId.new.lnk" }
-            backup = if ($index -lt 3) { "$destination.$transactionId.backup" } else { "$destination.$transactionId.backup.lnk" }
+            staged = if ($index -lt $artifactCount) { "$destination.$transactionId.new" } else { "$destination.$transactionId.new.lnk" }
+            backup = if ($index -lt $artifactCount) { "$destination.$transactionId.backup" } else { "$destination.$transactionId.backup.lnk" }
             had_original = (Test-Path -LiteralPath $destination)
+            active = ($index -ge $artifactCount -or $null -ne $source)
             expected_hash = ''
         }
     }
@@ -243,7 +259,7 @@ try {
         $journalData = [ordered]@{
             schema = 'spectr.windows.install.pending.v1'
             id = $transactionId
-            destinations = @($plan | ForEach-Object { [ordered]@{ path = $_.destination; had_original = $_.had_original } })
+            destinations = @($plan | ForEach-Object { [ordered]@{ path = $_.destination; had_original = $_.had_original; active = $_.active } })
             package = [ordered]@{
                 path = $Package
                 sha256 = (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash
@@ -265,12 +281,12 @@ try {
         } finally {
             Remove-SpectrPath $journalTemp
         }
-        foreach ($item in @($plan | Select-Object -First 3)) {
+        foreach ($item in @($plan | Select-Object -First $artifactCount | Where-Object { $_.active })) {
             Copy-Item -LiteralPath $item.source -Destination $item.staged -Recurse
         }
         if ($shortcutPaths.Count -gt 0) {
             $shell = New-Object -ComObject WScript.Shell
-            foreach ($item in @($plan | Select-Object -Skip 3)) {
+            foreach ($item in @($plan | Select-Object -Skip $artifactCount)) {
                 $shortcut = $shell.CreateShortcut($item.staged)
                 $shortcut.TargetPath = $standaloneDest
                 $shortcut.WorkingDirectory = $StandaloneRoot
@@ -287,10 +303,18 @@ try {
             $stagedFile = $null
             if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
                 $stagedFile = Join-Path $plan[0].staged $relative.Substring(17)
-            } elseif ($relative.StartsWith('CLAP\', [StringComparison]::OrdinalIgnoreCase)) {
-                $stagedFile = Join-Path $plan[1].staged $relative.Substring(5)
-            } elseif ($relative.StartsWith('Standalone\', [StringComparison]::OrdinalIgnoreCase)) {
-                $stagedFile = Join-Path $plan[2].staged $relative.Substring(11)
+            } elseif ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[1].staged
+            } elseif ($relative.Equals('CLAP\icudtl.dat', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[2].staged
+            } elseif ($relative.Equals('CLAP\wgpu_native.dll', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[3].staged
+            } elseif ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[3].staged
+            } elseif ($relative.Equals('Standalone\icudtl.dat', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[5].staged
+            } elseif ($relative.Equals('Standalone\wgpu_native.dll', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = $plan[6].staged
             }
             if ($null -eq $stagedFile) { continue }
             if (-not (Test-Path -LiteralPath $stagedFile -PathType Leaf) -or
@@ -299,7 +323,7 @@ try {
                 throw "Staged file differs from package manifest: $stagedFile"
             }
         }
-        foreach ($item in $plan) {
+        foreach ($item in @($plan | Where-Object { $_.active })) {
             if ($item.had_original) { Move-Item -LiteralPath $item.destination -Destination $item.backup }
             Move-Item -LiteralPath $item.staged -Destination $item.destination
         }
@@ -334,7 +358,7 @@ try {
     }).Count
     if ($installedFiles.Count -ne $expectedCount) { throw 'Installed file receipt is incomplete' }
     $installedShortcuts = @()
-    foreach ($item in @($plan | Select-Object -Skip 3)) {
+    foreach ($item in @($plan | Select-Object -Skip $artifactCount)) {
         if (-not (Test-Path -LiteralPath $item.destination -PathType Leaf)) { throw "Installed shortcut is missing: $($item.destination)" }
         $hash = (Get-FileHash -LiteralPath $item.destination -Algorithm SHA256).Hash
         if ($hash -ne $item.expected_hash) { throw "Installed shortcut differs from staged shortcut: $($item.destination)" }
@@ -372,7 +396,7 @@ try {
         }
         throw $installError
     }
-    foreach ($item in $plan) {
+    foreach ($item in @($plan | Where-Object { $_.active })) {
         Remove-SpectrPath $item.staged
         Remove-SpectrPath $item.backup
     }
