@@ -227,8 +227,13 @@ function Assert-SpectrPackageManifest {
     if ($runtimeSidecars -notcontains 'icudtl.dat') { throw 'Package manifest must include required icudtl.dat sidecar' }
     foreach ($runtime in $runtimeSidecars) {
         if ($runtime -notin @('icudtl.dat', 'wgpu_native.dll')) { throw "Unsupported runtime sidecar: $runtime" }
-        $runtimePath = "VST3\Spectr.vst3\Contents\$vst3Architecture\$runtime"
-        if (-not $seen.Contains($runtimePath)) { throw "Manifest is missing runtime sidecar: $runtimePath" }
+        foreach ($runtimePath in @(
+            "VST3\Spectr.vst3\Contents\$vst3Architecture\$runtime",
+            "CLAP\$runtime",
+            "Standalone\$runtime"
+        )) {
+            if (-not $seen.Contains($runtimePath)) { throw "Manifest is missing runtime sidecar: $runtimePath" }
+        }
     }
     $buildInfoPath = "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.pulp-build-info.json"
     $metadataSidecars = @($Manifest.metadata_sidecars)

@@ -90,11 +90,17 @@ try {
             }
             $runtimeSidecars += $runtime
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
-            # The VST3 loader resolves its sidecar runtime beside the
-            # architecture-specific binary. Keep the root copy for existing
-            # handoffs, but also package the runtime inside the bundle so the
-            # installer cannot silently omit it.
-            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime")
+            # Each Windows target resolves its sidecars beside its own binary.
+            # Keep the root copy for existing handoffs, but stage a copy for
+            # every target so standalone and CLAP cannot silently omit ICU or
+            # another declared runtime.
+            foreach ($targetPath in @(
+                "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime",
+                "CLAP\$runtime",
+                "Standalone\$runtime"
+            )) {
+                Copy-Item -LiteralPath $source -Destination (Join-Path $stage $targetPath)
+            }
         }
     }
     # Carry the verified installer beside the artifacts so a handoff ZIP is
