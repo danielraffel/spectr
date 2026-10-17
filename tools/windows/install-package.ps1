@@ -47,8 +47,12 @@ function Get-SpectrInstallFileDestination {
     if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
         return [IO.Path]::GetFullPath((Join-Path $Vst3Root $relative.Substring(5)))
     }
-    if ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) { return [IO.Path]::GetFullPath($clapDest) }
-    if ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) { return [IO.Path]::GetFullPath($standaloneDest) }
+    if ($relative.StartsWith('CLAP\', [StringComparison]::OrdinalIgnoreCase)) {
+        return [IO.Path]::GetFullPath((Join-Path $ClapRoot $relative.Substring(5)))
+    }
+    if ($relative.StartsWith('Standalone\', [StringComparison]::OrdinalIgnoreCase)) {
+        return [IO.Path]::GetFullPath((Join-Path $StandaloneRoot $relative.Substring(11)))
+    }
     return $null
 }
 
@@ -62,7 +66,7 @@ if (-not $NoShortcuts) {
         (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Spectr.lnk')
     )
 }
-$destinations = @($vst3Dest, $clapDest, $standaloneDest) + $shortcutPaths
+$destinations = @($vst3Dest, $ClapRoot, $StandaloneRoot) + $shortcutPaths
 $canonicalDestinations = @($destinations | ForEach-Object { [IO.Path]::GetFullPath($_) })
 $vst3Prefix = $canonicalDestinations[0].TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 for ($index = 0; $index -lt $destinations.Count; $index++) {
@@ -84,7 +88,11 @@ foreach ($destination in $canonicalDestinations) {
         throw 'Package and receipt paths must differ from install destinations'
     }
 }
-$lockRoots = @($Vst3Root, $ClapRoot, $StandaloneRoot) + @($shortcutPaths | ForEach-Object { Split-Path $_ -Parent })
+# CLAP and standalone are swapped as complete directories so their sidecars
+# move atomically with the binary. Their locks must therefore live in the
+# parent directory; a lock file inside a directory being moved would prevent
+# Move-Item on Windows.
+$lockRoots = @($Vst3Root, (Split-Path $ClapRoot -Parent), (Split-Path $StandaloneRoot -Parent)) + @($shortcutPaths | ForEach-Object { Split-Path $_ -Parent })
 $lockPaths = @($lockRoots | ForEach-Object {
     $root = [IO.Path]::GetFullPath($_)
     New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -212,7 +220,13 @@ try {
 
     New-Item -ItemType Directory -Force -Path $Vst3Root, $ClapRoot, $StandaloneRoot | Out-Null
     $transactionId = [guid]::NewGuid().ToString('N')
-    $sources = @($vst3Source, $clapSource, $standaloneSource)
+    # Stage each artifact's complete install directory so target-local
+    # runtime sidecars are swapped atomically with the binary they serve.
+    $sources = @(
+        $vst3Source,
+        (Split-Path $clapSource -Parent),
+        (Split-Path $standaloneSource -Parent)
+    )
     $plan = @()
     for ($index = 0; $index -lt $destinations.Count; $index++) {
         $destination = [IO.Path]::GetFullPath($destinations[$index])
@@ -273,10 +287,10 @@ try {
             $stagedFile = $null
             if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
                 $stagedFile = Join-Path $plan[0].staged $relative.Substring(17)
-            } elseif ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) {
-                $stagedFile = $plan[1].staged
-            } elseif ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) {
-                $stagedFile = $plan[2].staged
+            } elseif ($relative.StartsWith('CLAP\', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = Join-Path $plan[1].staged $relative.Substring(5)
+            } elseif ($relative.StartsWith('Standalone\', [StringComparison]::OrdinalIgnoreCase)) {
+                $stagedFile = Join-Path $plan[2].staged $relative.Substring(11)
             }
             if ($null -eq $stagedFile) { continue }
             if (-not (Test-Path -LiteralPath $stagedFile -PathType Leaf) -or
@@ -295,10 +309,10 @@ try {
         $destination = $null
         if ($relative.StartsWith('VST3\Spectr.vst3\', [StringComparison]::OrdinalIgnoreCase)) {
             $destination = Join-Path $Vst3Root $relative.Substring(5)
-        } elseif ($relative.Equals('CLAP\Spectr.clap', [StringComparison]::OrdinalIgnoreCase)) {
-            $destination = $clapDest
-        } elseif ($relative.Equals('Standalone\Spectr.exe', [StringComparison]::OrdinalIgnoreCase)) {
-            $destination = $standaloneDest
+        } elseif ($relative.StartsWith('CLAP\', [StringComparison]::OrdinalIgnoreCase)) {
+            $destination = Join-Path $ClapRoot $relative.Substring(5)
+        } elseif ($relative.StartsWith('Standalone\', [StringComparison]::OrdinalIgnoreCase)) {
+            $destination = Join-Path $StandaloneRoot $relative.Substring(11)
         }
         if ($null -eq $destination) { continue }
         if (-not (Test-Path -LiteralPath $destination -PathType Leaf)) { throw "Installed file is missing: $destination" }
@@ -316,7 +330,7 @@ try {
         }
     }
     $expectedCount = @($manifest.files | Where-Object {
-        ([string]$_.path).Replace('/', '\') -match '^(?i:VST3\\Spectr\.vst3\\|CLAP\\Spectr\.clap$|Standalone\\Spectr\.exe$)'
+        ([string]$_.path).Replace('/', '\') -match '^(?i:VST3\\Spectr\.vst3\\|CLAP\\|Standalone\\)'
     }).Count
     if ($installedFiles.Count -ne $expectedCount) { throw 'Installed file receipt is incomplete' }
     $installedShortcuts = @()
