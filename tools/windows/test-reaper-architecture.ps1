@@ -12,6 +12,14 @@ Assert-Equal (Get-ReaperHostArchitecture 'x86_64-win') 'x86_64-win' 'x64 host ma
 Assert-Equal (Get-ReaperHostArchitecture 'arm64-win') 'arm64-win' 'ARM64 host mapping'
 Assert-Equal (Get-ReaperHostArchitecture 'arm64ec-win') 'arm64-win' 'ARM64EC host mapping'
 
+$demoScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'reaper-demo.ps1') -Raw
+if ($demoScript -notmatch "-ArgumentList\s+'-newinst'") {
+    throw 'REAPER demo launch must use the supported -newinst switch'
+}
+if ($demoScript -match "-ArgumentList\s+'-newinstance'") {
+    throw 'REAPER demo launch contains unsupported -newinstance switch'
+}
+
 $failed = $false
 try { Get-ReaperHostArchitecture 'invalid-win' | Out-Null } catch { $failed = $true }
 if (-not $failed) { throw 'Unsupported architecture should fail closed' }

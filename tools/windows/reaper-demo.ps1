@@ -57,7 +57,7 @@ $receiptObject = [ordered]@{
 }
 
 if ($Launch) {
-    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinstance' -PassThru
+    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinst' -PassThru
     Start-Sleep -Seconds ([Math]::Max(0, $WaitSeconds))
     $receiptObject.reaper_pid = $process.Id
     $receiptObject.reaper_running = -not $process.HasExited
