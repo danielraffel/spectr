@@ -195,7 +195,7 @@ Before the first interactive run, prepare the host once to clear stale failed
 projects and select deterministic Dummy Audio:
 
 ```powershell
-.\tools\windows\prepare-reaper-demo.ps1 -Architecture arm64-win
+.\tools\windows\prepare-reaper-demo.ps1 -Architecture arm64ec-win
 ```
 
 The helper keeps a one-time `REAPER.ini.bak-spectr-demo` backup and writes a

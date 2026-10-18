@@ -48,7 +48,7 @@ if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]];
   SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
     SPECTR_WINDOWS_SSH_KEY="$ssh_key" \
     "$repo_root/tools/windows/ssh-qemu.sh" \
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\admin\\prepare-reaper-demo.ps1 -Architecture arm64-win' >/dev/null
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\admin\\prepare-reaper-demo.ps1 -Architecture arm64ec-win' >/dev/null
 fi
 
 if ! SPECTR_WINDOWS_SSH_PORT="$ssh_port" "$repo_root/tools/windows/utm-daw-status.sh"; then
