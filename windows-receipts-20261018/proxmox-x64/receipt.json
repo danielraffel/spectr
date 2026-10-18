@@ -1,0 +1,9 @@
+﻿{
+    "pid":  7300,
+    "exited":  false,
+    "marker_present":  false,
+    "elapsed_seconds":  90.44604609999999,
+    "module":  "C98AD2334552FD4B1187A5BE2F12612DB0BEABC94163F20139F0791E26DA277A",
+    "stderr":  "C:\\Users\\pulp-rdp\\Desktop\\spectr-x64-startup-diagnostic\\reaper.stderr.log",
+    "marker":  "C:\\Users\\pulp-rdp\\Desktop\\spectr-x64-startup-marker.txt"
+}
