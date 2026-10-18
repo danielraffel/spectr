@@ -30,6 +30,8 @@
 #include <string>
 #include <cstdlib>
 #include <string_view>
+#include <fstream>
+#include <mutex>
 
 namespace spectr {
 
@@ -38,14 +40,19 @@ namespace {
 // Opt-in host-startup diagnostics. Windows REAPER can call setup and
 // activation synchronously while inserting a VST3, so this identifies the
 // first slow or stuck Spectr stage without changing the default product path.
+void startup_trace_file_mark(const char* stage) noexcept;
+
 class StartupTraceScope {
 public:
     explicit StartupTraceScope(const char* operation)
-        : operation_(operation), start_(std::chrono::steady_clock::now()) {
+        : operation_(operation) {
         const char* value = std::getenv("SPECTR_STARTUP_TRACE");
         enabled_ = value != nullptr && std::strcmp(value, "0") != 0
             && std::strcmp(value, "") != 0;
-        if (enabled_) mark("begin");
+        if (enabled_) {
+            start_ = std::chrono::steady_clock::now();
+            mark("begin");
+        }
     }
 
     void mark(const char* stage) const {
@@ -54,6 +61,7 @@ public:
             std::chrono::steady_clock::now() - start_).count();
         pulp::runtime::log_info("Spectr startup {} {} elapsed_us={}", operation_,
                                 stage, elapsed);
+        startup_trace_file_mark(stage);
     }
 
     ~StartupTraceScope() {
@@ -62,9 +70,20 @@ public:
 
 private:
     const char* operation_;
-    std::chrono::steady_clock::time_point start_;
+    std::chrono::steady_clock::time_point start_{};
     bool enabled_ = false;
 };
+
+void startup_trace_file_mark(const char* stage) noexcept {
+    const char* value = std::getenv("SPECTR_STARTUP_TRACE");
+    const char* path = std::getenv("SPECTR_STARTUP_TRACE_FILE");
+    if (value == nullptr || std::strcmp(value, "0") == 0 ||
+        value[0] == '\0' || path == nullptr || path[0] == '\0') return;
+    static std::mutex file_mutex;
+    std::lock_guard<std::mutex> lock(file_mutex);
+    std::ofstream out(path, std::ios::app);
+    if (out) out << "global " << stage << '\n';
+}
 
 /// Negative-control seam for the route ramp: `SPECTR_MODULATION_PLANT=route-step`
 /// switches destinations and amounts in one block, the behaviour before routes
@@ -168,8 +187,13 @@ namespace {
 
 } // namespace
 
+void startup_trace_mark(const char* stage) noexcept {
+    startup_trace_file_mark(stage);
+}
+
 
 Spectr::Spectr() : editor_authority_(*this) {
+    startup_trace_mark("constructor_entry");
     prime_negative_control_seams();
     auto_gain_tap_.bind(&freeze_source_, &auto_gain_material_);
 #if defined(SPECTR_NATIVE_EDITOR)

@@ -1,0 +1,9 @@
+﻿{
+    "pid":  6028,
+    "exited":  false,
+    "marker_present":  true,
+    "elapsed_seconds":  50.3470142,
+    "module":  "D9056F4EF045550EE6A6B088FE3BC986DAD0B00B3EF366CBFA777AD03968E029",
+    "stderr":  "C:\\Users\\admin\\Desktop\\spectr-arm64-startup-diagnostic\\reaper.stderr.log",
+    "marker":  "C:\\Users\\admin\\Desktop\\spectr-arm64-startup-marker.txt"
+}
