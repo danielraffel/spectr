@@ -35,6 +35,37 @@ namespace spectr {
 
 namespace {
 
+// Opt-in host-startup diagnostics. Windows REAPER can call setup and
+// activation synchronously while inserting a VST3, so this identifies the
+// first slow or stuck Spectr stage without changing the default product path.
+class StartupTraceScope {
+public:
+    explicit StartupTraceScope(const char* operation)
+        : operation_(operation), start_(std::chrono::steady_clock::now()) {
+        const char* value = std::getenv("SPECTR_STARTUP_TRACE");
+        enabled_ = value != nullptr && std::strcmp(value, "0") != 0
+            && std::strcmp(value, "") != 0;
+        if (enabled_) mark("begin");
+    }
+
+    void mark(const char* stage) const {
+        if (!enabled_) return;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start_).count();
+        pulp::runtime::log_info("Spectr startup {} {} elapsed_us={}", operation_,
+                                stage, elapsed);
+    }
+
+    ~StartupTraceScope() {
+        if (enabled_) mark("end");
+    }
+
+private:
+    const char* operation_;
+    std::chrono::steady_clock::time_point start_;
+    bool enabled_ = false;
+};
+
 /// Negative-control seam for the route ramp: `SPECTR_MODULATION_PLANT=route-step`
 /// switches destinations and amounts in one block, the behaviour before routes
 /// were slewed. Read once per process; unset in every shipping run.
@@ -700,6 +731,8 @@ bool render_switch_plants_hard_cut_() noexcept {
 } // namespace
 
 std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool gpu) {
+    StartupTraceScope trace{"build_renderer"};
+    trace.mark("before_make_renderer");
     renderer_builds_.fetch_add(1, std::memory_order_relaxed);
     std::unique_ptr<MaskRenderer> renderer;
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
@@ -714,8 +747,11 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool 
         renderer = make_tracking_gpu_mask_renderer();
     else if (!renderer)
         renderer = make_mask_renderer(mode);
+    trace.mark("after_make_renderer");
     if (!renderer) return nullptr;
+    trace.mark("before_renderer_prepare");
     if (!renderer->prepare(renderer_config_())) return nullptr;
+    trace.mark("after_renderer_prepare");
     // Hand the new renderer the magnitude that is already drawn, so a switch
     // does not pass through a neutral field on its way to the right one.
     //
@@ -732,6 +768,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool 
         layout = make_mask_layout_();
     }
     if (!renderer->publish_layout(layout)) return nullptr;
+    trace.mark("after_publish_layout");
     // Record what the renderer is now realising, so neither the control nor
     // the audio path restages this same mask and pays a crossfade for it.
 #if !defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) && !defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
@@ -754,6 +791,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool 
     // advances its generation still renders, just through its initial mask for
     // one block, which is strictly better than refusing the switch.
     if (renderer->active_generation() == 0) {
+        trace.mark("before_silence_preroll");
         const int block = std::max(1, std::min(max_block_, 512));
         const auto channels = static_cast<std::size_t>(std::max(1, channels_));
         std::vector<float> silence(static_cast<std::size_t>(block), 0.0f);
@@ -769,6 +807,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool 
             if (renderer->active_generation() > 0) break;
             if (!renderer->process(in.data(), out.data(), block)) break;
         }
+        trace.mark("after_silence_preroll");
     }
     renderer->reset();
     // Last: the pump above runs on this (control) thread while the audio
@@ -1130,12 +1169,15 @@ bool Spectr::render_through_(MaskRenderer* renderer, MaskRenderer* incoming,
 }
 
 void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
+    StartupTraceScope trace{"prepare"};
+    trace.mark("before_stop_param_sync");
     // Re-prepare may overlap a parameter-sync task launched by the previous
     // process cycle. Join it before rebuilding the renderer: the worker can
     // publish a compiled layout, and publish_layout() must never race
     // MaskRenderer::prepare(). The lane is restarted after the new engine
     // and its initial publication are ready.
     stop_param_sync_lane_();
+    trace.mark("after_stop_param_sync");
 
     // An offline flag is one render session's; a host that set it for a
     // bounce and never cleared it must not make every later block wait.
@@ -1161,6 +1203,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     // the storage worker is joined first, so nothing it built for the old
     // geometry can land in the new one.
     freeze_storage_lane_.stop();
+    trace.mark("after_stop_freeze_storage");
     const double freeze_seconds = freeze_hold_seconds_at_(
         transport_tempo_bpm(), transport_time_sig_numerator(),
         transport_time_sig_denominator());
@@ -1172,6 +1215,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     else
         freeze_source_.ensure_loop_storage_while_stopped(freeze_seconds);
     freeze_storage_collect_sent_ = false;
+    trace.mark("after_freeze_prepare");
     start_freeze_storage_lane_();
     // Auto Gain's reference and v2's material estimator belong to the rate.
     // Prepared before any renderer is built, so the wet-source tap never
@@ -1179,6 +1223,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     auto_gain_reference_.prepare(sample_rate_);
     auto_gain_material_.prepare(sample_rate_, channels_, auto_gain_reference_,
                                 kSpectralFftSize);
+    trace.mark("after_auto_gain_prepare");
     auto_gain_last_valid_ = false;
 
     // No audio thread can be running across a prepare, so the previous
@@ -1190,6 +1235,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     active_renderer_.store(nullptr, std::memory_order_release);
     (void)switch_reclaim_lane_.start(&Spectr::switch_reclaim_trampoline_, this,
                                      pulp::format::BackgroundTaskPolicy::Latest);
+    trace.mark("after_switch_reclaim_start");
     {
         // A switch renders both renderers from a copy of the input, one run
         // of the freeze source, and the incoming output: three planar blocks.
@@ -1223,6 +1269,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
         renderer_=std::move(replacement);
     }
+    trace.mark("after_build_renderer");
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) || defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
@@ -1283,6 +1330,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
         publish_processing_state_();
     }
     preroll_surviving_hold_();
+    trace.mark("after_hold_preroll");
     // The pre-roll above ran the wet-source tap over silence. Start the
     // estimator's frame grid here, at the stream's first sample, so a bounce
     // and a playback prepared the same way see the same frames -- and keep
@@ -1297,6 +1345,7 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
             "[Spectr] parameter sync worker failed to start; host automation "
             "of the band surface will not reach the DSP");
     }
+    trace.mark("after_param_sync_start");
     suppress_legacy_lane_commands_ = false;
     processor_prepared_ = renderer_ != nullptr;
     configure_bridge_(ctx.output_channels);
