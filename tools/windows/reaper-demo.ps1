@@ -57,7 +57,9 @@ $receiptObject = [ordered]@{
 }
 
 if ($Launch) {
-    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinstance' -PassThru
+    # REAPER 7.82 uses the short -newinst spelling; the unsupported long
+    # spelling opens the usage dialog and leaves the requested host unopened.
+    $process = Start-Process -FilePath $ReaperExe -ArgumentList '-newinst' -PassThru
     Start-Sleep -Seconds ([Math]::Max(0, $WaitSeconds))
     $receiptObject.reaper_pid = $process.Id
     $receiptObject.reaper_running = -not $process.HasExited
