@@ -165,6 +165,10 @@ if ($positive.focused_test.assertions -lt 1 -or $positive.focused_test.test_case
 if ((Get-Content -LiteralPath $invocationPath -Raw) -match '--parallel|-j') {
     throw 'governed invocation carried an unbounded parallelism flag'
 }
+if ((Get-Content -LiteralPath $invocationPath -Raw) -notmatch '(?m)^<--config>$' -or
+    (Get-Content -LiteralPath $invocationPath -Raw) -notmatch '(?m)^<Release>$') {
+    throw 'governed invocation did not pin the Visual Studio build configuration to Release'
+}
 if ((Get-Content -LiteralPath $invocationPath -Raw) -notmatch [regex]::Escape($spaceBuild)) {
     throw 'governed invocation did not preserve the space-containing build path as one argument'
 }

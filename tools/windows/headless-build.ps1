@@ -150,8 +150,13 @@ try {
     $receiptObject.source.cmake_home_directory = Assert-CMakeSource $BuildDir $SourceDir
 
     $phase = 'build'
-    $buildArguments = @('cmake', '--build', $BuildDir, '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
-    $quotedBuildArguments = @('cmake', '--build', (Quote-CmdArgument $BuildDir 'BuildDir'), '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
+    # Visual Studio generators are multi-config.  Without an explicit config,
+    # cmake --build selects Debug even when the cache was configured for a
+    # Release product.  That can link Debug objects against the Release Pulp
+    # SDK and fail with unresolved __std_* symbols.  Keep the shipped helper
+    # deterministic across Ninja and Visual Studio generators.
+    $buildArguments = @('cmake', '--build', $BuildDir, '--config', 'Release', '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
+    $quotedBuildArguments = @('cmake', '--build', (Quote-CmdArgument $BuildDir 'BuildDir'), '--config', 'Release', '--target', 'Spectr_Standalone', 'Spectr_VST3', 'Spectr_CLAP', 'Spectr-test')
     $buildLine = ((Quote-CmdArgument $Bash 'Bash'), (Quote-CmdArgument $GovernedBuild 'GovernedBuild') + $quotedBuildArguments) -join ' '
     $receiptObject.build.arguments = $buildArguments
     $receiptObject.build.command_line = $buildLine
