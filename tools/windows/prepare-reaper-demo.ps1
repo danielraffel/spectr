@@ -29,7 +29,18 @@ $text = [regex]::Replace($text, '(?m)^(lastproject|faultyproject|projecttab2)=.*
 if (-not $KeepAudioMode) {
     # REAPER's Dummy Audio mode is 4. It is deterministic in a VM and avoids
     # coupling plugin acceptance to a host WASAPI device.
-    $text = [regex]::Replace($text, '(?s)(\[audioconfig\]\r?\n)mode=\d+', '$1mode=4', 1)
+    if ($text -match '(?m)^\[audioconfig\]\r?$') {
+        $text = [regex]::Replace($text, '(?s)(\[audioconfig\]\r?\n)mode=\d+', '$1mode=4', 1)
+        if ($text -notmatch '(?s)\[audioconfig\]\r?\nmode=4(?:\r?\n|$)') {
+            throw "REAPER audio configuration exists but has no writable mode entry: $ReaperIni"
+        }
+    } else {
+        # A newly initialized profile has no audio section yet. Appending it
+        # is required; replacing a missing line leaves REAPER's first-run
+        # device modal in front of the plugin host.
+        $separator = if ($text.EndsWith("`r`n") -or $text.EndsWith("`n")) { '' } else { "`r`n" }
+        $text += "${separator}[audioconfig]`r`nmode=4`r`n"
+    }
 }
 Set-Content -LiteralPath $ReaperIni -Value $text -Encoding Unicode
 
