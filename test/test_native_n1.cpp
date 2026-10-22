@@ -50,7 +50,8 @@ pulp::view::Point root_point(const pulp::view::View& view,
             (-c * x + a * y) / determinant};
 }
 
-void feed_tone(spectr::Spectr& processor, pulp::view::FrameClock& clock) {
+void feed_tone(spectr::Spectr& processor, pulp::view::FrameClock& clock,
+               float amplitude = 1.0f, int chunks = 96) {
     constexpr int block = 256;
     constexpr double sample_rate = 48000.0;
     std::vector<float> in0(block), in1(block), out0(block), out1(block);
@@ -60,10 +61,10 @@ void feed_tone(spectr::Spectr& processor, pulp::view::FrameClock& clock) {
     pulp::format::ProcessContext context;
     context.sample_rate = sample_rate;
     context.num_samples = block;
-    for (int chunk = 0; chunk < 96; ++chunk) {
+    for (int chunk = 0; chunk < chunks; ++chunk) {
         for (int sample = 0; sample < block; ++sample) {
             const auto index = chunk * block + sample;
-            const auto value = static_cast<float>(std::sin(
+            const auto value = amplitude * static_cast<float>(std::sin(
                 2.0 * 3.14159265358979323846 * 1000.0 * index / sample_rate));
             in0[sample] = value;
             in1[sample] = value;
@@ -988,6 +989,66 @@ TEST_CASE("native analyzer and output meter frames are dispatched, not compiled"
         throw new Error(`the output label disagrees with its attribute: `
           + `${label && label.textContent} / ${printed}`);
     )js", "spectr-native-publication-contract");
+
+    processor.on_view_closed(*root);
+}
+
+TEST_CASE("an unchanged analyzer frame is not republished",
+          "[native-n1][analyzer][publication]") {
+    spectr::Spectr processor;
+    pulp::state::StateStore store;
+    processor.set_state_store(&store);
+    processor.define_parameters(store);
+    pulp::format::PrepareContext prepare;
+    prepare.sample_rate = 48000.0;
+    prepare.max_buffer_size = 256;
+    prepare.input_channels = 2;
+    prepare.output_channels = 2;
+    processor.prepare(prepare);
+
+    auto root = processor.create_view();
+    REQUIRE(root != nullptr);
+    root->set_bounds({0, 0, 1320, 860});
+    pulp::view::FrameClock clock;
+    root->set_frame_clock(&clock);
+    root->layout_children();
+    processor.on_view_opened(*root);
+    auto* session = processor.active_scripted_ui();
+    REQUIRE(session != nullptr);
+    REQUIRE(session->bridge() != nullptr);
+    for (int frame = 0; frame < 4; ++frame)
+        clock.tick(1.0f / 60.0f);
+
+    session->bridge()->load_script(R"js(
+      globalThis.__spectrAnalyzerFrames = 0;
+      window.pulp.on('analyzer_frame', () => { ++globalThis.__spectrAnalyzerFrames; });
+    )js", "spectr-analyzer-republish-observer");
+    // A tone, then long enough silence for the spectrum to settle on its
+    // floor: the host keeps processing, so the sequence keeps advancing.
+    feed_tone(processor, clock);
+    feed_tone(processor, clock, 0.0f, 192);
+    const auto settled_sequence = processor.read_spectrum().sequence_number;
+    REQUIRE_NOTHROW(session->bridge()->load_script(R"js(
+      if (!globalThis.__spectrAnalyzerFrames)
+        throw new Error('no analyzer_frame reached the page');
+      globalThis.__spectrSettledFrames = globalThis.__spectrAnalyzerFrames;
+    )js", "spectr-analyzer-republish-settled"));
+
+    // Silence: the sequence advances, the picture does not, nothing publishes.
+    feed_tone(processor, clock, 0.0f, 96);
+    REQUIRE(processor.read_spectrum().sequence_number > settled_sequence);
+    CHECK_NOTHROW(session->bridge()->load_script(R"js(
+      if (globalThis.__spectrAnalyzerFrames !== globalThis.__spectrSettledFrames)
+        throw new Error(`silence republished the analyzer: `
+          + `${globalThis.__spectrAnalyzerFrames - globalThis.__spectrSettledFrames} frames`);
+    )js", "spectr-analyzer-republish-silence"));
+
+    // A visible change still publishes.
+    feed_tone(processor, clock);
+    CHECK_NOTHROW(session->bridge()->load_script(R"js(
+      if (!(globalThis.__spectrAnalyzerFrames > globalThis.__spectrSettledFrames))
+        throw new Error('a tone after silence published no analyzer frame');
+    )js", "spectr-analyzer-republish-tone"));
 
     processor.on_view_closed(*root);
 }
