@@ -40,6 +40,13 @@ native/editor/parameter/artifact tests, validates AUv2, and packages those exact
 artifacts as an unsigned acceptance PKG. It deliberately does not rerun the
 entire test corpus.
 
+Pull requests from forks do not run the gate. The lane's TartCI VM is ephemeral
+but mounts the host's shared ccache and configure-check cache writable, so fork
+code is kept off it, and there is no GitHub-hosted fallback. The fork PR's
+skipped job is named `Spectr M5 product-acceptance gate (fork PR, not run)`, so
+the required check stays unreported; after review, a maintainer runs the gate
+on a same-repo branch carrying that head.
+
 The artifact name includes the exact GitHub SHA. Confirm the candidate head
 before dispatch, and reuse an existing receipt for that SHA rather than running
 a duplicate.
