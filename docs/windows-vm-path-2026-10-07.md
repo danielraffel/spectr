@@ -33,6 +33,26 @@ The practical interactive path is therefore direct QEMU with the known-good para
 
 ## Build evidence
 
+## Evidence refresh: 2026-10-22
+
+The current local package lane has been rechecked against the exact Spectr
+source `e992cdc7ea173bc555d4d93f5a8af19d7116e08b`.
+
+| Lane | Current evidence | Disposition |
+| --- | --- | --- |
+| M5/M5S direct QEMU ARM64 | Release SDK `0.998.0`, native `arm64-win` VST3/CLAP/standalone package; package SHA-256 `4135aa9c37c6a03de5dc7ff775c099d30a561e1910d7f5879e56b0ba8890c855`; install receipt matched the package manifest | Build/package/install PASS; DAW UI acceptance pending |
+| Proxmox VM 300 x64 | `C:\spectr-build-current-x64\Spectr-test.exe "Spectr processes audio" --reporter compact`; `All tests passed (2 assertions in 1 test case)` | Focused audio PASS; VM stopped after validation |
+
+The ARM package is native ARM64 (`arm64-win`). The current Skia release has
+ARM64 and x64 slices but no ARM64EC slice, so it cannot yet be accepted as a
+GPU-editor payload for an ARM64X REAPER host. A REAPER cache entry or package
+installation alone is discovery evidence; current host-instance, UI, audio,
+and Perfetto acceptance remains unproven until an ARM64EC-compatible provider
+is available.
+
+The ARM launcher now makes a writable copy of read-only golden EFI vars before
+booting. This keeps the golden immutable and makes linked overlays repeatable.
+
 The headless M5 ARM64 guest built Pulp `v0.915.0` and Spectr at commit
 `2bef773265c0f3196db8fc77f761307cbbde9de6` with MSVC ARM64. Standalone, CLAP,
 and VST3 linked, and `Spectr-test.exe "Spectr processes audio" --reporter

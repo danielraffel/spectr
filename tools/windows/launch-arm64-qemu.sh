@@ -33,6 +33,10 @@ cleanup() { rm -f "$overlay" "$vars"; [[ -z "$QMP_SOCKET" ]] || rm -f "$QMP_SOCK
 trap cleanup EXIT
 qemu-img create -f qcow2 -F qcow2 -b "$BASE_IMAGE" "$overlay" >/dev/null
 cp "$VARS_TEMPLATE" "$vars"
+# Golden EFI-vars files are often intentionally read-only.  QEMU must be able
+# to update the disposable copy while booting, so normalize the session copy's
+# mode without ever touching the immutable template.
+chmod u+rw "$vars"
 if [[ -n "$QMP_SOCKET" ]]; then
   rm -f "$QMP_SOCKET"
   mkdir -p "$(dirname "$QMP_SOCKET")"
