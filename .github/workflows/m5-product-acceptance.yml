@@ -59,7 +59,16 @@ concurrency:
 
 jobs:
   product-acceptance:
-    name: Spectr M5 product-acceptance gate
+    # Fork pull requests do not run on this lane. Its TartCI VM is ephemeral,
+    # but it boots with the host's shared ccache and configure-check cache
+    # mounted writable, and later trusted jobs (this repo's and Pulp's) read
+    # them; fork code must not write there. There is no GitHub-hosted fallback.
+    # A skipped job would report the required check as passing, so a fork PR's
+    # skipped job carries a different name: `Spectr M5 product-acceptance gate`
+    # stays unreported and the PR cannot land until a maintainer, after review,
+    # runs the gate on a same-repo branch with that head.
+    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'Spectr M5 product-acceptance gate (fork PR, not run)' || 'Spectr M5 product-acceptance gate' }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]
     timeout-minutes: 120
     env:
