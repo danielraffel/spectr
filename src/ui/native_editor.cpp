@@ -3871,6 +3871,27 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                         kVisibleAnalyzerPointCount);
     const auto overview = analyzer_trace(spectrum, overview_min, overview_max,
                                          kOverviewAnalyzerPointCount);
+    {
+        // Compare at 0.01 dB, far below a pixel of the analyzer's scale, so a
+        // visible change always publishes and an unchanged frame never does.
+        const auto q = [](float v) {
+            return std::isfinite(v)
+                ? static_cast<std::int32_t>(std::lround(v * 100.0f))
+                : std::numeric_limits<std::int32_t>::min();
+        };
+        std::vector<std::int32_t> key;
+        key.reserve(visible.size() + overview.size() + 6);
+        key.push_back(static_cast<std::int32_t>(spectrum.epoch));
+        key.push_back(q(spectrum.floor_db));
+        key.push_back(q(visible_min));
+        key.push_back(q(visible_max));
+        key.push_back(q(overview_max));
+        key.push_back(static_cast<std::int32_t>(spectrum.source_channels));
+        for (const float v : visible) key.push_back(q(v));
+        for (const float v : overview) key.push_back(q(v));
+        if (key == native_analyzer_published_) return true;
+        native_analyzer_published_ = std::move(key);
+    }
     auto payload = choc::value::createObject("");
     payload.addMember("schema_version", static_cast<std::int32_t>(1));
     payload.addMember("epoch", static_cast<std::int64_t>(spectrum.epoch));
@@ -3912,6 +3933,7 @@ void Spectr::close_native_editor_() {
     native_frame_clock_ = nullptr;
     native_analyzer_elapsed_ = 0.0f;
     native_analyzer_sequence_ = 0;
+    native_analyzer_published_.clear();
     // Forget the last published level, so reopening the editor republishes
     // rather than sitting at "--" until the reading happens to move.
     native_output_level_peak_ = std::numeric_limits<float>::max();
