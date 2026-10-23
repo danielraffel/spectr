@@ -1866,7 +1866,11 @@ private:
     void configure_bridge_(int num_channels);
 };
 
+// Diagnostic-only marker used by the opt-in Windows startup trace.
+void startup_trace_mark(const char* stage) noexcept;
+
 inline std::unique_ptr<pulp::format::Processor> create_spectr() {
+    startup_trace_mark("factory_entry");
     return std::make_unique<Spectr>();
 }
 
