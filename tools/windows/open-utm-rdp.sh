@@ -10,7 +10,9 @@ utmctl="/Applications/UTM.app/Contents/MacOS/utmctl"
 utm_uuid="${SPECTR_WINDOWS_UTM_UUID:-36132D8D-99F7-4916-A6D8-935A6F4AF55F}"
 ssh_port="${SPECTR_WINDOWS_SSH_PORT:-50376}"
 rdp_port="${SPECTR_WINDOWS_RDP_PORT:-53390}"
-rdp_domain="${SPECTR_WINDOWS_RDP_DOMAIN:-PULP-WIN-CI}"
+# The guest hostname is PULP-WIN-CI, while the local account authority used
+# by NLA is the separate `pulp-win` domain.
+rdp_domain="${SPECTR_WINDOWS_RDP_DOMAIN:-pulp-win}"
 secret_file="${SPECTR_WINDOWS_UTM_SECRET:-$HOME/.config/pulp/secrets/spectr-windows-utm-admin}"
 
 [[ -x "$utmctl" ]] || { echo "UTM is not installed at $utmctl" >&2; exit 1; }
