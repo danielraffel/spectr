@@ -707,6 +707,10 @@ pulp_add_binary_data(spectr_editor_assets
 )
 
 # ── Tests ──────────────────────────────────────────────────────────────
+# Test executables and their negative-control registrations are only part of
+# the seam-enabled validation build.  Release/consumer builds must not require
+# developer-only SDK targets such as Pulp::audio-analysis.
+if(SPECTR_ENABLE_TEST_SEAMS)
 
 include(FetchContent)
 FetchContent_Declare(Catch2
@@ -4519,6 +4523,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
+endif()
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)
 pulp_add_plugin(SpectrWebViewReference
