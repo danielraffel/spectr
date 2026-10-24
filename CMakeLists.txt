@@ -4982,7 +4982,7 @@ if(Python3_Interpreter_FOUND)
     endif()
 endif()
 
-if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view)
+if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view AND SPECTR_ENABLE_TEST_SEAMS)
     add_executable(Spectr-native-standalone-artifact-test
         test/test_built_standalone.cpp)
     target_link_libraries(Spectr-native-standalone-artifact-test PRIVATE
@@ -5000,7 +5000,7 @@ endif()
 # Standalone artifact proof: launch the exact packaged executable headlessly,
 # capture its real GPU back buffer, and verify screenshot-only mode stays clear
 # of the audio device. This is intentionally downstream of the CLI/DSP suite.
-if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
+if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view AND SPECTR_ENABLE_TEST_SEAMS)
     add_executable(Spectr-standalone-artifact-test
         test/test_built_standalone.cpp)
     target_link_libraries(Spectr-standalone-artifact-test PRIVATE
