@@ -77,7 +77,10 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# The exact SDK provenance gate below is authoritative.  Do not constrain the
+# package by its historical semver major: Pulp's SDK package version advances
+# independently of the immutable source SHA consumed by this product.
+find_package(Pulp CONFIG REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
