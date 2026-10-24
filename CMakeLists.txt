@@ -4842,7 +4842,7 @@ endif()
 if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
     TARGET ${SPECTR_NATIVE_AU_TARGET} OR
     TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
-   TARGET Pulp::host)
+   TARGET Pulp::host AND SPECTR_ENABLE_TEST_SEAMS)
     # Same browser-free selection as Spectr-test: a cutover SDK has no WebView
     # editor to link against.
     add_executable(Spectr-artifact-test
