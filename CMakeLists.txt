@@ -309,9 +309,13 @@ foreach(_forbidden_native_asset
     endif()
 endforeach()
 
+# Stored as zlib streams (Pulp's pulp_add_binary_data COMPRESS): the runtime
+# bundle and document JSON are text and shrink from 2.83 MB to 0.67 MB.
+# native_editor.cpp inflates them once per process.
 pulp_add_binary_data(spectr_native_assets
     SOURCES ${SPECTR_NATIVE_ASSET_SOURCES}
     NAMESPACE spectr_native
+    COMPRESS
 )
 
 # Test-only perf fixtures, both read in Spectr::tick_native_analyzer_:

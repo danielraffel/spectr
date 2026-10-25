@@ -5,6 +5,7 @@
 #include "spectr/editor_bridge.hpp"
 
 #include <pulp/runtime/log.hpp>
+#include <pulp/runtime/zip.hpp>
 #include <pulp/runtime/trace.hpp>
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/format/plugin_descriptor.hpp>
@@ -315,18 +316,49 @@ public:
 private:
     bool hovered_ = false;
 };
+// One embedded package file, stored as a zlib stream. `size` is the inflated
+// size, so the package stamp and the on-disk size checks never inflate.
 struct EmbeddedFile {
     const char* relative_path;
-    const unsigned char* data;
+    const unsigned char* zlib;
+    std::size_t zlib_size;
     std::size_t size;
 };
 
 const std::array kEmbeddedFiles{
-    EmbeddedFile{"runtime.js", spectr_native::runtime_js, spectr_native::runtime_js_size},
-    EmbeddedFile{"materialized-document.runtime.json", spectr_native::materialized_document_runtime_json, spectr_native::materialized_document_runtime_json_size},
-    EmbeddedFile{"design.js", spectr_native::design_js, spectr_native::design_js_size},
-    EmbeddedFile{"help-content.js", spectr_native::help_content_js, spectr_native::help_content_js_size},
+    EmbeddedFile{"runtime.js", spectr_native::runtime_js_zlib, spectr_native::runtime_js_zlib_size,
+                 spectr_native::runtime_js_size},
+    EmbeddedFile{"materialized-document.runtime.json",
+                 spectr_native::materialized_document_runtime_json_zlib,
+                 spectr_native::materialized_document_runtime_json_zlib_size,
+                 spectr_native::materialized_document_runtime_json_size},
+    EmbeddedFile{"design.js", spectr_native::design_js_zlib, spectr_native::design_js_zlib_size,
+                 spectr_native::design_js_size},
+    EmbeddedFile{"help-content.js", spectr_native::help_content_js_zlib,
+                 spectr_native::help_content_js_zlib_size, spectr_native::help_content_js_size},
 };
+
+// The inflated text of every embedded file, in kEmbeddedFiles order. Inflated
+// once per process on first use: the editor-prewarm worker (a background
+// thread, at instantiation) or write_embedded_package() (the editor-open path,
+// when the package on disk is stale), whichever runs first. The function-local
+// static makes that first call thread-safe; the other caller blocks until it
+// is done and then shares the result. Never called on the audio thread: it
+// allocates. A file that fails to inflate stays empty, which the callers treat
+// as a missing package file.
+const std::array<std::string, kEmbeddedFiles.size()>& inflated_embedded_files() {
+    static const auto files = [] {
+        std::array<std::string, kEmbeddedFiles.size()> out;
+        for (std::size_t i = 0; i < kEmbeddedFiles.size(); ++i) {
+            const auto& file = kEmbeddedFiles[i];
+            auto bytes = pulp::runtime::zlib_decompress(file.zlib, file.zlib_size, file.size);
+            if (bytes && bytes->size() == file.size)
+                out[i].assign(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+        }
+        return out;
+    }();
+    return files;
+}
 
 constexpr const char* kPackagePrefix = "spectr-native-materialized-";
 
@@ -539,8 +571,11 @@ bool write_embedded_package(const std::filesystem::path& path) {
         }
     }
 
-    for (const auto& file : kEmbeddedFiles) {
-        std::string body(reinterpret_cast<const char*>(file.data), file.size);
+    const auto& inflated = inflated_embedded_files();
+    for (std::size_t index = 0; index < kEmbeddedFiles.size(); ++index) {
+        const auto& file = kEmbeddedFiles[index];
+        if (inflated[index].size() != file.size) return false;
+        std::string body = inflated[index];
         if (plant
             && std::string_view{file.relative_path}
                    == "materialized-document.runtime.json") {
@@ -818,9 +853,10 @@ pulp::format::Processor::EditorPrewarm Spectr::editor_prewarm() const {
     // it imports materialized-document.runtime.json, and the document bind
     // evaluates design.js and help-content.js.
     const auto view = [](const char* name) {
-        for (const auto& file : kEmbeddedFiles)
-            if (std::string_view{file.relative_path} == name)
-                return std::string_view{reinterpret_cast<const char*>(file.data), file.size};
+        const auto& inflated = inflated_embedded_files();
+        for (std::size_t i = 0; i < kEmbeddedFiles.size(); ++i)
+            if (std::string_view{kEmbeddedFiles[i].relative_path} == name)
+                return std::string_view{inflated[i]};
         return std::string_view{};
     };
     EditorPrewarm request;
