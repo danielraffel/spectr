@@ -63,7 +63,8 @@ SSH: 127.0.0.1:${ssh_port}
 RDP: 127.0.0.1:${rdp_port}
 Windows guest: PULP-WIN-CI / pulp-win\\admin
 Credential file: /Users/danielraffel/.config/pulp/secrets/spectr-windows-utm-admin (local mode 0600)
-REAPER and Ableton Live 10 Trial: use the desktop shortcuts.
-The helper verified both applications and shortcuts before opening the desktop.
+REAPER (ARM64): use the desktop shortcut or launch it from the Start menu.
+Ableton is optional and is not present in the current retained image.
+The helper verified the required REAPER installation before opening the desktop.
 DAW launchability does not claim Spectr host acceptance.
 EOF

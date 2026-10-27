@@ -40,12 +40,11 @@ mismatch.
 The first reconnect may ask for the existing Windows credential; leave Jump
 Desktop's **Save password** option enabled and subsequent launches are one
 command.
-The guest desktop has `REAPER (ARM64)` and `Ableton Live 10 Trial` shortcuts.
-The retained image contains REAPER ARM64 and Ableton Live 10.1.43 Trial. The
-current Live 12 installer rejects this ARM64 guest because AVX/AVX2 are
-unavailable, so the installed Live 10 trial is the compatible sequencer here.
-Run `tools/windows/utm-daw-status.sh` to verify both paths before opening
-Jump Desktop.
+The guest image currently has REAPER ARM64 installed. The retained image does
+not currently contain a usable Ableton executable or desktop shortcut; the UTM
+demo therefore uses REAPER as its DAW surface. Run
+`tools/windows/utm-daw-status.sh` to verify the REAPER path before opening Jump
+Desktop.
 
 If the UTM window itself is black, use the native RDP launcher instead:
 
