@@ -4,7 +4,8 @@ param(
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Vst3Architecture = '',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$RuntimeArchitecture = '',
-    [string]$Output = ''
+    [string]$Output = '',
+    [string]$RuntimeSource = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,7 +84,11 @@ try {
 
     $runtimeSidecars = @()
     foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-        $source = Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture
+        $source = if ($runtime -eq 'wgpu_native.dll' -and -not [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+            $resolvedRuntime = (Resolve-Path -LiteralPath $RuntimeSource -ErrorAction Stop).Path
+            if (-not (Test-Path -LiteralPath $resolvedRuntime -PathType Leaf)) { throw "Runtime source is not a file: $RuntimeSource" }
+            $resolvedRuntime
+        } else { Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture }
         if ($null -ne $source) {
             if ($runtime -eq 'wgpu_native.dll' -and $Architecture -ne $Vst3Architecture) {
                 throw 'Mixed-architecture packages cannot include one shared wgpu_native.dll; provide per-artifact runtime sources'
