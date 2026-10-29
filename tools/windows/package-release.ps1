@@ -117,6 +117,9 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Install-Spectr.cmd') -Destination (Join-Path $stage 'Install-Spectr.cmd')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Spectr.cmd') -Destination (Join-Path $stage 'Launch-Spectr.cmd')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'WINDOWS-INSTALL.txt') -Destination (Join-Path $stage 'WINDOWS-INSTALL.txt')
     $requiredRuntimes = @('icudtl.dat')
     if ($declaredRuntimeFiles -contains 'wgpu_native.dll') { $requiredRuntimes += 'wgpu_native.dll' }
     foreach ($requiredRuntime in $requiredRuntimes) {
