@@ -40,8 +40,8 @@ UninstallDisplayName=Spectr ({#DisplayArchitecture})
 
 [Files]
 Source: "{#SourceRoot}\Standalone\Spectr.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\Standalone\*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\Standalone\*.dat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceRoot}\Standalone\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#SourceRoot}\Standalone\*.dat"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#SourceRoot}\Launch-Spectr.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceRoot}\VST3\Spectr.vst3\*"; DestDir: "{cf}\VST3\Spectr.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\CLAP\*"; DestDir: "{cf}\CLAP"; Flags: ignoreversion recursesubdirs createallsubdirs
