@@ -1,0 +1,16 @@
+Spectr Windows test package
+
+1. Keep this extracted folder and the original Spectr-windows-*.zip together.
+2. Double-click Install-Spectr.cmd.
+3. Approve the Windows PowerShell/UAC prompts if shown.
+
+The ZIP may be run from a UTM shared folder such as Z:. The installer stores
+its receipt and recovery journal in the guest user's local Downloads folder,
+because some shared-folder roots do not allow sibling files to be created.
+
+Install-Spectr.ps1 is the underlying parameterized installer. Windows may open
+that file in Notepad when it is double-clicked; use Install-Spectr.cmd instead.
+
+Standalone\Spectr.exe is the GUI test app. Launch it from the interactive
+Windows desktop, not from an SSH session, because Windows GUI windows require
+an interactive desktop. The same package also installs VST3 and CLAP.

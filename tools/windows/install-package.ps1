@@ -10,7 +10,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Package = (Resolve-Path -LiteralPath $Package).Path
-if ([string]::IsNullOrWhiteSpace($Receipt)) { $Receipt = "$Package.install-receipt.json" }
+if ([string]::IsNullOrWhiteSpace($Receipt)) {
+    # UTM shared folders (often mounted as Z:) may expose the package but do
+    # not accept creating a sibling file at the share root. Keep receipts and
+    # the recovery journal on the guest's local filesystem by default.
+    $downloads = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
+    $Receipt = Join-Path $downloads ((Split-Path -Leaf $Package) + '.install-receipt.json')
+}
 $Receipt = [IO.Path]::GetFullPath($Receipt)
 if ($Receipt.Equals($Package, [StringComparison]::OrdinalIgnoreCase)) { throw 'Receipt path must differ from package path' }
 $pending = "$Receipt.pending.json"
