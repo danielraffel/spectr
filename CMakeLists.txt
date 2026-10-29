@@ -77,7 +77,10 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# Consume the installed Pulp package selected by the build. Pulp's package
+# config uses exact-version compatibility, so retaining the historical 0.915.0
+# request would reject newer SDKs even when they provide the same consumer API.
+find_package(Pulp REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
