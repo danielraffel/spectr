@@ -117,6 +117,16 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
+    # Keep the extracted handoff double-clickable.  The PowerShell installer
+    # remains parameterized for automation; these two small launchers are the
+    # user-facing entry points and are also consumed by the Inno installer.
+    foreach ($launcher in @('Install-Spectr.cmd', 'Launch-Spectr.cmd')) {
+        $launcherSource = Join-Path $PSScriptRoot $launcher
+        if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) {
+            throw "Windows launcher is missing: $launcherSource"
+        }
+        Copy-Item -LiteralPath $launcherSource -Destination (Join-Path $stage $launcher)
+    }
     $requiredRuntimes = @('icudtl.dat')
     if ($declaredRuntimeFiles -contains 'wgpu_native.dll') { $requiredRuntimes += 'wgpu_native.dll' }
     foreach ($requiredRuntime in $requiredRuntimes) {
