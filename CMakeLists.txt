@@ -77,7 +77,10 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# The exact SDK provenance gate below is authoritative.  Do not constrain the
+# package by its historical semver major: Pulp's SDK package version advances
+# independently of the immutable source SHA consumed by this product.
+find_package(Pulp CONFIG REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -704,6 +707,10 @@ pulp_add_binary_data(spectr_editor_assets
 )
 
 # ── Tests ──────────────────────────────────────────────────────────────
+# Test executables and their negative-control registrations are only part of
+# the seam-enabled validation build.  Release/consumer builds must not require
+# developer-only SDK targets such as Pulp::audio-analysis.
+if(SPECTR_ENABLE_TEST_SEAMS)
 
 include(FetchContent)
 FetchContent_Declare(Catch2
@@ -4516,6 +4523,7 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
 endif()
 
 # ── Plugin targets ─────────────────────────────────────────────────────
+endif()
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)
 pulp_add_plugin(SpectrWebViewReference
@@ -4834,7 +4842,7 @@ endif()
 if((TARGET ${SPECTR_NATIVE_CLAP_TARGET} OR TARGET ${SPECTR_NATIVE_VST3_TARGET} OR
     TARGET ${SPECTR_NATIVE_AU_TARGET} OR
     TARGET SpectrWebViewReference_CLAP OR TARGET SpectrWebViewReference_VST3) AND
-   TARGET Pulp::host)
+   TARGET Pulp::host AND SPECTR_ENABLE_TEST_SEAMS)
     # Same browser-free selection as Spectr-test: a cutover SDK has no WebView
     # editor to link against.
     add_executable(Spectr-artifact-test
@@ -4974,7 +4982,7 @@ if(Python3_Interpreter_FOUND)
     endif()
 endif()
 
-if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view)
+if(TARGET ${SPECTR_NATIVE_STANDALONE_TARGET} AND TARGET Pulp::platform AND TARGET Pulp::view AND SPECTR_ENABLE_TEST_SEAMS)
     add_executable(Spectr-native-standalone-artifact-test
         test/test_built_standalone.cpp)
     target_link_libraries(Spectr-native-standalone-artifact-test PRIVATE
@@ -4992,7 +5000,7 @@ endif()
 # Standalone artifact proof: launch the exact packaged executable headlessly,
 # capture its real GPU back buffer, and verify screenshot-only mode stays clear
 # of the audio device. This is intentionally downstream of the CLI/DSP suite.
-if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view)
+if(TARGET SpectrWebViewReference_Standalone AND TARGET Pulp::platform AND TARGET Pulp::view AND SPECTR_ENABLE_TEST_SEAMS)
     add_executable(Spectr-standalone-artifact-test
         test/test_built_standalone.cpp)
     target_link_libraries(Spectr-standalone-artifact-test PRIVATE

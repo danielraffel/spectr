@@ -61,7 +61,7 @@ UTM desktop ready.
 Jump Desktop: open the saved pulp-win-ci connection (127.0.0.1:${rdp_port}).
 SSH: 127.0.0.1:${ssh_port}
 RDP: 127.0.0.1:${rdp_port}
-Windows guest: PULP-WIN-CI / pulp-win\\admin
+Windows guest: PULP-WIN-CI (RDP domain pulp-win) / pulp-win\\admin
 Credential file: /Users/danielraffel/.config/pulp/secrets/spectr-windows-utm-admin (local mode 0600)
 REAPER and Ableton Live 10 Trial: use the desktop shortcuts.
 The helper verified both applications and shortcuts before opening the desktop.

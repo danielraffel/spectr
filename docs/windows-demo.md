@@ -35,8 +35,8 @@ tools/windows/open-utm-desktop.sh
 It starts the retained VM if needed, waits for SSH, repairs RDP, and opens Jump
 Desktop. The saved `pulp-win-ci` connection points at the retained UTM guest's
 local RDP forward (`127.0.0.1:53390`) and matches the guest hostname
-`PULP-WIN-CI` and the `pulp-win\\admin` account, so there is no per-run domain
-mismatch.
+`PULP-WIN-CI`; the helper uses the separate RDP domain `pulp-win` for the
+`pulp-win\\admin` account, so there is no per-run domain mismatch.
 The first reconnect may ask for the existing Windows credential; leave Jump
 Desktop's **Save password** option enabled and subsequent launches are one
 command.
