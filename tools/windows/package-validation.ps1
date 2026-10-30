@@ -218,7 +218,9 @@ function Assert-SpectrPackageManifest {
         "VST3\Spectr.vst3\Contents\$vst3Architecture\Spectr.vst3",
         'CLAP\Spectr.clap',
         'Install-Spectr.ps1',
-        'Spectr-PackageValidation.ps1'
+        'Spectr-PackageValidation.ps1',
+        'Install-Spectr.cmd',
+        'Launch-Spectr.cmd'
     )
     foreach ($relative in $required) {
         if (-not $seen.Contains($relative)) { throw "Manifest is missing required file: $relative" }

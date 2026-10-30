@@ -240,7 +240,8 @@ From the Windows guest, package the warmed build tree:
 
 The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
-`Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
+`Install-Spectr.ps1`, plus double-click launchers for installation and the
+standalone GUI. Runtime sidecars are copied beside the architecture-
 specific VST3 binary so the installed editor can resolve them; legacy root
 copies remain in the handoff ZIP. The VST3 slice also requires the matching
 `Spectr.pulp-build-info.json` provenance sidecar; its manifest entry includes
@@ -249,6 +250,20 @@ before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
+
+To create a traditional unsigned Windows installer from an extracted package,
+install Inno Setup 6 on the Windows build machine and run:
+
+```powershell
+.\tools\windows\build-installer.ps1 `
+  -PackageRoot C:\Users\admin\spectr-stage `
+  -PluginArchitecture arm64ec-win `
+  -DisplayArchitecture ARM64EC
+```
+
+Use `arm64-win`/`ARM64` or `x86_64-win`/`Intel64` for the other installers.
+The resulting `Spectr-Windows-*-Setup.exe` installs the standalone GUI,
+VST3, CLAP, runtime sidecars, and shortcuts through the normal Windows wizard.
 
 Install that package into the standard Windows locations from an elevated
 PowerShell prompt:
