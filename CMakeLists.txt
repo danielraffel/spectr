@@ -4566,6 +4566,15 @@ foreach(fmt VST3 AU CLAP Standalone)
 endforeach()
 endif()
 
+# The standalone Windows app owns a native editor window.  CMake defaults
+# executable targets to the console subsystem on Windows, which causes a
+# terminal window to flash when Spectr.exe is launched and makes the app exit
+# path look like a failed console command.  Keep plugin targets unchanged and
+# mark only the standalone target as a GUI subsystem executable.
+if(WIN32 AND TARGET Spectr_Standalone)
+    set_target_properties(Spectr_Standalone PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 # Freeze taps through the built AU v2 component, the way a host drives it.
 # The probe registers the bundle in-process (nothing is installed), renders
 # loud programme material offline (no audio device is opened), toggles Freeze
