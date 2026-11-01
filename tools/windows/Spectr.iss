@@ -53,8 +53,10 @@ Type: filesandordirs; Name: "{cf}\VST3\Spectr.vst3\Contents\arm64-win"
 Type: filesandordirs; Name: "{cf}\VST3\Spectr.vst3\Contents\arm64ec-win"
 
 [Icons]
-Name: "{autodesktop}\Spectr"; Filename: "{app}\Launch-Spectr.cmd"; WorkingDir: "{app}"
-Name: "{group}\Spectr"; Filename: "{app}\Launch-Spectr.cmd"; WorkingDir: "{app}"
+; The installed app is a GUI-subsystem executable. Point shortcuts at it
+; directly so Windows never leaves a command prompt behind for the user.
+Name: "{autodesktop}\Spectr"; Filename: "{app}\Spectr.exe"; WorkingDir: "{app}"
+Name: "{group}\Spectr"; Filename: "{app}\Spectr.exe"; WorkingDir: "{app}"
 Name: "{group}\Uninstall Spectr"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
