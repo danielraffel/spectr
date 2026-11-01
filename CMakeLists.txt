@@ -4573,6 +4573,11 @@ endif()
 # mark only the standalone target as a GUI subsystem executable.
 if(WIN32 AND TARGET Spectr_Standalone)
     set_target_properties(Spectr_Standalone PROPERTIES WIN32_EXECUTABLE TRUE)
+    # Pulp's plugin target helper supplies a console subsystem linker option
+    # for its shared standalone template.  Put the app-specific GUI option on
+    # the final target as well so the executable has no console subsystem even
+    # when that helper option is present in the generated link rule.
+    target_link_options(Spectr_Standalone PRIVATE /SUBSYSTEM:WINDOWS)
 endif()
 
 # Freeze taps through the built AU v2 component, the way a host drives it.
