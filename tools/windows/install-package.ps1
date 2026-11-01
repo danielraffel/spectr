@@ -10,7 +10,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Package = (Resolve-Path -LiteralPath $Package).Path
-if ([string]::IsNullOrWhiteSpace($Receipt)) { $Receipt = "$Package.install-receipt.json" }
+if ([string]::IsNullOrWhiteSpace($Receipt)) {
+    # Do not write the transaction journal beside the package.  Extracted
+    # handoffs are commonly opened from a mapped/network drive (for example
+    # Z:\ in UTM), and that drive can disappear or expose a provider path that
+    # PowerShell cannot create.  The receipt is installation state, so keep it
+    # in the machine-wide application-data directory instead.
+    $commonData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ([string]::IsNullOrWhiteSpace($commonData)) { $commonData = $env:ProgramData }
+    if ([string]::IsNullOrWhiteSpace($commonData)) { throw 'Windows common application-data directory is unavailable' }
+    $Receipt = Join-Path (Join-Path $commonData 'Spectr') 'install-receipt.json'
+}
 $Receipt = [IO.Path]::GetFullPath($Receipt)
 if ($Receipt.Equals($Package, [StringComparison]::OrdinalIgnoreCase)) { throw 'Receipt path must differ from package path' }
 $pending = "$Receipt.pending.json"
