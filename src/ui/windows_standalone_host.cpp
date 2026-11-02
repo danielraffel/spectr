@@ -11,7 +11,6 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -36,8 +35,6 @@ public:
             std::max(320, static_cast<int>(options_.width)),
             std::max(240, static_cast<int>(options_.height)),
             nullptr, nullptr, GetModuleHandleW(nullptr), this);
-        std::fprintf(stderr, "[spectr-windows-host] CreateWindowExW hwnd=%p error=%lu\\n",
-                     static_cast<void*>(hwnd_), static_cast<unsigned long>(GetLastError()));
         if (!hwnd_) return;
 
         pulp::view::PluginViewHost::Options plugin_options;
@@ -48,18 +45,20 @@ public:
         plugin_options.present_policy =
             pulp::view::PluginViewHost::PresentPolicy::vsync;
         child_ = pulp::view::PluginViewHost::create(root_, plugin_options);
-        std::fprintf(stderr, "[spectr-windows-host] PluginViewHost child=%p\\n",
-                     static_cast<void*>(child_.get()));
         if (!child_) return;
 
         child_->set_resize_callback([this](uint32_t width, uint32_t height) {
             if (resize_callback_) resize_callback_(width, height);
         });
-        const auto attached = child_->try_attach_to_parent(reinterpret_cast<void*>(hwnd_));
-        std::fprintf(stderr, "[spectr-windows-host] attach=%d child_hwnd=%p\\n",
-                     attached ? 1 : 0, child_->native_handle());
+        (void)child_->try_attach_to_parent(reinterpret_cast<void*>(hwnd_));
         resize_child();
         SetTimer(hwnd_, timer_id, 16, nullptr);
+        // Pulp's standalone lifecycle can create and attach the host without
+        // issuing WindowHost::show() on this Windows path. The owned top-level
+        // window must be made visible here or the process remains headless
+        // while audio and GPU rendering continue normally.
+        ShowWindow(hwnd_, SW_SHOWNORMAL);
+        UpdateWindow(hwnd_);
     }
 
     ~WindowsStandaloneHost() override {
