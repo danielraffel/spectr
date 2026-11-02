@@ -510,6 +510,13 @@ endforeach()
 if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
     target_sources(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
         src/clap_product_version_anchor.cpp)
+    if(APPLE)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "LINKER:-u,_spectr_product_version_anchor")
+    elseif(WIN32)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "/INCLUDE:spectr_product_version_anchor")
+    endif()
 endif()
 
 # The generated AAX wrapper is compiled as its own translation unit. Keep the
