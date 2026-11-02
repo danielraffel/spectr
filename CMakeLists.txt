@@ -77,7 +77,13 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# The release matrix consumes platform-specific Pulp SDK packages. Their
+# CMake package exports the supported API contract; pinning a numeric version
+# here made a newer Windows ARM64EC SDK reject an otherwise compatible
+# consumer while the macOS acceptance lane intentionally uses an older,
+# known-good SDK. Keep the dependency contract at the package boundary and
+# let each immutable SDK provenance pin select the tested implementation.
+find_package(Pulp REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
