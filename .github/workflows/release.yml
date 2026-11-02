@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PULP_ROOT_REF: v1.33.0
+      PULP_ROOT_REF: v1.21.1
       RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
       WINDOWS_ARM64EC_URL: ${{ inputs.windows_arm64ec_url }}
       WINDOWS_ARM64EC_SHA256: ${{ inputs.windows_arm64ec_sha256 }}
