@@ -4572,6 +4572,8 @@ endif()
 # path look like a failed console command.  Keep plugin targets unchanged and
 # mark only the standalone target as a GUI subsystem executable.
 if(WIN32 AND TARGET Spectr_Standalone)
+    target_sources(Spectr_Standalone PRIVATE
+        src/ui/windows_standalone_host.cpp)
     set_target_properties(Spectr_Standalone PROPERTIES WIN32_EXECUTABLE TRUE)
     # Pulp's plugin target helper supplies a console subsystem linker option
     # for its shared standalone template.  Put the app-specific GUI option on
