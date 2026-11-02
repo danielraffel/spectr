@@ -503,6 +503,15 @@ foreach(_spectr_native_target
     endif()
 endforeach()
 
+# The generated Pulp CLAP wrapper is the shipping entry point; Spectr's
+# standalone clap_entry.cpp is reserved for the shared-host probe.  Add the
+# release version anchor to the real CLAP target so the binary-level release
+# check covers the artifact that ships.
+if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    target_sources(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+        src/clap_product_version_anchor.cpp)
+endif()
+
 # The generated AAX wrapper is compiled as its own translation unit. Keep the
 # product headers reachable there just as they are for the native core.
 if(TARGET ${SPECTR_NATIVE_AAX_TARGET})

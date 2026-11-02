@@ -1,13 +1,6 @@
 #include "spectr/spectr.hpp"
 #include <pulp/format/clap_entry.hpp>
 
-// Keep the product version in the CLAP image itself.  The release check reads
-// the binary descriptor because CLAP has no bundle Info.plist; relying only on
-// the shared processor object lets an otherwise valid wrapper be stripped of
-// the version string by the linker.
-extern "C" CLAP_EXPORT const char spectr_product_version_anchor[] =
-    SPECTR_PRODUCT_VERSION;
-
 #if defined(SPECTR_SHARED_NATIVE_HOST_PROBE)
 #include "spectr/experimental/shared_host_probe_entry.hpp"
 namespace spectr::host_probe {
