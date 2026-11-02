@@ -61,7 +61,12 @@ public:
         if (hwnd_) DestroyWindow(hwnd_);
     }
 
-    bool valid() const { return hwnd_ != nullptr && child_ != nullptr && child_->is_attached(); }
+    // The standalone owns the top-level HWND; PluginViewHost::is_attached()
+    // describes embedding into a foreign DAW parent and is conservative on
+    // Windows. Requiring it here destroys an otherwise valid standalone host
+    // immediately after the GPU child is created, leaving a headless audio
+    // process with no window.
+    bool valid() const { return hwnd_ != nullptr && child_ != nullptr; }
 
     void show() override {
         if (hwnd_) {
