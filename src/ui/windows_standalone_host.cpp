@@ -142,7 +142,28 @@ public:
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
-    void set_fixed_aspect_ratio(float ratio) override { aspect_ratio_ = ratio; }
+    void set_design_viewport(float width, float height) override {
+        // The standalone lifecycle pins the editor's authored coordinate
+        // space here. The child owns both paint scaling and inverse mouse
+        // mapping; dropping this request clips the document on smaller windows.
+        design_width_ = width;
+        design_height_ = height;
+        if (child_) child_->set_design_viewport(width, height);
+    }
+
+    bool design_viewport_transform(float& sx, float& sy,
+                                   float& tx, float& ty) const override {
+        if (!child_) return false;
+        const auto size = child_->get_size();
+        return compute_design_viewport_transform(
+            static_cast<float>(size.width), static_cast<float>(size.height),
+            design_width_, design_height_, sx, sy, tx, ty);
+    }
+
+    void set_fixed_aspect_ratio(float ratio) override {
+        aspect_ratio_ = ratio;
+        if (child_) child_->set_fixed_aspect_ratio(ratio);
+    }
 
     void* native_window_handle() const override {
         return reinterpret_cast<void*>(hwnd_);
@@ -247,6 +268,8 @@ private:
     ResizeCallback resize_callback_;
     bool close_requested_ = false;
     float aspect_ratio_ = 0.0f;
+    float design_width_ = 0.0f;
+    float design_height_ = 0.0f;
 };
 
 } // namespace
