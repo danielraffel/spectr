@@ -28,12 +28,22 @@ public:
         register_class();
 
         const auto title = utf8_to_wide(options_.title);
+        const DWORD style = options_.resizable
+            ? WS_OVERLAPPEDWINDOW
+            : WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+        // WindowOptions describes the content. CreateWindowEx instead takes
+        // the outer frame, including the caption and borders. Passing the
+        // content size directly clips the editor's bottom and right edges.
+        RECT frame{0, 0,
+                   std::max(320, static_cast<int>(options_.width)),
+                   std::max(240, static_cast<int>(options_.height))};
+        if (!AdjustWindowRectExForDpi(&frame, style, FALSE, 0, GetDpiForSystem()))
+            return;
         hwnd_ = CreateWindowExW(
             0, class_name(), title.c_str(),
-            WS_OVERLAPPEDWINDOW | (options_.resizable ? 0 : WS_THICKFRAME),
+            style,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            std::max(320, static_cast<int>(options_.width)),
-            std::max(240, static_cast<int>(options_.height)),
+            frame.right - frame.left, frame.bottom - frame.top,
             nullptr, nullptr, GetModuleHandleW(nullptr), this);
         if (!hwnd_) return;
 
@@ -122,7 +132,11 @@ public:
     void request_content_size(float width, float height) override {
         if (!hwnd_) return;
         RECT frame{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
-        AdjustWindowRectEx(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0);
+        const auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE));
+        const auto ex_style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE));
+        if (!AdjustWindowRectExForDpi(&frame, style, FALSE, ex_style,
+                                     GetDpiForWindow(hwnd_)))
+            return;
         SetWindowPos(hwnd_, nullptr, 0, 0,
                      frame.right - frame.left, frame.bottom - frame.top,
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
