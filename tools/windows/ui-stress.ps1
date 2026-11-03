@@ -11,7 +11,9 @@
 param(
  [Parameter(Mandatory=$true)][string]$Exe,
  [Parameter(Mandatory=$true)][string]$EvidenceDir,
- [switch]$Trace
+ [switch]$Trace,
+ [ValidateSet('full','gesture','settings','presets','resize')][string]$Scenario='full',
+ [ValidateRange(15,120)][int]$TraceSeconds=65
 )
 $ErrorActionPreference='Stop'
 $Exe=(Resolve-Path -LiteralPath $Exe).Path
@@ -51,7 +53,7 @@ $env:SPECTR_LFO_PERF_FIXTURE='1'
 $env:SPECTR_BANDS_PERF_FIXTURE='1'
 if($Trace){
  $env:PULP_TRACE_PATH="$out\ui.pftrace"
- $env:PULP_TRACE_SECONDS='65'
+ $env:PULP_TRACE_SECONDS=[string]$TraceSeconds
  $env:PULP_TRACE_RING_KB='524288'
 }else{
  $env:SPECTR_STATE_OUT="$out\live-state.json"
@@ -61,7 +63,7 @@ if($Trace){
 $started=[DateTime]::UtcNow
 $p=Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) -RedirectStandardOutput "$out\stdout.txt" -RedirectStandardError "$out\stderr.txt" -PassThru
 $identity=$p.StartTime
-@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1'} | ConvertTo-Json | Set-Content "$out\identity.json"
+@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1'} | ConvertTo-Json | Set-Content "$out\identity.json"
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $phases=[Collections.Generic.List[object]]::new()
 function CheckOwned {
@@ -121,7 +123,14 @@ try{
  if($script:child -eq [IntPtr]::Zero){throw 'No SDK editor HWND; refusing guessed input target'}
  [StressWindow]::SetForegroundWindow($script:top)|Out-Null
  Start-Sleep -Seconds 4
- foreach($phase in @('idle','draw','settings','settings-close','presets','manager','manager-close','maximized','restored')){
+ $workload=switch($Scenario){
+  'gesture'{@('idle','draw')}
+  'settings'{@('idle','settings','settings-close')}
+  'presets'{@('idle','presets','manager','manager-close')}
+  'resize'{@('idle','maximized','restored')}
+  default{@('idle','draw','settings','settings-close','presets','manager','manager-close','maximized','restored')}
+ }
+ foreach($phase in $workload){
   CheckOwned
   $begin=$clock.Elapsed.TotalMilliseconds
   switch($phase){
@@ -146,9 +155,9 @@ try{
   Capture $phase
  }
  if($Trace){
-  $deadline=$started.AddSeconds(90)
+  $deadline=$started.AddSeconds($TraceSeconds+30)
   while(-not (Test-Path "$out\ui.pftrace")){
-   if([DateTime]::UtcNow -gt $deadline){throw 'Trace did not flush by 90 seconds'}
+   if([DateTime]::UtcNow -gt $deadline){throw 'Trace did not flush by its deadline'}
    CheckOwned
    Start-Sleep -Milliseconds 500
   }
