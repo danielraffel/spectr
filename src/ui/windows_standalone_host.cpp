@@ -34,10 +34,11 @@ public:
         // WindowOptions describes the content. CreateWindowEx instead takes
         // the outer frame, including the caption and borders. Passing the
         // content size directly clips the editor's bottom and right edges.
+        const auto dpi = GetDpiForSystem();
         RECT frame{0, 0,
-                   std::max(320, static_cast<int>(options_.width)),
-                   std::max(240, static_cast<int>(options_.height))};
-        if (!AdjustWindowRectExForDpi(&frame, style, FALSE, 0, GetDpiForSystem()))
+                   MulDiv(std::max(320, static_cast<int>(options_.width)), dpi, 96),
+                   MulDiv(std::max(240, static_cast<int>(options_.height)), dpi, 96)};
+        if (!AdjustWindowRectExForDpi(&frame, style, FALSE, 0, dpi))
             return;
         hwnd_ = CreateWindowExW(
             0, class_name(), title.c_str(),
@@ -131,11 +132,13 @@ public:
 
     void request_content_size(float width, float height) override {
         if (!hwnd_) return;
-        RECT frame{0, 0, static_cast<LONG>(width), static_cast<LONG>(height)};
+        const auto dpi = GetDpiForWindow(hwnd_);
+        RECT frame{0, 0, MulDiv(static_cast<int>(width), dpi, 96),
+                        MulDiv(static_cast<int>(height), dpi, 96)};
         const auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE));
         const auto ex_style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE));
         if (!AdjustWindowRectExForDpi(&frame, style, FALSE, ex_style,
-                                     GetDpiForWindow(hwnd_)))
+                                     dpi))
             return;
         SetWindowPos(hwnd_, nullptr, 0, 0,
                      frame.right - frame.left, frame.bottom - frame.top,
@@ -178,10 +181,9 @@ public:
     }
 
     pulp::view::WindowHost::ContentSize get_content_size() const override {
-        RECT rect{};
-        if (!hwnd_ || !GetClientRect(hwnd_, &rect)) return {};
-        return {static_cast<uint32_t>(std::max<LONG>(0, rect.right - rect.left)),
-                static_cast<uint32_t>(std::max<LONG>(0, rect.bottom - rect.top))};
+        if (!child_) return {};
+        const auto size = child_->get_size();
+        return {size.width, size.height};
     }
 
 private:
@@ -230,6 +232,18 @@ private:
         case WM_SIZE:
             self->resize_child();
             return 0;
+        case WM_DPICHANGED: {
+            // The suggested outer frame keeps the logical content size when
+            // moving between monitors. The child API also uses logical units.
+            if (self->child_)
+                self->child_->set_scale_factor(static_cast<float>(HIWORD(wparam)) / 96.0f);
+            const auto* frame = reinterpret_cast<const RECT*>(lparam);
+            SetWindowPos(hwnd, nullptr, frame->left, frame->top,
+                         frame->right - frame->left, frame->bottom - frame->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            self->resize_child();
+            return 0;
+        }
         case WM_TIMER:
             if (wparam == timer_id && self->idle_callback_) {
                 self->idle_callback_();
@@ -253,8 +267,10 @@ private:
         if (!hwnd_ || !child_) return;
         RECT rect{};
         if (!GetClientRect(hwnd_, &rect)) return;
-        const auto width = static_cast<uint32_t>(std::max<LONG>(1, rect.right - rect.left));
-        const auto height = static_cast<uint32_t>(std::max<LONG>(1, rect.bottom - rect.top));
+        const auto dpi = GetDpiForWindow(hwnd_);
+        child_->set_scale_factor(static_cast<float>(dpi) / 96.0f);
+        const auto width = static_cast<uint32_t>(std::max(1, MulDiv(rect.right - rect.left, 96, dpi)));
+        const auto height = static_cast<uint32_t>(std::max(1, MulDiv(rect.bottom - rect.top, 96, dpi)));
         child_->set_size(width, height);
         if (resize_callback_) resize_callback_(width, height);
     }
