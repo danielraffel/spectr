@@ -1,4 +1,5 @@
 #include "windows_standalone_host.hpp"
+#include "spectr/test_seams.hpp"
 
 #if defined(_WIN32)
 
@@ -62,7 +63,7 @@ public:
         // Explicit development experiments, absent from shipping binaries.
         // CPU raster and timed WARP distinguish scene cost from presentation
         // waits without changing the renderer selected for ordinary launches.
-        if (const auto* probe = std::getenv("SPECTR_WINDOWS_RENDER_PROBE")) {
+        if (const auto* probe = SPECTR_TEST_ENV("SPECTR_WINDOWS_RENDER_PROBE")) {
             const std::string_view mode{probe};
             if (mode == "cpu") plugin_options.use_gpu = false;
             if (mode == "gpu-timed") plugin_options.enable_gpu_timing = true;
