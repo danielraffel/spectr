@@ -12,7 +12,7 @@ param(
  [Parameter(Mandatory=$true)][string]$Exe,
  [Parameter(Mandatory=$true)][string]$EvidenceDir,
  [switch]$Trace,
- [ValidateSet('full','gesture','settings','presets','resize')][string]$Scenario='full',
+ [ValidateSet('full','gesture','settings','presets','resize','preset-roundtrip')][string]$Scenario='full',
  [ValidateRange(15,120)][int]$TraceSeconds=65,
  [ValidateRange(12,720)][int]$DragSamples=180,
  [ValidateRange(3,30)][int]$SettleSeconds=3,
@@ -23,6 +23,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 if($Trace -and $PaintCostDump){throw 'Paint-cost file I/O is forbidden during a timed trace'}
+if($Trace -and $Scenario -eq 'preset-roundtrip'){throw 'Preset roundtrip requires functional snapshots; run it separately from timing'}
 $Exe=(Resolve-Path -LiteralPath $Exe).Path
 $out=[IO.Path]::GetFullPath($EvidenceDir)
 if(Test-Path -LiteralPath $out){throw 'Use a fresh evidence directory; stale files cannot establish a result'}
@@ -115,6 +116,21 @@ function Mouse([uint32]$msg,[double]$x,[double]$y,[int]$buttons){
  if([StressWindow]::SendMessageTimeout($script:child,$msg,[IntPtr]$buttons,[IntPtr]$packed,2,5000,[ref]$result) -eq [IntPtr]::Zero){throw "Editor timed out on message $msg"}
 }
 function Click([double]$x,[double]$y){Mouse 0x201 $x $y 1;Mouse 0x202 $x $y 0}
+# Target the previous completed snapshot, not a file the editor is rewriting.
+# Build non-ASCII menu labels from codepoints for Windows PowerShell 5.1.
+function ClickText([string]$text){
+ $layout=[IO.File]::ReadAllText($script:latestLayoutPath) | ConvertFrom-Json
+ $targets=@($layout.nodes | Where-Object {
+  $_.visible -and $_.rect.w -gt 0 -and $_.rect.h -gt 0 -and
+  @($_.measured_text_boxes | Where-Object text -eq $text).Count -gt 0
+ })
+ if($targets.Count -ne 1){throw ("Expected one visible target: "+$text+" count="+$targets.Count)}
+ $r=$targets[0].rect
+ $px=($r.x+$r.w/2)/1320.0
+ $py=($r.y+$r.h/2)/860.0
+ Mouse 0x200 $px $py 0
+ Click $px $py
+}
 function Escape {
  CheckOwned
  $result=[IntPtr]::Zero
@@ -178,6 +194,7 @@ try{
   'settings'{@('idle','settings','settings-close')}
   'presets'{@('idle','presets','manager','manager-close')}
   'resize'{@('idle','maximized','restored')}
+  'preset-roundtrip'{@('idle','draw','presets','manager','save-open','save-submit','manager-close','clear-saved','presets-reopen','manager-reopen','select-saved','load-saved','loaded')}
   default{@('idle','draw','settings','settings-close','presets','manager','manager-close','maximized','restored')}
  }
  foreach($phase in $workload){
@@ -194,8 +211,15 @@ try{
    }
    'settings'{Click (935.0/990) (624.0/645)}
    'settings-close'{Escape}
-   'presets'{Click (315.0/990) (624.0/645)}
-   'manager'{Click (315.0/990) (598.0/645)}
+   'presets'{if($Scenario -eq 'preset-roundtrip'){ClickText ('PRESET'+[char]0x2026+' '+[char]0x25be)}else{Click (315.0/990) (624.0/645)}}
+   'manager'{if($Scenario -eq 'preset-roundtrip'){ClickText ('MANAGE'+[char]0x2026)}else{Click (315.0/990) (598.0/645)}}
+   'save-open'{ClickText 'SAVE CURRENT'}
+   'save-submit'{ClickText 'SAVE'}
+   'clear-saved'{ClickText 'CLEAR'}
+   'presets-reopen'{ClickText ('PRESET'+[char]0x2026+' '+[char]0x25be)}
+   'manager-reopen'{ClickText ('MANAGE'+[char]0x2026)}
+   'select-saved'{ClickText 'PATTERN 01'}
+   'load-saved'{ClickText 'APPLY'}
    'manager-close'{Escape}
    'maximized'{[StressWindow]::ShowWindow($script:top,3)|Out-Null}
    'restored'{[StressWindow]::ShowWindow($script:top,9)|Out-Null}
@@ -203,6 +227,7 @@ try{
   Start-Sleep -Seconds $SettleSeconds
   $phases.Add(@{name=$phase;begin_ms=$begin;end_ms=$clock.Elapsed.TotalMilliseconds;end_utc=[DateTime]::UtcNow.ToString('o')})
   Capture $phase
+  if(!$Trace){$script:latestLayoutPath="$out/$phase-live-layout.json"}
  }
  if($Trace){
   while($clock.Elapsed.TotalSeconds -lt $TraceSeconds){
@@ -234,4 +259,24 @@ try{
  if($Trace -and $exited -and (-not (Test-Path "$out\ui.pftrace") -or (Get-Item "$out\ui.pftrace").Length -le 4096)){
   throw 'Trace did not flush on clean shutdown; runtime tracing remains unproven'
  }
+}
+
+if($Scenario -eq 'preset-roundtrip'){
+ $exit=[IO.File]::ReadAllText("$out/exit.json") | ConvertFrom-Json
+ if(!$exit.clean_exit -or $exit.exit_code -ne 0){throw 'Preset roundtrip requires clean exit'}
+ $saved=[IO.File]::ReadAllText("$out/draw-live-state.json") | ConvertFrom-Json
+ $cleared=[IO.File]::ReadAllText("$out/clear-saved-live-state.json") | ConvertFrom-Json
+ $loaded=[IO.File]::ReadAllText("$out/loaded-live-state.json") | ConvertFrom-Json
+ foreach($state in @($saved,$cleared,$loaded)){
+  if($state.n_visible -ne 64 -or $state.gain_db.Count -ne 64){throw 'Unexpected band count'}
+  foreach($value in $state.gain_db){
+   if([double]::IsNaN($value) -or [double]::IsInfinity($value)){throw 'Nonfinite band value'}
+  }
+ }
+ if(@($saved.gain_db | Where-Object {[Math]::Abs($_) -gt 0.1}).Count -lt 10){throw 'Saved state lacks drawn pattern'}
+ if(@($cleared.gain_db | Where-Object {[Math]::Abs($_) -gt 0.0001}).Count){throw 'Clear did not reset bands'}
+ $maxDelta=0.0
+ for($i=0;$i -lt 64;$i++){$maxDelta=[Math]::Max($maxDelta,[Math]::Abs($saved.gain_db[$i]-$loaded.gain_db[$i]))}
+ if($maxDelta -gt 0.0001){throw ('Reloaded band values differ by '+$maxDelta)}
+ @{scope='in-session save/clear/reload via selection and Apply';bands=64;maximum_gain_delta=$maxDelta;exe_sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;clean_exit=$exit.clean_exit} | ConvertTo-Json | Set-Content "$out/roundtrip-result.json"
 }
