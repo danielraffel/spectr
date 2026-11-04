@@ -1663,6 +1663,7 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
+    PULP_TRACE_SCOPE_NAMED_ARGS("state", "spectr_analyzer_tick", "dt_seconds", dt);
     retire_failed_native_session_();
     // Pulp's session evaluates a deferred document from its own idle poll;
     // keep ticking until it has.
@@ -3906,6 +3907,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
     }
 
     const auto& spectrum = read_spectrum();
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_sequence", spectrum.sequence_number);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_dropped_frames", spectrum.dropped_frames);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_bins", spectrum.num_bins);
     if (!finite_spectrum(spectrum)
         || spectrum.sequence_number == native_analyzer_sequence_)
         return true;
