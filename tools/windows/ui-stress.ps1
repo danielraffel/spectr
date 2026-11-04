@@ -13,7 +13,8 @@ param(
  [Parameter(Mandatory=$true)][string]$EvidenceDir,
  [switch]$Trace,
  [ValidateSet('full','gesture','settings','presets','resize')][string]$Scenario='full',
- [ValidateRange(15,120)][int]$TraceSeconds=65
+ [ValidateRange(15,120)][int]$TraceSeconds=65,
+ [ValidateRange(12,720)][int]$DragSamples=180
 )
 $ErrorActionPreference='Stop'
 $Exe=(Resolve-Path -LiteralPath $Exe).Path
@@ -53,7 +54,8 @@ $env:SPECTR_LFO_PERF_FIXTURE='1'
 $env:SPECTR_BANDS_PERF_FIXTURE='1'
 if($Trace){
  $env:PULP_TRACE_PATH="$out\ui.pftrace"
- $env:PULP_TRACE_SECONDS=[string]$TraceSeconds
+ # Close the owned app to stop tracing between frames. A timer can cut an
+ # acquire/frame in half, leaving unfinished spans in an otherwise valid file.
  $env:PULP_TRACE_RING_KB='524288'
 }else{
  $env:SPECTR_STATE_OUT="$out\live-state.json"
@@ -149,8 +151,8 @@ try{
   switch($phase){
    'draw'{
     Mouse 0x201 0.15 0.50 1
-    for($i=1;$i -le 180;$i++){
-     Mouse 0x200 (0.15+0.65*$i/180) (0.50-0.12*[Math]::Sin($i/18)) 1
+    for($i=1;$i -le $DragSamples;$i++){
+     Mouse 0x200 (0.15+0.65*$i/$DragSamples) (0.50-0.12*[Math]::Sin(10.0*$i/$DragSamples)) 1
      Start-Sleep -Milliseconds 20
     }
     Mouse 0x202 0.80 0.50 0
@@ -168,13 +170,10 @@ try{
   Capture $phase
  }
  if($Trace){
-  $deadline=$started.AddSeconds($TraceSeconds+30)
-  while(-not (Test-Path "$out\ui.pftrace")){
-   if([DateTime]::UtcNow -gt $deadline){throw 'Trace did not flush by its deadline'}
+  while($clock.Elapsed.TotalSeconds -lt $TraceSeconds){
    CheckOwned
    Start-Sleep -Milliseconds 500
   }
-  if((Get-Item "$out\ui.pftrace").Length -le 4096){throw 'Trace is too small; runtime tracing remains unproven'}
  }
  'CAPTURED_REQUIRES_STATE_VISUAL_AUDIO_AND_TRACE_REVIEW' | Set-Content "$out\status.txt"
 }catch{
@@ -191,6 +190,9 @@ try{
   $p.WaitForExit()
   [IO.File]::WriteAllText("$out\stdout.txt",$stdout.Result)
   [IO.File]::WriteAllText("$out\stderr.txt",$stderr.Result)
+  if($Trace -and (-not (Test-Path "$out\ui.pftrace") -or (Get-Item "$out\ui.pftrace").Length -le 4096)){
+   throw 'Trace did not flush on clean shutdown; runtime tracing remains unproven'
+  }
  }
  @{clean_exit=$exited;exit_code=$(if($exited){$p.ExitCode}else{$null})} | ConvertTo-Json | Set-Content "$out\exit.json"
 }
