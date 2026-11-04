@@ -44,7 +44,7 @@ public static class StressWindow {
 # No external harness inherited from a previous capture may alter this workload.
 $names=@('PULP_AUDIO_DEVICE','PULP_SCREENSHOT','PULP_FRAMES','PULP_HEADLESS','PULP_TEST_MODE',
  'SPECTR_MENU_SCENARIO','SPECTR_MENU_SCENARIO_OUT','SPECTR_LAYOUT_DUMP','SPECTR_STATE_TRACE',
- 'SPECTR_STATE_OUT','SPECTR_GESTURE_PERF','SPECTR_CLICK','SPECTR_OPEN_SETTINGS',
+ 'SPECTR_STATE_OUT','SPECTR_MODULATION_DUMP','SPECTR_GESTURE_PERF','SPECTR_CLICK','SPECTR_OPEN_SETTINGS',
  'PULP_TRACE_PATH','PULP_TRACE_SECONDS','PULP_TRACE_RING_KB')
 foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
 $env:PULP_TEST_SIGNAL='noise'

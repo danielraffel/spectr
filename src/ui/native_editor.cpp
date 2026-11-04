@@ -877,6 +877,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         state().set_value(kParamLfoRate, 4.0f);
         state().set_value(kParamLfoDepth, 1.0f);
         state().set_value(kParamLfoTarget, 0.0f);
+        // The legacy target lane selects a destination but does not enable a
+        // route in the current routing model. A fresh LFO drives nothing until
+        // its destination switch is on; arm Bank explicitly for this fixture.
+        state().set_value(lfo_route_enabled_param_id(0, 0), 1.0f);
+        state().set_value(lfo_route_amount_param_id(0, 0), 1.0f);
         state().set_value(kParamLfoEnabled, 1.0f);
     }
 #endif
