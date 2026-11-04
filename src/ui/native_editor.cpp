@@ -1149,6 +1149,17 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             if (!disable_static_cache || std::string_view{disable_static_cache} != "1") {
                 if (auto* glow = bridge->widget("Pseudo_body_before"))
                     glow->set_raster_cached(true);
+                // The plot owns a separate grid/rulers canvas whose command
+                // stream changes only with its geometry/theme key. Resolve its
+                // authored marker rather than a generated native widget ID.
+                bridge->load_script(R"JS((() => {
+                    const node = document.querySelector('canvas[data-spectr-static-canvas]');
+                    const id = node && (node.__pulpId || node.id);
+                    if (id && typeof setRasterCached === 'function') {
+                        setRasterCached(String(id), true);
+                        console.log('[spectr-static-plot-cache] ' + id);
+                    }
+                })();)JS", "spectr-static-plot-cache");
             }
 #endif
             // A tracing build carries a "TRACING" reminder. Pulp paints one
