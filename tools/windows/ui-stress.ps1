@@ -16,6 +16,7 @@ param(
  [ValidateRange(15,120)][int]$TraceSeconds=65,
  [ValidateRange(12,720)][int]$DragSamples=180,
  [ValidateSet('default','cpu','gpu-timed')][string]$RenderProbe='default',
+ [switch]$DisableStaticRasterCache,
  [string]$PaintCostDump,
  [string]$DiagnosticScript
 )
@@ -55,6 +56,7 @@ $names=@('PULP_AUDIO_DEVICE','PULP_SCREENSHOT','PULP_FRAMES','PULP_HEADLESS','PU
 # remove decoration, force a backend or write per-frame files in another run.
 $names+=@(Get-ChildItem Env: | Where-Object Name -Like 'SPECTR_*' | ForEach-Object Name)
 foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
+if($DisableStaticRasterCache){$env:SPECTR_DISABLE_STATIC_RASTER_CACHE='1'}
 if($RenderProbe -ne 'default'){$env:SPECTR_WINDOWS_RENDER_PROBE=$RenderProbe}
 if($PaintCostDump){$env:SPECTR_PAINT_COST_DUMP=[IO.Path]::GetFullPath($PaintCostDump)}
 if($DiagnosticScript){$env:SPECTR_EVAL=$DiagnosticScript}
@@ -88,7 +90,7 @@ $p.StandardInput.Close()
 $stdout=$p.StandardOutput.ReadToEndAsync()
 $stderr=$p.StandardError.ReadToEndAsync()
 $identity=$p.StartTime
-@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1';renderer_probe=$RenderProbe;paint_cost_dump=$PaintCostDump;diagnostic_script=$DiagnosticScript;diagnostic_only=[bool]$DiagnosticScript} | ConvertTo-Json | Set-Content "$out\identity.json"
+@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1';renderer_probe=$RenderProbe;static_raster_cache_disabled=[bool]$DisableStaticRasterCache;paint_cost_dump=$PaintCostDump;diagnostic_script=$DiagnosticScript;diagnostic_only=[bool]$DiagnosticScript} | ConvertTo-Json | Set-Content "$out\identity.json"
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $phases=[Collections.Generic.List[object]]::new()
 function CheckOwned {
