@@ -318,6 +318,22 @@ private:
         double min_w = std::max(0.0, static_cast<double>(options_.min_width) * scale);
         double min_h = std::max(0.0, static_cast<double>(options_.min_height) * scale);
         if (aspect_ratio_ > 0.0f) {
+            // DefWindowProc can supply the full monitor envelope here, including
+            // the taskbar. Build the maximized envelope from the current work
+            // area, retaining Windows' offscreen resize borders.
+            MONITORINFO monitor{sizeof(MONITORINFO)};
+            if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
+                const auto dpi = window_dpi(hwnd);
+                const auto padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+                const auto border_x = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + padding;
+                const auto border_y = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + padding;
+                limits.ptMaxPosition = {
+                    monitor.rcWork.left - monitor.rcMonitor.left - border_x,
+                    monitor.rcWork.top - monitor.rcMonitor.top - border_y};
+                limits.ptMaxSize = {
+                    monitor.rcWork.right - monitor.rcWork.left + 2 * border_x,
+                    monitor.rcWork.bottom - monitor.rcWork.top + 2 * border_y};
+            }
             min_w = std::max(min_w, min_h * aspect_ratio_);
             min_h = min_w / aspect_ratio_;
 

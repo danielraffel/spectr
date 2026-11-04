@@ -43,6 +43,11 @@ Add-Type @'
 using System; using System.Text; using System.Runtime.InteropServices;
 public static class StressWindow {
  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int L,T,R,B; }
+ [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
+ [StructLayout(LayoutKind.Sequential)] public struct MonitorInfo { public int Size; public Rect Monitor,Work; public uint Flags; }
+ [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h,ref Point p);
+ [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h,uint flags);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr h,ref MonitorInfo info);
  public delegate bool EnumProc(IntPtr h,IntPtr p);
  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
@@ -152,13 +157,23 @@ function Escape {
 function Capture([string]$name){
  if($Trace){return}
  $rects=@{}
+ $monitor=New-Object StressWindow+MonitorInfo
+ $monitor.Size=[Runtime.InteropServices.Marshal]::SizeOf($monitor)
+ if(![StressWindow]::GetMonitorInfo([StressWindow]::MonitorFromWindow($script:top,2),[ref]$monitor)){throw 'Cannot query monitor work area'}
+ $rects.work_area=@{left=$monitor.Work.L;top=$monitor.Work.T;right=$monitor.Work.R;bottom=$monitor.Work.B}
  foreach($part in @('top','child')){
   $handle=if($part -eq 'top'){$script:top}else{$script:child}
   $rect=New-Object StressWindow+Rect
   [StressWindow]::GetClientRect($handle,[ref]$rect)|Out-Null
-  $rects[$part]=@{width=$rect.R-$rect.L;height=$rect.B-$rect.T}
+  $origin=New-Object StressWindow+Point
+  if(![StressWindow]::ClientToScreen($handle,[ref]$origin)){throw 'Cannot query client screen origin'}
+  $rects[$part]=@{width=$rect.R-$rect.L;height=$rect.B-$rect.T;left=$origin.X;top=$origin.Y;right=$origin.X+$rect.R;bottom=$origin.Y+$rect.B}
  }
  $rects|ConvertTo-Json|Set-Content "$out\$name-hwnd.json"
+ if($name -eq 'maximized'){
+  $c=$rects.child;$w=$rects.work_area
+  if($c.left -lt $w.left -or $c.top -lt $w.top -or $c.right -gt $w.right -or $c.bottom -gt $w.bottom){throw 'Maximized editor extends outside the monitor work area'}
+ }
  $r=New-Object StressWindow+Rect
  [StressWindow]::GetWindowRect($script:top,[ref]$r)|Out-Null
  [uint32]$owner=0
