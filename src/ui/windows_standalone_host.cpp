@@ -77,7 +77,6 @@ public:
         });
         (void)child_->try_attach_to_parent(reinterpret_cast<void*>(hwnd_));
         resize_child();
-        SetTimer(hwnd_, timer_id, 16, nullptr);
         // Pulp's standalone lifecycle can create and attach the host without
         // issuing WindowHost::show() on this Windows path. The owned top-level
         // window must be made visible here or the process remains headless
@@ -87,7 +86,6 @@ public:
     }
 
     ~WindowsStandaloneHost() override {
-        if (hwnd_) KillTimer(hwnd_, timer_id);
         if (child_) child_->detach();
         if (hwnd_) DestroyWindow(hwnd_);
     }
@@ -116,7 +114,9 @@ public:
 
     void repaint() override {
         if (child_) child_->repaint();
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        // The child owns all client pixels and its frame timer coalesces
+        // repaints. Invalidating the parent here creates higher-priority
+        // WM_PAINT work on every scripted repaint and starves that timer.
     }
 
     void set_close_callback(std::function<void()> callback) override {
@@ -137,7 +137,10 @@ public:
     }
 
     void set_idle_callback(std::function<void()> callback) override {
-        idle_callback_ = std::move(callback);
+        // Match the DAW adapters: poll editor work from the child renderer's
+        // idle callback. A second parent timer can starve behind a slow child
+        // frame and leave analyzer/session work detached from rendered frames.
+        if (child_) child_->set_idle_callback(std::move(callback));
     }
 
     void set_resize_callback(ResizeCallback callback) override {
@@ -201,7 +204,6 @@ public:
     }
 
 private:
-    static constexpr UINT_PTR timer_id = 1;
 
     static const wchar_t* class_name() { return L"SpectrWindowsStandalone"; }
 
@@ -258,12 +260,6 @@ private:
             self->resize_child();
             return 0;
         }
-        case WM_TIMER:
-            if (wparam == timer_id && self->idle_callback_) {
-                self->idle_callback_();
-                self->repaint();
-            }
-            return 0;
         case WM_CLOSE:
             self->close_requested_ = true;
             if (self->close_callback_) self->close_callback_();
@@ -294,7 +290,6 @@ private:
     HWND hwnd_ = nullptr;
     std::unique_ptr<pulp::view::PluginViewHost> child_;
     std::function<void()> close_callback_;
-    std::function<void()> idle_callback_;
     ResizeCallback resize_callback_;
     bool close_requested_ = false;
     float aspect_ratio_ = 0.0f;
