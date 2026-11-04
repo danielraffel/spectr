@@ -64,13 +64,17 @@ public static class StressWindow {
 $names=@('PULP_AUDIO_DEVICE','PULP_SCREENSHOT','PULP_FRAMES','PULP_HEADLESS','PULP_TEST_MODE',
  'SPECTR_MENU_SCENARIO','SPECTR_MENU_SCENARIO_OUT','SPECTR_LAYOUT_DUMP','SPECTR_STATE_TRACE',
  'SPECTR_STATE_OUT','SPECTR_MODULATION_DUMP','SPECTR_GESTURE_PERF','SPECTR_CLICK','SPECTR_OPEN_SETTINGS',
- 'PULP_TRACE_PATH','PULP_TRACE_SECONDS','PULP_TRACE_RING_KB','PULP_LOG_CANVAS_PAINT')
+ 'PULP_TRACE_PATH','PULP_TRACE_SECONDS','PULP_TRACE_RING_KB','PULP_LOG_CANVAS_PAINT',
+ 'PULP_WINDOWS_ALLOW_SOFTWARE_GPU','PULP_TEST_FORCE_WIN_FRAME_TIMER_FAILURE')
 # These are process-local test controls. An old diagnostic must never silently
 # remove decoration, force a backend or write per-frame files in another run.
 $names+=@(Get-ChildItem Env: | Where-Object Name -Like 'SPECTR_*' | ForEach-Object Name)
 foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
 if($DisableStaticRasterCache){$env:SPECTR_DISABLE_STATIC_RASTER_CACHE='1'}
 if($RenderProbe -ne 'default'){$env:SPECTR_WINDOWS_RENDER_PROBE=$RenderProbe}
+# Default follows the shipping adapter policy. A forced GPU comparison must
+# explicitly retain WARP; enabling timestamps alone still allows CPU fallback.
+if($RenderProbe -eq 'gpu-timed'){$env:PULP_WINDOWS_ALLOW_SOFTWARE_GPU='1'}
 if($PaintCostDump){$env:SPECTR_PAINT_COST_DUMP=[IO.Path]::GetFullPath($PaintCostDump)}
 if($DiagnosticScript){$env:SPECTR_EVAL=$DiagnosticScript}
 $env:PULP_TEST_SIGNAL='noise'
