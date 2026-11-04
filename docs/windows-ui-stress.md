@@ -33,3 +33,19 @@ for Perfetto, with no builds or screenshot captures during timing.
 The preset check uses selection plus Apply. Simulated double-clicking failed
 to apply a saved pattern in a slow ARM64EC VM capture; double-click behavior
 remains a separate qualification item.
+
+For settings changes and maximize/restore checks, use `-Scenario
+settings-roundtrip -SettleSeconds 12 -DragSamples 36`. This draws bands,
+opens settings and clicks Mono, Liquid, Bars, Spectral, Columns and Both.
+It then closes settings, maximizes and restores the window. A diagnostic
+readback records application state every second. The verifier requires the
+expected final state in the latter half of each settings phase, a clean exit
+and matching native parent/child client sizes. It rejects missing phases,
+missing readbacks and stale result files.
+
+`settings-roundtrip-result.json` records functional state and geometry only.
+Inspect the screenshots separately for clipping and letterboxing. The scenario
+cannot run with `-Trace` or a custom `-DiagnosticScript`; its logging affects
+performance. Existing captures can be checked with
+`tools/windows/verify-settings-roundtrip.ps1 -EvidenceDir <capture>` once.
+Use a fresh capture directory to repeat the check while preserving old evidence.

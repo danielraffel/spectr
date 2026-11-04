@@ -12,7 +12,7 @@ param(
  [Parameter(Mandatory=$true)][string]$Exe,
  [Parameter(Mandatory=$true)][string]$EvidenceDir,
  [switch]$Trace,
- [ValidateSet('full','gesture','settings','presets','resize','preset-roundtrip')][string]$Scenario='full',
+ [ValidateSet('full','gesture','settings','presets','resize','preset-roundtrip','settings-roundtrip')][string]$Scenario='full',
  [ValidateRange(15,120)][int]$TraceSeconds=65,
  [ValidateRange(12,720)][int]$DragSamples=180,
  [ValidateRange(3,30)][int]$SettleSeconds=3,
@@ -23,7 +23,13 @@ param(
 )
 $ErrorActionPreference='Stop'
 if($Trace -and $PaintCostDump){throw 'Paint-cost file I/O is forbidden during a timed trace'}
-if($Trace -and $Scenario -eq 'preset-roundtrip'){throw 'Preset roundtrip requires functional snapshots; run it separately from timing'}
+if($Trace -and $Scenario -in @('preset-roundtrip','settings-roundtrip')){throw 'Roundtrip checks require functional snapshots; run them separately from timing'}
+if($Scenario -eq 'settings-roundtrip'){
+ if($DiagnosticScript){throw 'Settings roundtrip owns its diagnostic readback script'}
+ $DiagnosticScript=@'
+setInterval(() => { const h=globalThis.__spectrTestHooks; if(h && h.appState){ const s=h.appState(); console.log('[settings-readback] '+JSON.stringify({t:Date.now(),settings:s.settings,visualizationMode:s.visualizationMode,analyzerMode:s.analyzerMode})); } }, 1000);
+'@
+}
 $Exe=(Resolve-Path -LiteralPath $Exe).Path
 $out=[IO.Path]::GetFullPath($EvidenceDir)
 if(Test-Path -LiteralPath $out){throw 'Use a fresh evidence directory; stale files cannot establish a result'}
@@ -192,6 +198,7 @@ try{
  $workload=switch($Scenario){
   'gesture'{@('idle','draw')}
   'settings'{@('idle','settings','settings-close')}
+  'settings-roundtrip'{@('idle','draw','settings','settings-mono','settings-liquid','settings-bars','settings-spectral','settings-columns','settings-both','settings-close','maximized','restored')}
   'presets'{@('idle','presets','manager','manager-close')}
   'resize'{@('idle','maximized','restored')}
   'preset-roundtrip'{@('idle','draw','presets','manager','save-open','save-submit','manager-close','clear-saved','presets-reopen','manager-reopen','select-saved','load-saved','loaded')}
@@ -210,6 +217,12 @@ try{
     Mouse 0x202 0.80 0.50 0
    }
    'settings'{Click (935.0/990) (624.0/645)}
+   'settings-mono'{ClickText 'Mono'}
+   'settings-liquid'{ClickText 'Liquid'}
+   'settings-bars'{ClickText 'Bars'}
+   'settings-spectral'{ClickText 'Spectral'}
+   'settings-columns'{ClickText 'Columns'}
+   'settings-both'{ClickText 'Both'}
    'settings-close'{Escape}
    'presets'{if($Scenario -eq 'preset-roundtrip'){ClickText ('PRESET'+[char]0x2026+' '+[char]0x25be)}else{Click (315.0/990) (624.0/645)}}
    'manager'{if($Scenario -eq 'preset-roundtrip'){ClickText ('MANAGE'+[char]0x2026)}else{Click (315.0/990) (598.0/645)}}
@@ -279,4 +292,8 @@ if($Scenario -eq 'preset-roundtrip'){
  for($i=0;$i -lt 64;$i++){$maxDelta=[Math]::Max($maxDelta,[Math]::Abs($saved.gain_db[$i]-$loaded.gain_db[$i]))}
  if($maxDelta -gt 0.0001){throw ('Reloaded band values differ by '+$maxDelta)}
  @{scope='in-session save/clear/reload via selection and Apply';bands=64;maximum_gain_delta=$maxDelta;exe_sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;clean_exit=$exit.clean_exit} | ConvertTo-Json | Set-Content "$out/roundtrip-result.json"
+}
+
+if($Scenario -eq 'settings-roundtrip'){
+ & "$PSScriptRoot/verify-settings-roundtrip.ps1" -EvidenceDir $out
 }
