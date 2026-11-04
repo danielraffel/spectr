@@ -15,6 +15,7 @@ param(
  [ValidateSet('full','gesture','settings','presets','resize')][string]$Scenario='full',
  [ValidateRange(15,120)][int]$TraceSeconds=65,
  [ValidateRange(12,720)][int]$DragSamples=180,
+ [ValidateRange(3,30)][int]$SettleSeconds=3,
  [ValidateSet('default','cpu','gpu-timed')][string]$RenderProbe='default',
  [switch]$DisableStaticRasterCache,
  [string]$PaintCostDump,
@@ -123,6 +124,14 @@ function Escape {
 }
 function Capture([string]$name){
  if($Trace){return}
+ $rects=@{}
+ foreach($part in @('top','child')){
+  $handle=if($part -eq 'top'){$script:top}else{$script:child}
+  $rect=New-Object StressWindow+Rect
+  [StressWindow]::GetClientRect($handle,[ref]$rect)|Out-Null
+  $rects[$part]=@{width=$rect.R-$rect.L;height=$rect.B-$rect.T}
+ }
+ $rects|ConvertTo-Json|Set-Content "$out\$name-hwnd.json"
  $r=New-Object StressWindow+Rect
  [StressWindow]::GetWindowRect($script:top,[ref]$r)|Out-Null
  [uint32]$owner=0
@@ -132,7 +141,21 @@ function Capture([string]$name){
  $g=[Drawing.Graphics]::FromImage($bmp)
  try{$g.CopyFromScreen($r.L,$r.T,0,0,$bmp.Size);$bmp.Save("$out\$name.png")}finally{$g.Dispose();$bmp.Dispose()}
  foreach($item in @('live-state.json','live-layout.json','modulation.json')){
-  if(Test-Path "$out\$item"){Copy-Item -LiteralPath "$out\$item" -Destination "$out\$name-$item"}
+  if(Test-Path "$out\$item"){
+   # The application rewrites these live files. Copying during truncation can
+   # preserve an empty or partial JSON document as an apparent snapshot.
+   $valid=$false
+   for($attempt=0;$attempt -lt 30;$attempt++){
+    try{
+     $json=[IO.File]::ReadAllText("$out\$item")
+     if([string]::IsNullOrWhiteSpace($json)){throw 'Empty live JSON'}
+     $null=ConvertFrom-Json -InputObject $json -ErrorAction Stop
+     [IO.File]::WriteAllText("$out\$name-$item",$json)
+     $valid=$true;break
+    }catch{Start-Sleep -Milliseconds 100}
+   }
+   if(!$valid){throw "Could not capture complete JSON: $item"}
+  }
  }
 }
 try{
@@ -177,7 +200,7 @@ try{
    'maximized'{[StressWindow]::ShowWindow($script:top,3)|Out-Null}
    'restored'{[StressWindow]::ShowWindow($script:top,9)|Out-Null}
   }
-  Start-Sleep -Seconds 3
+  Start-Sleep -Seconds $SettleSeconds
   $phases.Add(@{name=$phase;begin_ms=$begin;end_ms=$clock.Elapsed.TotalMilliseconds;end_utc=[DateTime]::UtcNow.ToString('o')})
   Capture $phase
  }
