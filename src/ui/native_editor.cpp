@@ -1138,6 +1138,19 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                     "globalThis.__pulpBindMaterializedCanvases__();",
                     "spectr-materialized-bind");
             }
+#if defined(_WIN32)
+            // The authored glow is static leaf artwork. Retain its pixels so
+            // WARP does not rerasterize both full-window radial gradients on
+            // every audio/modulation frame. The SDK invalidates on style,
+            // bounds, backing-scale and device changes. Live bound canvases
+            // deliberately retain their ordinary per-frame drawing path.
+            const auto* disable_static_cache =
+                SPECTR_TEST_ENV("SPECTR_DISABLE_STATIC_RASTER_CACHE");
+            if (!disable_static_cache || std::string_view{disable_static_cache} != "1") {
+                if (auto* glow = bridge->widget("Pseudo_body_before"))
+                    glow->set_raster_cached(true);
+            }
+#endif
             // A tracing build carries a "TRACING" reminder. Pulp paints one
             // from the root View at a fixed corner, above the header's line;
             // the header draws its own on that line instead, so Pulp's is
