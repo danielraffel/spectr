@@ -98,7 +98,7 @@ $p.StandardInput.Close()
 $stdout=$p.StandardOutput.ReadToEndAsync()
 $stderr=$p.StandardError.ReadToEndAsync()
 $identity=$p.StartTime
-@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1';renderer_probe=$RenderProbe;static_raster_cache_disabled=[bool]$DisableStaticRasterCache;paint_cost_dump=$PaintCostDump;diagnostic_script=$DiagnosticScript;diagnostic_only=[bool]$DiagnosticScript} | ConvertTo-Json | Set-Content "$out\identity.json"
+@{harness_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash;foreground_guard='owner checked before gestures and each 500ms trace hold';exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1';renderer_probe=$RenderProbe;static_raster_cache_disabled=[bool]$DisableStaticRasterCache;paint_cost_dump=$PaintCostDump;diagnostic_script=$DiagnosticScript;diagnostic_only=[bool]$DiagnosticScript} | ConvertTo-Json | Set-Content "$out\identity.json"
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $phases=[Collections.Generic.List[object]]::new()
 function CheckOwned {
