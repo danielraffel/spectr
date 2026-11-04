@@ -11,10 +11,13 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace spectr {
@@ -55,6 +58,17 @@ public:
         plugin_options.use_gpu = options_.use_gpu;
         plugin_options.present_policy =
             pulp::view::PluginViewHost::PresentPolicy::vsync;
+#if defined(SPECTR_ENABLE_TEST_SEAMS)
+        // Explicit development experiments, absent from shipping binaries.
+        // CPU raster and timed WARP distinguish scene cost from presentation
+        // waits without changing the renderer selected for ordinary launches.
+        if (const auto* probe = std::getenv("SPECTR_WINDOWS_RENDER_PROBE")) {
+            const std::string_view mode{probe};
+            if (mode == "cpu") plugin_options.use_gpu = false;
+            if (mode == "gpu-timed") plugin_options.enable_gpu_timing = true;
+            std::fprintf(stderr, "[spectr-render-probe] mode=%s\n", probe);
+        }
+#endif
         child_ = pulp::view::PluginViewHost::create(root_, plugin_options);
         if (!child_) return;
 
