@@ -3701,6 +3701,29 @@ bool Spectr::tick_native_analyzer_(float dt) {
         }
     }
 
+    // Diagnostic readback of the previous paint's native per-view timers.
+    // Kept separate from a timed trace: file I/O is not part of its workload.
+    if (const auto* path = SPECTR_TEST_ENV("SPECTR_PAINT_COST_DUMP");
+        path && native_editor_root_) {
+        auto rows = choc::value::createEmptyArray();
+        const auto visit = [&](const auto& self, const pulp::view::View& view,
+                               int depth) -> void {
+            auto row = choc::value::createObject("");
+            row.addMember("id", view.id());
+            row.addMember("depth", depth);
+            row.addMember("self_ns", static_cast<std::int64_t>(view.last_paint_self_ns()));
+            row.addMember("total_ns", static_cast<std::int64_t>(view.last_paint_with_children_ns()));
+            row.addMember("w", static_cast<double>(view.bounds().width));
+            row.addMember("h", static_cast<double>(view.bounds().height));
+            rows.addArrayElement(row);
+            for (const auto* child : view.sorted_children_by_z_index())
+                self(self, *child, depth + 1);
+        };
+        visit(visit, *native_editor_root_, 0);
+        std::ofstream out(path);
+        out << choc::json::toString(rows);
+    }
+
     // Dump the laid-out tree from the SAME process that produces the
     // screenshot, and rewrite it every tick so the final file is the one
     // nearest the shutter. Latching it wrote the tree at the FIRST settled
