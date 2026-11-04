@@ -107,6 +107,11 @@ function CheckOwned {
  [uint32]$owner=0
  [StressWindow]::GetWindowThreadProcessId($script:child,[ref]$owner)|Out-Null
  if($owner -ne $p.Id){throw 'Editor HWND ownership changed'}
+ # Timed passes omit screenshots, so verify foreground ownership here too.
+ # A background editor can throttle and produce a plausible but invalid trace.
+ [uint32]$foregroundOwner=0
+ [StressWindow]::GetWindowThreadProcessId([StressWindow]::GetForegroundWindow(),[ref]$foregroundOwner)|Out-Null
+ if($foregroundOwner -ne $p.Id){throw 'Editor lost foreground ownership; capture is invalid'}
 }
 function Mouse([uint32]$msg,[double]$x,[double]$y,[int]$buttons){
  CheckOwned
