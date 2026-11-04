@@ -204,6 +204,10 @@ try{
   [IO.File]::WriteAllText("$out\stderr.txt",$stderr.Result)
  }
  @{clean_exit=$exited;exit_code=$(if($exited){$p.ExitCode}else{$null})} | ConvertTo-Json | Set-Content "$out\exit.json"
+ if($exited -and $stderr.Result -notmatch 'mode=scripted'){
+  'FAILED_SCRIPTED_EDITOR_REQUIRED' | Set-Content "$out\status.txt"
+  throw 'Spectr did not open its scripted editor; fallback UI cannot pass this workload'
+ }
  if($Trace -and $exited -and (-not (Test-Path "$out\ui.pftrace") -or (Get-Item "$out\ui.pftrace").Length -le 4096)){
   throw 'Trace did not flush on clean shutdown; runtime tracing remains unproven'
  }
