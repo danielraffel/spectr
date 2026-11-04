@@ -3858,17 +3858,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
     publish_modulation_frame_();
     publish_freeze_display_();
 
-    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
-    native_analyzer_elapsed_ += tick_seconds;
-    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
-    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
-
-    // One poll consumes everything captured since the last one, however long
-    // this tick took: the bridge runs the latest_window backlog policy.
+    // Audio arrives in host time, independently of the animation clock. A
+    // long render frame can make HostFramePump report a nominal resume dt;
+    // throttling capture draining with that dt then skips another whole slow
+    // frame and can overflow the ring before the next poll. Drain on every
+    // delivered frame; only UI publication below uses the display cadence.
     {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_drain");
         drain_analyzer();
     }
+
+    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+    native_analyzer_elapsed_ += tick_seconds;
+    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
+    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
     // ── Output level ────────────────────────────────────────────────────
     //

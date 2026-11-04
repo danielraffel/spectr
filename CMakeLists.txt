@@ -1590,6 +1590,14 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     # heavyweight native materialized editor runtime and must not race.
     RESOURCE_LOCK spectr_native_materialized_editor)
 
+add_test(NAME Spectr-analyzer-stalled-ui
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_ANALYZER_STALLED_UI=1
+        $<TARGET_FILE:Spectr-native-shot> --backend=skia
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-analyzer-stalled-ui)
+set_tests_properties(Spectr-analyzer-stalled-ui PROPERTIES
+    TIMEOUT 120
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
 # Exercise the same shipping binary through its deterministic analyzer seam so
 # CI proves response acceptance and rendered plot content on the production
 # Skia/Dawn path. The Python receipt wrapper adds provenance and a stable CTest
