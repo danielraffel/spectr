@@ -14,9 +14,13 @@ param(
  [switch]$Trace,
  [ValidateSet('full','gesture','settings','presets','resize')][string]$Scenario='full',
  [ValidateRange(15,120)][int]$TraceSeconds=65,
- [ValidateRange(12,720)][int]$DragSamples=180
+ [ValidateRange(12,720)][int]$DragSamples=180,
+ [ValidateSet('default','cpu','gpu-timed')][string]$RenderProbe='default',
+ [string]$PaintCostDump,
+ [string]$DiagnosticScript
 )
 $ErrorActionPreference='Stop'
+if($Trace -and $PaintCostDump){throw 'Paint-cost file I/O is forbidden during a timed trace'}
 $Exe=(Resolve-Path -LiteralPath $Exe).Path
 $out=[IO.Path]::GetFullPath($EvidenceDir)
 if(Test-Path -LiteralPath $out){throw 'Use a fresh evidence directory; stale files cannot establish a result'}
@@ -46,8 +50,14 @@ public static class StressWindow {
 $names=@('PULP_AUDIO_DEVICE','PULP_SCREENSHOT','PULP_FRAMES','PULP_HEADLESS','PULP_TEST_MODE',
  'SPECTR_MENU_SCENARIO','SPECTR_MENU_SCENARIO_OUT','SPECTR_LAYOUT_DUMP','SPECTR_STATE_TRACE',
  'SPECTR_STATE_OUT','SPECTR_MODULATION_DUMP','SPECTR_GESTURE_PERF','SPECTR_CLICK','SPECTR_OPEN_SETTINGS',
- 'PULP_TRACE_PATH','PULP_TRACE_SECONDS','PULP_TRACE_RING_KB')
+ 'PULP_TRACE_PATH','PULP_TRACE_SECONDS','PULP_TRACE_RING_KB','PULP_LOG_CANVAS_PAINT')
+# These are process-local test controls. An old diagnostic must never silently
+# remove decoration, force a backend or write per-frame files in another run.
+$names+=@(Get-ChildItem Env: | Where-Object Name -Like 'SPECTR_*' | ForEach-Object Name)
 foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$null,'Process')}
+if($RenderProbe -ne 'default'){$env:SPECTR_WINDOWS_RENDER_PROBE=$RenderProbe}
+if($PaintCostDump){$env:SPECTR_PAINT_COST_DUMP=[IO.Path]::GetFullPath($PaintCostDump)}
+if($DiagnosticScript){$env:SPECTR_EVAL=$DiagnosticScript}
 $env:PULP_TEST_SIGNAL='noise'
 $env:PULP_TEST_SIGNAL_AMPLITUDE='0.1'
 $env:SPECTR_LFO_PERF_FIXTURE='1'
@@ -78,7 +88,7 @@ $p.StandardInput.Close()
 $stdout=$p.StandardOutput.ReadToEndAsync()
 $stderr=$p.StandardError.ReadToEndAsync()
 $identity=$p.StartTime
-@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1'} | ConvertTo-Json | Set-Content "$out\identity.json"
+@{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1';renderer_probe=$RenderProbe;paint_cost_dump=$PaintCostDump;diagnostic_script=$DiagnosticScript;diagnostic_only=[bool]$DiagnosticScript} | ConvertTo-Json | Set-Content "$out\identity.json"
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $phases=[Collections.Generic.List[object]]::new()
 function CheckOwned {
