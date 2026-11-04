@@ -190,9 +190,9 @@ try{
   $p.WaitForExit()
   [IO.File]::WriteAllText("$out\stdout.txt",$stdout.Result)
   [IO.File]::WriteAllText("$out\stderr.txt",$stderr.Result)
-  if($Trace -and (-not (Test-Path "$out\ui.pftrace") -or (Get-Item "$out\ui.pftrace").Length -le 4096)){
-   throw 'Trace did not flush on clean shutdown; runtime tracing remains unproven'
-  }
  }
  @{clean_exit=$exited;exit_code=$(if($exited){$p.ExitCode}else{$null})} | ConvertTo-Json | Set-Content "$out\exit.json"
+ if($Trace -and $exited -and (-not (Test-Path "$out\ui.pftrace") -or (Get-Item "$out\ui.pftrace").Length -le 4096)){
+  throw 'Trace did not flush on clean shutdown; runtime tracing remains unproven'
+ }
 }
