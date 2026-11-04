@@ -15,6 +15,7 @@
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
@@ -3713,6 +3714,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
             row.addMember("depth", depth);
             row.addMember("visible", view.visible() && ancestors_visible);
             row.addMember("parent", view.parent() ? view.parent()->id() : "");
+            row.addMember("opacity", view.opacity());
+            row.addMember("background", view.has_background_color());
+            row.addMember("blend", static_cast<int>(view.mix_blend_mode()));
+            row.addMember("backdrop_blur", view.backdrop_blur());
+            row.addMember("shadow_count", static_cast<int>(view.box_shadows().size()));
+            if (const auto* widget = dynamic_cast<const pulp::view::CanvasWidget*>(&view)) {
+                row.addMember("canvas_commands", static_cast<int>(widget->command_count()));
+                row.addMember("canvas_isolation", widget->needs_backdrop_isolation());
+            }
             // Timers belong to the last paint of this node. A hidden node can
             // retain an old sample, so consumers must filter visible ancestry.
             auto gradients = choc::value::createEmptyArray();
