@@ -24,6 +24,11 @@
 namespace spectr {
 namespace {
 
+UINT window_dpi(HWND hwnd) {
+    const auto dpi = GetDpiForWindow(hwnd);
+    return dpi != 0 ? dpi : 96;
+}
+
 class WindowsStandaloneHost final : public pulp::view::WindowHost {
 public:
     WindowsStandaloneHost(pulp::view::View& root,
@@ -153,7 +158,7 @@ public:
 
     void request_content_size(float width, float height) override {
         if (!hwnd_) return;
-        const auto dpi = GetDpiForWindow(hwnd_);
+        const auto dpi = window_dpi(hwnd_);
         RECT frame{0, 0, MulDiv(static_cast<int>(width), dpi, 96),
                         MulDiv(static_cast<int>(height), dpi, 96)};
         const auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE));
@@ -255,8 +260,11 @@ private:
         case WM_DPICHANGED: {
             // The suggested outer frame keeps the logical content size when
             // moving between monitors. The child API also uses logical units.
-            if (self->child_)
-                self->child_->set_scale_factor(static_cast<float>(HIWORD(wparam)) / 96.0f);
+            if (self->child_) {
+                const auto message_dpi = HIWORD(wparam);
+                const auto dpi = message_dpi != 0 ? message_dpi : window_dpi(hwnd);
+                self->child_->set_scale_factor(static_cast<float>(dpi) / 96.0f);
+            }
             const auto* frame = reinterpret_cast<const RECT*>(lparam);
             SetWindowPos(hwnd, nullptr, frame->left, frame->top,
                          frame->right - frame->left, frame->bottom - frame->top,
@@ -281,7 +289,7 @@ private:
         if (!hwnd_ || !child_) return;
         RECT rect{};
         if (!GetClientRect(hwnd_, &rect)) return;
-        const auto dpi = GetDpiForWindow(hwnd_);
+        const auto dpi = window_dpi(hwnd_);
         child_->set_scale_factor(static_cast<float>(dpi) / 96.0f);
         const auto width = static_cast<uint32_t>(std::max(1, MulDiv(rect.right - rect.left, 96, dpi)));
         const auto height = static_cast<uint32_t>(std::max(1, MulDiv(rect.bottom - rect.top, 96, dpi)));
