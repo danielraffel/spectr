@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -62,6 +63,7 @@ public:
             static_cast<uint32_t>(std::max(1.0f, options_.width)),
             static_cast<uint32_t>(std::max(1.0f, options_.height))};
         plugin_options.use_gpu = options_.use_gpu;
+        plugin_options.background_rgb = options_.background_rgb;
         plugin_options.present_policy =
             pulp::view::PluginViewHost::PresentPolicy::vsync;
 #if defined(SPECTR_ENABLE_TEST_SEAMS)
@@ -190,8 +192,8 @@ public:
     }
 
     void set_fixed_aspect_ratio(float ratio) override {
-        aspect_ratio_ = ratio;
-        if (child_) child_->set_fixed_aspect_ratio(ratio);
+        aspect_ratio_ = std::isfinite(ratio) && ratio > 0.0f ? ratio : 0.0f;
+        if (child_) child_->set_fixed_aspect_ratio(aspect_ratio_);
     }
 
     void* native_window_handle() const override {
@@ -254,6 +256,18 @@ private:
         if (!self) return DefWindowProcW(hwnd, message, wparam, lparam);
 
         switch (message) {
+        case WM_GETMINMAXINFO: {
+            // Keep Windows' monitor/work-area calculation, then fit the
+            // authored client aspect inside it, including the native frame.
+            const auto result = DefWindowProcW(hwnd, message, wparam, lparam);
+            self->constrain_window_limits(hwnd, *reinterpret_cast<MINMAXINFO*>(lparam));
+            return result;
+        }
+        case WM_SIZING:
+            if (self->constrain_resize(hwnd, static_cast<UINT>(wparam),
+                                       *reinterpret_cast<RECT*>(lparam)))
+                return TRUE;
+            break;
         case WM_SIZE:
             self->resize_child();
             return 0;
@@ -283,6 +297,75 @@ private:
         default:
             return DefWindowProcW(hwnd, message, wparam, lparam);
         }
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    bool window_frame(HWND hwnd, LONG& width, LONG& height) const {
+        RECT frame{};
+        const auto style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE));
+        const auto ex_style = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
+        if (!AdjustWindowRectExForDpi(&frame, style, FALSE, ex_style, window_dpi(hwnd)))
+            return false;
+        width = frame.right - frame.left;
+        height = frame.bottom - frame.top;
+        return true;
+    }
+
+    void constrain_window_limits(HWND hwnd, MINMAXINFO& limits) const {
+        LONG frame_w = 0, frame_h = 0;
+        if (!window_frame(hwnd, frame_w, frame_h)) return;
+        const double scale = static_cast<double>(window_dpi(hwnd)) / 96.0;
+        double min_w = std::max(0.0, static_cast<double>(options_.min_width) * scale);
+        double min_h = std::max(0.0, static_cast<double>(options_.min_height) * scale);
+        if (aspect_ratio_ > 0.0f) {
+            min_w = std::max(min_w, min_h * aspect_ratio_);
+            min_h = min_w / aspect_ratio_;
+
+            const auto available_w = std::max(1L, limits.ptMaxSize.x - frame_w);
+            const auto available_h = std::max(1L, limits.ptMaxSize.y - frame_h);
+            const double width = std::min(static_cast<double>(available_w),
+                                           available_h * static_cast<double>(aspect_ratio_));
+            const LONG outer_w = static_cast<LONG>(std::lround(width)) + frame_w;
+            const LONG outer_h = static_cast<LONG>(std::lround(width / aspect_ratio_)) + frame_h;
+            limits.ptMaxPosition.x += (limits.ptMaxSize.x - outer_w) / 2;
+            limits.ptMaxPosition.y += (limits.ptMaxSize.y - outer_h) / 2;
+            limits.ptMaxSize = {outer_w, outer_h};
+        }
+        limits.ptMinTrackSize.x = std::max(limits.ptMinTrackSize.x,
+            static_cast<LONG>(std::ceil(min_w)) + frame_w);
+        limits.ptMinTrackSize.y = std::max(limits.ptMinTrackSize.y,
+            static_cast<LONG>(std::ceil(min_h)) + frame_h);
+    }
+
+    bool constrain_resize(HWND hwnd, UINT edge, RECT& proposed) const {
+        if (aspect_ratio_ <= 0.0f) return false;
+        LONG frame_w = 0, frame_h = 0;
+        RECT current{};
+        if (!window_frame(hwnd, frame_w, frame_h) || !GetWindowRect(hwnd, &current))
+            return false;
+        const auto width = std::max(1L, proposed.right - proposed.left - frame_w);
+        const auto height = std::max(1L, proposed.bottom - proposed.top - frame_h);
+        const auto dx = (proposed.right - proposed.left) - (current.right - current.left);
+        const auto dy = (proposed.bottom - proposed.top) - (current.bottom - current.top);
+        const bool height_driven = edge == WMSZ_TOP || edge == WMSZ_BOTTOM ||
+            ((edge != WMSZ_LEFT && edge != WMSZ_RIGHT) &&
+             std::abs(static_cast<double>(dy) * aspect_ratio_) > std::abs(static_cast<double>(dx)));
+        const double scale = static_cast<double>(window_dpi(hwnd)) / 96.0;
+        const double client_w = std::max({
+            height_driven ? height * static_cast<double>(aspect_ratio_) : static_cast<double>(width),
+            static_cast<double>(options_.min_width) * scale,
+            static_cast<double>(options_.min_height) * scale * aspect_ratio_});
+        const LONG outer_w = static_cast<LONG>(std::lround(client_w)) + frame_w;
+        const LONG outer_h = static_cast<LONG>(std::lround(client_w / aspect_ratio_)) + frame_h;
+        if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
+            proposed.left = proposed.right - outer_w;
+        else
+            proposed.right = proposed.left + outer_w;
+        if (edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT)
+            proposed.top = proposed.bottom - outer_h;
+        else
+            proposed.bottom = proposed.top + outer_h;
+        return true;
     }
 
     void resize_child() {
