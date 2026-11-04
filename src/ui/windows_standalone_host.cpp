@@ -76,7 +76,10 @@ public:
         child_->set_resize_callback([this](uint32_t width, uint32_t height) {
             if (resize_callback_) resize_callback_(width, height);
         });
-        (void)child_->try_attach_to_parent(reinterpret_cast<void*>(hwnd_));
+        if (!child_->try_attach_to_parent(reinterpret_cast<void*>(hwnd_))) {
+            std::fprintf(stderr, "Spectr: standalone editor attachment failed\n");
+            return;
+        }
         resize_child();
         // Pulp's standalone lifecycle can create and attach the host without
         // issuing WindowHost::show() on this Windows path. The owned top-level
@@ -91,12 +94,12 @@ public:
         if (hwnd_) DestroyWindow(hwnd_);
     }
 
-    // The standalone owns the top-level HWND; PluginViewHost::is_attached()
-    // describes embedding into a foreign DAW parent and is conservative on
-    // Windows. Requiring it here destroys an otherwise valid standalone host
-    // immediately after the GPU child is created, leaving a headless audio
-    // process with no window.
-    bool valid() const { return hwnd_ != nullptr && child_ != nullptr; }
+    // A created child is not necessarily attached: native parenting or its
+    // frame timer can fail. Require the SDK's actual attachment state before
+    // accepting this host, so a failed child cannot leave an empty window.
+    bool valid() const {
+        return hwnd_ != nullptr && child_ != nullptr && child_->is_attached();
+    }
 
     void show() override {
         if (hwnd_) {
