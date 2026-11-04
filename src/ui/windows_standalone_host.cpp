@@ -53,8 +53,11 @@ public:
             static_cast<uint32_t>(std::max(1.0f, options_.width)),
             static_cast<uint32_t>(std::max(1.0f, options_.height))};
         plugin_options.use_gpu = options_.use_gpu;
+        // WM_TIMER already paces this host. Rendering runs synchronously on
+        // the HWND input thread, so waiting for another refresh in acquire
+        // blocks pointer/keyboard delivery just as it would in a DAW editor.
         plugin_options.present_policy =
-            pulp::view::PluginViewHost::PresentPolicy::vsync;
+            pulp::view::PluginViewHost::PresentPolicy::nonblocking;
         child_ = pulp::view::PluginViewHost::create(root_, plugin_options);
         if (!child_) return;
 
