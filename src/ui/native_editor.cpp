@@ -3707,19 +3707,31 @@ bool Spectr::tick_native_analyzer_(float dt) {
         path && native_editor_root_) {
         auto rows = choc::value::createEmptyArray();
         const auto visit = [&](const auto& self, const pulp::view::View& view,
-                               int depth) -> void {
+                               int depth, bool ancestors_visible) -> void {
             auto row = choc::value::createObject("");
             row.addMember("id", view.id());
             row.addMember("depth", depth);
+            row.addMember("visible", view.visible() && ancestors_visible);
+            row.addMember("parent", view.parent() ? view.parent()->id() : "");
+            // Timers belong to the last paint of this node. A hidden node can
+            // retain an old sample, so consumers must filter visible ancestry.
+            auto gradients = choc::value::createEmptyArray();
+            for (const auto& gradient : view.background_gradient_layers()) {
+                auto layer = choc::value::createObject("");
+                layer.addMember("type", gradient.type);
+                layer.addMember("stops", static_cast<int>(gradient.colors.size()));
+                gradients.addArrayElement(layer);
+            }
+            row.addMember("gradients", gradients);
             row.addMember("self_ns", static_cast<std::int64_t>(view.last_paint_self_ns()));
             row.addMember("total_ns", static_cast<std::int64_t>(view.last_paint_with_children_ns()));
             row.addMember("w", static_cast<double>(view.bounds().width));
             row.addMember("h", static_cast<double>(view.bounds().height));
             rows.addArrayElement(row);
             for (const auto* child : view.sorted_children_by_z_index())
-                self(self, *child, depth + 1);
+                self(self, *child, depth + 1, ancestors_visible && view.visible());
         };
-        visit(visit, *native_editor_root_, 0);
+        visit(visit, *native_editor_root_, 0, true);
         std::ofstream out(path);
         out << choc::json::toString(rows);
     }
