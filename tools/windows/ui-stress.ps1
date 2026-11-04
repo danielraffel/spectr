@@ -61,7 +61,20 @@ if($Trace){
  $env:SPECTR_MODULATION_DUMP="$out\modulation.json"
 }
 $started=[DateTime]::UtcNow
-$p=Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) -RedirectStandardOutput "$out\stdout.txt" -RedirectStandardError "$out\stderr.txt" -PassThru
+$info=New-Object Diagnostics.ProcessStartInfo
+$info.FileName=$Exe
+$info.WorkingDirectory=Split-Path -Parent $Exe
+$info.UseShellExecute=$false
+$info.RedirectStandardInput=$true
+$info.RedirectStandardOutput=$true
+$info.RedirectStandardError=$true
+$info.CreateNoWindow=$true
+$p=New-Object Diagnostics.Process
+$p.StartInfo=$info
+if(-not $p.Start()){throw 'Standalone did not start'}
+$p.StandardInput.Close()
+$stdout=$p.StandardOutput.ReadToEndAsync()
+$stderr=$p.StandardError.ReadToEndAsync()
 $identity=$p.StartTime
 @{exe=$Exe;sha256=(Get-FileHash $Exe -Algorithm SHA256).Hash;pid=$p.Id;start=$identity.ToString('o');launched_utc=$started.ToString('o');trace=[bool]$Trace;scenario=$Scenario;trace_seconds=$TraceSeconds;session=$session;audio='platform default, noise amplitude 0.1';fixture='64 bands, LFO1'} | ConvertTo-Json | Set-Content "$out\identity.json"
 $clock=[Diagnostics.Stopwatch]::StartNew()
@@ -174,5 +187,10 @@ try{
   $p.CloseMainWindow()|Out-Null
   $exited=$p.WaitForExit(15000)
  }else{$exited=$true}
+ if($exited){
+  $p.WaitForExit()
+  [IO.File]::WriteAllText("$out\stdout.txt",$stdout.Result)
+  [IO.File]::WriteAllText("$out\stderr.txt",$stderr.Result)
+ }
  @{clean_exit=$exited;exit_code=$(if($exited){$p.ExitCode}else{$null})} | ConvertTo-Json | Set-Content "$out\exit.json"
 }
