@@ -6,8 +6,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "src/ui/windows_standalone_host.hpp"
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    spectr::install_windows_standalone_window_host();
+#endif
     // The standalone owns its window, so its plain-key shortcuts stay live.
     spectr::set_editor_is_standalone(true);
     pulp::format::StandaloneApp app(spectr::create_spectr);

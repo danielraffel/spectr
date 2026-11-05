@@ -45,9 +45,20 @@ Source: "{#SourceRoot}\Launch-Spectr.cmd"; DestDir: "{app}"; Flags: ignoreversio
 Source: "{#SourceRoot}\VST3\Spectr.vst3\*"; DestDir: "{cf}\VST3\Spectr.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceRoot}\CLAP\*"; DestDir: "{cf}\CLAP"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; An older Spectr installer may have placed a different Windows ABI under the
+; same VST3 bundle. Remove those architecture directories before copying the
+; selected payload so an upgrade cannot leave a mixed bundle that REAPER scans
+; ambiguously.
+[InstallDelete]
+Type: filesandordirs; Name: "{cf}\VST3\Spectr.vst3\Contents\x86_64-win"
+Type: filesandordirs; Name: "{cf}\VST3\Spectr.vst3\Contents\arm64-win"
+Type: filesandordirs; Name: "{cf}\VST3\Spectr.vst3\Contents\arm64ec-win"
+
 [Icons]
-Name: "{autodesktop}\Spectr"; Filename: "{app}\Launch-Spectr.cmd"; WorkingDir: "{app}"
-Name: "{group}\Spectr"; Filename: "{app}\Launch-Spectr.cmd"; WorkingDir: "{app}"
+; The installed app is a GUI-subsystem executable. Point shortcuts at it
+; directly so Windows never leaves a command prompt behind for the user.
+Name: "{autodesktop}\Spectr"; Filename: "{app}\Spectr.exe"; WorkingDir: "{app}"
+Name: "{group}\Spectr"; Filename: "{app}\Spectr.exe"; WorkingDir: "{app}"
 Name: "{group}\Uninstall Spectr"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
