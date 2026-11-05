@@ -20,6 +20,14 @@ if ([string]::IsNullOrWhiteSpace($DisplayArchitecture)) {
 foreach ($required in @('Standalone\Spectr.exe', 'VST3\Spectr.vst3', 'CLAP', 'Launch-Spectr.cmd')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $required))) { throw "Package is missing required installer input: $required" }
 }
+$buildInfo = Get-ChildItem -LiteralPath $PackageRoot -Recurse -Filter 'Spectr.pulp-build-info.json' -File |
+    Select-Object -First 1
+if ($null -eq $buildInfo) { throw 'Package is missing Spectr.pulp-build-info.json' }
+$buildInfoJson = Get-Content -LiteralPath $buildInfo.FullName -Raw | ConvertFrom-Json
+$productVersion = [string]$buildInfoJson.product.version
+if ($productVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+    throw "Build metadata has an invalid product version: $productVersion"
+}
 $iscc = @(
     (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 7\ISCC.exe'),
     (Join-Path $env:ProgramFiles 'Inno Setup 7\ISCC.exe'),
@@ -29,6 +37,6 @@ $iscc = @(
 if (-not $iscc) { throw 'Inno Setup 6 ISCC.exe was not found' }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $iss = Join-Path $PSScriptRoot 'Spectr.iss'
-& $iscc "/DSourceRoot=$PackageRoot" "/DOutputDir=$OutputDir" "/DPluginArchitecture=$PluginArchitecture" "/DDisplayArchitecture=$DisplayArchitecture" $iss
+& $iscc "/DSourceRoot=$PackageRoot" "/DOutputDir=$OutputDir" "/DPluginArchitecture=$PluginArchitecture" "/DDisplayArchitecture=$DisplayArchitecture" "/DProductVersion=$productVersion" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 Get-ChildItem -LiteralPath $OutputDir -Filter "Spectr-Windows-$DisplayArchitecture-Setup.exe" -File
