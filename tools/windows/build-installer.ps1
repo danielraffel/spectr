@@ -21,6 +21,8 @@ foreach ($required in @('Standalone\Spectr.exe', 'VST3\Spectr.vst3', 'CLAP', 'La
     if (-not (Test-Path -LiteralPath (Join-Path $PackageRoot $required))) { throw "Package is missing required installer input: $required" }
 }
 $iscc = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 7\ISCC.exe'),
+    (Join-Path $env:ProgramFiles 'Inno Setup 7\ISCC.exe'),
     (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
     (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
 ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
