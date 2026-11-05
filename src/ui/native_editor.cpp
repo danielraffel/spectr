@@ -1147,8 +1147,21 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             const auto* disable_static_cache =
                 SPECTR_TEST_ENV("SPECTR_DISABLE_STATIC_RASTER_CACHE");
             if (!disable_static_cache || std::string_view{disable_static_cache} != "1") {
-                if (auto* glow = bridge->widget("Pseudo_body_before"))
-                    glow->set_raster_cached(true);
+                if (auto* glow = bridge->widget("Pseudo_body_before")) {
+                    // Pulp PR11520 exposes leaf-pixel retention as
+                    // set_raster_cached(). Released SDKs expose the older
+                    // subtree cache contract, so keep this consumer
+                    // buildable against both SDK generations.
+                    if constexpr (requires(pulp::view::View& view) {
+                                      view.set_raster_cached(true);
+                                  }) {
+                        glow->set_raster_cached(true);
+                    } else if constexpr (requires(pulp::view::View& view) {
+                                             view.set_subtree_cached(true);
+                                         }) {
+                        glow->set_subtree_cached(true);
+                    }
+                }
                 // The plot owns a separate grid/rulers canvas whose command
                 // stream changes only with its geometry/theme key. Resolve its
                 // authored marker rather than a generated native widget ID.
