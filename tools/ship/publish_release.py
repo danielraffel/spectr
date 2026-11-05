@@ -140,13 +140,15 @@ def main() -> int:
     args = ap.parse_args()
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
-    supplied_windows = (args.windows_arm64, args.windows_arm64ec, args.windows_x64)
-    if any(supplied_windows) and not all(supplied_windows):
-        raise SystemExit("all Windows architectures must be supplied together")
-    windows = supplied_windows if all(supplied_windows) else None
-    if windows and (windows[0].name != f"Spectr-windows-arm64-{args.version}.zip"
-                    or windows[1].name != f"Spectr-windows-arm64ec-{args.version}.zip"
-                    or windows[2].name != f"Spectr-windows-x64-{args.version}.zip"):
+    if bool(args.windows_arm64ec) != bool(args.windows_x64):
+        raise SystemExit("ARM64EC and x64 Windows assets must be supplied together")
+    windows = ((args.windows_arm64, args.windows_arm64ec, args.windows_x64)
+               if args.windows_arm64 else
+               (args.windows_arm64ec, args.windows_x64)
+               if args.windows_arm64ec else None)
+    if windows and ((len(windows) == 3 and windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
+                    or windows[-2].name != f"Spectr-windows-arm64ec-{args.version}.zip"
+                    or windows[-1].name != f"Spectr-windows-x64-{args.version}.zip"):
         raise SystemExit("Windows package filenames must match the release version and architecture")
     target = args.target
     if not target:
@@ -165,7 +167,8 @@ def main() -> int:
     check_macos_package(args.pkg, args.version, target)
     print(f"verified macOS package source={target}", flush=True)
     if windows:
-        for asset, arch in zip(windows, ("arm64-win", "arm64ec-win", "x86_64-win")):
+        arches = ("arm64-win", "arm64ec-win", "x86_64-win") if len(windows) == 3 else ("arm64ec-win", "x86_64-win")
+        for asset, arch in zip(windows, arches):
             if not asset.is_file():
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
