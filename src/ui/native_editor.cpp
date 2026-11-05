@@ -31,6 +31,23 @@
 
 #include "spectr_native_assets_data.hpp"
 
+namespace spectr_cache {
+
+template <typename View>
+void retain_static_pixels(View& view) {
+    if constexpr (requires(View& candidate) {
+                      candidate.set_raster_cached(true);
+                  }) {
+        view.set_raster_cached(true);
+    } else if constexpr (requires(View& candidate) {
+                             candidate.set_subtree_cached(true);
+                         }) {
+        view.set_subtree_cached(true);
+    }
+}
+
+} // namespace spectr_cache
+
 // ── Band context menu, addressed from the SHIPPING standalone ───────────
 //
 // A row is found by the text painted on it and pressed at the pixels that
@@ -1152,15 +1169,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                     // set_raster_cached(). Released SDKs expose the older
                     // subtree cache contract, so keep this consumer
                     // buildable against both SDK generations.
-                    if constexpr (requires(pulp::view::View& view) {
-                                      view.set_raster_cached(true);
-                                  }) {
-                        glow->set_raster_cached(true);
-                    } else if constexpr (requires(pulp::view::View& view) {
-                                             view.set_subtree_cached(true);
-                                         }) {
-                        glow->set_subtree_cached(true);
-                    }
+                    spectr_cache::retain_static_pixels(*glow);
                 }
                 // The plot owns a separate grid/rulers canvas whose command
                 // stream changes only with its geometry/theme key. Resolve its
