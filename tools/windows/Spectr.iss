@@ -16,7 +16,9 @@
 #endif
 
 #define ProductName "Spectr"
-#define ProductVersion "0.1.0"
+#ifndef ProductVersion
+  #define ProductVersion "0.1.0"
+#endif
 
 [Setup]
 AppId={{B7A9A4E5-28AE-4C4A-9C0A-1D2D7C8B6E91}
