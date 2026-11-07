@@ -25,6 +25,7 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-hosted-vst3-clap-receipt-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-receipt-20261107.txt) | `51422e4c3ad6688543464dfab15f49962c30e8c5f71b4f1eee4f2cf659cc1838` |
 | [reaper-hosted-vst3-clap-gpu-20261107.log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log) | `0851dad3566bc24463d98bac4c3db63b458ab55db3db6e17503da3c3bc0c4b40` |
 | [reaper-hosted-live-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-live-screen-20261107.png) | `fd62ba8d29d23e408fa9156f0aed770962a137a2e40b6abec9c587bda6949dff` |
+| [reaper-clap-host-parameter-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-clap-host-parameter-probe-20261107.txt) | `c174bedee5daa31d2868a69e2d5bb89341193164f56c696788d178ea8144d271` |
 | [reaper-hosted-modulation-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-modulation-utm-screen-20261107.png) | `2f9d2afdca94209d9aadcfdb18d721fb051aeaaedaf84423528b9d605204f0f8` |
 | [reaper-input-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-input-probe-20261107.txt) | `2b9c7280e8c0221e5778c84cae346733db08aa649d5d108bb89e8bcd2388b76c` |
 
@@ -68,9 +69,12 @@ was collected after the scheduler rebuild in the running Omarchy guest. REAPER
 discovered both installed formats, instantiated each editor, and reported 212
 parameters for each. The VST3 Mix parameter changed from `1.0` to
 `0.3700000048` through the host API. The CLAP editor was instantiated and its
-parameter surface was visible, but this run's CLAP host-parameter write stayed
-at `1.0`; that is a host/API diagnostic result, not pointer-input proof. The
-corresponding [GPU log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log)
+parameter surface was visible. A separate CLAP-only probe
+([reaper-clap-host-parameter-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-clap-host-parameter-probe-20261107.txt))
+changed Mix from normalized `1.0` to `0.37` and observed that value across
+thirty deferred host ticks. The earlier dual-instance receipt's unchanged CLAP
+value was therefore a probe-order artifact, not evidence of a CLAP adapter
+failure. The corresponding [GPU log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log)
 records presentable Vulkan/Dawn/Graphite surfaces and GPU attachment for both
 formats on Virtio-GPU Venus.
 
@@ -90,6 +94,7 @@ The exact-head rerun after replacing the scheduler files produced presentable Vu
 | Hosted modulation and automation | PASS | Both formats played under JACK with changing Output values and zero reported underruns; receipt and screenshot are committed. |
 | Standalone editor presentation | PASS | Unlocked screenshot and AT-SPI/editor-open receipt. |
 | Hosted REAPER surface creation | PASS | Fresh log shows Vulkan/Skia initialization and GPU attachment for VST3 and CLAP. |
+| Hosted CLAP host-parameter write | PASS | CLAP-only probe changes Mix from normalized `1.0` to `0.37` and retains it across deferred host ticks. |
 | Exact rebuilt hosted pointer input | FAIL / OPEN | Hover reaches Mix, but XWayland and ydotool press/drag leaves VST3 Mix at `1.0`; see the exact-hash receipt. |
 | Hosted REAPER editor presentation | OPEN | Fresh non-black hosted pixels and a new exact rebuilt VST3/CLAP instantiation receipt are proven; pointer input and exact-head timer evidence remain open. |
 | GPU editor qualification | OPEN | Hosted GPU attachment is proven; standalone receipt and timer-capability proof remain separate. |
