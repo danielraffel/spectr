@@ -26,6 +26,7 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-hosted-vst3-clap-gpu-20261107.log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log) | `0851dad3566bc24463d98bac4c3db63b458ab55db3db6e17503da3c3bc0c4b40` |
 | [reaper-hosted-live-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-live-screen-20261107.png) | `fd62ba8d29d23e408fa9156f0aed770962a137a2e40b6abec9c587bda6949dff` |
 | [reaper-clap-host-parameter-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-clap-host-parameter-probe-20261107.txt) | `c174bedee5daa31d2868a69e2d5bb89341193164f56c696788d178ea8144d271` |
+| [reaper-x11-child-event-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-x11-child-event-probe-20261107.txt) | `7b543652c3a250b22b8b54add5fe3283df62a62d6ab130accad00c248f726246` |
 | [reaper-hosted-modulation-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-modulation-utm-screen-20261107.png) | `2f9d2afdca94209d9aadcfdb18d721fb051aeaaedaf84423528b9d605204f0f8` |
 | [reaper-input-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-input-probe-20261107.txt) | `2b9c7280e8c0221e5778c84cae346733db08aa649d5d108bb89e8bcd2388b76c` |
 
@@ -77,6 +78,15 @@ value was therefore a probe-order artifact, not evidence of a CLAP adapter
 failure. The corresponding [GPU log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log)
 records presentable Vulkan/Dawn/Graphite surfaces and GPU attachment for both
 formats on Virtio-GPU Venus.
+
+The native X11 child-event probe
+([reaper-x11-child-event-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-x11-child-event-probe-20261107.txt))
+selected the actual embedded Spectr child window and listened with Xlib while
+both Xdotool and Ydotool targeted it. It observed no ButtonPress,
+ButtonRelease, MotionNotify, EnterNotify, or LeaveNotify events, while the
+REAPER monitor kept Mix at `1.0`. Pulp's synthetic nested-window XSendEvent
+test passes separately; this receipt identifies the remaining gap as the
+Hyprland/Xwayland event transport in this UTM guest.
 
 The accompanying [live hosted screen](evidence/linux-qualification-2026-11-07/reaper-hosted-live-screen-20261107.png)
 is a fresh unlocked UTM capture from the same guest session. It visibly shows
