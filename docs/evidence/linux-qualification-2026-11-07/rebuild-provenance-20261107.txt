@@ -1,23 +1,13 @@
-pulp_head=dd2129dd4126096069336d903fd939142e7cb7a5
-pulp_status=
- M core/format/include/pulp/format/clap_adapter.hpp
- M core/format/include/pulp/format/clap_entry.hpp
- M core/format/include/pulp/format/vst3_plug_view.hpp
- M core/format/src/vst3_plug_view.cpp
- M core/view/include/pulp/view/plugin_view_host.hpp
- M core/view/platform/linux/plugin_view_host_linux.cpp
- M external/skia-build
- M inspect/src/control_host_bootstrap.cpp
- M test/test_plugin_view_host_factory.cpp
-changed_scheduler_hashes=
-36b4b9c29db217b777f2853a5739ed3575c5ceeaf01ff8f44308cacee7436a0c  core/format/include/pulp/format/clap_adapter.hpp
-db8c58a9e6a2133f3048aaf6cdfef9dcd54d16b71bec7dd58c957e8580669432  core/format/include/pulp/format/clap_entry.hpp
-1b414b40270e9ce291835a5f0e0aead69b99808117399b61d15d8229ca7a8cd6  core/format/include/pulp/format/vst3_plug_view.hpp
-99f24afbb19bfe1855a3dc8677cb20b190b01196fa7908d60aa9fcc8f77e002f  core/format/src/vst3_plug_view.cpp
-199bdd4c13fa3cbd9113f9662578973fc9734fd91552e41d5ea6fffc18d697d0  core/view/include/pulp/view/plugin_view_host.hpp
-53304ee80801b753caaac34273ea1332b9fb2e63a1e7fdfa2cc9cc78c35c3f2a  core/view/platform/linux/plugin_view_host_linux.cpp
-installed_hashes=
-2eb4386abbd2c256a85971d4bd99b4bdcf1f2bc0cc2bbe88c23921d77845e3dd  /home/omarchy/.vst3/Spectr.vst3/Contents/aarch64-linux/Spectr.so
-70528fe8314539f20842cee7c74a6c06e0bdbca314d31792eb50ee10e2577a7e  /home/omarchy/.clap/Spectr.clap
+pulp_guest_base=dd2129dd4126096069336d903fd939142e7cb7a5
+pulp_scheduler_files_replaced_from_active_branch=yes
+installed_module_hashes=
+6b4d180e58cda9450eef3a50b4dab61ef3ff7a511fc88fc2a1ac67899c739d99  /home/omarchy/.vst3/Spectr.vst3/Contents/aarch64-linux/Spectr.so
+84a328f0a8cf51dcf5c1d844b18709d4b5dfb6fca88192920fc14bafff891a67  /home/omarchy/.clap/Spectr.clap
 173eed8a94a100af3d9a7a22259e14a9aacaf476db55495eee5c1e4a18117beb  /build/spectr-f5bc-vst3/Spectr
-sdk_installed_sources=
+scheduler_file_hashes=
+36b4b9c29db217b777f2853a5739ed3575c5ceeaf01ff8f44308cacee7436a0c  core/format/include/pulp/format/clap_adapter.hpp
+dde71ba272bd436fcab19340951469129c98a8336db313e1c16fb2a171e86a5e  core/format/include/pulp/format/clap_entry.hpp
+720f04201cc32df6f0b0b277fb573eed379e2ee69dc3497463ae19d4f9570beb  core/format/include/pulp/format/vst3_plug_view.hpp
+008ffa874116f69ae0783c918804cd72ba78647eb9a3ac4b9b6865b8b435bf2e  core/format/src/vst3_plug_view.cpp
+bf2af880ba8beffa6a0176ff6cdab5f17b072b5578100fd62c8aaca2d7c9c75c  core/view/include/pulp/view/plugin_view_host.hpp
+7c4e03fcc4acbed112f6c750b74e005a305b80dd16b16850f9e49dc23e6335a8  core/view/platform/linux/plugin_view_host_linux.cpp
