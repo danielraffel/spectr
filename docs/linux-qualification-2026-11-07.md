@@ -16,11 +16,16 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [standalone-editor.png](evidence/linux-qualification-2026-11-07/standalone-editor.png) | `1737cd094067d983b81db87600cf1a3c7cf6dc36d0ad59a04f38b7553774c3d8` |
 | [reaper-hosted-gpu-latest.log](evidence/linux-qualification-2026-11-07/reaper-hosted-gpu-latest.log) | `b4ab5127ea72c15e329c11d56664e46a764712cfb0f9ed7bb5fc304994ebb297` |
 | [reaper-user-service-frames.log](evidence/linux-qualification-2026-11-07/reaper-user-service-frames.log) | `92412b260df11bfbcb034cf7f38f33d32cb38b51c50569d205b5f12a7ea985c0` |
+| [rebuild-provenance-20261107.txt](evidence/linux-qualification-2026-11-07/rebuild-provenance-20261107.txt) | `34a8662b5a12ace13b97cbe002ab534ff0cb8ef465efd0a864ff2b27b4b77194` |
+| [reaper-user-service-receipt-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-user-service-receipt-20261107.txt) | `023d389903fbe1fe3136aeda94b6e7fa2800b7d607ed96776db7b0eef8de96f9` |
+| [reaper-hosted-window-geometry-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-window-geometry-20261107.txt) | `199cd9f5fcb06a2df34a59f0b773f91a420468412cdfe1418426bb256caa7cb0` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 
 - VST3: `eedb7dda9be373c4f54d4310f97f218492866fe5ebdb6d7c70b971d01e52a2c9`, 56,957,328 bytes.
 - CLAP: `05ed4de301439978d8cce3a84523d36592989f64ecad0bf463028e2e77302aff`, 56,657,984 bytes.
+
+The post-scheduler rebuild was performed in the same guest after installing the current Pulp scheduler objects. Its installed hashes are recorded separately in [rebuild-provenance-20261107.txt](evidence/linux-qualification-2026-11-07/rebuild-provenance-20261107.txt): VST3 `2eb4386abbd2c256a85971d4bd99b4bdcf1f2bc0cc2bbe88c23921d77845e3dd`, CLAP `70528fe8314539f20842cee7c74a6c06e0bdbca314d31792eb50ee10e2577a7e`, and standalone `173eed8a94a100af3d9a7a22259e14a9aacaf476db55495eee5c1e4a18117beb`. The guest Pulp checkout is based at `dd2129dd4126096069336d903fd939142e7cb7a5` with the scheduler files locally modified; the six modified-file hashes are included in that receipt. These hashes supersede the historical pre-lifecycle module hashes for any new hosted run.
 
 The receipt also captures ELF dependency and relocation checks for both modules. These module hashes belong to the exact-source build made before the guest-only lifecycle diagnostic; they are historical evidence and must not be presented as hashes for a later rebuild. Any current rebuild will have different hashes.
 
@@ -31,6 +36,8 @@ The real-time receipt reports both VST3 and CLAP loaded in REAPER, JACK mode, 48
 The standalone editor has a real unlocked presentation in [standalone-editor.png](evidence/linux-qualification-2026-11-07/standalone-editor.png). The accompanying [standalone-receipt.json](evidence/linux-qualification-2026-11-07/standalone-receipt.json) records the guest, display, JACK mode, 48 kHz rate, 1024-frame buffer, and 265 exported AT-SPI objects. [standalone.log](evidence/linux-qualification-2026-11-07/standalone.log) records the editor opening at 990x645. The log reports `gpu=false (gpu-unavailable)`, so this is standalone CPU/editor presentation evidence and not GPU qualification.
 
 The original hosted screenshot remains blank in [hosted-vst3-blank.png](evidence/linux-qualification-2026-11-07/hosted-vst3-blank.png) and is retained as a negative-control artifact. A fresh rebuild after the Pulp GPU move-order and Linux host-scheduling changes reports a presentable Vulkan Dawn surface, Graphite Skia initialization, and GPU attachment for both VST3 and CLAP in [reaper-hosted-gpu-latest.log](evidence/linux-qualification-2026-11-07/reaper-hosted-gpu-latest.log). A user-session REAPER run now records sustained `LINUX_FRAME_TICK` callbacks for both hosted editors in [reaper-user-service-frames.log](evidence/linux-qualification-2026-11-07/reaper-user-service-frames.log), proving the host-driven animation scheduler is active. A fresh hosted screenshot with all controls visible and an input receipt is still required before hosted GUI acceptance.
+
+A fresh user-session run after the rebuild instantiated both formats and applied the parameter probe; see [reaper-user-service-receipt-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-user-service-receipt-20261107.txt). Hyprland reported visible floating editors at 990x702 (VST3) and 990x703 (CLAP); see [reaper-hosted-window-geometry-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-window-geometry-20261107.txt). The UTM display output was DPMS-off/black during compositor capture, so this is window-state and parameter evidence only; it does not close the required pixel screenshot gate.
 
 | Qualification slice | Result | Evidence boundary |
 | --- | --- | --- |

@@ -1,0 +1,10 @@
+WINDOW=6291510
+VST3: Spectr (Pulp) - Track 1 [1/2]
+Window 6291510
+  Position: 112,60 (screen: 0)
+  Geometry: 990x702
+WINDOW=6291525
+CLAP: Spectr (Pulp) - Track 1 [2/2]
+Window 6291525
+  Position: 144,92 (screen: 0)
+  Geometry: 990x703

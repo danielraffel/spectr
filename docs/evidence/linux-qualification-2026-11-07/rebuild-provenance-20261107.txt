@@ -1,0 +1,23 @@
+pulp_head=dd2129dd4126096069336d903fd939142e7cb7a5
+pulp_status=
+ M core/format/include/pulp/format/clap_adapter.hpp
+ M core/format/include/pulp/format/clap_entry.hpp
+ M core/format/include/pulp/format/vst3_plug_view.hpp
+ M core/format/src/vst3_plug_view.cpp
+ M core/view/include/pulp/view/plugin_view_host.hpp
+ M core/view/platform/linux/plugin_view_host_linux.cpp
+ M external/skia-build
+ M inspect/src/control_host_bootstrap.cpp
+ M test/test_plugin_view_host_factory.cpp
+changed_scheduler_hashes=
+36b4b9c29db217b777f2853a5739ed3575c5ceeaf01ff8f44308cacee7436a0c  core/format/include/pulp/format/clap_adapter.hpp
+db8c58a9e6a2133f3048aaf6cdfef9dcd54d16b71bec7dd58c957e8580669432  core/format/include/pulp/format/clap_entry.hpp
+1b414b40270e9ce291835a5f0e0aead69b99808117399b61d15d8229ca7a8cd6  core/format/include/pulp/format/vst3_plug_view.hpp
+99f24afbb19bfe1855a3dc8677cb20b190b01196fa7908d60aa9fcc8f77e002f  core/format/src/vst3_plug_view.cpp
+199bdd4c13fa3cbd9113f9662578973fc9734fd91552e41d5ea6fffc18d697d0  core/view/include/pulp/view/plugin_view_host.hpp
+53304ee80801b753caaac34273ea1332b9fb2e63a1e7fdfa2cc9cc78c35c3f2a  core/view/platform/linux/plugin_view_host_linux.cpp
+installed_hashes=
+2eb4386abbd2c256a85971d4bd99b4bdcf1f2bc0cc2bbe88c23921d77845e3dd  /home/omarchy/.vst3/Spectr.vst3/Contents/aarch64-linux/Spectr.so
+70528fe8314539f20842cee7c74a6c06e0bdbca314d31792eb50ee10e2577a7e  /home/omarchy/.clap/Spectr.clap
+173eed8a94a100af3d9a7a22259e14a9aacaf476db55495eee5c1e4a18117beb  /build/spectr-f5bc-vst3/Spectr
+sdk_installed_sources=
