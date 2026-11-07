@@ -1,0 +1,21 @@
+{
+  "render_sha256": "667cff48d9e3cc3f1ca1d9e2d04dfc516aa1f60101afcae4cd916402fdfef07b",
+  "sample_rate": 48000,
+  "frames": 192000,
+  "channels": {
+    "VST3": {
+      "rms_before": 0.016257969703969994,
+      "rms_after": 0.25767140242946535,
+      "gain_delta_db": 23.999998225510755,
+      "expected_delta_db": 24,
+      "pass": true
+    },
+    "CLAP": {
+      "rms_before": 0.016257969703969994,
+      "rms_after": 0.25767140242946535,
+      "gain_delta_db": 23.999998225510755,
+      "expected_delta_db": 24,
+      "pass": true
+    }
+  }
+}
