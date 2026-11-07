@@ -1,0 +1,57 @@
+started=77155.014908184
+installed=VST3: Spectr (Pulp) | /home/omarchy/.vst3/Spectr.vst3
+installed=CLAP: Spectr (Pulp) | com.pulp.spectr
+installed=JS: Spectral Hold (Cockos) | synthesis/spectral_hold
+installed=JS: Frequency Spectrum Analyzer Meter (Cockos) | analysis/gfxanalyzer
+installed=JS: Spectrograph Spectrogram Meter (Cockos) | analysis/gfxspectrograph
+installed=JS: Spectropaint Synthesis | analysis/spectropaint
+installed=JS: Spectropaint Filter | filters/spectro_filter_paint
+VST3: Spectr index=0
+actual=VST3: Spectr (Pulp) params=212
+param 0 Mix=1
+param 1 Output=0.5
+param 2 Intensity=1
+param 3 Auto Gain=1
+param 4 Freeze=0
+param 5 Freeze Length=0.80000001192093
+param 6 Band 01 Gain=0.5
+param 7 Band 02 Gain=0.5
+param 8 Band 03 Gain=0.5
+param 9 Band 04 Gain=0.5
+param 10 Band 05 Gain=0.5
+param 11 Band 06 Gain=0.5
+param 12 Band 07 Gain=0.5
+param 13 Band 08 Gain=0.5
+param 14 Band 09 Gain=0.5
+param 15 Band 10 Gain=0.5
+param 16 Band 11 Gain=0.5
+param 17 Band 12 Gain=0.5
+param 18 Band 13 Gain=0.5
+param 19 Band 14 Gain=0.5
+param 20 Band 15 Gain=0.5
+param0_before=1 after=0.37000000476837
+CLAP: Spectr index=1
+actual=CLAP: Spectr (Pulp) params=212
+param 0 Mix=1
+param 1 Output=0.5
+param 2 Intensity=1
+param 3 Auto Gain=1
+param 4 Freeze=0
+param 5 Freeze Length=0.8
+param 6 Band 01 Gain=0.5
+param 7 Band 02 Gain=0.5
+param 8 Band 03 Gain=0.5
+param 9 Band 04 Gain=0.5
+param 10 Band 05 Gain=0.5
+param 11 Band 06 Gain=0.5
+param 12 Band 07 Gain=0.5
+param 13 Band 08 Gain=0.5
+param 14 Band 09 Gain=0.5
+param 15 Band 10 Gain=0.5
+param 16 Band 11 Gain=0.5
+param 17 Band 12 Gain=0.5
+param 18 Band 13 Gain=0.5
+param 19 Band 14 Gain=0.5
+param 20 Band 15 Gain=0.5
+param0_before=1 after=1
+completed
