@@ -1,0 +1,36 @@
+{
+  "schema": "spectr-linux-qualification-module-receipt-v2",
+  "guest": "Omarchy-virt",
+  "guest_architecture": "aarch64",
+  "built_at": "2026-11-07",
+  "pulp_source_base": "f5bc69859e32b9b1137e2d0f35f6d9504b33a89d",
+  "pulp_overlay_commits": [
+    "ecc4cafe877483ea612d187a3d771a7ab8e48512",
+    "b809f43130"
+  ],
+  "spectr_source": "911d06fbe9ca6c3395e099b596e23cab5e5ae07f",
+  "artifacts": {
+    "vst3": {
+      "path": "/home/omarchy/.vst3/Spectr.vst3/Contents/aarch64-linux/Spectr.so",
+      "bytes": 57030120,
+      "sha256": "3b0555676507ae89546d414e9e1f076c019e20062517c1a1b1b51f020c10bc78"
+    },
+    "clap": {
+      "path": "/home/omarchy/.clap/Spectr.clap",
+      "bytes": 56664336,
+      "sha256": "944b4e250850ce7312b7f1462a5d0e13969779e6742a8cc7e869f975a3da67e7"
+    },
+    "standalone": {
+      "path": "/home/omarchy/bin/Spectr",
+      "bytes": 61376208,
+      "sha256": "173eed8a94a100af3d9a7a22259e14a9aacaf476db55495eee5c1e4a18117beb"
+    }
+  },
+  "runtime": {
+    "vst3_and_clap_gpu_surface_attachment": "pass",
+    "vst3_and_clap_reaper_instantiation": "pass",
+    "standalone_gui_capture": "pass",
+    "host_timer_callback_receipt": "open: REAPER log did not expose VST3 IRunLoop or CLAP timer-support callbacks"
+  },
+  "qualification_boundary": "Build and installed-consumer evidence; hosted full-control screenshot and timer-driven animation remain open."
+}
