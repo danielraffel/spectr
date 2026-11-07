@@ -21,6 +21,8 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-hosted-window-geometry-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-window-geometry-20261107.txt) | `199cd9f5fcb06a2df34a59f0b773f91a420468412cdfe1418426bb256caa7cb0` |
 | [reaper-exact-scheduler-run-20261107.log](evidence/linux-qualification-2026-11-07/reaper-exact-scheduler-run-20261107.log) | `61e961d4adb1fc5f0005f09244d28fd7619f37b31719e91abc4195b8e4841981` |
 | [reaper-hosted-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-utm-screen-20261107.png) | `e54368543a53daee23dc78a7e9c686908668bdd201a47e7a445d49a0ec69973b` |
+| [reaper-modulation-proof-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261107.txt) | `8a82b93a97f36be4d14c19cc9043b87455ff11331ebb4f38230ff34a9ac60534` |
+| [reaper-hosted-modulation-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-modulation-utm-screen-20261107.png) | `2f9d2afdca94209d9aadcfdb18d721fb051aeaaedaf84423528b9d605204f0f8` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 
@@ -34,6 +36,8 @@ The receipt also captures ELF dependency and relocation checks for both modules.
 The offline REAPER render is measured separately from editor presentation. The identity and scaled measurements both cover 192,000 frames at 48 kHz. VST3 and CLAP each move from RMS `0.0162579697` to `0.2576714024`, a measured gain change of `23.9999982255 dB` against the 24 dB expectation. Both records pass. The automation helper for the identity run is [audio-proof-identity.lua](evidence/linux-qualification-2026-11-07/audio-proof-identity.lua). The Lua script reads each host's `lo`/`hi` parameter range before inserting points, but its `/tmp` paths are diagnostic paths for the guest run and require adaptation for reuse.
 
 The real-time receipt reports both VST3 and CLAP loaded in REAPER, JACK mode, 48 kHz, 1024 frames, 508 observed samples, and `underrun=0`. The measured peak is approximately `0.1591004` for each format. [loaded-maps.txt](evidence/linux-qualification-2026-11-07/loaded-maps.txt) records live mappings for the canonical installed CLAP and VST3 modules. This is runtime audio evidence; it does not prove visual editor acceptance.
+
+A separate hosted modulation run exercised both formats while JACK was playing. [reaper-modulation-proof-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261107.txt) records 48 kHz JACK, 1024-frame blocks, playback state `1`, Output automation ranges of approximately `0.4..0.59947` for both formats, peaks of `0.19362` (VST3) and `0.16113` (CLAP), and zero reported underruns. The corresponding [reaper-hosted-modulation-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-modulation-utm-screen-20261107.png) shows the hosted editor during the workload. This closes hosted audio/automation stress evidence; it does not by itself prove pointer input or a frame callback, because this run's journal contained zero `LINUX_FRAME_TICK` lines.
 
 The standalone editor has a real unlocked presentation in [standalone-editor.png](evidence/linux-qualification-2026-11-07/standalone-editor.png). The accompanying [standalone-receipt.json](evidence/linux-qualification-2026-11-07/standalone-receipt.json) records the guest, display, JACK mode, 48 kHz rate, 1024-frame buffer, and 265 exported AT-SPI objects. [standalone.log](evidence/linux-qualification-2026-11-07/standalone.log) records the editor opening at 990x645. The log reports `gpu=false (gpu-unavailable)`, so this is standalone CPU/editor presentation evidence and not GPU qualification.
 
@@ -49,6 +53,7 @@ The exact-head rerun after replacing the scheduler files produced presentable Vu
 | Installed VST3/CLAP module identity | PASS, historical | Matching hashes and ELF receipts are pre-lifecycle-fix module evidence. |
 | Offline DSP and parameter automation | PASS | Both formats measure 23.9999982255 dB over the 24 dB expectation. |
 | Real-time JACK audio | PASS | Both formats ran with zero reported underruns. |
+| Hosted modulation and automation | PASS | Both formats played under JACK with changing Output values and zero reported underruns; receipt and screenshot are committed. |
 | Standalone editor presentation | PASS | Unlocked screenshot and AT-SPI/editor-open receipt. |
 | Hosted REAPER surface creation | PASS | Fresh log shows Vulkan/Skia initialization and GPU attachment for VST3 and CLAP. |
 | Hosted REAPER editor presentation | OPEN | Fresh non-black hosted pixels are proven, but the capture has notification occlusion and no input receipt; exact-head timer evidence is also still open. |
