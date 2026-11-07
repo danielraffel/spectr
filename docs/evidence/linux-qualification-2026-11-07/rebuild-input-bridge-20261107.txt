@@ -1,0 +1,29 @@
+Spectr Linux ARM64 UTM qualification: exact rebuilt input-bridge run
+Date: 2026-11-07
+VM: Omarchy-virt (native AArch64, UTM, external SSD)
+Pulp source branch: codex/linux-host-frame-trace-20261107
+Pulp source commit: f5b33c74f24f4e062752cb8cdeb3d55a4dc2cbd6
+Linux host source SHA-256: 1a22eaca58fa89695cd4bcf391fdf99609f053bd0ef7e8fbb777081daca06254
+
+The guest rebuilt and installed the Linux host object from the exact source
+above, then rebuilt Spectr VST3, CLAP, and standalone against that SDK. The
+installed consumer hashes are:
+
+VST3: 1fd622ebb034dae4ffef7aebb7b2e54f90771876f2f734badcca905373d5cd36
+      /home/omarchy/.vst3/Spectr.vst3/Contents/aarch64-linux/Spectr.so
+CLAP: a44396757fdaaf9ef0f8fc018f0436989ee0fab39cf59f786a42a6f70acd5d03
+      /home/omarchy/.clap/Spectr.clap
+Standalone: c7124f88fbecbbcfe30296b30db232d1f3943126fa2971be2492604c8871b498
+      /home/omarchy/.local/lib/Spectr/Spectr
+
+REAPER instantiated both formats. The VST3 editor was visible at 990x673 and
+the CLAP editor at 990x673. Hovering the Mix control produced its tooltip,
+which proves pointer motion reaches the hosted editor. A controlled XWayland
+and ydotool left-button press/drag from the Mix knob at screen (460,142) to
+(460,360) did not change the monitored VST3 Mix parameter: it remained
+1.000000000 throughout the 2,000-sample monitor. This is a FAIL for hosted
+press/drag parameter acceptance after the rebuilt SDK and remains open.
+
+This receipt does not claim the input bridge is fixed. It binds the negative
+result to the exact installed modules so the next investigation can distinguish
+X11 child-window delivery from Pulp pointer dispatch/control handling.

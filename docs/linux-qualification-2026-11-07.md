@@ -48,6 +48,14 @@ The original hosted screenshot remains blank in [hosted-vst3-blank.png](evidence
 
 A fresh user-session run after the rebuild instantiated both formats and applied the parameter probe; see [reaper-user-service-receipt-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-user-service-receipt-20261107.txt). Hyprland reported visible floating editors at 990x702 (VST3) and 990x703 (CLAP); see [reaper-hosted-window-geometry-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-window-geometry-20261107.txt). That earlier compositor capture was DPMS-off/black and remains window-state evidence only; the later host-level captures above are the current pixel evidence.
 
+The exact rebuilt Linux host input bridge was installed and retested in a fresh
+session. [rebuild-input-bridge-20261107.txt](evidence/linux-qualification-2026-11-07/rebuild-input-bridge-20261107.txt)
+binds the run to Pulp `f5b33c74f24f4e062752cb8cdeb3d55a4dc2cbd6` and the new
+installed VST3/CLAP/standalone hashes. Hover reaches the Mix control, but a
+controlled press/drag still leaves VST3 Mix at `1.0`. Hosted press/drag remains
+open; this negative result is the current exact-source boundary between X11
+event delivery and Pulp control dispatch.
+
 The exact-head rerun after replacing the scheduler files produced presentable Vulkan/Graphite surfaces and both editor attachments, but no `LINUX_FRAME_TICK` lines in [reaper-exact-scheduler-run-20261107.log](evidence/linux-qualification-2026-11-07/reaper-exact-scheduler-run-20261107.log). REAPER did not expose a timer callback on that idle run, so the previously captured callback log remains evidence for the separate user-session workload and is not reused as exact-head proof. The fresh host-level captures close the non-black pixel gate; exact-head continuous animation and pointer input remain open.
 
 | Qualification slice | Result | Evidence boundary |
@@ -59,6 +67,7 @@ The exact-head rerun after replacing the scheduler files produced presentable Vu
 | Hosted modulation and automation | PASS | Both formats played under JACK with changing Output values and zero reported underruns; receipt and screenshot are committed. |
 | Standalone editor presentation | PASS | Unlocked screenshot and AT-SPI/editor-open receipt. |
 | Hosted REAPER surface creation | PASS | Fresh log shows Vulkan/Skia initialization and GPU attachment for VST3 and CLAP. |
+| Exact rebuilt hosted pointer input | FAIL / OPEN | Hover reaches Mix, but XWayland and ydotool press/drag leaves VST3 Mix at `1.0`; see the exact-hash receipt. |
 | Hosted REAPER editor presentation | OPEN | Fresh non-black hosted pixels are proven, but the capture has notification occlusion and no input receipt; exact-head timer evidence is also still open. |
 | GPU editor qualification | OPEN | Hosted GPU attachment is proven; standalone receipt and timer-capability proof remain separate. |
 | Linux product/release acceptance | NOT READY | Hosted GUI proof and current post-fix module provenance remain unresolved. |
