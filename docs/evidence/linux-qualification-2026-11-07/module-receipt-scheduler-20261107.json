@@ -30,7 +30,7 @@
     "vst3_and_clap_gpu_surface_attachment": "pass",
     "vst3_and_clap_reaper_instantiation": "pass",
     "standalone_gui_capture": "pass",
-    "host_timer_callback_receipt": "open: REAPER log did not expose VST3 IRunLoop or CLAP timer-support callbacks"
+    "host_timer_callback_receipt": "pass: user-session REAPER log records sustained LINUX_FRAME_TICK callbacks for both VST3 and CLAP hosted editors"
   },
-  "qualification_boundary": "Build and installed-consumer evidence; hosted full-control screenshot and timer-driven animation remain open."
+  "qualification_boundary": "Build, installed-consumer, GPU attachment, and host-driven frame callback evidence; hosted full-control screenshot and input receipt remain open."
 }
