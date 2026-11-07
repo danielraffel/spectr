@@ -1,6 +1,6 @@
 # Spectr Linux ARM64 qualification — 2026-11-07
 
-This packet records the Linux ARM64 qualification evidence collected from the Omarchy AArch64 guest. It is a qualification record, not a release acceptance decision. No product rebuild was performed while preparing this document.
+This packet records the Linux ARM64 qualification evidence collected from the Omarchy AArch64 guest. It is a qualification record, not a release acceptance decision. The original packet is historical; the follow-up hosted-GPU log below comes from a rebuild against the pending Pulp Linux host-scheduling change.
 
 The guest source was compared byte-for-byte with this checkout at `911d06fbe9ca6c3395e099b596e23cab5e5ae07f`. The source manifest covers all 1,003 tracked files. It also records one guest-only `tools/spectr-detectors/__pycache__/layout_common.cpython-314.pyc` entry; that bytecode file is not tracked. The manifest is [source-hashes.json](evidence/linux-qualification-2026-11-07/source-hashes.json).
 
@@ -14,6 +14,7 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [realtime-proof.txt](evidence/linux-qualification-2026-11-07/realtime-proof.txt) | `81f5ef039cf9d4e5d0b69ce501a1abb9431ea3ea6560d8ae4796c45695d6734d` |
 | [loaded-maps.txt](evidence/linux-qualification-2026-11-07/loaded-maps.txt) | `c26082336bbef7055bbf164e9efdd842ea8b1d81755f8b18057b18e2e46cc516` |
 | [standalone-editor.png](evidence/linux-qualification-2026-11-07/standalone-editor.png) | `1737cd094067d983b81db87600cf1a3c7cf6dc36d0ad59a04f38b7553774c3d8` |
+| [reaper-hosted-gpu-latest.log](evidence/linux-qualification-2026-11-07/reaper-hosted-gpu-latest.log) | `b4ab5127ea72c15e329c11d56664e46a764712cfb0f9ed7bb5fc304994ebb297` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 
@@ -28,7 +29,7 @@ The real-time receipt reports both VST3 and CLAP loaded in REAPER, JACK mode, 48
 
 The standalone editor has a real unlocked presentation in [standalone-editor.png](evidence/linux-qualification-2026-11-07/standalone-editor.png). The accompanying [standalone-receipt.json](evidence/linux-qualification-2026-11-07/standalone-receipt.json) records the guest, display, JACK mode, 48 kHz rate, 1024-frame buffer, and 265 exported AT-SPI objects. [standalone.log](evidence/linux-qualification-2026-11-07/standalone.log) records the editor opening at 990x645. The log reports `gpu=false (gpu-unavailable)`, so this is standalone CPU/editor presentation evidence and not GPU qualification.
 
-The hosted REAPER editor remains blank in [hosted-vst3-blank.png](evidence/linux-qualification-2026-11-07/hosted-vst3-blank.png). A guest-only move-before-`ok` lifecycle diagnostic was exercised, but it did not resolve the hosted blank surface. Startup repaint tracing showed bursts for roughly the first 1.2 seconds and then no continuing host-driven ticks. The remaining scheduling boundary is tracked in [Pulp issue 8448](https://github.com/Generous-Corp/pulp/issues/8448), which covers the missing Linux `HostFramePump`/`FrameClock` tick. The hosted editor therefore remains open and is not accepted by this packet.
+The original hosted screenshot remains blank in [hosted-vst3-blank.png](evidence/linux-qualification-2026-11-07/hosted-vst3-blank.png) and is retained as a negative-control artifact. A fresh rebuild after the Pulp GPU move-order and Linux host-scheduling changes now reports a presentable Vulkan Dawn surface, Graphite Skia initialization, and GPU attachment for both VST3 and CLAP in [reaper-hosted-gpu-latest.log](evidence/linux-qualification-2026-11-07/reaper-hosted-gpu-latest.log). This proves hosted surface creation and attachment; a fresh screenshot with all controls visible and an input/animation receipt is still required before hosted GUI acceptance. The host timer APIs are optional: the log does not prove that REAPER supplied VST3 `IRunLoop` or CLAP timer-support callbacks, so continuous animation remains an open host-capability check.
 
 | Qualification slice | Result | Evidence boundary |
 | --- | --- | --- |
@@ -37,6 +38,7 @@ The hosted REAPER editor remains blank in [hosted-vst3-blank.png](evidence/linux
 | Offline DSP and parameter automation | PASS | Both formats measure 23.9999982255 dB over the 24 dB expectation. |
 | Real-time JACK audio | PASS | Both formats ran with zero reported underruns. |
 | Standalone editor presentation | PASS | Unlocked screenshot and AT-SPI/editor-open receipt. |
-| Hosted REAPER editor presentation | OPEN / FAIL | Hosted VST3 surface remains blank after the lifecycle diagnostic. |
-| GPU editor qualification | OPEN | Standalone receipt reports GPU unavailable. |
+| Hosted REAPER surface creation | PASS | Fresh log shows Vulkan/Skia initialization and GPU attachment for VST3 and CLAP. |
+| Hosted REAPER editor presentation | OPEN | Fresh full-control screenshot and input/animation receipt are still required. |
+| GPU editor qualification | OPEN | Hosted GPU attachment is proven; standalone receipt and timer-capability proof remain separate. |
 | Linux product/release acceptance | NOT READY | Hosted GUI proof and current post-fix module provenance remain unresolved. |
