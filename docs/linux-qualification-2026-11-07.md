@@ -29,6 +29,11 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-x11-child-event-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-x11-child-event-probe-20261107.txt) | `7b543652c3a250b22b8b54add5fe3283df62a62d6ab130accad00c248f726246` |
 | [reaper-hosted-modulation-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-modulation-utm-screen-20261107.png) | `2f9d2afdca94209d9aadcfdb18d721fb051aeaaedaf84423528b9d605204f0f8` |
 | [reaper-input-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-input-probe-20261107.txt) | `2b9c7280e8c0221e5778c84cae346733db08aa649d5d108bb89e8bcd2388b76c` |
+| [reaper-audio-proof-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-audio-proof-20261108.txt) | `f939517ff0924b3a0cf481fc62be299da01c568b5df668f3a5224242ad4c52e3` |
+| [reaper-audio-metrics-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-audio-metrics-20261108.txt) | `9f6c13ac5404ebda4a7deb817e3b5205bd2ef78490e5c2180840f8077ecb4062` |
+| [reaper-audio-loaded-maps-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-audio-loaded-maps-20261108.txt) | `d0e2fb5d523e24aa6e468b85ac63e5668748af03848f778a26f82034fc0b7234` |
+| [reaper-modulation-proof-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261108.txt) | `c5146e6a9a95867f220929e515dc179eb74ee28af91968baa0a6020239750f6b` |
+| [reaper-modulation-identity-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-identity-20261108.txt) | `4ab737244c716acc3cbe2db3b31ae24d1ef10b4e4d49e55ec5ec82d7f1f32ae4` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 
@@ -99,13 +104,17 @@ The fresh 2026-11-08 REAPER run was made after rebuilding Pulp with `PULP_ENABLE
 
 REAPER 7.85 discovered both `VST3: Spectr (Pulp)` and `CLAP: Spectr (Pulp)`, instantiated both editors, and reported 212 parameters for each. The host changed VST3 Mix from normalized `1.0` to `0.3700000048`; the CLAP editor was instantiated and its parameter surface was visible. Hyprland reported both visible floating editor windows (`VST3: Spectr (Pulp) - Track 1 [1/2]` and `CLAP: Spectr (Pulp) - Track 1 [2/2]`), each 990x673. The complete receipt is [reaper-fresh-qualification-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-fresh-qualification-20261108.txt) (SHA-256 `c6410e2ab3d763586d9b170c0ccb6be5151d2348333011e2cdefcb7b8bc50b2e`). This closes fresh REAPER discovery, instantiation, editor-window, and host-parameter evidence; compositor-native pointer acceptance remains a separate open boundary.
 
+The exact installed-hash audio and automation rerun on 2026-11-08 completed as the Omarchy desktop user. REAPER 7.85 instantiated VST3 and CLAP, inserted three Output envelope points for each, and rendered 192,000 stereo frames at 48 kHz. The rendered output is nonzero and changes at the automation boundary: RMS is `136381.7` through 1.5 seconds, `171963.6` from 1.5 to 2 seconds, and `2161504.3` from 2 to 4 seconds. The rendered WAV SHA-256 is `fb69e4f34fe7242dbfc45e854a297279e33bc7c1e8aaaf8e6a39cd3e2b11cc23`. The loaded-map receipt binds the run to the current installed VST3 and CLAP module hashes listed in the receipt.
+
+A second exact-hash hosted modulation run configured the LFO and Output automation on both formats while JACK playback was active. VST3 and CLAP produced nonzero peaks, changing Output values, `playstate=1`, and an underrun count of zero.
+
 | Qualification slice | Result | Evidence boundary |
 | --- | --- | --- |
 | Exact source parity | PASS | 1,003 tracked files match the guest manifest. |
 | Installed VST3/CLAP module identity | PASS, historical | Matching hashes and ELF receipts are pre-lifecycle-fix module evidence. |
 | Offline DSP and parameter automation | PASS | Both formats measure 23.9999982255 dB over the 24 dB expectation. |
-| Real-time JACK audio | PASS | Both formats ran with zero reported underruns. |
-| Hosted modulation and automation | PASS | Both formats played under JACK with changing Output values and zero reported underruns; receipt and screenshot are committed. |
+| Real-time JACK audio | PASS, exact current hashes | Fresh REAPER render and loaded-map receipts bind nonzero output to the current installed VST3/CLAP modules. |
+| Hosted modulation and automation | PASS, exact current hashes | Fresh VST3/CLAP run shows active JACK playback, changing Output values, nonzero peaks, and zero underrun count. |
 | Standalone editor presentation | PASS | Unlocked screenshot and AT-SPI/editor-open receipt. |
 | Hosted REAPER surface creation | PASS | Fresh log shows Vulkan/Skia initialization and GPU attachment for VST3 and CLAP. |
 | Hosted CLAP host-parameter write | PASS | CLAP-only probe changes Mix from normalized `1.0` to `0.37` and retains it across deferred host ticks. |

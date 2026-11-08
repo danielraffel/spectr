@@ -1,0 +1,27 @@
+Spectr ARM64 Omarchy UTM fresh REAPER audio/automation receipt
+Run date: 2026-11-08 UTC
+Guest: Omarchy-virt, aarch64, kernel 7.2.3-2-aarch64-ARCH
+Host: REAPER 7.85, JACK 48000 Hz, 1024 frames
+
+Installed module hashes immediately before the run:
+VST3 1224883b1580960966f328905550b29083b713ad370051640b76143cbe1cf5a4
+CLAP ae4e39f095cd7924c698047adb9391240f7a890bd3e6de1d58e68ab833df1a05
+Standalone ace01f57b4aeedc310f6f63832ee23619e0d5786e5a74ed71f450006aa0cc265
+
+REAPER receipt:
+- VST3: Spectr index=0; output range=0..1; envelope points=3
+- CLAP: Spectr index=0; output range=-24..24; envelope points=3
+- Project saved: /tmp/spectr-audio-proof.RPP
+- Rendered output: /tmp/spectr-audio-proof-identity.wav
+
+Rendered output SHA-256: fb69e4f34fe7242dbfc45e854a297279e33bc7c1e8aaaf8e6a39cd3e2b11cc23
+Rendered output: 2 channels, 48 kHz, 192000 frames, 24-bit PCM
+Rendered output samples: peak=3057463, RMS=1531901.39, nonzero=383360/384000
+Windowed output changed at the automation boundary:
+0.0-1.5 s peak=192913 RMS=136381.7
+1.5-2.0 s peak=3056444 RMS=171963.6
+2.0-4.0 s peak=3057463 RMS=2161504.3
+
+The automation was authored by /tmp/spectr-audio-proof-identity.lua. The
+source tone is not used as the acceptance signal; the measured rendered WAV
+is the output receipt.
