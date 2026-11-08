@@ -34,6 +34,7 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-audio-loaded-maps-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-audio-loaded-maps-20261108.txt) | `d0e2fb5d523e24aa6e468b85ac63e5668748af03848f778a26f82034fc0b7234` |
 | [reaper-modulation-proof-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261108.txt) | `c5146e6a9a95867f220929e515dc179eb74ee28af91968baa0a6020239750f6b` |
 | [reaper-modulation-identity-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-identity-20261108.txt) | `4ab737244c716acc3cbe2db3b31ae24d1ef10b4e4d49e55ec5ec82d7f1f32ae4` |
+| [reaper-ydotool-pointer-probe-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-ydotool-pointer-probe-20261108.txt) | `PLACEHOLDER` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 
@@ -107,6 +108,8 @@ REAPER 7.85 discovered both `VST3: Spectr (Pulp)` and `CLAP: Spectr (Pulp)`, ins
 The exact installed-hash audio and automation rerun on 2026-11-08 completed as the Omarchy desktop user. REAPER 7.85 instantiated VST3 and CLAP, inserted three Output envelope points for each, and rendered 192,000 stereo frames at 48 kHz. The rendered output is nonzero and changes at the automation boundary: RMS is `136381.7` through 1.5 seconds, `171963.6` from 1.5 to 2 seconds, and `2161504.3` from 2 to 4 seconds. The rendered WAV SHA-256 is `fb69e4f34fe7242dbfc45e854a297279e33bc7c1e8aaaf8e6a39cd3e2b11cc23`. The loaded-map receipt binds the run to the current installed VST3 and CLAP module hashes listed in the receipt.
 
 A second exact-hash hosted modulation run configured the LFO and Output automation on both formats while JACK playback was active. VST3 and CLAP produced nonzero peaks, changing Output values, `playstate=1`, and an underrun count of zero.
+
+A fresh compositor-native pointer probe used the guest's running `ydotoold` and moved the Hyprland cursor into the exact VST3 editor geometry. Native click and drag events did not change the monitored Mix parameter, so pointer acceptance remains open at the embedded XWayland child/control-dispatch boundary.
 
 | Qualification slice | Result | Evidence boundary |
 | --- | --- | --- |
