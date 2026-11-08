@@ -34,7 +34,7 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-audio-loaded-maps-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-audio-loaded-maps-20261108.txt) | `d0e2fb5d523e24aa6e468b85ac63e5668748af03848f778a26f82034fc0b7234` |
 | [reaper-modulation-proof-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261108.txt) | `c5146e6a9a95867f220929e515dc179eb74ee28af91968baa0a6020239750f6b` |
 | [reaper-modulation-identity-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-identity-20261108.txt) | `4ab737244c716acc3cbe2db3b31ae24d1ef10b4e4d49e55ec5ec82d7f1f32ae4` |
-| [reaper-ydotool-pointer-probe-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-ydotool-pointer-probe-20261108.txt) | `PLACEHOLDER` |
+| [reaper-ydotool-pointer-probe-20261108.txt](evidence/linux-qualification-2026-11-07/reaper-ydotool-pointer-probe-20261108.txt) | `4a2eec0f07bf58d91a20291ca2c0ec57b021b745335bee0d63a588819c40658a` |
 
 The module receipt records VST3 and CLAP build and installed-consumer hashes. The canonical installed VST3 module is `Spectr.vst3/Contents/aarch64-linux/Spectr.so`, and the installed CLAP module is `Spectr.clap`. The receipt records matching build/installed hashes:
 

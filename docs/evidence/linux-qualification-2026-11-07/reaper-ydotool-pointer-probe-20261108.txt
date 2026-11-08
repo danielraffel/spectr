@@ -4,7 +4,7 @@ Guest: Omarchy-virt, aarch64, Hyprland/XWayland
 Host: REAPER 7.85
 
 Current installed module hashes:
-VST3 1224883b1580960966f328905550b29083b713ad3700516404b76143cbe1cf5a4
+VST3 1224883b1580960966f328905550b29083b713ad370051640b76143cbe1cf5a4
 CLAP ae4e39f095cd7924c698047adb9391240f7a890bd3e6de1d58e68ab833df1a05
 
 ydotoold was present at /usr/bin/ydotoold on /run/user/1000/ydotool.socket.
