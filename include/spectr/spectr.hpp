@@ -64,6 +64,7 @@
 #include <pulp/signal/processing_switch_crossfade.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/macro_field.hpp"
+#include "spectr/lfo_sampling.hpp"
 #include "spectr/modulation.hpp"
 
 #ifndef SPECTR_EDITOR_BACKGROUND_RGB
@@ -235,6 +236,15 @@ struct ModulatedFieldSnapshot {
     double             phase_2 = 0.0; ///< LFO 2 phase at `published_ns`
     double             phase_per_second = 0.0;
     double             phase_2_per_second = 0.0;
+    /// The cycles each LFO spans in the block `field` was composed for. The
+    /// mask reads an LFO as its MEAN over that span (`lfo_mean`), never the
+    /// point value; a zero span is the point read (the test plant).
+    double             phase_span = 0.0;
+    double             phase_2_span = 0.0;
+    /// The share of Bank the mask holds (1 below 1/32 cycle a block). The
+    /// rest is handed to the per-sample gain, a uniform offset the mask
+    /// field does not carry (see `handed_over_bank_db`).
+    float              bank_mask_share = 1.0f;
     /// Shape crossfades at `published_ns`; the consumer advances them by the
     /// same elapsed time as the phases.
     LfoShapeFade       shape_fade{};
@@ -244,6 +254,69 @@ struct ModulatedFieldSnapshot {
     /// fall back to `field` rather than extrapolate from an unknown origin.
     std::int64_t       published_ns = 0;
 };
+
+/// The waves the mask composed @p snapshot's field with, for LFO phases
+/// @p phase_1 / @p phase_2 through @p fade_1 / @p fade_2: each LFO's mean over
+/// the span the snapshot carries, or its point value when that span is zero.
+inline std::pair<float, float> snapshot_mask_waves(const ModulatedFieldSnapshot& snapshot,
+                                                   double phase_1, double phase_2,
+                                                   const LfoShapeFade& fade_1,
+                                                   const LfoShapeFade& fade_2) noexcept {
+    const float w1 = snapshot.phase_span > 0.0
+        ? lfo_mean(fade_1, phase_1, phase_1 + snapshot.phase_span)
+        : lfo_value(fade_1, phase_1);
+    const float w2 = snapshot.phase_2_span > 0.0
+        ? lfo_mean(fade_2, phase_2, phase_2 + snapshot.phase_2_span)
+        : lfo_value(fade_2, phase_2);
+    return {w1, w2};
+}
+
+/// The field the mask holds for @p snapshot at these phases: the composition
+/// with Bank at its mask share. For the snapshot's own phases and fades this
+/// is exactly `snapshot.field`; a frame extrapolates the phases and fades.
+inline BandField snapshot_mask_field(const ModulatedFieldSnapshot& snapshot,
+                                     double phase_1, double phase_2,
+                                     const LfoShapeFade& fade_1,
+                                     const LfoShapeFade& fade_2) noexcept {
+    const auto [w1, w2] = snapshot_mask_waves(snapshot, phase_1, phase_2, fade_1, fade_2);
+    ModulationSettings mask = snapshot.settings;
+    if (snapshot.bank_mask_share < 1.0f) {
+        constexpr auto kBank = static_cast<std::size_t>(ModulationTarget::WholeBank);
+        for (auto& routes : mask.routes)
+            routes[kBank].amount *= std::clamp(snapshot.bank_mask_share, 0.0f, 1.0f);
+    }
+    return compose_internal_modulation(snapshot.pre_field, snapshot.snapshots,
+                                       snapshot.host_morph, mask, w1, w2).field;
+}
+
+/// The uniform offset, in dB of every band before Intensity, that Bank's
+/// handed-over share adds as the per-sample gain at these phases (its point
+/// values: the gain follows the waveform sample by sample).
+inline float handed_over_bank_db(const ModulatedFieldSnapshot& snapshot,
+                                 double phase_1, double phase_2,
+                                 const LfoShapeFade& fade_1,
+                                 const LfoShapeFade& fade_2) noexcept {
+    const float handed = 1.0f - std::clamp(snapshot.bank_mask_share, 0.0f, 1.0f);
+    if (handed <= 0.0f) return 0.0f;
+    return bank_modulation_coordinate(snapshot.settings, lfo_value(fade_1, phase_1),
+                                      lfo_value(fade_2, phase_2))
+         * handed * kModulationBankExcursionDb;
+}
+
+/// What a frame draws: the mask's field plus the handed-over Bank offset,
+/// each band clamped as the mask clamps it -- the field a listener hears at
+/// these phases, from the inputs the audio owner published.
+inline BandField snapshot_audible_field(const ModulatedFieldSnapshot& snapshot,
+                                        double phase_1, double phase_2,
+                                        const LfoShapeFade& fade_1,
+                                        const LfoShapeFade& fade_2) noexcept {
+    BandField out = snapshot_mask_field(snapshot, phase_1, phase_2, fade_1, fade_2);
+    const float offset = handed_over_bank_db(snapshot, phase_1, phase_2, fade_1, fade_2);
+    if (offset != 0.0f)
+        for (auto& band : out.bands)
+            band.gain_db = std::clamp(band.gain_db + offset, kBandGainMinDb, kBandGainMaxDb);
+    return out;
+}
 static_assert(std::is_trivially_copyable_v<ModulatedFieldSnapshot>,
               "modulated field publication must remain allocation-free POD");
 
@@ -378,6 +451,16 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 #endif
         .version      = SPECTR_PRODUCT_VERSION,
         .category     = pulp::format::PluginCategory::Effect,
+        // Pro Tools filters insert choices by the declared AAX stem layout.
+        // Publish both common track widths so Spectr is available on a new
+        // mono track as well as the stereo layout used by saved sessions.
+        // Stereo comes first: the CLAP adapter selects index 0 until the host
+        // picks a configuration, and a 2-channel block against a mono
+        // selection is rejected before its parameter events are consumed.
+        .supported_bus_layouts = {
+            {.inputs = {2}, .outputs = {2}, .name = "Stereo"},
+            {.inputs = {1}, .outputs = {1}, .name = "Mono"},
+        },
     };
 }
 
@@ -1045,6 +1128,12 @@ public:
     /// around it in menu order (index kPresetModulationSteps is the current
     /// one), and how many exist each way. Persisted in the plugin state, so
     /// the target keeps working when a session reopens.
+    /// Band groups: route @p lfo to the bands in @p mask with @p enabled and
+    /// @p amount. A group is keyed by its mask: the same selection edits the
+    /// same group, a new selection takes a free slot (false when none is
+    /// free), and a group neither LFO drives is forgotten.
+    bool set_band_group(std::uint64_t mask, std::size_t lfo, bool enabled, float amount);
+    BandGroups band_groups() const;
     bool set_preset_modulation(std::string centre_id,
                                const std::array<std::string, kPresetNeighbourCount>& names,
                                const PresetModulationNeighbours& neighbours);
@@ -1324,10 +1413,13 @@ private:
     /// The Length a freeze takes with the LFOs at @p phases (LFO 1, LFO 2):
     /// seconds, its LENGTH-list index in @p index (-1 when no LFO drives
     /// Length), and the longest length the routes reach in @p reach_seconds.
+    /// With @p spans (cycles per LFO) each LFO is read as its mean over
+    /// [phase, phase + span] -- the slice it is read for -- rather than at the
+    /// point; null spans read the point.
     [[nodiscard]] double freeze_length_at_phases_(double tempo_bpm, int numerator,
                                                   int denominator, const double phases[2],
-                                                  int* index,
-                                                  double* reach_seconds) const noexcept;
+                                                  int* index, double* reach_seconds,
+                                                  const double* spans = nullptr) const noexcept;
     void preroll_surviving_hold_();
     std::array<const float*, kMaximumChannels> input_channels_{};
     std::array<float*, kMaximumChannels>       output_channels_{};
@@ -1434,6 +1526,7 @@ private:
     // Guarded by processing_state_mutex_: the Preset destination's
     // neighbourhood, published through AudioModulationState.
     PresetModulationNeighbours preset_neighbours_{};
+    BandGroups band_groups_{};
     std::array<std::string, kPresetNeighbourCount> preset_names_{};
     std::string preset_centre_id_;
     bool freeze_hold_gate_last_ = false;
@@ -1480,6 +1573,11 @@ private:
     // automation redraws immediately without echoing every editor-originated
     // paint receipt back through a full hydration.
     std::atomic<EditorRevision> host_automation_revision_{0};
+    /// The dry input, delayed by the renderer's latency, so Bank's handed-over
+    /// per-sample gain can be applied to the wet path alone at any Mix:
+    /// y' = y + (g - 1) (y - (1 - mix) dry). Sized at prepare; two channels.
+    std::array<std::vector<float>, 2> bank_dry_ring_{};
+    std::size_t bank_dry_write_ = 0;
     // The canonical state as last pushed to the parameters — the sync delta
     // base. Morph updates it silently (morph moves the morph parameter only;
     // pushing 64 resulting band lanes per morph move would double-drive the

@@ -286,6 +286,10 @@ else if (!/const onViewport = \(view, live\) => \{\s*\n\s*if \(live\) return;/.t
     + "150ms poll this replaced, because a resize moves the printed value on "
     + "nearly every frame");
 }
+if (readoutBody && !/marginRight:\s*64/.test(readoutBody)) {
+  fail("the zoom readout does not reserve space for the right-aligned GPU/CPU "
+    + "chip, so the header can overlap at native font metrics");
+}
 if (readoutBody && /requestAnimationFrame/.test(
       readoutBody.slice(readoutBody.indexOf("const onViewport"),
                         readoutBody.indexOf("const attach")))) {

@@ -389,23 +389,26 @@ choc::value::Value make_modulation_payload_(const Spectr& plugin) {
         routes.addArrayElement(route);
     }
     modulation.addMember("routes", routes);
-    auto band_groups = choc::value::createEmptyArray();
-    const auto& overrides = modulation_state.band_overrides;
-    const auto group_count = std::min<std::size_t>(overrides.count,
-                                                   kMaxBandModulationGroups);
-    for (std::size_t i = 0; i < group_count; ++i) {
-        auto group = choc::value::createObject("SpectrBandModulationGroup");
-        group.addMember("members_lo", static_cast<double>(
-            static_cast<std::uint32_t>(overrides.groups[i].members & 0xffffffffu)));
-        group.addMember("members_hi", static_cast<double>(
-            static_cast<std::uint32_t>(overrides.groups[i].members >> 32)));
-        auto depths = choc::value::createEmptyArray();
-        for (float depth : overrides.groups[i].depth)
-            depths.addArrayElement(static_cast<double>(depth));
-        group.addMember("depths", depths);
-        band_groups.addArrayElement(group);
+    // Band groups: bands as indices, each LFO's switch and Depth.
+    auto groups = choc::value::createEmptyArray();
+    for (const auto& group : modulation_state.groups) {
+        if (!group.defined()) continue;
+        auto g = choc::value::createObject("SpectrBandGroup");
+        auto bands = choc::value::createEmptyArray();
+        for (std::size_t b = 0; b < kMaxBands; ++b)
+            if ((group.mask >> b) & 1ull) bands.addArrayElement(static_cast<std::int32_t>(b));
+        g.addMember("bands", bands);
+        auto lfos = choc::value::createEmptyArray();
+        for (const auto& route : group.lfo) {
+            auto r = choc::value::createObject("SpectrBandGroupRoute");
+            r.addMember("on", route.enabled);
+            r.addMember("amount", static_cast<double>(route.amount));
+            lfos.addArrayElement(r);
+        }
+        g.addMember("lfo", lfos);
+        groups.addArrayElement(g);
     }
-    modulation.addMember("band_groups", band_groups);
+    modulation.addMember("groups", groups);
     // Freeze "Hold for Length" (4140): shown under the Freeze target.
     modulation.addMember("freeze_hold_for_length", plugin.freeze_hold_for_length());
     return modulation;
@@ -1123,58 +1126,6 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 : EditorBridge::err_response("modulation target state unavailable");
         });
 
-    // Selected-band modulation is editor state rather than a 64-lane host
-    // surface. The native selection/marquee supplies the member bitset; this
-    // command only records the chosen LFO and normalized depth.
-    bridge.add_handler("band_modulation_group_set",
-        [&plugin](const choc::value::ValueView& p) -> std::string {
-            if (!p.isObject() || !p.hasObjectMember("lfo") || !p.hasObjectMember("depth"))
-                return EditorBridge::err_response("lfo and depth are required");
-            std::uint64_t members = 0;
-            if (p.hasObjectMember("members_lo") || p.hasObjectMember("members_hi")) {
-                if (!p.hasObjectMember("members_lo") || !p.hasObjectMember("members_hi"))
-                    return EditorBridge::err_response("members halves must be paired");
-                const auto uint32_value = [](const choc::value::ValueView& v)
-                    -> std::optional<std::uint32_t> {
-                    double d = 0.0;
-                    if (v.isInt32()) d = v.getInt32();
-                    else if (v.isInt64()) d = static_cast<double>(v.getInt64());
-                    else if (v.isFloat64()) d = v.getFloat64();
-                    else return std::nullopt;
-                    if (!std::isfinite(d) || d < 0.0 || d > 4294967295.0
-                        || d != std::floor(d)) return std::nullopt;
-                    return static_cast<std::uint32_t>(d);
-                };
-                const auto lo = uint32_value(p["members_lo"]);
-                const auto hi = uint32_value(p["members_hi"]);
-                if (!lo || !hi)
-                    return EditorBridge::err_response("members halves must be uint32 values");
-                members = static_cast<std::uint64_t>(*lo)
-                    | (static_cast<std::uint64_t>(*hi) << 32);
-            } else {
-                const auto members_v = p["members"];
-                if (!members_v.isInt64() && !members_v.isInt32())
-                    return EditorBridge::err_response("members must be a non-negative integer");
-                const auto signed_members = members_v.isInt64()
-                    ? members_v.getInt64() : static_cast<std::int64_t>(members_v.getInt32());
-                if (signed_members <= 0)
-                    return EditorBridge::err_response("members must be non-empty");
-                members = static_cast<std::uint64_t>(signed_members);
-            }
-            if (members == 0)
-                return EditorBridge::err_response("members must be non-empty");
-            const auto lfo = EditorBridge::get_uint(p, "lfo", kLfoCount);
-            if (lfo >= kLfoCount)
-                return EditorBridge::err_response("lfo index out of range");
-            const auto depth = finite_number_(p["depth"]);
-            if (!depth || *depth < 0.0f || *depth > 1.0f)
-                return EditorBridge::err_response("depth must be between 0 and 1");
-            return plugin.set_band_modulation_group(
-                       members, lfo, *depth)
-                ? EditorBridge::ok_response()
-                : EditorBridge::err_response("band modulation state unavailable");
-        });
-
     // Assign or clear one macro's membership. The macro's VALUE is not here
     // on purpose: it is an ordinary parameter and goes through `param_set`
     // like every other lane, which is what lets a host record and automate it.
@@ -1301,6 +1252,34 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
     // it would write -- and sends their names and gains here whenever the
     // current preset, the band count or the library changes.
     //   { centre: id, below: n, above: n, names: [9], gains: [9][<=64] }
+    // Band groups: {bands: [indices], lfo: 1|2, on: bool, amount?: 0..1}.
+    bridge.add_handler("band_group_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("bands") || !p["bands"].isArray()
+                || !p.hasObjectMember("lfo") || !p.hasObjectMember("on") || !p["on"].isBool())
+                return EditorBridge::err_response("bands, lfo and on required");
+            std::uint64_t mask = 0;
+            for (std::uint32_t i = 0; i < p["bands"].size(); ++i) {
+                const auto& v = p["bands"][i];
+                const double band = (v.isInt32() || v.isInt64() || v.isFloat32() || v.isFloat64())
+                    ? v.getWithDefault<double>(-1.0) : -1.0;
+                if (!(band >= 0.0) || band >= static_cast<double>(kMaxBands)
+                    || band != std::floor(band))
+                    return EditorBridge::err_response("bands must be indices 0..63");
+                mask |= 1ull << static_cast<unsigned>(band);
+            }
+            const auto& lfo_value = p["lfo"];
+            const auto lfo = static_cast<std::int64_t>(
+                (lfo_value.isInt32() || lfo_value.isInt64() || lfo_value.isFloat32() || lfo_value.isFloat64())
+                    ? lfo_value.getWithDefault<double>(0.0) : 0.0);
+            if (lfo < 1 || lfo > static_cast<std::int64_t>(kLfoCount))
+                return EditorBridge::err_response("lfo must be 1 or 2");
+            const float amount = static_cast<float>(
+                p.hasObjectMember("amount") ? p["amount"].getWithDefault<double>(0.5) : 0.5);
+            if (!plugin.set_band_group(mask, static_cast<std::size_t>(lfo - 1), p["on"].getBool(), amount))
+                return EditorBridge::err_response("no free band group (4 at most) or empty selection");
+            return EditorBridge::ok_response();
+        });
     bridge.add_handler("preset_modulation_set",
         [&plugin](const choc::value::ValueView& p) -> std::string {
             if (!p.isObject() || !p.hasObjectMember("centre") || !p["centre"].isString()

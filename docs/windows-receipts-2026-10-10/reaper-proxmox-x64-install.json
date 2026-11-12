@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T16:53:00Z",
+  "guest": {
+    "provider": "Proxmox",
+    "vmid": 300,
+    "host": "macpro",
+    "status": "running",
+    "os_build": "Windows Server 2022 10.0.20348.587",
+    "architecture": "x86_64-win"
+  },
+  "reaper_installer": {
+    "url": "https://www.reaper.fm/files/7.x/reaper782_x64-install.exe",
+    "path": "C:\\Windows\\Temp\\reaper782_x64-install.exe",
+    "bytes": 17172472,
+    "sha256": "AE86DD8396673318A85275175DC8C1C9B0B8E090BF305F9CEC920358E9D1E18F",
+    "silent_install_exit": 0
+  },
+  "reaper": {
+    "path": "C:\\Program Files\\REAPER (x64)\\reaper.exe",
+    "bytes": 18649160,
+    "sha256": "EA910AF76B1160411F54DEA978084D054BB8E397A391E7E84DE91088904C7F26"
+  },
+  "plugin": {
+    "path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\x86_64-win\\Spectr.vst3",
+    "bytes": 9611264,
+    "sha256": "329D2FBF55D1CB5B47B7FB6DD150E94308233B77A60635DCB776C125471C8620"
+  },
+  "verification": {
+    "pulp_focused_audio_test": "pass",
+    "reaper_plugin_instance": "not_run",
+    "reaper_rendered_audio": "not_run",
+    "screenshot": "not_run",
+    "limitation": "The Proxmox guest-agent path proves installation and artifact placement only; an authenticated desktop session is still required for REAPER scan, instantiation, screenshot, and render evidence."
+  }
+}

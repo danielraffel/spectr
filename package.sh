@@ -239,16 +239,38 @@ if [[ -n "${DIAG_APP:-}" ]]; then
   done
   args+=(--app "Diagnostics app" "$DIAG_STAGED" "$DIAG_ENT")
 fi
+# Optional Pro Tools format. An AAX cannot be signed here: PACE's wraptool
+# wraps the executable and seals the bundle under the Developer ID identity
+# in one step, and the installer recipe only verifies it (a `codesign
+# --force` after wraptool strips the wrap, and Pro Tools refuses the
+# plugin). SPECTR_AAX_SIGNED names an already wrapped and signed
+# Spectr.aaxplugin built from this exact source; unset, the package carries
+# no AAX, as the release workflow's runner has no wraptool. A set path that
+# does not verify is an error, never a silent omission.
+if [[ -n "${SPECTR_AAX_SIGNED:-}" ]]; then
+  [[ -d "$SPECTR_AAX_SIGNED" ]] || { echo "SPECTR_AAX_SIGNED does not exist: $SPECTR_AAX_SIGNED" >&2; exit 2; }
+  grep -q 'aax) echo "/Library/Application Support/Avid/Audio/Plug-Ins"' \
+    "$PULP_ROOT/tools/scripts/build_combined_installer.sh" || {
+    echo "PULP_ROOT's installer recipe has no aax plugin kind: $PULP_ROOT" >&2; exit 2; }
+  codesign --verify --deep --strict "$SPECTR_AAX_SIGNED" || {
+    echo "SPECTR_AAX_SIGNED is not signed; wrap and sign it with wraptool first" >&2; exit 2; }
+  AAX_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$SPECTR_AAX_SIGNED/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$AAX_VER" == "$VER" ]] || {
+    echo "SPECTR_AAX_SIGNED is version '${AAX_VER:-unknown}', the package is $VER" >&2; exit 2; }
+  args+=(--plugin aax "$SPECTR_AAX_SIGNED")
+fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
 
-# Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Its nested code must be
-# signed inside-out with the Developer ID identity before the app is sealed.
-# Pulp's recipe does that from the release that added pulp_add_sparkle(); for an
-# older PULP_ROOT, sign the framework here first. Delete this block on the Pulp
-# SDK bump that ships pulp_add_sparkle().
+# Spectr.app embeds Sparkle (cmake/SpectrSparkle.cmake). Sign the source
+# framework inside-out before handing the app to Pulp's combined-installer
+# recipe. The recipe signs a staging copy; validating the original build tree
+# after it returns otherwise sees Sparkle's ad-hoc Autoupdate and rejects a
+# package even though the staged copy was signed. Re-signing here is harmless
+# when the recipe also signs its staging copy and keeps both validation paths
+# honest.
 SPARKLE_FW="$APP/Contents/Frameworks/Sparkle.framework"
-if [[ -d "$SPARKLE_FW" ]] &&
-   ! grep -q 'sign_embedded_frameworks' "$PULP_ROOT/tools/scripts/build_combined_installer.sh"; then
+if [[ -d "$SPARKLE_FW" ]]; then
   "$PULP_ROOT/tools/scripts/ensure_signing_ready.sh" --quiet || {
     echo "signing preflight failed; run 'pulp ship doctor'" >&2; exit 2; }
   SPARKLE_V="$SPARKLE_FW/Versions/B"
@@ -258,6 +280,7 @@ if [[ -d "$SPARKLE_FW" ]] &&
   [[ -d "$SPARKLE_V/XPCServices" ]] && {
     echo "Sparkle XPC services are present; a non-sandboxed Spectr must not ship them" >&2; exit 2; }
   codesign --force --options runtime --timestamp -s "$APP_ID" "$SPARKLE_FW"
+  codesign --verify --deep --strict --verbose=2 "$SPARKLE_FW"
 fi
 
 "$PULP_ROOT/tools/scripts/build_combined_installer.sh" "${args[@]}"
@@ -272,17 +295,42 @@ python3 "$ROOT/tools/check_release_version.py" "${version_args[@]}"
 # Each signed bundle declares the macOS floor its binaries are built for.
 MIN_OS="$(sed -n 's/^CMAKE_OSX_DEPLOYMENT_TARGET:[^=]*=//p' "$CACHE" | tail -1)"
 [[ -n "$MIN_OS" ]] || { echo "build cache names no CMAKE_OSX_DEPLOYMENT_TARGET" >&2; exit 2; }
-python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" \
-  --bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP"
+min_os_bundles=(--bundle "$APP" --bundle "$AU" --bundle "$VST3" --bundle "$CLAP")
+[[ -n "${SPECTR_AAX_SIGNED:-}" ]] && min_os_bundles+=(--bundle "$SPECTR_AAX_SIGNED")
+python3 "$ROOT/tools/check_min_os.py" --expected "$MIN_OS" "${min_os_bundles[@]}"
 
 # The updater lives in the app and nowhere else, and the signed app's nested
 # Sparkle code carries the Developer ID signature notarization requires.
-# A release also proves, on the signed app, that it reads the release feed.
+# Notarytool staples the submitted package, not the original build-tree app.
+# Validate the extracted, stapled app for a real release; a no-notarize practice
+# run keeps validating the source app and therefore intentionally fails spctl.
 if [[ -d "$SPARKLE_FW" ]]; then
+  SPARKLE_CHECK_APP="$APP"
+  if [[ "${NOTARIZE:-1}" == 1 ]]; then
+    VERIFY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/spectr-notarized.XXXXXX")"
+    mkdir -p "$VERIFY_ROOT/xar" "$VERIFY_ROOT/payload"
+    xar -xf "$PKG" -C "$VERIFY_ROOT/xar"
+    APP_PAYLOAD="$VERIFY_ROOT/xar/$PKG_NAME.app.pkg/Payload"
+    [[ -f "$APP_PAYLOAD" ]] || {
+      echo "notarized package is missing app payload: $APP_PAYLOAD" >&2; exit 2; }
+    gzip -dc "$APP_PAYLOAD" | (cd "$VERIFY_ROOT/payload" && cpio -idm >/dev/null)
+    SPARKLE_CHECK_APP="$VERIFY_ROOT/payload/Applications/$PKG_NAME.app"
+    [[ -d "$SPARKLE_CHECK_APP" ]] || {
+      echo "could not extract notarized app for Sparkle validation: $SPARKLE_CHECK_APP" >&2
+      exit 2
+    }
+  fi
+  if [[ "${NOTARIZE:-1}" == 1 ]]; then
+    stapler validate "$PKG"
+    spctl --assess --type install --verbose=2 "$PKG"
+  fi
   feed_args=()
   [[ "$APP_BUILD" == "$VER" ]] && feed_args=(--feed "$RELEASE_FEED")
-  python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$APP" \
-    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" ${feed_args[@]+"${feed_args[@]}"}
+  gatekeeper_args=()
+  [[ "${NOTARIZE:-1}" == 1 ]] && gatekeeper_args=(--skip-gatekeeper)
+  python3 "$ROOT/tools/ship/check_sparkle.py" bundles --signed --app "$SPARKLE_CHECK_APP" \
+    --plugin "$AU" --plugin "$VST3" --plugin "$CLAP" \
+    "${gatekeeper_args[@]}" ${feed_args[@]+"${feed_args[@]}"}
 fi
 
 # A practice package is named for its build so two of them can sit side by side

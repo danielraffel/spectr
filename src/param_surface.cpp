@@ -119,15 +119,33 @@ float parse_octaves(std::string_view text) {
 }
 
 // LFO rate in the units the editor shows: "4 beats", "0.25 beats", "1 beat".
+// "1/1024 beat" .. "4096 beats": a sub-beat rate whose reciprocal is whole
+// reads as the fraction the editor shows, anything else as a decimal.
 std::string beats_string(float beats) {
     char buf[40];
+    if (beats > 0.0f && beats < 1.0f) {
+        const double per_beat = 1.0 / static_cast<double>(beats);
+        const double whole = std::round(per_beat);
+        if (std::abs(per_beat - whole) < 1e-3 * whole) {
+            std::snprintf(buf, sizeof(buf), "1/%.0f beat", whole);
+            return buf;
+        }
+    }
     std::snprintf(buf, sizeof(buf), "%g %s", static_cast<double>(beats),
                   beats == 1.0f ? "beat" : "beats");
     return buf;
 }
 
+// Accepts the fraction form too ("1/1024", "1/4 beat").
 float parse_beats(std::string_view text) {
     std::string s(text);
+    float numerator = 0.0f, denominator = 0.0f;
+    if (std::sscanf(s.c_str(), "%f/%f", &numerator, &denominator) == 2) {
+        if (!std::isfinite(numerator) || !std::isfinite(denominator)
+            || denominator <= 0.0f)
+            return 0.0f;
+        return numerator / denominator;
+    }
     float beats = 0.0f;
     if (std::sscanf(s.c_str(), "%f", &beats) != 1 || !std::isfinite(beats))
         return 0.0f;
@@ -330,7 +348,11 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle, 4.0f};
+        // Shaped so a host's normalised slider spends half its travel under
+        // 2 beats (the geometric middle of 1/1024 .. 4096). Opens at 1 beat:
+        // one cycle per beat, so a fresh LFO follows the host tempo as is.
+        info.range = pulp::state::ParamRange::with_center(
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 1.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -382,7 +404,11 @@ void register_surface_params(pulp::state::StateStore& store) {
         info.name = "LFO 2 Rate";
         // No separate unit: the display string carries it ("4 beats"), and
         // VST3 hosts print `units` after that string, which would double it.
-        info.range = {kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle, 4.0f};
+        // Shaped so a host's normalised slider spends half its travel under
+        // 2 beats (the geometric middle of 1/1024 .. 4096). Opens at 1 beat:
+        // one cycle per beat, so a fresh LFO follows the host tempo as is.
+        info.range = pulp::state::ParamRange::with_center(
+            kLfoBeatsMin, kLfoBeatsMax, 2.0f, 1.0f);
         info.group_id = kGroupModulation;
         info.to_string = [](float v) { return beats_string(v); };
         info.from_string = [](const std::string& t) { return parse_beats(t); };
@@ -436,8 +462,9 @@ void register_surface_params(pulp::state::StateStore& store) {
     // existing parameter moves. Each LFO drives any set of destinations at
     // once; each destination has an on/off lane and its own Depth (there is no
     // LFO-level depth any more; 4003/4013 are command lanes onto these).
-    // Defaults reproduce a fresh 1.0.x instance: both LFOs on the whole bank at
-    // 50 %, nothing else.
+    // A fresh instance routes nothing: an LFO's switch is its own control,
+    // and a target is switched on separately. (A 1.0.x session, which had no
+    // routing lanes, is migrated on restore from its single target instead.)
     static constexpr const char* kRouteNames[kRouteTargetCount] = {
         "Bank", "Snapshot A", "Snapshot B", "Morph",
         "Band shift", "Band spread", "Freeze", "Length",
@@ -447,7 +474,7 @@ void register_surface_params(pulp::state::StateStore& store) {
             pulp::state::ParamInfo info;
             info.id = lfo_route_enabled_param_id(lfo, t);
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t];
-            info.range = {0.0f, 1.0f, t == 0 ? 1.0f : 0.0f, 1.0f};
+            info.range = {0.0f, 1.0f, 0.0f, 1.0f};
             info.group_id = kGroupModulation;
             info.kind = pulp::state::ParamKind::Toggle;
             add_enum_labels(info, {"Off", "On"});
@@ -458,8 +485,9 @@ void register_surface_params(pulp::state::StateStore& store) {
             info.id = lfo_route_amount_param_id(lfo, t);
             info.name = "LFO " + std::to_string(lfo + 1) + " " + kRouteNames[t]
                 + " Depth";
-            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a new
-            // instance's LFO 1 on Bank sounds as it did.
+            // 50 %: the LFO Depth a fresh 1.0.x instance opened with, so a
+            // target switched on sounds as that LFO did, and for Freeze (whose
+            // Depth is the frozen duty) half the cycle frozen, half live.
             info.range = {0.0f, 1.0f, 0.5f};
             info.group_id = kGroupModulation;
             info.to_string = [](float v) { return percent_string(v); };
@@ -537,7 +565,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfoShape))), 0, 3));
     settings.beats_per_cycle = std::clamp(
-        store->get_value(kParamLfoRate), kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle);
+        store->get_value(kParamLfoRate), kLfoBeatsMin, kLfoBeatsMax);
     settings.depth = std::clamp(
         store->get_value(kParamLfoDepth), 0.0f, 1.0f);
     settings.target = static_cast<ModulationTarget>(std::clamp(
@@ -546,7 +574,7 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     settings.lfo2_shape = static_cast<LfoShape>(std::clamp(
         static_cast<int>(std::lround(store->get_value(kParamLfo2Shape))), 0, 3));
     settings.lfo2_beats_per_cycle = std::clamp(
-        store->get_value(kParamLfo2Rate), kMinLfoBeatsPerCycle, kMaxLfoBeatsPerCycle);
+        store->get_value(kParamLfo2Rate), kLfoBeatsMin, kLfoBeatsMax);
     settings.lfo2_depth = std::clamp(
         store->get_value(kParamLfo2Depth), 0.0f, 1.0f);
     for (std::size_t lfo = 0; lfo < kRouteLfoCount; ++lfo) {
@@ -562,6 +590,8 @@ ModulationSettings Spectr::modulation_from_store_() const noexcept {
     // single-target API sees what LFO 1 is actually driving.
     settings.target_mask = static_cast<std::uint8_t>(
         route_mask(settings.routes[0]) & kModulationTargetMaskAll);
+    // Band groups are session state with no lanes: they ride along.
+    settings.groups = band_groups_;
     return settings;
 }
 
@@ -703,7 +733,6 @@ bool Spectr::apply_surface_params(bool apply_morph) noexcept {
     }
 
     ModulationSettings next_modulation = modulation_from_store_();
-    next_modulation.band_overrides = band_modulation_overrides_;
     const std::array<float, 9> modulation_values{
         next_modulation.enabled ? 1.0f : 0.0f,
         static_cast<float>(next_modulation.shape),
@@ -859,25 +888,6 @@ ModulationSettings Spectr::modulation_settings() const noexcept {
     return modulation_;
 }
 
-BandModulationOverrides Spectr::band_modulation_overrides() const noexcept {
-    std::lock_guard<std::mutex> lock(processing_state_mutex_);
-    return band_modulation_overrides_;
-}
-
-bool Spectr::set_band_modulation_group(std::uint64_t members, std::size_t lfo,
-                                       float depth) noexcept {
-    std::lock_guard<std::mutex> lock(processing_state_mutex_);
-    if (!spectr::set_band_modulation_group(band_modulation_overrides_, members,
-                                           lfo, depth))
-        return false;
-    modulation_.band_overrides = band_modulation_overrides_;
-    publish_audio_modulation_state_();
-    host_automation_revision_.store(
-        editor_authority_.record_external_mutation(),
-        std::memory_order_release);
-    return true;
-}
-
 bool Spectr::morph_applies_viewport() const noexcept {
     std::lock_guard<std::mutex> lock(processing_state_mutex_);
     return morph_applies_viewport_;
@@ -925,6 +935,39 @@ int Spectr::freeze_shown_length_index() const noexcept {
         if (engaged >= 0) return engaged;
     }
     return freeze_modulated_length_index();
+}
+
+bool Spectr::set_band_group(std::uint64_t mask, std::size_t lfo, bool enabled, float amount) {
+    if (mask == 0 || lfo >= kLfoCount || !std::isfinite(amount)) return false;
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    auto& groups = band_groups_;
+    std::size_t at = kBandGroupCount;
+    for (std::size_t g = 0; g < kBandGroupCount; ++g)
+        if (groups[g].mask == mask) { at = g; break; }
+    if (at == kBandGroupCount) {
+        if (!enabled) return true;  // nothing to switch off
+        for (std::size_t g = 0; g < kBandGroupCount; ++g)
+            if (!groups[g].defined()) { at = g; break; }
+        if (at == kBandGroupCount) return false;
+        groups[at] = BandGroup{};
+        groups[at].mask = mask;
+    }
+    groups[at].lfo[lfo].enabled = enabled;
+    groups[at].lfo[lfo].amount = std::clamp(amount, 0.0f, 1.0f);
+    if (!groups[at].defined()) groups[at] = BandGroup{};
+    modulation_.groups = groups;
+    publish_audio_modulation_state_();
+    // The editor reads groups off the live projection; a new external
+    // mutation makes the next frame republish it (the macro setter's rule).
+    host_automation_revision_.store(
+        editor_authority_.record_external_mutation(),
+        std::memory_order_release);
+    return true;
+}
+
+BandGroups Spectr::band_groups() const {
+    std::lock_guard<std::mutex> lock(processing_state_mutex_);
+    return band_groups_;
 }
 
 bool Spectr::set_preset_modulation(

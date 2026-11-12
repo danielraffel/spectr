@@ -44,6 +44,15 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+
 using spectr::MaskRenderMode;
 using spectr::Spectr;
 
@@ -258,9 +267,19 @@ struct Run {
 };
 
 double thread_cpu_us() {
+#if defined(_WIN32)
+    FILETIME creation{}, exit{}, kernel{}, user{};
+    if (!GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user))
+        return 0.0;
+    ULARGE_INTEGER ticks{};
+    ticks.LowPart = user.dwLowDateTime;
+    ticks.HighPart = user.dwHighDateTime;
+    return static_cast<double>(ticks.QuadPart) * 0.1;
+#else
     timespec ts{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return double(ts.tv_sec) * 1e6 + double(ts.tv_nsec) * 1e-3;
+#endif
 }
 
 /// Thread CPU time of each host callback, in microseconds, by block start.

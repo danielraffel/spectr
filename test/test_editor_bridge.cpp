@@ -1216,6 +1216,36 @@ TEST_CASE("M9.5 bridge capture_snapshot: slot string is required") {
     CHECK(r.proc->snapshots().has(SnapshotBank::Slot::B));
 }
 
+TEST_CASE("bridge band_group_set makes a group of the given bands for one LFO, and the payload lists it") {
+    Rig r;
+    CHECK(response_has_error(r.dispatch(R"({"type":"band_group_set"})"), "bands, lfo and on"));
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_group_set","payload":{"bands":[12,99],"lfo":1,"on":true}})"), "0..63"));
+    CHECK(response_has_error(r.dispatch(
+        R"({"type":"band_group_set","payload":{"bands":[12],"lfo":3,"on":true}})"), "1 or 2"));
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"band_group_set","payload":{"bands":[12,13,14,15],"lfo":1,"on":true,"amount":0.8}})")));
+    const auto groups = r.proc->band_groups();
+    CHECK(groups[0].mask == (0xFull << 12));
+    CHECK(groups[0].lfo[0].enabled);
+    CHECK(groups[0].lfo[0].amount == Approx(0.8f));
+    CHECK_FALSE(groups[0].lfo[1].enabled);
+    // The live modulation payload carries the group as bands + per-LFO rows.
+    const auto state = choc::json::parse(r.dispatch(R"({"type":"processing_state_get"})"));
+    const auto& listed = state["modulation"]["groups"];
+    REQUIRE(listed.isArray());
+    REQUIRE(listed.size() == 1);
+    CHECK(listed[0]["bands"].size() == 4);
+    CHECK(listed[0]["bands"][0].get<int64_t>() == 12);
+    CHECK(listed[0]["lfo"][0]["on"].getBool());
+    CHECK(listed[0]["lfo"][0]["amount"].get<double>() == Approx(0.8));
+    CHECK_FALSE(listed[0]["lfo"][1]["on"].getBool());
+    // Switching the only LFO off forgets the group.
+    REQUIRE(response_ok(r.dispatch(
+        R"({"type":"band_group_set","payload":{"bands":[12,13,14,15],"lfo":1,"on":false}})")));
+    CHECK(r.proc->band_groups()[0].mask == 0);
+}
+
 TEST_CASE("M9.5 bridge recall_snapshot restores field viewport and layout") {
     Rig r;
     r.proc->set_layout(spectr::Layout::Bands40);

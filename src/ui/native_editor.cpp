@@ -3,7 +3,6 @@
 #include <pulp/view/plugin_view_host.hpp>
 
 #include "spectr/editor_bridge.hpp"
-#include "spectr/mac_haptics.hpp"
 
 #include <pulp/runtime/log.hpp>
 #include <pulp/runtime/trace.hpp>
@@ -16,6 +15,7 @@
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
@@ -30,6 +30,23 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
+
+namespace spectr_cache {
+
+template <typename View>
+void retain_static_pixels(View& view) {
+    if constexpr (requires(View& candidate) {
+                      candidate.set_raster_cached(true);
+                  }) {
+        view.set_raster_cached(true);
+    } else if constexpr (requires(View& candidate) {
+                             candidate.set_subtree_cached(true);
+                         }) {
+        view.set_subtree_cached(true);
+    }
+}
+
+} // namespace spectr_cache
 
 // ── Band context menu, addressed from the SHIPPING standalone ───────────
 //
@@ -287,13 +304,20 @@ public:
     // standalone showed paint firing with correct bounds while the corner read
     // as empty in a screenshot. A grip nobody can see is a grip nobody drags,
     // so draw it explicitly at a contrast that survives the dark theme.
+    // The diagonals stay clear of the window corner: on macOS 26+ the plug-in
+    // window's bottom-right corner is rounded and masks roughly the outer 4pt
+    // of the content along the diagonal, which hid the first two strokes of a
+    // flush grip in Pro Tools. The hit box is still flush; only the ink moves.
+    static constexpr float kCornerClearance = 6.0f;
+
     void paint(pulp::canvas::Canvas& canvas) override {
-        const float w = bounds().width, h = bounds().height;
+        const float w = bounds().width - kCornerClearance;
+        const float h = bounds().height - kCornerClearance;
         canvas.set_line_width(1.5f);
         for (int i = 0; i < 3; ++i) {
-            const float inset = 2.0f + static_cast<float>(i) * 6.0f;
+            const float inset = 2.0f + static_cast<float>(i) * 5.0f;
             canvas.set_stroke_color(pulp::canvas::Color::rgba8(
-                190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 150)));
+                190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 170)));
             canvas.stroke_line(w - inset, h - 1.0f, w - 1.0f, h - inset);
         }
     }
@@ -871,6 +895,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         state().set_value(kParamLfoRate, 4.0f);
         state().set_value(kParamLfoDepth, 1.0f);
         state().set_value(kParamLfoTarget, 0.0f);
+        // The legacy target lane selects a destination but does not enable a
+        // route in the current routing model. A fresh LFO drives nothing until
+        // its destination switch is on; arm Bank explicitly for this fixture.
+        state().set_value(lfo_route_enabled_param_id(0, 0), 1.0f);
+        state().set_value(lfo_route_amount_param_id(0, 0), 1.0f);
         state().set_value(kParamLfoEnabled, 1.0f);
     }
 #endif
@@ -939,16 +968,6 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             [this](const choc::value::ValueView&) {
                 return pulp::view::EditorBridge::ok_response(
                     make_output_meter_payload(read_output_level()));
-            });
-        // One alignment tick per actual gutter range transition. The JS side
-        // clamps transitions and gates the user's haptic preference; this
-        // handler only schedules platform feedback and never touches DSP.
-        native_editor_bridge_.add_handler(
-            "range_haptic",
-            [this](const choc::value::ValueView&) {
-                (void)this;
-                mac_haptic_alignment_tick();
-                return pulp::view::EditorBridge::ok_response();
             });
         native_editor_handlers_registered_ = true;
     }
@@ -1136,6 +1155,35 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                     "globalThis.__pulpBindMaterializedCanvases__();",
                     "spectr-materialized-bind");
             }
+#if defined(_WIN32)
+            // The authored glow is static leaf artwork. Retain its pixels so
+            // WARP does not rerasterize both full-window radial gradients on
+            // every audio/modulation frame. The SDK invalidates on style,
+            // bounds, backing-scale and device changes. Live bound canvases
+            // deliberately retain their ordinary per-frame drawing path.
+            const auto* disable_static_cache =
+                SPECTR_TEST_ENV("SPECTR_DISABLE_STATIC_RASTER_CACHE");
+            if (!disable_static_cache || std::string_view{disable_static_cache} != "1") {
+                if (auto* glow = bridge->widget("Pseudo_body_before")) {
+                    // Pulp PR11520 exposes leaf-pixel retention as
+                    // set_raster_cached(). Released SDKs expose the older
+                    // subtree cache contract, so keep this consumer
+                    // buildable against both SDK generations.
+                    spectr_cache::retain_static_pixels(*glow);
+                }
+                // The plot owns a separate grid/rulers canvas whose command
+                // stream changes only with its geometry/theme key. Resolve its
+                // authored marker rather than a generated native widget ID.
+                bridge->load_script(R"JS((() => {
+                    const node = document.querySelector('canvas[data-spectr-static-canvas]');
+                    const id = node && (node.__pulpId || node.id);
+                    if (id && typeof setRasterCached === 'function') {
+                        setRasterCached(String(id), true);
+                        console.log('[spectr-static-plot-cache] ' + id);
+                    }
+                })();)JS", "spectr-static-plot-cache");
+            }
+#endif
             // A tracing build carries a "TRACING" reminder. Pulp paints one
             // from the root View at a fixed corner, above the header's line;
             // the header draws its own on that line instead, so Pulp's is
@@ -1453,10 +1501,9 @@ void Spectr::publish_modulation_controls_(const ModulatedFieldSnapshot& modulate
     if (driven)
         coords = modulation_coordinates(settings, lfo_value(fade_1, phase_1),
                                         lfo_value(fade_2, phase_2));
-    const float intensity_pull = intensity_on ? coords[ModulationTarget::Intensity] : 0.0f;
-    const float mix_pull = mix_on ? coords[ModulationTarget::Mix] : 0.0f;
-    const float output_base_db = param_store_ ? param_store_->get_value(kOutputTrim) : 0.0f;
-    const float output_db = output_on ? output_modulation_db(output_base_db, coords) : 0.0f;
+    const float intensity_pull = intensity_on ? level_pull(coords, ModulationTarget::Intensity) : 0.0f;
+    const float mix_pull = mix_on ? level_pull(coords, ModulationTarget::Mix) : 0.0f;
+    const float output_db = output_on ? output_modulation_db(coords) : 0.0f;
     const float morph_offset = morph_on
         ? coords[ModulationTarget::Morph] * kModulationMorphExcursion : 0.0f;
     // Quantised to well under a pixel of any control's travel: a knob sweeps
@@ -1536,9 +1583,11 @@ void Spectr::publish_modulation_frame_() {
     // Extrapolating the published phase makes the painted value a continuous
     // function of display time.
     //
-    // This calls the same pure `lfo_value` / `apply_internal_modulation` the
-    // audio owner calls, over the inputs the audio owner published, so no DSP
-    // is duplicated and the drawn field cannot drift from the audible one.
+    // This calls the same pure composition the audio owner calls
+    // (`snapshot_audible_field`: the mask's mean-read waves plus Bank's
+    // handed-over per-sample share), over the inputs the audio owner
+    // published, so no DSP is duplicated and the drawn field cannot drift
+    // from the audible one.
     const bool reconstructable =
         modulated.active && modulated.published_ns != 0;
     double phase_1 = modulated.phase;
@@ -1592,10 +1641,8 @@ void Spectr::publish_modulation_frame_() {
 
     const BandField* drawn = &modulated.field;
     if (reconstructable) {
-        native_modulation_drawn_ = compose_internal_modulation(
-            modulated.pre_field, modulated.snapshots, modulated.host_morph,
-            modulated.settings, lfo_value(fade_1, phase_1),
-            lfo_value(fade_2, phase_2)).field;
+        native_modulation_drawn_ = snapshot_audible_field(
+            modulated, phase_1, phase_2, fade_1, fade_2);
         drawn = &native_modulation_drawn_;
     }
 
@@ -1623,6 +1670,21 @@ void Spectr::publish_modulation_frame_() {
         gains.addArrayElement(static_cast<double>(drawn->bands[band].gain_db));
         muted.addArrayElement(drawn->bands[band].muted);
     }
+    // The window an LFO is moving (Band shift / Band spread). Evaluated at
+    // this frame's phase like the control pulls, from the base window the
+    // audio owner modulated, so the drawn window and the audible one come
+    // from one derivation. Paint only on the editor side: the user's window
+    // is never overwritten by it.
+    const auto& settings = modulated.settings;
+    const bool viewport_driven = modulated.active
+        && (modulation_drives(settings, ModulationTarget::ViewportPosition)
+            || modulation_drives(settings, ModulationTarget::ViewportZoom));
+    Viewport drawn_viewport = modulated.viewport;
+    if (viewport_driven && reconstructable)
+        drawn_viewport = apply_viewport_modulation(
+            modulated.base_viewport,
+            modulation_coordinates(settings, lfo_value(fade_1, phase_1),
+                                   lfo_value(fade_2, phase_2)));
     auto payload = choc::value::createObject("SpectrModulationFrame");
     payload.addMember("active", modulated.active);
     payload.addMember("sequence",
@@ -1630,16 +1692,7 @@ void Spectr::publish_modulation_frame_() {
     payload.addMember("n_visible", static_cast<std::int32_t>(visible));
     payload.addMember("gain_db", gains);
     payload.addMember("muted", muted);
-    // Send the audible window on the paint lane, never the authored-state
-    // lane: displaying modulation must not ratchet the user's baseline.
-    const bool viewport_on = modulated.active
-        && (modulation_drives(modulated.settings, ModulationTarget::ViewportPosition)
-            || modulation_drives(modulated.settings, ModulationTarget::ViewportZoom));
-    const auto drawn_viewport = apply_viewport_modulation(
-        modulated.base_viewport,
-        modulation_coordinates(modulated.settings, lfo_value(fade_1, phase_1),
-                               lfo_value(fade_2, phase_2)));
-    payload.addMember("viewport_on", viewport_on);
+    payload.addMember("viewport_driven", viewport_driven);
     payload.addMember("min_hz", static_cast<double>(drawn_viewport.min_hz));
     payload.addMember("max_hz", static_cast<double>(drawn_viewport.max_hz));
     try {
@@ -1656,6 +1709,7 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
+    PULP_TRACE_SCOPE_NAMED_ARGS("state", "spectr_analyzer_tick", "dt_seconds", dt);
     retire_failed_native_session_();
     // Pulp's session evaluates a deferred document from its own idle poll;
     // keep ticking until it has.
@@ -3695,6 +3749,50 @@ bool Spectr::tick_native_analyzer_(float dt) {
         }
     }
 
+    // Diagnostic readback of the previous paint's native per-view timers.
+    // Kept separate from a timed trace: file I/O is not part of its workload.
+    if (const auto* path = SPECTR_TEST_ENV("SPECTR_PAINT_COST_DUMP");
+        path && native_editor_root_) {
+        auto rows = choc::value::createEmptyArray();
+        const auto visit = [&](const auto& self, const pulp::view::View& view,
+                               int depth, bool ancestors_visible) -> void {
+            auto row = choc::value::createObject("");
+            row.addMember("id", view.id());
+            row.addMember("depth", depth);
+            row.addMember("visible", view.visible() && ancestors_visible);
+            row.addMember("parent", view.parent() ? view.parent()->id() : "");
+            row.addMember("opacity", view.opacity());
+            row.addMember("background", view.has_background_color());
+            row.addMember("blend", static_cast<int>(view.mix_blend_mode()));
+            row.addMember("backdrop_blur", view.backdrop_blur());
+            row.addMember("shadow_count", static_cast<int>(view.box_shadows().size()));
+            if (const auto* widget = dynamic_cast<const pulp::view::CanvasWidget*>(&view)) {
+                row.addMember("canvas_commands", static_cast<int>(widget->command_count()));
+                row.addMember("canvas_isolation", widget->needs_backdrop_isolation());
+            }
+            // Timers belong to the last paint of this node. A hidden node can
+            // retain an old sample, so consumers must filter visible ancestry.
+            auto gradients = choc::value::createEmptyArray();
+            for (const auto& gradient : view.background_gradient_layers()) {
+                auto layer = choc::value::createObject("");
+                layer.addMember("type", gradient.type);
+                layer.addMember("stops", static_cast<int>(gradient.colors.size()));
+                gradients.addArrayElement(layer);
+            }
+            row.addMember("gradients", gradients);
+            row.addMember("self_ns", static_cast<std::int64_t>(view.last_paint_self_ns()));
+            row.addMember("total_ns", static_cast<std::int64_t>(view.last_paint_with_children_ns()));
+            row.addMember("w", static_cast<double>(view.bounds().width));
+            row.addMember("h", static_cast<double>(view.bounds().height));
+            rows.addArrayElement(row);
+            for (const auto* child : view.sorted_children_by_z_index())
+                self(self, *child, depth + 1, ancestors_visible && view.visible());
+        };
+        visit(visit, *native_editor_root_, 0, true);
+        std::ofstream out(path);
+        out << choc::json::toString(rows);
+    }
+
     // Dump the laid-out tree from the SAME process that produces the
     // screenshot, and rewrite it every tick so the final file is the one
     // nearest the shutter. Latching it wrote the tree at the FIRST settled
@@ -3782,17 +3880,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
     publish_modulation_frame_();
     publish_freeze_display_();
 
-    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
-    native_analyzer_elapsed_ += tick_seconds;
-    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
-    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
-
-    // One poll consumes everything captured since the last one, however long
-    // this tick took: the bridge runs the latest_window backlog policy.
+    // Audio arrives in host time, independently of the animation clock. A
+    // long render frame can make HostFramePump report a nominal resume dt;
+    // throttling capture draining with that dt then skips another whole slow
+    // frame and can overflow the ring before the next poll. Drain on every
+    // delivered frame; only UI publication below uses the display cadence.
     {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_drain");
         drain_analyzer();
     }
+
+    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+    native_analyzer_elapsed_ += tick_seconds;
+    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
+    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
     // ── Output level ────────────────────────────────────────────────────
     //
@@ -3855,6 +3956,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
     }
 
     const auto& spectrum = read_spectrum();
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_sequence", spectrum.sequence_number);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_dropped_frames", spectrum.dropped_frames);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_bins", spectrum.num_bins);
     if (!finite_spectrum(spectrum)
         || spectrum.sequence_number == native_analyzer_sequence_)
         return true;

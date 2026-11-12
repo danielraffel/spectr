@@ -5,12 +5,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <pulp/format/headless.hpp>
+#include <pulp/audio/analysis/audio_spectrum.hpp>
+#include <pulp/audio/buffer.hpp>
 #include "spectr/freeze_length.hpp"
 #include "spectr/modulation.hpp"
 #include "spectr/param_surface.hpp"
 #include "spectr/spectr.hpp"
 
 #include <algorithm>
+#include <set>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -994,6 +997,62 @@ TEST_CASE("the Preset destination morphs toward neighbouring presets and back",
     CHECK(reopened.plugin->preset_modulation_name(1) == "ABOVE");
 }
 
+TEST_CASE("the Preset destination steps through whole presets, never a blend",
+          "[modulation][preset-target]") {
+    // A sine at full depth sweeps the coordinate continuously; the field must
+    // still only ever be one of the neighbours (or the current preset), so
+    // every short window's level sits on one of three plateaus. A blend
+    // would spend most of its time between them.
+    Rig rig;
+    spectr::PresetModulationNeighbours n{};
+    n.below = 1;
+    n.above = 1;
+    for (auto& g : n.gains[spectr::kPresetModulationSteps + 1]) g = 12.0f;
+    for (auto& g : n.gains[spectr::kPresetModulationSteps - 1]) g = -12.0f;
+    std::array<std::string, spectr::kPresetNeighbourCount> names{};
+    names[spectr::kPresetModulationSteps - 1] = "BELOW";
+    names[spectr::kPresetModulationSteps] = "CURRENT";
+    names[spectr::kPresetModulationSteps + 1] = "ABOVE";
+    REQUIRE(rig.plugin->set_preset_modulation("factory:flat", names, n));
+    rig.set(spectr::kParamLfoShape, float(LfoShape::Sine));
+    rig.set(spectr::kParamLfoRate, 4.0f);  // 2 s per cycle
+    rig.set(spectr::lfo_route_enabled_param_id(0, kPresetT), 1.0f);
+    rig.set(spectr::lfo_route_amount_param_id(0, kPresetT), 1.0f);  // reaches past the one neighbour each way
+    std::vector<float> out;
+    std::set<int> steps_seen;
+    for (int b = 0; b < int(4.0 * kRate / kBlock); ++b) {
+        rig.block([](double) { return 1000.0; }, &out);
+        steps_seen.insert(rig.plugin->preset_modulation_step_shown());
+    }
+    // All three plateaus are visited, and only those.
+    CHECK(steps_seen == std::set<int>{-1, 0, 1});
+    // The level, in 20 ms windows after the first cycle has settled, sits on
+    // one of three plateaus 12 dB apart. The plateau values are measured from
+    // the run itself (a control: they must differ by ~12 dB), and every window
+    // lands within 1.5 dB of one of them -- a blend would not.
+    const auto level = [&](std::size_t at, std::size_t len) {
+        double e = 0.0;
+        for (std::size_t i = 0; i < len; ++i) e += double(out[at + i]) * out[at + i];
+        return 10.0 * std::log10(e / double(len) + 1e-30);
+    };
+    const std::size_t window = std::size_t(0.02 * kRate);
+    std::vector<double> levels;
+    for (std::size_t at = std::size_t(2.0 * kRate); at + window <= out.size(); at += window)
+        levels.push_back(level(at, window));
+    REQUIRE(levels.size() > 50);
+    const double lo = *std::min_element(levels.begin(), levels.end());
+    const double hi = *std::max_element(levels.begin(), levels.end());
+    INFO("plateaus " << lo << " .. " << hi << " dB");
+    CHECK(hi - lo == Approx(24.0).margin(3.0));  // control: the neighbours are heard
+    const double mid = (lo + hi) * 0.5;
+    int between = 0;
+    for (const double l : levels)
+        if (std::abs(l - lo) > 1.5 && std::abs(l - hi) > 1.5 && std::abs(l - mid) > 1.5) ++between;
+    // The route slews each step over 60 ms, so a window straddling a step
+    // reads between plateaus; at a 2 s cycle that is a handful of windows.
+    CHECK(between <= 12);
+}
+
 TEST_CASE("switching the Bands route off fades back to the user's band count",
           "[modulation][bands-target]") {
     // A square at +1 holds 64 bands over a 32-band base; the route is then
@@ -1163,4 +1222,323 @@ TEST_CASE("a param sync loses to the mask the audio path claimed, however fast i
     // (the order this replaced) the same run counts 0: each worker staged its
     // base mask over the request the audio path had not yet published.
     CHECK(superseded == static_cast<std::uint64_t>(kWrites));
+}
+
+// ── Fast LFO rates and aliasing ────────────────────────────────────────
+// Every destination that takes one value per block reads each LFO's mean
+// over the block (no fold above the block Nyquist); the Output gain reads
+// the band-limited waveform at every sample. Both are graded with Pulp's
+// modulation-sideband measurement over a steady 1 kHz tone: the energy at
+// the carrier +/- k times the LFO's frequency (the modulation) against the
+// energy anywhere else in the band (what the path added), each re the
+// carrier. `SPECTR_MODULATION_PLANT=lfo-point-sample` restores the
+// one-phase-per-block read and must fail these gates
+// (Spectr-lfo-alias-negative-control).
+namespace {
+
+std::unique_ptr<pulp::format::Processor> create_linear() {
+    auto p = spectr::create_spectr();
+    REQUIRE(static_cast<spectr::Spectr*>(p.get())->set_render_mode(
+        spectr::MaskRenderMode::linear_phase));
+    return p;
+}
+
+struct AliasRig {
+    double rate;
+    std::size_t block;
+    pulp::format::HeadlessHost host;
+    spectr::Spectr* plugin = nullptr;
+    std::uint64_t n = 0;
+    AliasRig(double sample_rate, std::size_t block_size, bool linear = false)
+        : rate(sample_rate), block(block_size), host(linear ? create_linear : create_tracking) {
+        host.prepare(rate, block);
+        plugin = dynamic_cast<spectr::Spectr*>(host.processor());
+        REQUIRE(plugin != nullptr);
+    }
+    void set(pulp::state::ParamID id, float v) { host.state().set_value(id, v); }
+    double block_cost_us(double hz, std::vector<float>* out) {
+        pulp::audio::Buffer<float> in(2, block), o(2, block);
+        for (std::size_t i = 0; i < block; ++i, ++n) {
+            const float v = 0.3f * float(std::sin(2.0 * kPi * hz * double(n) / rate));
+            in.channel(0)[i] = v;
+            in.channel(1)[i] = v;
+        }
+        const float* ip[] = {in.channel(0).data(), in.channel(1).data()};
+        pulp::audio::BufferView<const float> iv(ip, 2, block);
+        auto ov = o.view();
+        pulp::state::ParameterEventQueue events;
+        pulp::midi::MidiBuffer midi_in, midi_out;
+        pulp::format::ProcessContext ctx;
+        ctx.process_mode = pulp::format::ProcessMode::Realtime;
+        ctx.render_speed_hint = pulp::format::RenderSpeedHint::Realtime;
+        const auto t0 = std::chrono::steady_clock::now();
+        host.process(ov, iv, midi_in, midi_out, events, ctx);
+        const auto t1 = std::chrono::steady_clock::now();
+        await_workers();
+        if (out) out->insert(out->end(), o.channel(0).begin(), o.channel(0).end());
+        return std::chrono::duration<double, std::micro>(t1 - t0).count();
+    }
+};
+
+constexpr double kAliasCarrierHz = 1000.0;
+constexpr std::size_t kAliasTargetBank = 0;
+constexpr std::size_t kAliasTargetOutput = static_cast<std::size_t>(ModulationTarget::Output);
+
+struct AliasRun {
+    pulp::test::audio::ModulationSidebandReport report;
+    double median_block_us = 0.0;
+};
+
+// Render `seconds` of a steady tone with one LFO routed to `target`, skip
+// the first second, and grade the rest. `beats` 0 leaves the LFO off (the
+// control).
+AliasRun render_alias(double rate, std::size_t block, double beats, std::size_t target,
+                      int shape, float depth, double seconds = 3.0) {
+    AliasRig rig(rate, block);
+    const bool on = beats > 0.0;
+    rig.set(spectr::kParamLfoEnabled, on ? 1.0f : 0.0f);
+    rig.set(spectr::kParamLfoShape, static_cast<float>(shape));
+    rig.set(spectr::kParamLfoRate, on ? static_cast<float>(beats) : 1.0f);
+    rig.set(spectr::lfo_route_enabled_param_id(0, target), on ? 1.0f : 0.0f);
+    rig.set(spectr::lfo_route_amount_param_id(0, target), depth);
+    std::vector<float> out;
+    std::vector<double> costs;
+    for (int b = 0; b < int(seconds * rate / double(block)); ++b)
+        costs.push_back(rig.block_cost_us(kAliasCarrierHz, &out));
+    std::sort(costs.begin(), costs.end());
+    pulp::audio::Buffer<float> buffer(1, static_cast<int>(out.size()));
+    for (int i = 0; i < static_cast<int>(out.size()); ++i) buffer.channel(0)[i] = out[std::size_t(i)];
+    pulp::test::audio::ModulationSidebandOptions opts;
+    opts.fft_length = 1 << 16;
+    opts.analysis_offset = static_cast<int>(rate);
+    // Every line of a square's or an exponential gain's series up to the band
+    // edge is the modulation's own; only what is left is the path's.
+    opts.max_order = 64;
+    REQUIRE(out.size() >= std::size_t(opts.analysis_offset + opts.fft_length));
+    const double lfo_hz = on ? 120.0 / 60.0 / beats : 0.0;
+    AliasRun run;
+    run.report = pulp::test::audio::measure_modulation_sidebands(
+        std::as_const(buffer).view(), kAliasCarrierHz, lfo_hz, rate, opts);
+    run.median_block_us = costs[costs.size() / 2];
+    return run;
+}
+
+}  // namespace
+
+TEST_CASE("a spectral target reads the LFO's block mean: no fold above the block Nyquist, faithful below it",
+          "[modulation][lfo-alias]") {
+    // Bank (every band's level) over the sample-rate x block-size matrix.
+    // Above the block Nyquist the swing collapses to the wave's average, so
+    // the residual must sit at the unmodulated control's floor; well below
+    // it (an eighth of the block rate) the modulation sits at its own
+    // sidebands, well above what lands elsewhere.
+    for (double rate : {44100.0, 48000.0, 96000.0})
+        for (std::size_t block : {std::size_t{64}, std::size_t{256}, std::size_t{1024}}) {
+            const double block_rate = rate / double(block);
+            const auto control = render_alias(rate, block, 0.0, kAliasTargetBank, 0, 0.5f);
+            std::printf("[lfo-alias] bank %5.0f Hz / %4zu: control residual %6.1f dB (block rate %.1f Hz)\n",
+                        rate, block, control.report.residual_db, block_rate);
+            // Named stops, plus rates just below and above this block
+            // size's own Nyquist and at non-integer cycles per block, where a
+            // box filter is weakest and a fold would show first.
+            const double nyquist = 0.5 * block_rate;
+            const double beat_list[] = {1.0, 1.0 / 32, 1.0 / 256, 1.0 / 1024,
+                                        2.0 / (0.45 * nyquist), 2.0 / (0.55 * nyquist),
+                                        2.0 / (0.9 * nyquist), 2.0 / (1.3 * nyquist),
+                                        2.0 / (2.7 * nyquist)};
+            for (double beats : beat_list) {
+                const double lfo_hz = 2.0 / beats;
+                const auto run = render_alias(rate, block, beats, kAliasTargetBank, 0, 0.5f);
+                const bool above = lfo_hz > 0.5 * block_rate;
+                const bool well_below = lfo_hz < block_rate / 8.0;
+                std::printf("[lfo-alias] bank %5.0f Hz / %4zu: 1/%-5.0f beat = %7.1f Hz: sidebands %6.1f dB, elsewhere %6.1f dB%s\n",
+                            rate, block, 1.0 / beats, lfo_hz, run.report.sideband_db,
+                            run.report.residual_db, above ? "  [above block Nyquist]" : "");
+                INFO("rate " << rate << " block " << block << " beats " << beats);
+                // The block mean is a box one block wide: a sinc, not a brick
+                // wall, so above the block Nyquist the fold is attenuated by
+                // the box (-20 dB a cycle a block in, -45 dB and more beyond),
+                // never reproduced at the LFO's own frequency. With the
+                // point-sample plant the same rows read -7 .. -9 dB.
+                const double bin_hz = run.report.bin_hz;
+                const bool lines_resolvable = lfo_hz > 3.0 * 8.0 * bin_hz;
+                // Bank follows the LFO at every rate: its block mean through
+                // the mask and its fast residual as a per-sample gain. With
+                // the point-sample plant the rows above the block Nyquist
+                // read sidebands at the floor and -7 .. -9 dB elsewhere.
+                (void)well_below;
+                if (lines_resolvable) {
+                    CHECK(run.report.sideband_db > -20.0);
+                    CHECK(run.report.sideband_db - run.report.residual_db > 10.0);
+                } else {
+                    // The sidebands sit inside the carrier's own line at this
+                    // resolution; what is left is the restage's hold image at
+                    // the block rate, a known cost of per-block restaging.
+                    CHECK(run.report.residual_db < -30.0);
+                }
+            }
+        }
+}
+
+TEST_CASE("Bank's handed-over gain is numerically the law the mask path plays",
+          "[modulation][lfo-alias][equivalence]") {
+    // The same Bank route, Depth 50 % (a +/-6 dB swing), read two ways: at 1
+    // beat through the mask, at 1/64 beat (128 Hz, 0.68 cycle a block at
+    // 256 / 48 kHz: handed over entirely) as the per-sample gain. The tone's
+    // envelope, one value per carrier cycle in dB, is fitted with a sine at
+    // the LFO's frequency: both must swing 6 dB, and the fit must explain the
+    // envelope (a small residual), so the handed-over gain is the mask's law
+    // and not merely energy near the right frequency.
+    const auto envelope_fit = [](double beats, bool linear = false, bool lfo2_fast = false,
+                                 float* mask_share = nullptr, float mix_percent = 100.0f) {
+        AliasRig rig(48000.0, 256, linear);
+        rig.set(spectr::kMix, mix_percent);
+        rig.set(spectr::kParamLfoEnabled, 1.0f);
+        rig.set(spectr::kParamLfoShape, 0.0f);
+        rig.set(spectr::kParamLfoRate, static_cast<float>(beats));
+        rig.set(spectr::lfo_route_enabled_param_id(0, kAliasTargetBank), 1.0f);
+        rig.set(spectr::lfo_route_amount_param_id(0, kAliasTargetBank), 0.5f);
+        if (lfo2_fast) {
+            // LFO 2 off, parked at 1/256 beat: it must not key Bank's handover.
+            rig.set(spectr::kParamLfo2Enabled, 0.0f);
+            rig.set(spectr::kParamLfo2Rate, 1.0f / 256.0f);
+            rig.set(spectr::lfo_route_enabled_param_id(1, kAliasTargetBank), 1.0f);
+        }
+        std::vector<float> out;
+        for (int b = 0; b < int(3.0 * 48000.0 / 256.0); ++b)
+            rig.block_cost_us(kAliasCarrierHz, &out);
+        if (mask_share) *mask_share = rig.plugin->read_modulated_field().bank_mask_share;
+        // One envelope value per carrier cycle (48 samples), after a second.
+        constexpr std::size_t kCycle = 48;
+        std::vector<double> env_db;
+        for (std::size_t at = 48000; at + kCycle <= out.size(); at += kCycle) {
+            double e = 0.0;
+            for (std::size_t i = 0; i < kCycle; ++i) e += double(out[at + i]) * out[at + i];
+            env_db.push_back(10.0 * std::log10(e / double(kCycle) + 1e-20));
+        }
+        // Least-squares sine at the LFO's frequency on the envelope series.
+        const double lfo_hz = 2.0 / beats;
+        const double w = 2.0 * kPi * lfo_hz * kCycle / 48000.0;
+        double mean = 0.0;
+        for (double v : env_db) mean += v;
+        mean /= double(env_db.size());
+        double a = 0.0, b = 0.0;
+        for (std::size_t i = 0; i < env_db.size(); ++i) {
+            a += (env_db[i] - mean) * std::sin(w * double(i));
+            b += (env_db[i] - mean) * std::cos(w * double(i));
+        }
+        a *= 2.0 / double(env_db.size());
+        b *= 2.0 / double(env_db.size());
+        const double amp_db = std::sqrt(a * a + b * b);
+        double residual = 0.0;
+        for (std::size_t i = 0; i < env_db.size(); ++i) {
+            const double fit = mean + a * std::sin(w * double(i)) + b * std::cos(w * double(i));
+            residual += (env_db[i] - fit) * (env_db[i] - fit);
+        }
+        residual = std::sqrt(residual / double(env_db.size()));
+        return std::pair<double, double>{amp_db, residual};
+    };
+    // Both render modes, at the mask path (1 beat), inside the handover band
+    // (1/4 and 1/6 beat: 0.04 and 0.06 cycle a block, where both shares
+    // play and the renderer's latency separates them) and fully handed over.
+    for (bool linear : {false, true})
+        for (double beats : {1.0, 1.0 / 4, 1.0 / 6, 1.0 / 64}) {
+            const auto fit = envelope_fit(beats, linear);
+            std::printf("[lfo-alias] bank law %s 1/%-3.0f beat: swings %.2f dB, residual %.2f dB\n",
+                        linear ? "linear-phase" : "tracking    ", 1.0 / beats, fit.first, fit.second);
+            INFO((linear ? "linear-phase " : "tracking ") << "beats " << beats);
+            CHECK(fit.first == Approx(6.0).margin(0.5));
+            CHECK(fit.second < 0.3);
+        }
+    // Keying: LFO 2 switched off but parked at a fast Rate keys nothing, so a
+    // 1-beat Bank stays on the mask path with the same law.
+    float share = 0.0f;
+    const auto keyed = envelope_fit(1.0, false, true, &share);
+    std::printf("[lfo-alias] bank law with LFO 2 off at 1/256: swings %.2f dB, mask share %.2f\n",
+                keyed.first, share);
+    CHECK(share == 1.0f);
+    CHECK(keyed.first == Approx(6.0).margin(0.5));
+    // Wet-only: at Mix 25 % the mask moves only the wet share of the output,
+    // a smaller swing of the sum (1.5 dB under the mixer's law). The
+    // handed-over gain must reach that same share, through the
+    // latency-aligned dry, and read the same swing in both render modes --
+    // a gain on the whole output would read the full 6 dB here.
+    const auto slow_mix = envelope_fit(1.0, false, false, nullptr, 25.0f);
+    const auto fast_mix = envelope_fit(1.0 / 64, false, false, nullptr, 25.0f);
+    const auto fast_mix_linear = envelope_fit(1.0 / 64, true, false, nullptr, 25.0f);
+    std::printf("[lfo-alias] bank law at Mix 25 %%: mask path swings %.2f dB, per-sample %.2f dB, "
+                "per-sample linear-phase %.2f dB\n",
+                slow_mix.first, fast_mix.first, fast_mix_linear.first);
+    CHECK(slow_mix.first < 4.0);
+    CHECK(slow_mix.first > 0.5);
+    CHECK(fast_mix.first == Approx(slow_mix.first).margin(0.4));
+    CHECK(fast_mix_linear.first == Approx(slow_mix.first).margin(0.4));
+}
+
+TEST_CASE("the Output target follows a fast LFO at audio rate, band-limited",
+          "[modulation][lfo-alias]") {
+    // Output (a per-sample gain) at rates far above any block Nyquist: a
+    // true amplitude modulation, its energy at the LFO's own sidebands and
+    // the residual near the control, for the sine and for the square whose
+    // edges polyBLEP keeps out of the band.
+    for (double rate : {44100.0, 48000.0, 96000.0})
+        for (std::size_t block : {std::size_t{64}, std::size_t{256}, std::size_t{1024}}) {
+            const auto control = render_alias(rate, block, 0.0, kAliasTargetOutput, 0, 1.0f);
+            for (int shape : {0, 2})
+                for (double beats : {1.0 / 256, 1.0 / 1024}) {
+                    const auto run = render_alias(rate, block, beats, kAliasTargetOutput, shape, 1.0f);
+                    std::printf("[lfo-alias] output %5.0f Hz / %4zu: %s 1/%-5.0f beat = %7.1f Hz: sidebands %6.1f dB, elsewhere %6.1f dB (control %6.1f)\n",
+                                rate, block, shape == 0 ? "sine  " : "square", 1.0 / beats,
+                                2.0 / beats, run.report.sideband_db, run.report.residual_db,
+                                control.report.residual_db);
+                    INFO("rate " << rate << " block " << block << " shape " << shape << " beats " << beats);
+                    CHECK(run.report.sideband_db > -20.0);
+                    CHECK(run.report.sideband_db - run.report.residual_db > 20.0);
+                }
+        }
+}
+
+TEST_CASE("a slow LFO costs no more per block than it did", "[modulation][lfo-alias][cost]") {
+    // The block mean is closed form and the Output ramp is kept below 1/32
+    // cycle a block, so a 1-beat LFO on Bank and on Output pays nothing new.
+    // Recorded against the unmodulated control with a generous bound; the
+    // per-callback cost measurements elsewhere in this file stay the
+    // finer instrument.
+    const auto control = render_alias(48000.0, 256, 0.0, kAliasTargetBank, 0, 0.5f);
+    const auto bank = render_alias(48000.0, 256, 1.0, kAliasTargetBank, 0, 0.5f);
+    const auto output = render_alias(48000.0, 256, 1.0, kAliasTargetOutput, 0, 1.0f);
+    const auto bank_fast = render_alias(48000.0, 256, 1.0 / 256, kAliasTargetBank, 0, 0.5f);
+    const auto output_fast = render_alias(48000.0, 256, 1.0 / 256, kAliasTargetOutput, 0, 1.0f);
+    std::printf("[lfo-alias] cost per 256-sample block, median: control %.0f us; 1-beat Bank %.0f us, Output %.0f us; "
+                "1/256-beat Bank %.0f us, Output %.0f us\n",
+                control.median_block_us, bank.median_block_us, output.median_block_us,
+                bank_fast.median_block_us, output_fast.median_block_us);
+    // Tracked, loosely gated: a shared host's load moves these by 2-3x
+    // between runs, so the bound catches an order-of-magnitude regression
+    // and nothing finer (the numbers above are the record).
+    for (const auto* run : {&bank, &output, &bank_fast, &output_fast})
+        CHECK(run->median_block_us < 5.0 * control.median_block_us + 200.0);
+}
+
+TEST_CASE("the Output and Bank coordinates alone equal the full composition's",
+          "[modulation][lfo-alias]") {
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 0.8f;
+    settings.lfo2_enabled = true;
+    settings.lfo2_depth = 0.6f;
+    settings.routes[0][kAliasTargetOutput].enabled = true;
+    settings.routes[0][kAliasTargetOutput].amount = 0.7f;
+    settings.routes[1][kAliasTargetOutput].enabled = true;
+    settings.routes[1][kAliasTargetOutput].amount = 0.4f;
+    settings.routes[0][kAliasTargetBank].enabled = true;
+    settings.routes[0][kAliasTargetBank].amount = 1.0f;
+    for (float w1 : {-1.0f, -0.3f, 0.0f, 0.5f, 1.0f})
+        for (float w2 : {-0.9f, 0.1f, 1.0f}) {
+            const auto coords = spectr::modulation_coordinates(settings, w1, w2);
+            CHECK(spectr::output_modulation_coordinate(settings, w1, w2)
+                  == Approx(coords[ModulationTarget::Output]));
+            CHECK(spectr::bank_modulation_coordinate(settings, w1, w2)
+                  == Approx(coords[ModulationTarget::WholeBank]));
+        }
 }

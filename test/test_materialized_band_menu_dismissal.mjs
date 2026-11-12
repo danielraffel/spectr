@@ -20,7 +20,10 @@ import fs from 'node:fs';
 
 const PLANTS = ['--plant-document-outside', '--plant-menu-only-containment',
                 '--plant-stacking-submenus', '--plant-escape-closes-all',
-                '--plant-no-escape', '--plant-unanswerable-dismisses'];
+                '--plant-no-escape', '--plant-unanswerable-dismisses',
+                '--plant-pointer-isolation', '--plant-lifted-pointer-isolation',
+                '--plant-pointerdown-isolation', '--plant-pointerup-isolation',
+                '--plant-click-isolation'];
 // NOT a plant, deliberately: making `< Back` clear only its own flag cannot be
 // detected from here, and a control that cannot go red is worse than none.
 // Once one-submenu-at-a-time holds, the other flag is already false by the
@@ -75,6 +78,60 @@ if (plant === '--plant-escape-closes-all')
               '        if (submenu) closeSubmenus(); else onClose();');
 if (plant === '--plant-no-escape')
   replaceOnce('doc.addEventListener("keydown", onEscapeKey, true);', '');
+if (plant === '--plant-pointer-isolation')
+  replaceOnce('      onPointerDown: (event) => event.stopPropagation(),\n' +
+              '      onPointerUp: (event) => event.stopPropagation(),\n' +
+              '      onClick: (event) => event.stopPropagation(),\n', '');
+if (plant === '--plant-lifted-pointer-isolation')
+  replaceOnce('        onPointerDown: (event) => event.stopPropagation(),\n' +
+              '        onPointerUp: (event) => event.stopPropagation(),\n' +
+              '        onClick: (event) => event.stopPropagation(),\n' +
+              '        onDismiss: () => closeSubmenuLevel("macros"),\n',
+              '        onDismiss: () => closeSubmenuLevel("macros"),\n');
+
+// Remove one propagation guard from every mounted panel. The positive path
+// dispatches all three browser activation phases in order; the ancestor model
+// records any phase that escapes, so each phase has its own red control.
+function removeLiftedPhaseGuard(phase, panel) {
+  const line = {
+    pointerdown: '        onPointerDown: (event) => event.stopPropagation(),\n',
+    pointerup: '        onPointerUp: (event) => event.stopPropagation(),\n',
+    click: '        onClick: (event) => event.stopPropagation(),\n',
+  }[phase];
+  assert(line, 'unknown phase ' + phase);
+  const marker = `        onDismiss: () => closeSubmenuLevel("${panel}"),\n`;
+  const block =
+    '        onPointerDown: (event) => event.stopPropagation(),\n' +
+    '        onPointerUp: (event) => event.stopPropagation(),\n' +
+    '        onClick: (event) => event.stopPropagation(),\n' +
+    marker;
+  replaceOnce(block, block.replace(line, ''));
+}
+function removeEveryPanelPhaseGuard(phase) {
+  const rootLine = {
+    pointerdown: '      onPointerDown: (event) => event.stopPropagation(),\n',
+    pointerup: '      onPointerUp: (event) => event.stopPropagation(),\n',
+    click: '      onClick: (event) => event.stopPropagation(),\n',
+  }[phase];
+  assert(rootLine, 'unknown phase ' + phase);
+  // The root and both lifted panels share the same indentation. Anchor the
+  // root removal to its authored aria label and the complete handler block so
+  // this plant cannot accidentally remove only one sibling or phase.
+  const rootBlock =
+    '      onPointerDown: (event) => event.stopPropagation(),\n' +
+    '      onPointerUp: (event) => event.stopPropagation(),\n' +
+    '      onClick: (event) => event.stopPropagation(),\n' +
+    '      overlay: true,\n' +
+    '      onDismiss: onClose,\n';
+  const rootSnippet = '      "aria-label": "Band actions",\n' + rootBlock;
+  replaceOnce(rootSnippet,
+              '      "aria-label": "Band actions",\n' + rootBlock.replace(rootLine, ''));
+  removeLiftedPhaseGuard(phase, 'macros');
+  removeLiftedPhaseGuard(phase, 'modulation');
+}
+if (plant === '--plant-pointerdown-isolation') removeEveryPanelPhaseGuard('pointerdown');
+if (plant === '--plant-pointerup-isolation') removeEveryPanelPhaseGuard('pointerup');
+if (plant === '--plant-click-isolation') removeEveryPanelPhaseGuard('click');
 
 // ── A DOM shim that keeps `document` and `document.body` distinct ─────────
 //
@@ -161,6 +218,14 @@ function mount() {
     },
   };
   const dom = makeDom();
+  const model = {
+    gains: new Array(64).fill(0.5),
+    muted: new Array(64).fill(false),
+    captures: 0,
+    underlyingMutations: 0,
+    underlyingPhases: [],
+    underlyingBands: [],
+  };
   const window = { pulp: {
     on(type, callback) {
       if (!listeners.has(type)) listeners.set(type, new Set());
@@ -190,9 +255,11 @@ function mount() {
     hook + '\n' + component + '\nreturn ContextMenu;')(
       React, window, dom.document, () => ({}), fakeSetTimeout, fakeClearTimeout);
   const noop = () => {};
-  const props = { x: 300, y: 300, band: 8, N: 64, selection: new Set([1, 2]),
+  const props = { x: 300, y: 300, band: 14, N: 64, selection: new Set([1, 2]),
     macros: [], editMode: 'sculpt', onClose: () => closed++, onEditMode: noop,
-    onMuteBand: noop, onZeroBand: noop, onSoloBand: noop, onSelectAll: noop,
+    onMuteBand: band => { model.muted[band] = !model.muted[band]; },
+    onZeroBand: band => { model.gains[band] = 0; },
+    onSoloBand: noop, onSelectAll: noop,
     onSelectNone: noop, onZeroSel: noop, onMuteSel: noop, onFitView: noop,
     onUndo: noop, onRedo: noop, onMacroMembers: noop };
   function expand(node) {
@@ -234,6 +301,53 @@ function mount() {
     assert(found, 'visible button ' + action);
     return found;
   };
+  function pathTo(target, node = tree, path = [], seen = new Set()) {
+    if (!node || typeof node !== 'object') return null;
+    if (seen.has(node)) return null;
+    seen.add(node);
+    const next = path.concat(node);
+    if (node === target) return next;
+    for (const child of node.children || []) {
+      const found = pathTo(target, child, next, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  function bubble(target, type) {
+    const event = {
+      target,
+      currentTarget: null,
+      type,
+      stopped: false,
+      stopPropagation() { this.stopped = true; },
+    };
+    const handler = {
+      pointerdown: 'onPointerDown',
+      pointerup: 'onPointerUp',
+      click: 'onClick',
+    }[type];
+    const path = pathTo(target);
+    assert(path, 'event target is mounted in the React tree');
+    for (let i = path.length - 1; i >= 0; --i) {
+      event.currentTarget = path[i];
+      path[i].props?.[handler]?.(event);
+      if (event.stopped) break;
+    }
+    // The canvas is an ancestor outside this React tree. Every un-stopped
+    // phase reaches it; pointerdown additionally establishes capture and
+    // mutates the mounted band. This is a structural event model: no screen
+    // geometry or transformed hit-test is executed here, so the harness band
+    // comes from the mounted menu props.
+    if (!event.stopped) {
+      model.underlyingPhases.push(type);
+      model.underlyingMutations++;
+      if (type === 'pointerdown') {
+        model.captures++;
+        model.underlyingBands.push(props.band);
+      }
+    }
+    return event;
+  }
   const panel = marker => nodes(tree).find(n => n.props[marker]);
   render();
   return {
@@ -254,6 +368,19 @@ function mount() {
       render();
     },
     refOf(marker) { return panel(marker)?.props?.ref?.current ?? null; },
+    model,
+    menuPress(action) {
+      const row = button(action);
+      assert(row, 'context menu action mounted');
+      // Browser pointer activation is ordered pointerdown, pointerup, click.
+      // Each event bubbles from the selected row through its actual mounted
+      // panel; lifted submenus are siblings, so their own panel handlers are
+      // required to stop the path before it reaches the canvas ancestor.
+      bubble(row, 'pointerdown');
+      bubble(row, 'pointerup');
+      bubble(row, 'click');
+      render();
+    },
     // Escape as each host delivers it. Both route it to the overlay stack,
     // which pops the TOP claim and fires that claim's onDismiss; an open
     // submenu stacks on the menu, so it is the top. The standalone offers the
@@ -432,6 +559,47 @@ function check() {
     assert(menu.dom.live() > 0, 'control: listeners were registered');
     menu.unmount();
     assert.equal(menu.dom.live(), 0, 'no listener outlives the menu');
+  }
+
+  // ── Menu and lifted submenu actions must not reach the canvas underneath ─
+  // This dispatches the real React bubble order (pointerdown, pointerup,
+  // click) through the selected row and its mounted panel. The macros and
+  // modulation panels are siblings of the root menu, so each needs its own
+  // stopPropagation handlers. This is a structural event model: it executes
+  // no screen geometry or transformed hit-test.
+  {
+    const menu = mount();
+    const before = menu.model.muted.slice();
+    menu.menuPress('reset-band');
+    assert.equal(menu.model.gains[14], 0,
+                 'control: Reset must change the mounted Band 14 action');
+    assert.deepEqual(menu.model.muted, before,
+                     'root menu action must not mutate the canvas');
+    assert.equal(menu.model.captures, 0,
+                 'root menu press must not establish canvas capture');
+    assert.equal(menu.model.underlyingMutations, 0,
+                 'root menu press must not reach the canvas');
+
+    menu.click('macros-toggle');
+    assert(menu.panel('data-spectr-macros-panel'), 'macros panel open');
+    menu.menuPress('macros-back');
+    assert.equal(menu.model.captures, 0,
+                 'lifted macros press must not establish canvas capture');
+    assert.equal(menu.model.underlyingMutations, 0,
+                 'lifted macros press must not reach the canvas');
+
+    menu.click('modulation-toggle');
+    assert(menu.panel('data-spectr-modulation-panel'), 'modulation panel open');
+    menu.menuPress('modulation-back');
+    assert.equal(menu.model.captures, 0,
+                 'lifted modulation press must not establish canvas capture');
+    assert.equal(menu.model.underlyingMutations, 0,
+                 'lifted modulation press must not reach the canvas');
+    assert.deepEqual(menu.model.underlyingPhases, [],
+                     'no pointerdown, pointerup, or click phase may reach the canvas');
+    assert.deepEqual(menu.model.underlyingBands, [],
+                     'structural menu presses have no underlying band hit');
+    menu.unmount();
   }
 }
 

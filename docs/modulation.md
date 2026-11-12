@@ -1,7 +1,19 @@
 # Internal modulation: targets, depths, stacking
 
 Spectr has two tempo-synced LFOs. An LFO defines a **movement** -- its Shape
-and its Rate in beats -- and nothing else. What it moves, and how far, is set
+and its Rate in beats -- and nothing else. The Rate runs from 1/1024 to 4096
+beats per cycle; the menus step through the powers of two and show the stop
+as one token ("1/1024" .. "4096", the unit named once in the section head),
+a host can automate any value between; at the far end 4096 beats is 34
+minutes at 120 BPM. How a destination samples the LFO depends on how often it
+can take a value, and neither way aliases (see [Sampling](#sampling-the-lfos)
+below): a destination that takes one value per audio block -- every spectral
+target, the Freeze gate and the Length / Bands / Preset steps -- reads the
+waveform's mean over that block, so a cycle shorter than the block fades to
+the wave's average rather than folding into a block-rate stepper; the Output
+gain, which takes a value every sample, follows the LFO at audio rate with
+band-limited waveforms, so a 1/1024-beat LFO on Output is a true
+amplitude modulation. What it moves, and how far, is set
 per **target**: each LFO drives any set of targets at once, and each target
 has its own **Depth**. This page is the contract for how targets combine, what
 each one does, how the controls record and play back, and how sessions and
@@ -45,7 +57,33 @@ show their Depth rows together; a switched-off target keeps its stored Depth
 for when it is switched on again. Switching a target never moves the row under
 the pointer: the Depth row opens below it and the list's scroll offset is
 kept. Depths default to 50 % (the LFO depth a fresh 1.0.x instance opened
-with); a fresh instance drives Bank from both LFOs, everything else off.
+with; for Freeze that is half of every cycle frozen), and each LFO's Rate opens
+at 1 beat, one cycle per beat, so a fresh LFO follows the host tempo as is. A
+fresh instance routes nothing: the LFO 1 / LFO 2 switches turn the
+LFOs on and a target is switched on separately, and neither control writes
+the other. An LFO that is on with nothing routed reads "On, no target"; a
+target that is on under an LFO that is off reads "On, LFO off". (A session
+saved by 1.0.x, which had no routing lanes, keeps its single target: it is
+migrated on restore, not defaulted.)
+
+## Band groups: modulating a selection
+
+Bank moves every band together. To move only some, select them in the
+plot and open their band menu: its Modulation submenu lists the selection
+as its own target above Bank -- "Band 12" for one band, "Bands 12-15" for a
+run, "4 bands" otherwise -- with a switch and a Depth per LFO, exactly like
+the other targets. Switching it on makes a **band group**: those bands,
+driven by that LFO at that Depth. A session holds up to four groups; each
+keeps its own Depth per LFO, so one group can breathe gently while another
+is thrown around. The same selection always edits the same group (select
+the bands again to change its Depth or switch its other LFO on), and a group
+neither LFO drives is forgotten.
+
+A group does its own thing: it offsets its bands by wave x Depth x 12 dB
+the way Bank does, **on top of** Bank. A band in a group under both hears
+Bank plus its group; a band in no group hears Bank alone. Groups ride the
+session (they are not host parameters: a band set is not an automation
+lane), and the LFO switches gate them like every other target.
 
 ### Selected-band groups
 
@@ -143,11 +181,12 @@ block) and must fail on its gate.
 each still shows ONE indicator: its one needle and value arc sit at the
 **value playing**, in violet, moving at the display rate (white needle and blue
 arc when nothing drives it). The **base** -- the value the user set, or host
-automation is playing -- is a short white tick across the ring. The readout
-prints the value playing, and the base while the knob is being dragged; the
-drag moves the tick. The base is the only thing a drag, a wheel notch or an
-arrow key edits and the only thing the host records; the value playing is
-display only. While an LFO drives a knob its track ring and rim are tinted a
+automation is playing -- is not marked on the ring: a second mark read as a
+second, stuck control in a DAW. The readout prints the value playing, and the
+base while the knob is being dragged. The base is the only thing a drag, a
+wheel notch or an arrow key edits and the only thing the host records; the
+value playing is display only
+(`tools/patch_materialized_modulated_no_base_tick.py`). While an LFO drives a knob its track ring and rim are tinted a
 quiet violet as well. Grabbing a
 driven knob -- a drag, a wheel notch or an arrow key -- asks the override
 question (below) on the release of the press; **Keep modulating** lets the
@@ -163,9 +202,10 @@ around it in the same frame (`tools/patch_materialized_modulation_controls_follo
 
 **The MORPH slider** works the same way: while an LFO drives Morph and both
 snapshots exist, its one thumb and fill sit at the morph position playing, in
-violet, and the base (what a drag moves and the Morph lane records) is a short
-white tick on the track; with no LFO the white thumb and blue fill are the
-base (`tools/patch_materialized_modulated_single_indicator.py`).
+violet, and the base (what a drag moves and the Morph lane records) is not
+marked on the track; with no LFO the white thumb and blue fill are the base
+(`tools/patch_materialized_modulated_single_indicator.py`, then
+`tools/patch_materialized_modulated_no_base_tick.py`).
 
 A control showing two indicators at once -- the base's own needle or thumb
 beside the value playing -- reads as two selections. `Spectr-native-shot`'s
@@ -205,12 +245,24 @@ into 20 Hz..20 kHz with a one-octave minimum; at an edge Band shift holds the
 width rather than squeezing it. The viewport lanes (3001, 3002) and their
 automation are never written by an LFO.
 
-**Audio only.** The plot and the minimap keep showing the user's window, and
-every pointer hit-test runs in it, so the band under the pointer is always the
-one edited (proved in `test_native_state_parity.cpp`, "viewport modulation
-never moves the band under the pointer"). An overlay of the audible window was
-built and removed by decision; pausing the sweep while a band is dragged was
-rejected because it changes what is heard the moment a band is touched.
+**Drawn, paint only.** The plot, the grid, the rulers and the minimap paint
+the audible window while the sweep runs: each `modulation_frame` carries
+`viewport_driven`, `min_hz` and `max_hz`, evaluated at the frame's phase from
+the base window the audio owner modulated, and `renderAll` swaps that window
+into the live view for exactly one paint pass and restores the user's window
+before it returns (`tools/patch_materialized_modulated_viewport.py`,
+`test_materialized_modulated_viewport.mjs`, and "native modulation frames
+carry the window an LFO is moving" in `test_native_n1.cpp`). Nothing that
+publishes the view can observe the swap, so an edit made during a sweep still
+carries the window the user set, and the zoom readout keeps showing it.
+
+Every pointer hit-test still runs in the user's window, so the band under the
+pointer is always the one edited (proved in `test_native_state_parity.cpp`,
+"viewport modulation never moves the band under the pointer"). An earlier
+overlay of the audible window had been removed by decision and the sweep was
+audio only until 2026-10-13, when drawing it was requested again; pausing the
+sweep while a band is dragged remains rejected because it changes what is
+heard the moment a band is touched.
 
 ## Freeze
 
@@ -347,15 +399,19 @@ escape hatch (plays the user's count, lanes kept); it is off.
 
 ## Preset
 
-The Preset target morphs the composed field (after Morph, the snapshots, Bank
-and the macros) toward the presets next to the current one in the preset
-menu's order (factory, then user): the coordinate x 4 is a continuous position
-in presets, and between two presets each band's gain interpolates, the
-morph's own rule. Position 0 is **the field as it stands, the user's edits
-included**: the target never discards an edit, it moves away from the current
-sound toward its neighbours and back. Mutes never move
-(`preserve_authored_mutes`); a band a preset floors goes to -24 dB. At the
-ends of the list it stops at the last neighbour that exists.
+The Preset target steps the composed field (after Morph, the snapshots, Bank
+and the macros) through the presets next to the current one in the preset
+menu's order (factory, then user): the coordinate x 4 is a position in
+presets, rounded to the nearest whole one, and that preset's gains play as
+they are. A sine LFO walks the list one shape at a time -- flat, then the
+next, then the one after -- and a square flips between two; what the
+dropdown names is exactly what plays, never a blend of two presets. Between
+steps the field does not change, so the overlay has nothing new to draw.
+Position 0 is **the field as it stands, the user's edits included**: the
+target never discards an edit, it steps away from the current sound to its
+neighbours and back. Mutes never move (`preserve_authored_mutes`); a band a
+preset floors goes to -24 dB. At the ends of the list it stops at the last
+neighbour that exists.
 
 The neighbourhood is the editor's: when a preset is applied, the band count
 changes or the user library changes, it resolves the presets four either side
@@ -373,8 +429,10 @@ measure 24 +/- 3 dB apart and the shown step is +1 / -1 by half.
 
 ## Header controls: context menus
 
-Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH or
-the preset button opens a small menu in the band menu's style:
+Right-clicking LIVE / FROZEN, MIX, INTENSITY, OUTPUT, LENGTH, BANDS, MORPH,
+the preset button or a SNAPSHOT capture button (A, B -- the Snapshot A and
+Snapshot B targets; the recall buttons keep their right-click, which empties
+a filled slot) opens a small menu in the band menu's style:
 
 - the control's name and **Reset to** its default (Live, 100 %, 0.0 dB,
   1 bar, 32 bands, A; the preset has none);
@@ -384,7 +442,7 @@ the preset button opens a small menu in the band menu's style:
   control, else LFO 1) and that LFO's **Shape** and **Rate**;
 - **<TARGET> TARGET** -- only this control's own target, never the full
   list: per LFO a row such as **LFO 1 → Freeze** whose switch is the route
-  (On, Off, or "LFO off" when the route is on but its LFO is not). While a
+  (On, Off, or "On, LFO off" when the route is on but its LFO is not). While a
   route is on its settings sit nested under it behind Settings' guide line:
   **Depth**, and under Freeze **Hold for Length** (one setting, shown under
   either Freeze route);
@@ -419,6 +477,87 @@ again** turns the Setting off. The dialog is generic
 (`window.spectrOverrideModulated(control, target, lfos, action, options)`;
 `options.keepApplies === false` drops the action on Keep); the Mix,
 Intensity and Output knobs ask it in their own names.
+
+## Sampling the LFOs
+
+An LFO is a continuous function of phase; what can alias is how a destination
+samples it. Two regimes, both from Pulp's `pulp/signal/lfo_sampling.hpp`:
+
+- **One value per block** (the band groups, Snapshot A / B, Morph, Band
+  shift, Band spread, Intensity, Mix, the Freeze gate, Length, Bands, Preset,
+  and Bank below 1/32 cycle per block):
+  the value is the exact mean of the waveform over the block's phase interval
+  (`lfo_mean`), a box filter one block wide. Below the block Nyquist (half the
+  block rate: 94 Hz at 256-sample blocks and 48 kHz) it is the value at the
+  block's centre to within the box's rolloff; above it the swing collapses to
+  the wave's average -- a 2 kHz LFO on a band group fades to nothing, by
+  design, rather than painting a random stepper (Bank itself is handed to the
+  per-sample path, below). The Freeze gate on the sine, triangle and
+  saw compares that mean with its threshold; on the square it is on when more
+  than half the block lies inside the gate's window. Closed form, so a fast
+  LFO costs what a slow one does.
+- **Every sample** (Output, and Bank once handed over): above 1/32 cycle
+  per block the gain reads each LFO's band-limited waveform at every sample (`lfo_bandlimited`: polyBLEP at
+  the square's and saw's edges, polyBLAMP at the triangle's corners, the sine
+  exact), phase-continuous with the block phase and at the increment the
+  block advance uses. Below that the previous ramp between block ends is
+  within 0.5 % of the curve and costs nothing per sample, so a slow LFO pays
+  nothing new. **Bank is handed over** to this path: it moves every band
+  together, which is a broadband gain, so from 1/32 cycle per hold interval
+  its share through the mask shrinks and its share as the per-sample gain
+  grows (whole by 1/16). The hold interval is how long the mask keeps a
+  value: the block in Tracking, where the convolver adopts a restage every
+  block, but the analysis hop (2048 samples) in linear phase, where the
+  frame engine adopts only at a hop boundary and its window smears anything
+  faster -- so in linear phase Bank hands over from about 0.7 Hz and is whole
+  by about 1.5 Hz at 48 kHz, before the window can smear it. The handover is
+  keyed per destination on the LFOs that are on and routed to it, so an LFO
+  left at a fast Rate while off, or driving another target, hands nothing
+  over. Sweeping Rate across the handover moves nothing, and once handed over
+  the mask holds no Bank at all, so Bank follows the LFO exactly at any rate
+  rather than fading. The per-sample share is read the renderer's latency
+  behind the block phase, so a handover in progress sums with the mask's
+  share rather than partly cancelling. It is scaled by the slewed Intensity
+  as the mask would scale it, and it reaches the WET path only, at any Mix:
+  the dry input, delayed by the renderer's latency, is subtracted out of the
+  output before the gain and added back after, so below 100 % Mix the dry
+  path stays as still as it does on the mask path. The per-band clamp the
+  mask applies does not reach it.
+
+Measured (`test/test_modulation_freeze.cpp`, `[lfo-alias]`, Pulp's
+`measure_modulation_sidebands`: a 1 kHz tone, the energy at the carrier +/- k
+times the LFO frequency against the energy anywhere else in 20 Hz .. 20 kHz,
+both re the carrier; `SPECTR_MODULATION_PLANT=lfo-point-sample` restores the
+one-phase-per-block read as the negative control):
+
+| Target, LFO rate at 120 BPM (48 kHz, 256-sample blocks: block rate 187.5 Hz) | Point-sample read (before): sidebands / elsewhere | Shipping: sidebands / elsewhere |
+| --- | --- | --- |
+| Bank, 1 beat (2 Hz; lines inside the carrier's own line at this resolution) | -40.4 / -52.2 dB | -40.4 / -52.2 dB |
+| Bank, 1/32 beat (64 Hz) | -11.7 / -11.8 dB | -6.6 / -115.1 dB |
+| Bank, 1/42 beat (84 Hz, just below the block Nyquist) | -15.5 / -9.7 dB | -6.6 / -113.9 dB |
+| Bank, 1/61 beat (122 Hz, just above it) | -19.7 / -9.0 dB | -6.6 / -113.9 dB |
+| Bank, 1/256 beat (512 Hz) | -12.9 / -10.2 dB | -6.6 / -113.6 dB |
+| Bank, 1/1024 beat (2048 Hz) | -33.9 / -6.8 dB | -6.6 / -113.8 dB |
+| Output, sine, 1/256 beat | -11.7 / -11.3 dB | -6.6 / -113.5 dB |
+| Output, sine, 1/1024 beat | -44.5 / -6.8 dB | -6.6 / -113.8 dB |
+| Output, square, 1/256 beat | -9.9 / -7.8 dB | -4.5 / -43.5 dB |
+| Output, square, 1/1024 beat | -19.2 / -5.2 dB | -4.7 / -38.4 dB |
+| Unmodulated control: elsewhere | -114.3 dB | -114.3 dB |
+
+A Bank LFO at Depth 50 % is a +/-6 dB swing, which is the -6.6 dB the
+sidebands read once the modulation is reproduced; "elsewhere" at the control's
+floor means the path added nothing. The same rows hold at 44.1 and 96 kHz and
+at 64- and 1024-sample blocks, and at 42, 52, 84, 122 and 253 Hz on the
+187.5 Hz block rate, where a one-block box alone is weakest. The square's
+remaining -38 .. -58 dB is polyBLEP's own reach. Bank's law is pinned by a
+fit of the tone's envelope: 6.00 dB of swing through the mask at 1 beat,
+5.84 dB as the per-sample gain at 1/64 beat, each with a 0.07 dB fit
+residual. Per 256-sample block, median: 32 us with no LFO, 60 us with a 1-beat
+Bank LFO (the mask restage, as before), 32 us with a 1-beat Output LFO. In
+linear phase the same envelope fit reads 5.7 dB at 1 beat, 6.0 dB at 1/6 beat
+and 5.8 dB at 1/64 beat; keyed on the block instead of the hop, 1/4 beat read
+2.0 dB there, which is what the hop keying exists to catch. At Mix 25 % the
+mask path and the handed-over path both read the wet quarter's 3.1 dB swing.
 
 ## Smoothness
 

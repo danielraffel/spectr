@@ -31,31 +31,91 @@ the current latest never becomes latest, and step 4 says so.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+from check_macos_release import check_package as check_macos_package
+from check_windows_release import check_package as check_windows_package
 
 HERE = Path(__file__).resolve().parent
 REPO_SLUG = "danielraffel/spectr"
 LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 
 
+def _digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return "sha256:" + h.hexdigest()
+
+
+def check_draft(version: str, target: str, windows: tuple[Path, Path],
+                macos: tuple[Path, Path] | None = None,
+                allow_existing_macos: bool = False) -> None:
+    """Refuse a changed draft, tag, or asset set before any publication step."""
+    tag = f"v{version}"
+    result = subprocess.run(
+        ["gh", "release", "view", tag, "--repo", REPO_SLUG,
+         "--json", "isDraft,assets"], capture_output=True, text=True, check=True)
+    release = json.loads(result.stdout)
+    tag_ref = subprocess.run(
+        ["gh", "api", f"repos/{REPO_SLUG}/git/ref/tags/{tag}",
+         "--jq", ".object.sha"], capture_output=True, text=True, check=True)
+    if release.get("isDraft") is not True or tag_ref.stdout.strip() != target:
+        raise ValueError(f"{tag}: draft state or tag target changed")
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError(f"{tag}: release assets are unavailable")
+    by_name = {}
+    for asset in assets:
+        name = asset.get("name")
+        if not isinstance(name, str) or name in by_name:
+            raise ValueError(f"{tag}: duplicate or invalid release asset name")
+        by_name[name] = asset
+    expected = {path.name: _digest(path) for path in windows}
+    if macos:
+        expected.update({path.name: _digest(path) for path in macos})
+    for name, digest in expected.items():
+        if by_name.get(name, {}).get("digest") != digest:
+            raise ValueError(f"{tag}: missing or changed draft asset {name}")
+    allowed = {path.name for path in windows}
+    if macos or allow_existing_macos:
+        allowed.update((f"Spectr-{version}.pkg", "appcast.xml"))
+    if not (set(by_name) <= allowed if allow_existing_macos and not macos
+            else set(by_name) == allowed):
+        raise ValueError(f"{tag}: unexpected draft asset set")
+
+
 def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
-         title: str | None = None) -> list[list[str]]:
+         title: str | None = None,
+         windows: tuple[Path, Path] | None = None,
+         reuse_draft: bool = False) -> list[list[str]]:
     tag = f"v{version}"
     if appcast.name != "appcast.xml":
         raise SystemExit("the release feed asset must be named appcast.xml")
-    return [
-        ["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
+    steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
-         "--notes-file", str(notes)],
-        ["gh", "release", "upload", tag, "--repo", REPO_SLUG, str(pkg), str(appcast)],
+         "--notes-file", str(notes)]]
+    upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG]
+    if reuse_draft:
+        upload.append("--clobber")
+    upload.extend((str(pkg), str(appcast)))
+    if not reuse_draft and windows:
+        upload.extend(str(asset) for asset in windows)
+    steps += [
+        upload,
         ["gh", "release", "edit", tag, "--repo", REPO_SLUG, "--draft=false", "--latest"],
         [sys.executable, str(HERE / "check_sparkle.py"), "appcast",
          "--appcast", f"{LATEST}/appcast.xml", "--pkg", f"{LATEST}/{pkg.name}",
          "--expect-version", version, "--channel", "release", "--require-notes"],
     ]
+    return steps
 
 
 def main() -> int:
@@ -66,18 +126,37 @@ def main() -> int:
     ap.add_argument("--notes", type=Path, required=True)
     ap.add_argument("--title")
     ap.add_argument("--target", help="commit to tag (default: HEAD; must be the newest)")
+    ap.add_argument("--windows-arm64ec", type=Path,
+                    help="verified Windows ARM64EC package to publish with macOS")
+    ap.add_argument("--windows-arm64", type=Path,
+                    help="verified native Windows ARM64 package to publish with macOS")
+    ap.add_argument("--windows-x64", type=Path,
+                    help="verified Windows x64 package to publish with macOS")
     ap.add_argument("--verify-attempts", type=int, default=12,
                     help="live-feed checks, 15 s apart, before calling the publish broken")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--reuse-draft", action="store_true",
+                    help="upload into an existing draft vX.Y.Z release")
     args = ap.parse_args()
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
+    if bool(args.windows_arm64ec) != bool(args.windows_x64):
+        raise SystemExit("ARM64EC and x64 Windows assets must be supplied together")
+    windows = ((args.windows_arm64, args.windows_arm64ec, args.windows_x64)
+               if args.windows_arm64 else
+               (args.windows_arm64ec, args.windows_x64)
+               if args.windows_arm64ec else None)
+    if windows and ((len(windows) == 3 and windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
+                    or windows[-2].name != f"Spectr-windows-arm64ec-{args.version}.zip"
+                    or windows[-1].name != f"Spectr-windows-x64-{args.version}.zip"):
+        raise SystemExit("Windows package filenames must match the release version and architecture")
     target = args.target
     if not target:
         target = "HEAD" if args.dry_run else subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
         ).stdout.strip()
-    steps = plan(args.version, args.pkg, args.appcast, args.notes, target, args.title)
+    steps = plan(args.version, args.pkg, args.appcast, args.notes, target,
+                 args.title, windows, args.reuse_draft)
     if args.dry_run:
         for cmd in steps:
             print(" ".join(cmd))
@@ -85,13 +164,29 @@ def main() -> int:
     for f in (args.pkg, args.appcast, args.notes):
         if not f.is_file():
             raise SystemExit(f"missing {f}")
-    for cmd in steps[:3]:
+    check_macos_package(args.pkg, args.version, target)
+    print(f"verified macOS package source={target}", flush=True)
+    if windows:
+        arches = ("arm64-win", "arm64ec-win", "x86_64-win") if len(windows) == 3 else ("arm64ec-win", "x86_64-win")
+        for asset, arch in zip(windows, arches):
+            if not asset.is_file():
+                raise SystemExit(f"missing {asset}")
+            print(f"verified {arch} sha256=" +
+                  check_windows_package(asset, arch, args.version, target), flush=True)
+    if args.reuse_draft:
+        if not windows or not re.fullmatch(r"[0-9a-f]{40}", target):
+            raise SystemExit("--reuse-draft requires both Windows assets and an exact target SHA")
+        check_draft(args.version, target, windows, allow_existing_macos=True)
+    mutation_steps = steps[:2] if args.reuse_draft else steps[:3]
+    for index, cmd in enumerate(mutation_steps):
+        if args.reuse_draft and index == 1:
+            check_draft(args.version, target, windows, (args.pkg, args.appcast))
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "
                   "last step above was the publish", file=sys.stderr)
             return 1
-    verify = steps[3]
+    verify = steps[2] if args.reuse_draft else steps[3]
     for attempt in range(1, args.verify_attempts + 1):
         print(f"+ ({attempt}/{args.verify_attempts}) " + " ".join(verify), flush=True)
         if subprocess.run(verify).returncode == 0:

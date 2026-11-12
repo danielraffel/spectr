@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-11T18:10:00Z",
+  "host": "M5S macOS host, retained UTM Windows 11 ARM64 guest",
+  "guest": {
+    "ssh": "127.0.0.1:50376",
+    "rdp": "127.0.0.1:53390",
+    "architecture": "arm64-win",
+    "reaper_version": "7.82 ARM64",
+    "reaper_sha256": "95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8"
+  },
+  "audio": {
+    "mode": "Dummy Audio",
+    "mode_value": 4,
+    "status": "PASS",
+    "evidence": "/Users/danielraffel/Code/spectr-windows-build-20261007/.local-evidence/windows-gpu-5487/rdp-reaper-dummy-attempt.png"
+  },
+  "plugin": {
+    "vst3_path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+    "vst3_sha256": "C5E055CEA2F14840B8938CFE61724697BCD11F104FD045336CB23A06724E36CD",
+    "reaper_cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-vstplugins64arwmin.ini",
+    "reaper_cache_entry": "Spectr.vst3=216CEC616159DD01",
+    "discovery": "PASS",
+    "instantiation": "UNVERIFIED",
+    "load_observation": "REAPER Project Load Warning reported VST3: Spectr (Pulp) unavailable",
+    "evidence": "/Users/danielraffel/Code/spectr-windows-build-20261007/.local-evidence/windows-gpu-5487/rdp-reaper-vst3-project.png"
+  },
+  "standalone": {
+    "status": "BLOCKED",
+    "reason": "UTM emulated display cannot create the GPU WindowHost; see arm64-gpu-vst3-build-receipt.json"
+  },
+  "verdict": "PARTIAL",
+  "limitation": "Dummy Audio host readiness and VST3 discovery are proven. Exact ARM64 Spectr VST3 instantiation, editor, and rendered audio acceptance remain open."
+}

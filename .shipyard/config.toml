@@ -55,3 +55,25 @@ workflows = [".github/workflows/m5-product-acceptance.yml"]
 
 [ship]
 base_branch = "main"
+
+# This repository has no skill-sync or version-bump gate scripts, so
+# `shipyard pr` skips those gates instead of refusing to start.
+[validation]
+pr_gates = false
+
+# Shipyard settings this repository's base branch carries. The
+# `review-verdict` workflow reads this table from the base branch.
+
+[auto_merge]
+# Who may sign the fleet App's `verdict: APPROVE`: an approval posted through
+# ghapp counts only with a `reviewer: <name>` line naming one of these. The
+# `review-verdict` status reads only this list, never a host file.
+reviewer_signers = ["pulp-review", "infra-review2"]
+# Only a scheduled reviewer pass may approve: an App APPROVE counts only when
+# its ghapp session stamp matches one of these globs (a HOLD from any session
+# still counts).
+reviewer_stamp_sessions = ["fleet-pass-reviewer-*"]
+# `arm_requires_head_approval` is deliberately unset. Shipyard counts the
+# fleet App's approvals only for repositories in its REVIEW_REQUIRED_REPOS
+# list; setting the key here instead would admit only the logins in
+# `reviewer_identities` and refuse every App approval.

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T23:08:00Z",
+  "source_sha": "f9d732639ade1331feebb1d8cfc66ca74ffb2ead",
+  "sdk": {
+    "source_sha": "68a48f899164056ac25691668138ec95cee86af9",
+    "provenance_kind": "release",
+    "distribution_eligible": true,
+    "cmake_dir": "/Users/danielraffel/Code/pulp-dsp-next-20261001/sdk-v0931.3/pulp-sdk/lib/cmake/Pulp"
+  },
+  "probe": {
+    "directory": "/Users/danielraffel/Code/spectr-mac-intel-probe-20261010",
+    "configure_command": "cmake -S /Users/danielraffel/Code/spectr-windows-build-20261007 -B /Users/danielraffel/Code/spectr-mac-intel-probe-20261010 -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.4 -DPulp_DIR=/Users/danielraffel/Code/pulp-dsp-next-20261001/sdk-v0931.3/pulp-sdk/lib/cmake/Pulp -DSPECTR_ENABLE_TEST_SEAMS=OFF -DSPECTR_ENABLE_PERF_FIXTURES=OFF -DSPECTR_SHARED_PRODUCT_ACCEPTANCE=OFF -DSPECTR_SHARED_NATIVE_HOST_PROBE=OFF -DSPECTR_SPARKLE_CHANNEL=release",
+    "configure": "PASS",
+    "build_command": "/Users/danielraffel/Code/pulp-installer-clean-20261010/tools/ci/governed-build.sh cmake --build /Users/danielraffel/Code/spectr-mac-intel-probe-20261010 --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP",
+    "build": "FAIL",
+    "exit_code": 2,
+    "failure": "The linker ignored arm64-only Pulp runtime, AU SDK, SDL3, and related static archives while targeting x86_64; required Pulp symbols were then missing for architecture x86_64.",
+    "full_log_path": "/Users/danielraffel/.spectr-local-evidence-20261010/macos-intel-build.log",
+    "full_log_sha256": "11462a3448a5a03b32104b193105a93c1307ca8886e010b4633e1b3b6683b468"
+  },
+  "sdk_slice_inventory": {
+    "lib/libpulp-render.a": "arm64 only",
+    "lib/libausdk.a": "arm64 only",
+    "external/skia-build/build/mac-gpu/lib/Release/libskia.a": "x86_64 arm64",
+    "external/skia-build/build/mac-gpu/lib/Release/libdawn_combined.a": "x86_64 arm64"
+  },
+  "disposition": "No Intel artifact was produced. Intel validation requires a Pulp SDK containing x86_64 slices for all linked runtime archives, followed by a native Intel host check or an x86_64 VM/CI host. The current Apple Silicon host and SDK are insufficient for that gate."
+}

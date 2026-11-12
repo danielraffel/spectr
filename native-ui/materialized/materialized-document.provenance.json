@@ -1,0 +1,18 @@
+{
+  "schema": "spectr-materialized-source-provenance-v1",
+  "version": 1,
+  "scope": {
+    "staging_only": true,
+    "production_cutover": false
+  },
+  "source": {
+    "path": "resources/editor.html",
+    "sha256": "86074422391d9af59e46be350c1a77a921bbbd327d0048091c49fedf6b986983",
+    "bytes": 2068131
+  },
+  "artifact": {
+    "path": "native-ui/materialized/materialized-document.runtime.json",
+    "sha256": "e60964dbc2abcb5bafc5f1ddf10f7217b8d78da34949bbccf8186ab7c6414895",
+    "bytes": 1162521
+  }
+}

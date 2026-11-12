@@ -1,0 +1,284 @@
+{
+  "schema": "spectr.windows.perfetto.receipt.v1",
+  "scope": "development-only; never a shipping/product-acceptance claim",
+  "host": "Proxmox Windows Server 2022 x64 VM 300 (192.168.86.21)",
+  "spectr_source_sha": "506cbf18e134d13400b6c4f4ed4072ca98aeab91",
+  "pulp_source_sha": "c2d4f454ee229c1ba5b8f7a93a14ac9390f5200b",
+  "pulp_tracing": true,
+  "perfetto_version": "v57.2",
+  "pulp_runtime_lib_sha256": "4390C31EBBEE7E4F9A38A25D8B6D3218A90451DF84B925238D37B31EF6E05C56",
+  "pulp_perfetto_lib_sha256": "A6DCEDB4B3EF46808941B453B47D409964A2E7AA86C6D36DB2212039600ECCE9",
+  "spectr_test_exe_sha256": "3CFC816B3CD9F6C312208503F2E5C49B05D3F271453789F7D1949D9E3FBE1F10",
+  "test": "[.][glitch-trace] \u2014 All tests passed (14 assertions in 1 test case)",
+  "trace_processor_query": "select count(*) from slice; select name,count(*) from slice where name is not null group by name order by count(*) desc limit 8",
+  "traces": [
+    {
+      "file": "drag-tracking.pftrace",
+      "bytes": 356171,
+      "sha256": "a976970ba580b4c29c9880355cba2507eb5397de781aed5476fbd2de44e729b2",
+      "slice_count": 7984,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 4504
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 362
+        },
+        {
+          "name": "free retired impulse",
+          "n": 362
+        },
+        {
+          "name": "autogain.transform",
+          "n": 276
+        },
+        {
+          "name": "shape band-edge transitions",
+          "n": 181
+        },
+        {
+          "name": "design minimum-phase impulse (FFT)",
+          "n": 181
+        }
+      ]
+    },
+    {
+      "file": "freeze-tracking-1bar.pftrace",
+      "bytes": 291594,
+      "sha256": "2d046cbea073ed520c778581868e431562cef6e1fa19dbba79a5c93089046cb2",
+      "slice_count": 6572,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 4504
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "autogain.transform",
+          "n": 276
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 69
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 6
+        },
+        {
+          "name": "freeze.hold_group",
+          "n": 6
+        },
+        {
+          "name": "freeze.analyse",
+          "n": 6
+        }
+      ]
+    },
+    {
+      "file": "freeze-tracking-quarter.pftrace",
+      "bytes": 291730,
+      "sha256": "7efc504abf43da4f490b592e7b43ad6b8e6cd54e872e6d2c323425eb2e77ad59",
+      "slice_count": 6572,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 4504
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "autogain.transform",
+          "n": 276
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 69
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 6
+        },
+        {
+          "name": "freeze.hold_group",
+          "n": 6
+        },
+        {
+          "name": "freeze.analyse",
+          "n": 6
+        }
+      ]
+    },
+    {
+      "file": "steady-mixing.pftrace",
+      "bytes": 150241,
+      "sha256": "cbe0971fd5af787f49d56c6b463944ef57e9b7be360c3bcb2d774261a8c93dda",
+      "slice_count": 3154,
+      "top_slice_names": [
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "mixing.process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "autogain.transform",
+          "n": 274
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 68
+        }
+      ]
+    },
+    {
+      "file": "steady-tracking.pftrace",
+      "bytes": 291051,
+      "sha256": "cdee6567e827bc498983a3a1c4fd98d271b8213c22534894ccf8e6caae095e18",
+      "slice_count": 6560,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 4504
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "autogain.transform",
+          "n": 276
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 69
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 6
+        },
+        {
+          "name": "free retired impulse",
+          "n": 6
+        },
+        {
+          "name": "shape band-edge transitions",
+          "n": 3
+        }
+      ]
+    },
+    {
+      "file": "switch-mixing-to-tracking.pftrace",
+      "bytes": 248446,
+      "sha256": "d3979de91cd82883b28a12875e3b4f08b6eeb6490e479802c3ea11bf971450a4",
+      "slice_count": 5506,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 3004
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "mixing.process",
+          "n": 413
+        },
+        {
+          "name": "autogain.transform",
+          "n": 276
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 69
+        },
+        {
+          "name": "render_switch",
+          "n": 38
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 4
+        }
+      ]
+    },
+    {
+      "file": "switch-tracking-to-mixing.pftrace",
+      "bytes": 208934,
+      "sha256": "8c5f968d7457bddd3c231ca897b7c5e738bb88cede31e456e9824daeed200cfd",
+      "slice_count": 4540,
+      "top_slice_names": [
+        {
+          "name": "tracking.render_block",
+          "n": 1688
+        },
+        {
+          "name": "process",
+          "n": 1125
+        },
+        {
+          "name": "mixing.process",
+          "n": 750
+        },
+        {
+          "name": "freeze.hop",
+          "n": 562
+        },
+        {
+          "name": "autogain.transform",
+          "n": 274
+        },
+        {
+          "name": "autogain.on_frame",
+          "n": 68
+        },
+        {
+          "name": "render_switch",
+          "n": 46
+        },
+        {
+          "name": "stage impulse for audio thread",
+          "n": 6
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-10T21:39:00Z",
+  "host": {
+    "provider": "Proxmox",
+    "vmid": 300,
+    "guest": "pulp-win-ci",
+    "address": "192.168.86.21",
+    "cpu": "Intel Xeon E5-1650 v2"
+  },
+  "ableton": {
+    "version": "10.1.43 Trial",
+    "installed_path": "C:\\ProgramData\\Ableton\\Live 10 Trial\\Program\\Ableton Live 10 Trial.exe",
+    "launch": "PASS: Ableton Live 10 Trial window visible in the authenticated RDP desktop",
+    "screenshot": ".local-evidence/ableton/proxmox-ableton-live10-desktop.png",
+    "screenshot_sha256": "70006c16d06195c3fb75ab5af0c35adc29f507ea1138881b0c05b8eaee86efaa",
+    "plugin_load": "UNVERIFIED: first-run trial dialog remained open; no Spectr device was loaded",
+    "audio": "UNVERIFIED"
+  },
+  "disposition": "The older Ableton Live 10 trial launches on Proxmox. This is desktop-launch evidence only. Current Ableton Live 12 still requires an AVX2-capable x64 host, and no Ableton Spectr acceptance claim is made."
+}

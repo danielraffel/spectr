@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-10-11T16:06:46Z",
+  "provider": "Proxmox",
+  "vmid": 300,
+  "guest": "pulp-win-ci",
+  "address": "192.168.86.21",
+  "architecture": "x86_64-win",
+  "transport": {
+    "ssh": "PASS: pulp-rdp@192.168.86.21 authenticated",
+    "rdp": "PASS: 192.168.86.21:3389 reachable",
+    "guest_agent": "FAIL: qm guest exec did not become ready after the bounded validation wait"
+  },
+  "focused_test": {
+    "command": "C:\\spectr-win-proof\\build-win\\Spectr-test.exe Spectr processes audio --reporter compact",
+    "result": "PASS",
+    "assertions": 2,
+    "cases": 1,
+    "transport": "Windows OpenSSH fallback because the Proxmox guest agent was unavailable"
+  },
+  "scope": "Current health check only; existing x64 REAPER/editor/render receipts remain the authoritative GUI/audio proof."
+}

@@ -2,9 +2,15 @@
 #include <pulp/format/standalone.hpp>
 
 #include <cstring>
+#include <cstdlib>
 #include <string>
+#include "src/ui/windows_standalone_host.hpp"
 
-int main(int argc, char** argv) {
+namespace {
+int run_spectr(int argc, char** argv) {
+#if defined(_WIN32)
+    spectr::install_windows_standalone_window_host();
+#endif
     // The standalone owns its window, so its plain-key shortcuts stay live.
     spectr::set_editor_is_standalone(true);
     pulp::format::StandaloneApp app(spectr::create_spectr);
@@ -39,3 +45,15 @@ int main(int argc, char** argv) {
     // Second arg is `use_gpu`, not an editor toggle.
     return app.run_with_editor(/*use_gpu=*/true) ? 0 : 1;
 }
+} // namespace
+
+#if defined(_WIN32)
+#include <windows.h>
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    return run_spectr(__argc, __argv);
+}
+#else
+int main(int argc, char** argv) {
+    return run_spectr(argc, argv);
+}
+#endif

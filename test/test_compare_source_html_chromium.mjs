@@ -1,0 +1,143 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {stateDigest} from '../tools/parity_state_canonical.mjs';
+
+const [comparatorPath, chromePath] = process.argv.slice(2);
+assert(comparatorPath && chromePath,
+  'usage: test_compare_source_html_chromium.mjs COMPARATOR CHROME');
+
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'spectr-compare-doctype-'));
+const sameArtifactAuthority = {
+  browserArtifact: 'fixture-source.html',
+  nativeArtifact: 'fixture-source.html',
+  joinMode: 'same-artifact',
+};
+const cases = [
+  {
+    name: 'doctype',
+    source: '<!doctype html>\n<html><head><title>standards</title></head>' +
+      '<body><div id="root"><span>fixture</span><canvas width="8" height="8"></canvas>' +
+      '</div><script>window.pulp.postMessage(\'editor_ready\')</script></body></html>\n',
+    expectedCompatMode: 'CSS1Compat',
+  },
+  {
+    name: 'no-doctype',
+    source: '<html><head><title>quirks</title></head>' +
+      '<body><div id="root"><span>fixture</span><canvas width="8" height="8"></canvas>' +
+      '</div><script>window.pulp.postMessage(\'editor_ready\')</script></body></html>\n',
+    expectedCompatMode: 'BackCompat',
+  },
+];
+
+try {
+  for (const testCase of cases) {
+    const sourcePath = path.join(temp, `${testCase.name}.html`);
+    const outputPath = path.join(temp, testCase.name);
+    fs.writeFileSync(sourcePath, testCase.source);
+    const statePath = path.join(temp, `${testCase.name}-state.json`);
+    const state = {schema: 'spectr-parity-state-v1', version: 1,
+      source: {sha256: crypto.createHash('sha256').update(testCase.source).digest('hex')},
+      viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+      authority: sameArtifactAuthority};
+    state.stateSha256 = stateDigest(state);
+    fs.writeFileSync(statePath, JSON.stringify(state));
+    const run = spawnSync(process.execPath, [
+      comparatorPath,
+      '--source', sourcePath,
+      '--output', outputPath,
+      '--chrome', chromePath,
+      '--state', statePath,
+      '--strict',
+    ], {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+    assert.equal(run.error, undefined, run.error && run.error.message);
+    assert.equal(run.status, 0,
+      `${testCase.name} comparator failed:\n${run.stdout}\n${run.stderr}`);
+
+    const receipt = JSON.parse(fs.readFileSync(path.join(outputPath, 'receipt.json'), 'utf8'));
+    assert.equal(receipt.positive.info.compatMode, testCase.expectedCompatMode,
+      `${testCase.name} compatMode`);
+    assert.equal(receipt.positive.ready.parityReady, null,
+      `${testCase.name} optional parity readiness`);
+    assert.equal(receipt.positive.ready.sourceEditorReady, true,
+      `${testCase.name} source editor readiness`);
+    assert.equal(receipt.stateSha256, state.stateSha256, `${testCase.name} state digest`);
+
+    const injected = fs.readFileSync(path.join(outputPath, 'source-with-bridge.html'), 'utf8');
+    if (testCase.expectedCompatMode === 'CSS1Compat') {
+      assert.match(injected, /^<!doctype html>\s*<script>/i,
+        'the bridge must follow a leading doctype');
+    } else {
+      assert.match(injected, /^<script>/,
+        'a source without a doctype keeps the bridge at the document start');
+    }
+  }
+  const layeredSource = path.join(temp, 'layered.html');
+  const layeredOutput = path.join(temp, 'layered');
+  const layeredPrimaryOutput = path.join(temp, 'layered-primary');
+  const layeredMarkup = '<!doctype html><html><body><div id="root"><span>fixture</span>'
+    + '<canvas width="8" height="8"></canvas><canvas width="8" height="8"></canvas>'
+    + '<script>const canvas=document.querySelectorAll("canvas")[1];'
+    + 'canvas.getContext("2d").fillStyle="rgb(255,0,0)";'
+    + 'canvas.getContext("2d").fillRect(0,0,8,8);'
+    + 'window.pulp.postMessage("editor_ready")</script></div></body></html>';
+  fs.writeFileSync(layeredSource, layeredMarkup);
+  const layeredState = {schema: 'spectr-parity-state-v1', version: 1,
+    source: {sha256: crypto.createHash('sha256').update(layeredMarkup).digest('hex')},
+    viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+    authority: sameArtifactAuthority};
+  layeredState.stateSha256 = stateDigest(layeredState);
+  const layeredStatePath = path.join(temp, 'layered-state.json');
+  fs.writeFileSync(layeredStatePath, JSON.stringify(layeredState));
+  const aggregate = spawnSync(process.execPath, [comparatorPath,
+    '--source', layeredSource, '--output', layeredOutput, '--chrome', chromePath,
+    '--state', layeredStatePath, '--strict', '--require-canvas-ink'],
+  {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.equal(aggregate.error, undefined, aggregate.error && aggregate.error.message);
+  assert.equal(aggregate.status, 0,
+    `aggregate two-canvas ink control failed:\n${aggregate.stdout}\n${aggregate.stderr}`);
+  const primary = spawnSync(process.execPath, [comparatorPath,
+    '--source', layeredSource, '--output', layeredPrimaryOutput, '--chrome', chromePath,
+    '--state', layeredStatePath, '--strict', '--require-canvas-ink',
+    '--require-primary-canvas-ink'],
+  {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.equal(primary.error, undefined, primary.error && primary.error.message);
+  assert.notEqual(primary.status, 0,
+    'primary-canvas ink control must reject a blank first canvas');
+  assert.match(primary.stderr, /primary canvas ink check failed/);
+  const malformedSource = path.join(temp, 'malformed.html');
+  const malformedOutput = path.join(temp, 'malformed');
+  const malformedFixture = path.join(temp, 'malformed-fixture.json');
+  const malformedState = path.join(temp, 'malformed-state.json');
+  fs.writeFileSync(malformedSource,
+    '<!doctype html><html><body><div id="root"><canvas width="8" height="8"></canvas></div></body></html>');
+  const fixture = {
+    schema: 'spectr-parity-analyzer-v1', version: 1, epoch: 1, sequences: [1, 2],
+    fftSize: 1024, sampleRate: 48000, floorDb: -96, ceilingDb: 0,
+    sourceChannels: 2, visibleSamples: 0, overviewSamples: 121,
+    minHz: 20, maxHz: 20000,
+    trace: {baseDb: -92, peakDb: 78, centre: 0.25, phaseStep: 0.1, width: 0},
+  };
+  fs.writeFileSync(malformedFixture, JSON.stringify(fixture));
+  const malformedStateValue = {
+    schema: 'spectr-parity-state-v1', version: 1,
+    source: {sha256: crypto.createHash('sha256').update(fs.readFileSync(malformedSource)).digest('hex')},
+    viewport: {width: 1320, height: 860, deviceScaleFactor: 1},
+    authority: sameArtifactAuthority,
+    analyzer: {fixtureSha256: crypto.createHash('sha256').update(fs.readFileSync(malformedFixture)).digest('hex')},
+  };
+  malformedStateValue.stateSha256 = stateDigest(malformedStateValue);
+  fs.writeFileSync(malformedState, JSON.stringify(malformedStateValue));
+  const malformedRun = spawnSync(process.execPath, [comparatorPath,
+    '--source', malformedSource, '--output', malformedOutput, '--chrome', chromePath,
+    '--state', malformedState, '--analyzer-fixture', malformedFixture, '--strict'],
+    {encoding: 'utf8', timeout: 45_000, maxBuffer: 4 * 1024 * 1024});
+  assert.notEqual(malformedRun.status, 0, 'malformed analyzer fixture must fail closed');
+} finally {
+  fs.rmSync(temp, {recursive: true, force: true});
+}
+
+console.log('PASS: doctype source stays CSS1Compat and no-doctype control stays BackCompat');

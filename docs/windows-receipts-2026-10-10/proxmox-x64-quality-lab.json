@@ -1,0 +1,27 @@
+{
+  "schema": "quality_lab.reference_free.v1",
+  "sample_rate": 44100,
+  "frames": 132300,
+  "duration_s": 3.0,
+  "metrics": {
+    "spectral_centroid_hz": 445.9522820893372,
+    "spectral_flux": 0.00037779901959096156,
+    "hnr_db": 50.1533117471881,
+    "amplitude_modulation_hz": 14.031818181818183,
+    "hf_energy_fraction": 7.420802259336841e-10
+  },
+  "confidence": {
+    "amplitude_modulation_hz": 0.49175962353094177
+  },
+  "audibility": {
+    "rms": 0.25893669884902454,
+    "audible_band_rms": 0.2589366988346465,
+    "minimum_rms": 0.0001
+  },
+  "input": "/Users/danielraffel/Code/spectr-windows-build-20261007/docs/windows-receipts-2026-10-10/proxmox-x64-spectr-render.wav",
+  "channel_handling": {
+    "input_channels": 2,
+    "analysis": "manifest-selected-channel",
+    "selected_channel": 0
+  }
+}
