@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.8 LANGUAGES CXX)
+project(Spectr VERSION 1.0.9 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -77,7 +77,13 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# The release matrix consumes platform-specific Pulp SDK packages. Their
+# CMake package exports the supported API contract; pinning a numeric version
+# here made a newer Windows ARM64EC SDK reject an otherwise compatible
+# consumer while the macOS acceptance lane intentionally uses an older,
+# known-good SDK. Keep the dependency contract at the package boundary and
+# let each immutable SDK provenance pin select the tested implementation.
+find_package(Pulp REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -502,6 +508,22 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+
+# The generated Pulp CLAP wrapper is the shipping entry point; Spectr's
+# standalone clap_entry.cpp is reserved for the shared-host probe.  Add the
+# release version anchor to the real CLAP target so the binary-level release
+# check covers the artifact that ships.
+if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    target_sources(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+        src/clap_product_version_anchor.cpp)
+    if(APPLE)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "LINKER:-u,_spectr_product_version_anchor")
+    elseif(WIN32)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "/INCLUDE:spectr_product_version_anchor")
+    endif()
+endif()
 
 # The generated AAX wrapper is compiled as its own translation unit. Keep the
 # product headers reachable there just as they are for the native core.
@@ -1566,6 +1588,14 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     SKIP_RETURN_CODE 77
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+add_test(NAME Spectr-analyzer-stalled-ui
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_ANALYZER_STALLED_UI=1
+        $<TARGET_FILE:Spectr-native-shot> --backend=skia
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-analyzer-stalled-ui)
+set_tests_properties(Spectr-analyzer-stalled-ui PROPERTIES
+    TIMEOUT 120
     RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Exercise the same shipping binary through its deterministic analyzer seam so
@@ -4564,6 +4594,22 @@ foreach(fmt VST3 AU CLAP Standalone)
         )
     endif()
 endforeach()
+endif()
+
+# The standalone Windows app owns a native editor window.  CMake defaults
+# executable targets to the console subsystem on Windows, which causes a
+# terminal window to flash when Spectr.exe is launched and makes the app exit
+# path look like a failed console command.  Keep plugin targets unchanged and
+# mark only the standalone target as a GUI subsystem executable.
+if(WIN32 AND TARGET Spectr_Standalone)
+    target_sources(Spectr_Standalone PRIVATE
+        src/ui/windows_standalone_host.cpp)
+    set_target_properties(Spectr_Standalone PROPERTIES WIN32_EXECUTABLE TRUE)
+    # Pulp's plugin target helper supplies a console subsystem linker option
+    # for its shared standalone template.  Put the app-specific GUI option on
+    # the final target as well so the executable has no console subsystem even
+    # when that helper option is present in the generated link rule.
+    target_link_options(Spectr_Standalone PRIVATE /SUBSYSTEM:WINDOWS)
 endif()
 
 # Freeze taps through the built AU v2 component, the way a host drives it.

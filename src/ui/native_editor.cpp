@@ -15,6 +15,7 @@
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
 #include <pulp/view/buttons.hpp>
+#include <pulp/view/canvas_widget.hpp>
 #include <pulp/view/hover_cursor.hpp>
 #include <pulp/view/input_events.hpp>
 #include <pulp/view/layout_snapshot.hpp>
@@ -29,6 +30,23 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
+
+namespace spectr_cache {
+
+template <typename View>
+void retain_static_pixels(View& view) {
+    if constexpr (requires(View& candidate) {
+                      candidate.set_raster_cached(true);
+                  }) {
+        view.set_raster_cached(true);
+    } else if constexpr (requires(View& candidate) {
+                             candidate.set_subtree_cached(true);
+                         }) {
+        view.set_subtree_cached(true);
+    }
+}
+
+} // namespace spectr_cache
 
 // ── Band context menu, addressed from the SHIPPING standalone ───────────
 //
@@ -877,6 +895,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         state().set_value(kParamLfoRate, 4.0f);
         state().set_value(kParamLfoDepth, 1.0f);
         state().set_value(kParamLfoTarget, 0.0f);
+        // The legacy target lane selects a destination but does not enable a
+        // route in the current routing model. A fresh LFO drives nothing until
+        // its destination switch is on; arm Bank explicitly for this fixture.
+        state().set_value(lfo_route_enabled_param_id(0, 0), 1.0f);
+        state().set_value(lfo_route_amount_param_id(0, 0), 1.0f);
         state().set_value(kParamLfoEnabled, 1.0f);
     }
 #endif
@@ -1132,6 +1155,35 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                     "globalThis.__pulpBindMaterializedCanvases__();",
                     "spectr-materialized-bind");
             }
+#if defined(_WIN32)
+            // The authored glow is static leaf artwork. Retain its pixels so
+            // WARP does not rerasterize both full-window radial gradients on
+            // every audio/modulation frame. The SDK invalidates on style,
+            // bounds, backing-scale and device changes. Live bound canvases
+            // deliberately retain their ordinary per-frame drawing path.
+            const auto* disable_static_cache =
+                SPECTR_TEST_ENV("SPECTR_DISABLE_STATIC_RASTER_CACHE");
+            if (!disable_static_cache || std::string_view{disable_static_cache} != "1") {
+                if (auto* glow = bridge->widget("Pseudo_body_before")) {
+                    // Pulp PR11520 exposes leaf-pixel retention as
+                    // set_raster_cached(). Released SDKs expose the older
+                    // subtree cache contract, so keep this consumer
+                    // buildable against both SDK generations.
+                    spectr_cache::retain_static_pixels(*glow);
+                }
+                // The plot owns a separate grid/rulers canvas whose command
+                // stream changes only with its geometry/theme key. Resolve its
+                // authored marker rather than a generated native widget ID.
+                bridge->load_script(R"JS((() => {
+                    const node = document.querySelector('canvas[data-spectr-static-canvas]');
+                    const id = node && (node.__pulpId || node.id);
+                    if (id && typeof setRasterCached === 'function') {
+                        setRasterCached(String(id), true);
+                        console.log('[spectr-static-plot-cache] ' + id);
+                    }
+                })();)JS", "spectr-static-plot-cache");
+            }
+#endif
             // A tracing build carries a "TRACING" reminder. Pulp paints one
             // from the root View at a fixed corner, above the header's line;
             // the header draws its own on that line instead, so Pulp's is
@@ -1657,6 +1709,7 @@ void Spectr::publish_modulation_frame_() {
 }
 
 bool Spectr::tick_native_analyzer_(float dt) {
+    PULP_TRACE_SCOPE_NAMED_ARGS("state", "spectr_analyzer_tick", "dt_seconds", dt);
     retire_failed_native_session_();
     // Pulp's session evaluates a deferred document from its own idle poll;
     // keep ticking until it has.
@@ -3696,6 +3749,50 @@ bool Spectr::tick_native_analyzer_(float dt) {
         }
     }
 
+    // Diagnostic readback of the previous paint's native per-view timers.
+    // Kept separate from a timed trace: file I/O is not part of its workload.
+    if (const auto* path = SPECTR_TEST_ENV("SPECTR_PAINT_COST_DUMP");
+        path && native_editor_root_) {
+        auto rows = choc::value::createEmptyArray();
+        const auto visit = [&](const auto& self, const pulp::view::View& view,
+                               int depth, bool ancestors_visible) -> void {
+            auto row = choc::value::createObject("");
+            row.addMember("id", view.id());
+            row.addMember("depth", depth);
+            row.addMember("visible", view.visible() && ancestors_visible);
+            row.addMember("parent", view.parent() ? view.parent()->id() : "");
+            row.addMember("opacity", view.opacity());
+            row.addMember("background", view.has_background_color());
+            row.addMember("blend", static_cast<int>(view.mix_blend_mode()));
+            row.addMember("backdrop_blur", view.backdrop_blur());
+            row.addMember("shadow_count", static_cast<int>(view.box_shadows().size()));
+            if (const auto* widget = dynamic_cast<const pulp::view::CanvasWidget*>(&view)) {
+                row.addMember("canvas_commands", static_cast<int>(widget->command_count()));
+                row.addMember("canvas_isolation", widget->needs_backdrop_isolation());
+            }
+            // Timers belong to the last paint of this node. A hidden node can
+            // retain an old sample, so consumers must filter visible ancestry.
+            auto gradients = choc::value::createEmptyArray();
+            for (const auto& gradient : view.background_gradient_layers()) {
+                auto layer = choc::value::createObject("");
+                layer.addMember("type", gradient.type);
+                layer.addMember("stops", static_cast<int>(gradient.colors.size()));
+                gradients.addArrayElement(layer);
+            }
+            row.addMember("gradients", gradients);
+            row.addMember("self_ns", static_cast<std::int64_t>(view.last_paint_self_ns()));
+            row.addMember("total_ns", static_cast<std::int64_t>(view.last_paint_with_children_ns()));
+            row.addMember("w", static_cast<double>(view.bounds().width));
+            row.addMember("h", static_cast<double>(view.bounds().height));
+            rows.addArrayElement(row);
+            for (const auto* child : view.sorted_children_by_z_index())
+                self(self, *child, depth + 1, ancestors_visible && view.visible());
+        };
+        visit(visit, *native_editor_root_, 0, true);
+        std::ofstream out(path);
+        out << choc::json::toString(rows);
+    }
+
     // Dump the laid-out tree from the SAME process that produces the
     // screenshot, and rewrite it every tick so the final file is the one
     // nearest the shutter. Latching it wrote the tree at the FIRST settled
@@ -3783,17 +3880,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
     publish_modulation_frame_();
     publish_freeze_display_();
 
-    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
-    native_analyzer_elapsed_ += tick_seconds;
-    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
-    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
-
-    // One poll consumes everything captured since the last one, however long
-    // this tick took: the bridge runs the latest_window backlog policy.
+    // Audio arrives in host time, independently of the animation clock. A
+    // long render frame can make HostFramePump report a nominal resume dt;
+    // throttling capture draining with that dt then skips another whole slow
+    // frame and can overflow the ring before the next poll. Drain on every
+    // delivered frame; only UI publication below uses the display cadence.
     {
         PULP_TRACE_SCOPE_NAMED("state", "spectr_analyzer_drain");
         drain_analyzer();
     }
+
+    const float tick_seconds = std::isfinite(dt) ? std::max(0.0f, dt) : 0.0f;
+    native_analyzer_elapsed_ += tick_seconds;
+    if (native_analyzer_elapsed_ < kPublishPeriodSeconds) return true;
+    native_analyzer_elapsed_ = std::fmod(native_analyzer_elapsed_, kPublishPeriodSeconds);
 
     // ── Output level ────────────────────────────────────────────────────
     //
@@ -3856,6 +3956,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
     }
 
     const auto& spectrum = read_spectrum();
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_sequence", spectrum.sequence_number);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_dropped_frames", spectrum.dropped_frames);
+    PULP_TRACE_COUNTER("state", "spectr_analyzer_bins", spectrum.num_bins);
     if (!finite_spectrum(spectrum)
         || spectrum.sequence_number == native_analyzer_sequence_)
         return true;
