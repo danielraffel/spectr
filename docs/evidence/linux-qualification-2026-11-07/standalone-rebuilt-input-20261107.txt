@@ -1,0 +1,17 @@
+Spectr standalone exact rebuilt consumer receipt
+Date: 2026-11-07
+VM: Omarchy-virt (native AArch64, UTM, external SSD)
+Pulp source commit: f5b33c74f24f4e062752cb8cdeb3d55a4dc2cbd6
+Standalone installed module:
+  /home/omarchy/.local/lib/Spectr/Spectr
+  SHA-256: c7124f88fbecbbcfe30296b30db232d1f3943126fa2971be2492604c8871b498
+
+The rebuilt standalone launched as the omarchy user, connected to JACK at
+48 kHz with 1024-frame buffers, opened its scripted editor at 990x645, and
+exported 265 AT-SPI objects. The unlocked rich editor surface is captured in
+standalone-rebuilt-input-20261107.png (SHA-256
+b0e134f5b6f4a636cb68bdfdd8cabae76b6f16e82c64390746a1b554bb63a127).
+
+This proves the rebuilt standalone launches and presents its UI. It does not
+close the separate hosted X11 press/drag failure recorded in
+rebuild-input-bridge-20261107.txt.

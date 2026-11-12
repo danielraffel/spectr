@@ -1,0 +1,9 @@
+[pulp:info]  Standalone: starting 'Spectr'
+[pulp:info]  JACK: connected as 'pulp' at 48000 Hz, buffer 1024 frames, 2 out / 2 in
+[pulp:info]  Standalone: running on 'JACK Audio' at 48000 Hz, buffer 1024
+[pulp:warn]  WidgetBridge: 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png' is not a file under the script directory or a reviewed asset root; not opened
+[pulp:info]  Standalone: editor window open (990x645, gpu=false (gpu-unavailable), mode=scripted, chrome=editor-only, inspector=ready)
+[pulp:info]  Linux AT-SPI: exported 265 accessible objects on a11y bus
+
+Session terminated, killing shell...[pulp:info]  Linux AT-SPI: accessible objects torn down
+ ...killed.

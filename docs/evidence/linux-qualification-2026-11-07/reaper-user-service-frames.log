@@ -1,0 +1,358 @@
+Started [systemd-run] /home/omarchy/start-reaper-user.sh.
+[pulp:info]  VST3 setBusArrangements: rejected layout outside explicit supported_bus_layouts (1 in / 1 out buses)
+[pulp:info]  [plugin-gpu-host] adapter mode=scripted use_gpu=true wants_gpu=true env_disabled=false scripted=true requires_gpu_host=true create_view_null=false build=release
+[pulp:info]  X11PluginViewHost: init GPU logical=990x645 physical=988x643 scale=0.9984277
+[pulp:info]  GpuSurface: created Vulkan surface from X11 window
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+[pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+[pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+[pulp:info]  GpuSurface: present mode Mailbox (vsync requested: false)
+[pulp:info]  GpuSurface: configured surface (format: 27, mode: 4)
+[pulp:info]  GpuSurface: Dawn initialized (surface: presentable)
+[pulp:info]  GpuSurface: backend_type=Vulkan
+[pulp:info]  GpuSurface: adapter name="Virtio-GPU Venus (Apple M5 Ultra)" vendor="apple" architecture="Vulkan" description="venus: Mesa 26.2.2-arch1.1" type=integrated backend=Vulkan null=false
+[pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes, gpu-render-time: unavailable)
+[pulp:info]  X11PluginViewHost: GPU and Skia surfaces ready
+[pulp:info]  [plugin-gpu-host] GpuSurface attached to WidgetBridge via ScriptedUiSession (VST3)
+[pulp:warn]  WidgetBridge: 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png' is not a file under the script directory or a reviewed asset root; not opened
+[pulp:info]  VST3 editor: attached (990x645, mode=scripted, gpu=true)
+[pulp:info]  [plugin-gpu-host] adapter mode=scripted use_gpu=true wants_gpu=true env_disabled=false scripted=true requires_gpu_host=true create_view_null=false build=release
+[pulp:info]  X11PluginViewHost: init GPU logical=990x645 physical=988x643 scale=0.9984277
+[pulp:info]  GpuSurface: created Vulkan surface from X11 window
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+[pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+[pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+[pulp:info]  GpuSurface: present mode Mailbox (vsync requested: false)
+[pulp:info]  GpuSurface: configured surface (format: 27, mode: 4)
+[pulp:info]  GpuSurface: Dawn initialized (surface: presentable)
+[pulp:info]  GpuSurface: backend_type=Vulkan
+[pulp:info]  GpuSurface: adapter name="Virtio-GPU Venus (Apple M5 Ultra)" vendor="apple" architecture="Vulkan" description="venus: Mesa 26.2.2-arch1.1" type=integrated backend=Vulkan null=false
+[pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes, gpu-render-time: unavailable)
+[pulp:info]  X11PluginViewHost: GPU and Skia surfaces ready
+[pulp:info]  [plugin-gpu-host] GpuSurface attached to WidgetBridge via ScriptedUiSession (CLAP)
+[pulp:warn]  WidgetBridge: 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png' is not a file under the script directory or a reviewed asset root; not opened
+[pulp:info]  CLAP editor: created (990x645, mode=scripted, gpu=true)
+[pulp:info]  LINUX_FRAME_TICK count=1 attached=true now=71394.72564287
+[pulp:info]  LINUX_FRAME_TICK count=1 attached=true now=71394.732302551
+[pulp:info]  LINUX_FRAME_TICK count=2 attached=true now=71394.749473837
+[pulp:info]  LINUX_FRAME_TICK count=3 attached=true now=71394.766176914
+[pulp:info]  LINUX_FRAME_TICK count=2 attached=true now=71394.769332337
+[pulp:info]  LINUX_FRAME_TICK count=4 attached=true now=71394.7832247
+[pulp:info]  LINUX_FRAME_TICK count=5 attached=true now=71394.80644154
+[pulp:info]  LINUX_FRAME_TICK count=3 attached=true now=71394.809470422
+[pulp:info]  LINUX_FRAME_TICK count=4 attached=true now=71394.845858873
+[pulp:info]  LINUX_FRAME_TICK count=5 attached=true now=71394.884891789
+[pulp:info]  LINUX_FRAME_TICK count=100 attached=true now=71397.370501036
+[pulp:info]  LINUX_FRAME_TICK count=100 attached=true now=71398.487898524
+[pulp:info]  LINUX_FRAME_TICK count=200 attached=true now=71399.992058418
+[pulp:info]  LINUX_FRAME_TICK count=200 attached=true now=71402.291006713
+[pulp:info]  LINUX_FRAME_TICK count=300 attached=true now=71402.57806199
+[pulp:info]  LINUX_FRAME_TICK count=400 attached=true now=71405.218226567
+[pulp:info]  LINUX_FRAME_TICK count=300 attached=true now=71406.065060455
+[pulp:info]  LINUX_FRAME_TICK count=500 attached=true now=71407.821073871
+[pulp:info]  LINUX_FRAME_TICK count=400 attached=true now=71409.921602572
+[pulp:info]  LINUX_FRAME_TICK count=600 attached=true now=71410.436175675
+[pulp:info]  LINUX_FRAME_TICK count=700 attached=true now=71413.121196602
+[pulp:info]  LINUX_FRAME_TICK count=500 attached=true now=71413.802450691
+[pulp:info]  LINUX_FRAME_TICK count=800 attached=true now=71415.789025632
+[pulp:info]  LINUX_FRAME_TICK count=600 attached=true now=71417.612668939
+[pulp:info]  LINUX_FRAME_TICK count=900 attached=true now=71418.394486502
+[pulp:info]  LINUX_FRAME_TICK count=1000 attached=true now=71421.09415709
+[pulp:info]  LINUX_FRAME_TICK count=700 attached=true now=71421.374644281
+[pulp:info]  LINUX_FRAME_TICK count=1100 attached=true now=71423.763140669
+[pulp:info]  LINUX_FRAME_TICK count=800 attached=true now=71425.202432171
+[pulp:info]  LINUX_FRAME_TICK count=1200 attached=true now=71426.330209666
+[pulp:info]  LINUX_FRAME_TICK count=1300 attached=true now=71429.000458444
+[pulp:info]  LINUX_FRAME_TICK count=900 attached=true now=71429.027503253
+[pulp:info]  LINUX_FRAME_TICK count=1400 attached=true now=71431.675762081
+[pulp:info]  LINUX_FRAME_TICK count=1000 attached=true now=71432.806389556
+[pulp:info]  LINUX_FRAME_TICK count=1500 attached=true now=71434.311988147
+[pulp:info]  LINUX_FRAME_TICK count=1100 attached=true now=71436.59281303
+[pulp:info]  LINUX_FRAME_TICK count=1600 attached=true now=71436.946560599
+[pulp:info]  LINUX_FRAME_TICK count=1700 attached=true now=71439.647847796
+[pulp:info]  LINUX_FRAME_TICK count=1200 attached=true now=71440.399258703
+[pulp:info]  LINUX_FRAME_TICK count=1800 attached=true now=71442.325385498
+[pulp:info]  LINUX_FRAME_TICK count=1300 attached=true now=71444.227761247
+[pulp:info]  LINUX_FRAME_TICK count=1900 attached=true now=71444.845489614
+[pulp:info]  LINUX_FRAME_TICK count=2000 attached=true now=71447.46014608
+[pulp:info]  LINUX_FRAME_TICK count=1400 attached=true now=71447.974992931
+[pulp:info]  LINUX_FRAME_TICK count=2100 attached=true now=71450.163689131
+[pulp:info]  LINUX_FRAME_TICK count=1500 attached=true now=71451.724433232
+[pulp:info]  LINUX_FRAME_TICK count=2200 attached=true now=71452.788038604
+[pulp:info]  LINUX_FRAME_TICK count=2300 attached=true now=71455.337127464
+[pulp:info]  LINUX_FRAME_TICK count=1600 attached=true now=71455.56643356
+[pulp:info]  LINUX_FRAME_TICK count=2400 attached=true now=71458.067049368
+[pulp:info]  LINUX_FRAME_TICK count=1700 attached=true now=71459.379425936
+[pulp:info]  LINUX_FRAME_TICK count=2500 attached=true now=71460.560165004
+[pulp:info]  LINUX_FRAME_TICK count=2600 attached=true now=71463.122995434
+[pulp:info]  LINUX_FRAME_TICK count=1800 attached=true now=71463.204799535
+[pulp:info]  LINUX_FRAME_TICK count=2700 attached=true now=71465.680834033
+[pulp:info]  LINUX_FRAME_TICK count=1900 attached=true now=71467.024689067
+[pulp:info]  LINUX_FRAME_TICK count=2800 attached=true now=71468.4548748
+[pulp:info]  LINUX_FRAME_TICK count=2000 attached=true now=71470.859713245
+[pulp:info]  LINUX_FRAME_TICK count=2900 attached=true now=71471.073352354
+[pulp:info]  LINUX_FRAME_TICK count=3000 attached=true now=71473.70196057
+[pulp:info]  LINUX_FRAME_TICK count=2100 attached=true now=71474.72983124
+[pulp:info]  LINUX_FRAME_TICK count=3100 attached=true now=71476.308167915
+[pulp:info]  LINUX_FRAME_TICK count=2200 attached=true now=71478.544669762
+[pulp:info]  LINUX_FRAME_TICK count=3200 attached=true now=71478.930086767
+[pulp:info]  LINUX_FRAME_TICK count=3300 attached=true now=71481.423119837
+[pulp:info]  LINUX_FRAME_TICK count=2300 attached=true now=71482.352941839
+[pulp:info]  LINUX_FRAME_TICK count=3400 attached=true now=71483.959099392
+[pulp:info]  LINUX_FRAME_TICK count=2400 attached=true now=71486.224692172
+[pulp:info]  LINUX_FRAME_TICK count=3500 attached=true now=71486.463528012
+[pulp:info]  LINUX_FRAME_TICK count=3600 attached=true now=71489.008779988
+[pulp:info]  LINUX_FRAME_TICK count=2500 attached=true now=71490.066812424
+[pulp:info]  LINUX_FRAME_TICK count=3700 attached=true now=71491.486372987
+[pulp:info]  LINUX_FRAME_TICK count=2600 attached=true now=71493.842759633
+[pulp:info]  LINUX_FRAME_TICK count=3800 attached=true now=71494.074947628
+[pulp:info]  LINUX_FRAME_TICK count=3900 attached=true now=71496.656220515
+[pulp:info]  LINUX_FRAME_TICK count=2700 attached=true now=71497.616922907
+[pulp:info]  LINUX_FRAME_TICK count=4000 attached=true now=71499.423386054
+[pulp:info]  LINUX_FRAME_TICK count=2800 attached=true now=71501.421725902
+[pulp:info]  LINUX_FRAME_TICK count=4100 attached=true now=71502.123668201
+[pulp:info]  LINUX_FRAME_TICK count=4200 attached=true now=71504.732569315
+[pulp:info]  LINUX_FRAME_TICK count=2900 attached=true now=71505.193372181
+[pulp:info]  LINUX_FRAME_TICK count=4300 attached=true now=71507.236193279
+[pulp:info]  LINUX_FRAME_TICK count=3000 attached=true now=71508.995694556
+[pulp:info]  LINUX_FRAME_TICK count=4400 attached=true now=71510.01084843
+[pulp:info]  LINUX_FRAME_TICK count=4500 attached=true now=71512.668089612
+[pulp:info]  LINUX_FRAME_TICK count=3100 attached=true now=71512.792203194
+[pulp:info]  LINUX_FRAME_TICK count=4600 attached=true now=71515.224230818
+[pulp:info]  LINUX_FRAME_TICK count=3200 attached=true now=71516.589675402
+[pulp:info]  LINUX_FRAME_TICK count=4700 attached=true now=71517.829053025
+[pulp:info]  LINUX_FRAME_TICK count=3300 attached=true now=71520.384724463
+[pulp:info]  LINUX_FRAME_TICK count=4800 attached=true now=71520.440252177
+[pulp:info]  LINUX_FRAME_TICK count=4900 attached=true now=71523.029162871
+[pulp:info]  LINUX_FRAME_TICK count=3400 attached=true now=71524.20574111
+[pulp:info]  LINUX_FRAME_TICK count=5000 attached=true now=71525.693992423
+[pulp:info]  LINUX_FRAME_TICK count=3500 attached=true now=71528.015716923
+[pulp:info]  LINUX_FRAME_TICK count=5100 attached=true now=71528.342344948
+[pulp:info]  LINUX_FRAME_TICK count=5200 attached=true now=71530.959900704
+[pulp:info]  LINUX_FRAME_TICK count=3600 attached=true now=71531.811928437
+[pulp:info]  LINUX_FRAME_TICK count=5300 attached=true now=71533.5440811
+[pulp:info]  LINUX_FRAME_TICK count=3700 attached=true now=71535.614838284
+[pulp:info]  LINUX_FRAME_TICK count=5400 attached=true now=71536.179231463
+[pulp:info]  LINUX_FRAME_TICK count=5500 attached=true now=71538.861087366
+[pulp:info]  LINUX_FRAME_TICK count=3800 attached=true now=71539.429751351
+[pulp:info]  LINUX_FRAME_TICK count=5600 attached=true now=71541.419166902
+[pulp:info]  LINUX_FRAME_TICK count=3900 attached=true now=71543.236035546
+[pulp:info]  LINUX_FRAME_TICK count=5700 attached=true now=71544.022056514
+[pulp:info]  LINUX_FRAME_TICK count=5800 attached=true now=71546.642245096
+[pulp:info]  LINUX_FRAME_TICK count=4000 attached=true now=71547.042189307
+[pulp:info]  LINUX_FRAME_TICK count=5900 attached=true now=71549.285198078
+[pulp:info]  LINUX_FRAME_TICK count=4100 attached=true now=71550.829962881
+[pulp:info]  LINUX_FRAME_TICK count=6000 attached=true now=71551.770784816
+[pulp:info]  LINUX_FRAME_TICK count=6100 attached=true now=71554.393432104
+[pulp:info]  LINUX_FRAME_TICK count=4200 attached=true now=71554.643924084
+[pulp:info]  LINUX_FRAME_TICK count=6200 attached=true now=71557.036021952
+[pulp:info]  LINUX_FRAME_TICK count=4300 attached=true now=71558.446861535
+[pulp:info]  LINUX_FRAME_TICK count=6300 attached=true now=71559.791511002
+[pulp:info]  LINUX_FRAME_TICK count=4400 attached=true now=71562.253354851
+[pulp:info]  LINUX_FRAME_TICK count=6400 attached=true now=71562.348203581
+[pulp:info]  LINUX_FRAME_TICK count=6500 attached=true now=71564.932231862
+[pulp:info]  LINUX_FRAME_TICK count=4500 attached=true now=71566.067550042
+[pulp:info]  LINUX_FRAME_TICK count=6600 attached=true now=71567.585355656
+[pulp:info]  LINUX_FRAME_TICK count=4600 attached=true now=71569.806266405
+[pulp:info]  LINUX_FRAME_TICK count=6700 attached=true now=71570.335290239
+[pulp:info]  LINUX_FRAME_TICK count=6800 attached=true now=71573.002091505
+[pulp:info]  LINUX_FRAME_TICK count=4700 attached=true now=71573.602582308
+[pulp:info]  LINUX_FRAME_TICK count=6900 attached=true now=71575.663563687
+[pulp:info]  LINUX_FRAME_TICK count=4800 attached=true now=71577.402777117
+[pulp:info]  LINUX_FRAME_TICK count=7000 attached=true now=71578.223126088
+[pulp:info]  LINUX_FRAME_TICK count=7100 attached=true now=71580.828026277
+[pulp:info]  LINUX_FRAME_TICK count=4900 attached=true now=71581.230094557
+[pulp:info]  LINUX_FRAME_TICK count=7200 attached=true now=71583.397308514
+[pulp:info]  LINUX_FRAME_TICK count=5000 attached=true now=71585.017581797
+[pulp:info]  LINUX_FRAME_TICK count=7300 attached=true now=71586.00414573
+[pulp:info]  LINUX_FRAME_TICK count=7400 attached=true now=71588.587813856
+[pulp:info]  LINUX_FRAME_TICK count=5100 attached=true now=71588.884315839
+[pulp:info]  LINUX_FRAME_TICK count=7500 attached=true now=71591.209373087
+[pulp:info]  LINUX_FRAME_TICK count=5200 attached=true now=71592.691475422
+[pulp:info]  LINUX_FRAME_TICK count=7600 attached=true now=71593.835230922
+[pulp:info]  LINUX_FRAME_TICK count=5300 attached=true now=71596.4605556
+[pulp:info]  LINUX_FRAME_TICK count=7700 attached=true now=71596.587882583
+[pulp:info]  LINUX_FRAME_TICK count=7800 attached=true now=71599.11618478
+[pulp:info]  LINUX_FRAME_TICK count=5400 attached=true now=71600.27469387
+[pulp:info]  LINUX_FRAME_TICK count=7900 attached=true now=71601.731129119
+[pulp:info]  LINUX_FRAME_TICK count=5500 attached=true now=71604.109791338
+[pulp:info]  LINUX_FRAME_TICK count=8000 attached=true now=71604.403417696
+[pulp:info]  LINUX_FRAME_TICK count=8100 attached=true now=71607.104313354
+[pulp:info]  LINUX_FRAME_TICK count=5600 attached=true now=71607.914385919
+[pulp:info]  LINUX_FRAME_TICK count=8200 attached=true now=71609.810357744
+[pulp:info]  LINUX_FRAME_TICK count=5700 attached=true now=71611.705963156
+[pulp:info]  LINUX_FRAME_TICK count=8300 attached=true now=71612.358967125
+[pulp:info]  LINUX_FRAME_TICK count=8400 attached=true now=71614.860055064
+[pulp:info]  LINUX_FRAME_TICK count=5800 attached=true now=71615.523643021
+[pulp:info]  LINUX_FRAME_TICK count=8500 attached=true now=71617.594286347
+[pulp:info]  LINUX_FRAME_TICK count=5900 attached=true now=71619.308275366
+[pulp:info]  LINUX_FRAME_TICK count=8600 attached=true now=71620.271652124
+[pulp:info]  LINUX_FRAME_TICK count=8700 attached=true now=71622.863215527
+[pulp:info]  LINUX_FRAME_TICK count=6000 attached=true now=71623.130623785
+[pulp:info]  LINUX_FRAME_TICK count=8800 attached=true now=71625.371729314
+[pulp:info]  LINUX_FRAME_TICK count=6100 attached=true now=71626.994671788
+[pulp:info]  LINUX_FRAME_TICK count=8900 attached=true now=71627.977023896
+[pulp:info]  LINUX_FRAME_TICK count=9000 attached=true now=71630.676219768
+[pulp:info]  LINUX_FRAME_TICK count=6200 attached=true now=71630.721168131
+[pulp:info]  LINUX_FRAME_TICK count=9100 attached=true now=71633.348242955
+[pulp:info]  LINUX_FRAME_TICK count=6300 attached=true now=71634.497497621
+[pulp:info]  LINUX_FRAME_TICK count=9200 attached=true now=71635.899917639
+[pulp:info]  LINUX_FRAME_TICK count=6400 attached=true now=71638.346230481
+[pulp:info]  LINUX_FRAME_TICK count=9300 attached=true now=71638.400750286
+[pulp:info]  LINUX_FRAME_TICK count=9400 attached=true now=71641.084269449
+[pulp:info]  LINUX_FRAME_TICK count=6500 attached=true now=71642.09559165
+[pulp:info]  LINUX_FRAME_TICK count=9500 attached=true now=71643.874074393
+[pulp:info]  LINUX_FRAME_TICK count=6600 attached=true now=71645.852441733
+[pulp:info]  LINUX_FRAME_TICK count=9600 attached=true now=71646.575325371
+[pulp:info]  LINUX_FRAME_TICK count=9700 attached=true now=71649.335551093
+[pulp:info]  LINUX_FRAME_TICK count=6700 attached=true now=71649.651871528
+[pulp:info]  LINUX_FRAME_TICK count=9800 attached=true now=71651.960953064
+[pulp:info]  LINUX_FRAME_TICK count=6800 attached=true now=71653.430778539
+[pulp:info]  LINUX_FRAME_TICK count=9900 attached=true now=71654.663599242
+[pulp:info]  LINUX_FRAME_TICK count=6900 attached=true now=71657.204773391
+[pulp:info]  LINUX_FRAME_TICK count=10000 attached=true now=71657.503823992
+[pulp:info]  LINUX_FRAME_TICK count=10100 attached=true now=71660.158326775
+[pulp:info]  LINUX_FRAME_TICK count=7000 attached=true now=71660.966085589
+[pulp:info]  LINUX_FRAME_TICK count=10200 attached=true now=71662.765294782
+[pulp:info]  LINUX_FRAME_TICK count=7100 attached=true now=71664.760685905
+[pulp:info]  LINUX_FRAME_TICK count=10300 attached=true now=71665.382327071
+[pulp:info]  LINUX_FRAME_TICK count=10400 attached=true now=71668.034384356
+[pulp:info]  LINUX_FRAME_TICK count=7200 attached=true now=71668.561508922
+[pulp:info]  LINUX_FRAME_TICK count=10500 attached=true now=71670.753291361
+[pulp:info]  LINUX_FRAME_TICK count=7300 attached=true now=71672.321740342
+[pulp:info]  LINUX_FRAME_TICK count=10600 attached=true now=71673.387914644
+[pulp:info]  LINUX_FRAME_TICK count=10700 attached=true now=71676.098449634
+[pulp:info]  LINUX_FRAME_TICK count=7400 attached=true now=71676.124079018
+[pulp:info]  LINUX_FRAME_TICK count=10800 attached=true now=71678.828216758
+[pulp:info]  LINUX_FRAME_TICK count=7500 attached=true now=71679.932954694
+[pulp:info]  LINUX_FRAME_TICK count=10900 attached=true now=71681.354155207
+[pulp:info]  LINUX_FRAME_TICK count=7600 attached=true now=71683.777297154
+[pulp:info]  LINUX_FRAME_TICK count=11000 attached=true now=71683.848353315
+[pulp:info]  LINUX_FRAME_TICK count=11100 attached=true now=71686.427219766
+[pulp:info]  LINUX_FRAME_TICK count=7700 attached=true now=71687.597612051
+[pulp:info]  LINUX_FRAME_TICK count=11200 attached=true now=71689.150040138
+[pulp:info]  LINUX_FRAME_TICK count=7800 attached=true now=71691.382213044
+[pulp:info]  LINUX_FRAME_TICK count=11300 attached=true now=71691.80652741
+[pulp:info]  LINUX_FRAME_TICK count=11400 attached=true now=71694.476251602
+[pulp:info]  LINUX_FRAME_TICK count=7900 attached=true now=71695.152062147
+[pulp:info]  LINUX_FRAME_TICK count=11500 attached=true now=71697.186448469
+[pulp:info]  LINUX_FRAME_TICK count=8000 attached=true now=71698.913484345
+[pulp:info]  LINUX_FRAME_TICK count=11600 attached=true now=71699.897314067
+[pulp:info]  LINUX_FRAME_TICK count=11700 attached=true now=71702.574336107
+[pulp:info]  LINUX_FRAME_TICK count=8100 attached=true now=71702.685776648
+[pulp:info]  LINUX_FRAME_TICK count=11800 attached=true now=71705.338904642
+[pulp:info]  LINUX_FRAME_TICK count=8200 attached=true now=71706.447533604
+[pulp:info]  LINUX_FRAME_TICK count=11900 attached=true now=71707.884030687
+[pulp:info]  LINUX_FRAME_TICK count=8300 attached=true now=71710.27507027
+[pulp:info]  LINUX_FRAME_TICK count=12000 attached=true now=71710.463424658
+[pulp:info]  LINUX_FRAME_TICK count=12100 attached=true now=71713.068497176
+[pulp:info]  LINUX_FRAME_TICK count=8400 attached=true now=71714.108232767
+[pulp:info]  LINUX_FRAME_TICK count=12200 attached=true now=71715.706432602
+[pulp:info]  LINUX_FRAME_TICK count=8500 attached=true now=71717.913818093
+[pulp:info]  LINUX_FRAME_TICK count=12300 attached=true now=71718.28222777
+[pulp:info]  LINUX_FRAME_TICK count=12400 attached=true now=71720.93250447
+[pulp:info]  LINUX_FRAME_TICK count=8600 attached=true now=71721.702444793
+[pulp:info]  LINUX_FRAME_TICK count=12500 attached=true now=71723.537340163
+[pulp:info]  LINUX_FRAME_TICK count=8700 attached=true now=71725.527008446
+[pulp:info]  LINUX_FRAME_TICK count=12600 attached=true now=71726.110207657
+[pulp:info]  LINUX_FRAME_TICK count=12700 attached=true now=71728.78322235
+[pulp:info]  LINUX_FRAME_TICK count=8800 attached=true now=71729.384923625
+[pulp:info]  LINUX_FRAME_TICK count=12800 attached=true now=71731.337417102
+[pulp:info]  LINUX_FRAME_TICK count=8900 attached=true now=71733.216528082
+[pulp:info]  LINUX_FRAME_TICK count=12900 attached=true now=71733.956318943
+[pulp:info]  LINUX_FRAME_TICK count=13000 attached=true now=71736.700776148
+[pulp:info]  LINUX_FRAME_TICK count=9000 attached=true now=71737.039677679
+[pulp:info]  LINUX_FRAME_TICK count=13100 attached=true now=71739.324432673
+[pulp:info]  LINUX_FRAME_TICK count=9100 attached=true now=71740.832039858
+[pulp:info]  LINUX_FRAME_TICK count=13200 attached=true now=71741.992888263
+[pulp:info]  LINUX_FRAME_TICK count=13300 attached=true now=71744.604469656
+[pulp:info]  LINUX_FRAME_TICK count=9200 attached=true now=71744.665119973
+[pulp:info]  LINUX_FRAME_TICK count=13400 attached=true now=71747.28754026
+[pulp:info]  LINUX_FRAME_TICK count=9300 attached=true now=71748.379058061
+[pulp:info]  LINUX_FRAME_TICK count=13500 attached=true now=71750.099191741
+[pulp:info]  LINUX_FRAME_TICK count=9400 attached=true now=71752.141967466
+[pulp:info]  LINUX_FRAME_TICK count=13600 attached=true now=71752.695238892
+[pulp:info]  LINUX_FRAME_TICK count=13700 attached=true now=71755.378075307
+[pulp:info]  LINUX_FRAME_TICK count=9500 attached=true now=71755.992354902
+[pulp:info]  LINUX_FRAME_TICK count=13800 attached=true now=71758.002786741
+[pulp:info]  LINUX_FRAME_TICK count=9600 attached=true now=71759.791919323
+[pulp:info]  LINUX_FRAME_TICK count=13900 attached=true now=71760.692787111
+[pulp:info]  LINUX_FRAME_TICK count=14000 attached=true now=71763.348986569
+[pulp:info]  LINUX_FRAME_TICK count=9700 attached=true now=71763.629853715
+[pulp:info]  LINUX_FRAME_TICK count=14100 attached=true now=71766.036351074
+[pulp:info]  LINUX_FRAME_TICK count=9800 attached=true now=71767.360093071
+[pulp:info]  LINUX_FRAME_TICK count=14200 attached=true now=71768.699078226
+[pulp:info]  LINUX_FRAME_TICK count=14300 attached=true now=71771.171243974
+[pulp:info]  LINUX_FRAME_TICK count=9900 attached=true now=71771.200319639
+[pulp:info]  LINUX_FRAME_TICK count=14400 attached=true now=71773.764065824
+[pulp:info]  LINUX_FRAME_TICK count=10000 attached=true now=71774.967624809
+[pulp:info]  LINUX_FRAME_TICK count=14500 attached=true now=71776.526303281
+[pulp:info]  LINUX_FRAME_TICK count=10100 attached=true now=71778.633712488
+[pulp:info]  LINUX_FRAME_TICK count=14600 attached=true now=71779.261711151
+[pulp:info]  LINUX_FRAME_TICK count=14700 attached=true now=71781.871248838
+[pulp:info]  LINUX_FRAME_TICK count=10200 attached=true now=71782.441982723
+[pulp:info]  LINUX_FRAME_TICK count=14800 attached=true now=71784.428432979
+[pulp:info]  LINUX_FRAME_TICK count=10300 attached=true now=71786.268777855
+[pulp:info]  LINUX_FRAME_TICK count=14900 attached=true now=71786.870042076
+[pulp:info]  LINUX_FRAME_TICK count=15000 attached=true now=71789.445818272
+[pulp:info]  LINUX_FRAME_TICK count=10400 attached=true now=71790.156505592
+[pulp:info]  LINUX_FRAME_TICK count=15100 attached=true now=71792.061592698
+[pulp:info]  LINUX_FRAME_TICK count=10500 attached=true now=71793.931905673
+[pulp:info]  LINUX_FRAME_TICK count=15200 attached=true now=71794.527341598
+[pulp:info]  LINUX_FRAME_TICK count=15300 attached=true now=71797.098876153
+[pulp:info]  LINUX_FRAME_TICK count=10600 attached=true now=71797.733216931
+[pulp:info]  LINUX_FRAME_TICK count=15400 attached=true now=71799.705555743
+[pulp:info]  LINUX_FRAME_TICK count=10700 attached=true now=71801.480741029
+[pulp:info]  LINUX_FRAME_TICK count=15500 attached=true now=71802.485212039
+[pulp:info]  LINUX_FRAME_TICK count=15600 attached=true now=71805.076943375
+[pulp:info]  LINUX_FRAME_TICK count=10800 attached=true now=71805.296054238
+[pulp:info]  LINUX_FRAME_TICK count=15700 attached=true now=71807.650346219
+[pulp:info]  LINUX_FRAME_TICK count=10900 attached=true now=71809.045401871
+[pulp:info]  LINUX_FRAME_TICK count=15800 attached=true now=71810.387227816
+[pulp:info]  LINUX_FRAME_TICK count=11000 attached=true now=71812.860637376
+[pulp:info]  LINUX_FRAME_TICK count=15900 attached=true now=71812.988168116
+[pulp:info]  LINUX_FRAME_TICK count=16000 attached=true now=71815.525817057
+[pulp:info]  LINUX_FRAME_TICK count=11100 attached=true now=71816.676984103
+[pulp:info]  LINUX_FRAME_TICK count=16100 attached=true now=71818.287756504
+[pulp:info]  LINUX_FRAME_TICK count=11200 attached=true now=71820.401188317
+[pulp:info]  LINUX_FRAME_TICK count=16200 attached=true now=71820.999881265
+[pulp:info]  LINUX_FRAME_TICK count=16300 attached=true now=71823.618232277
+[pulp:info]  LINUX_FRAME_TICK count=11300 attached=true now=71824.178537772
+[pulp:info]  LINUX_FRAME_TICK count=16400 attached=true now=71826.460906876
+[pulp:info]  LINUX_FRAME_TICK count=11400 attached=true now=71827.874735172
+[pulp:info]  LINUX_FRAME_TICK count=16500 attached=true now=71829.180071194
+[pulp:info]  LINUX_FRAME_TICK count=11500 attached=true now=71831.64049549
+[pulp:info]  LINUX_FRAME_TICK count=16600 attached=true now=71831.942232252
+[pulp:info]  LINUX_FRAME_TICK count=16700 attached=true now=71834.703265892
+[pulp:info]  LINUX_FRAME_TICK count=11600 attached=true now=71835.377196156
+[pulp:info]  LINUX_FRAME_TICK count=16800 attached=true now=71837.238031401
+[pulp:info]  LINUX_FRAME_TICK count=11700 attached=true now=71839.213896093
+[pulp:info]  LINUX_FRAME_TICK count=16900 attached=true now=71839.893784914
+[pulp:info]  LINUX_FRAME_TICK count=17000 attached=true now=71842.476574277
+[pulp:info]  LINUX_FRAME_TICK count=11800 attached=true now=71842.980863095
+[pulp:info]  LINUX_FRAME_TICK count=17100 attached=true now=71845.001374903
+[pulp:info]  LINUX_FRAME_TICK count=11900 attached=true now=71846.752811354
+[pulp:info]  LINUX_FRAME_TICK count=17200 attached=true now=71847.688841426
+[pulp:info]  LINUX_FRAME_TICK count=17300 attached=true now=71850.087075306
+[pulp:info]  LINUX_FRAME_TICK count=12000 attached=true now=71850.600742158
+[pulp:info]  LINUX_FRAME_TICK count=17400 attached=true now=71852.579359737
+[pulp:info]  LINUX_FRAME_TICK count=12100 attached=true now=71854.439721227
+[pulp:info]  LINUX_FRAME_TICK count=17500 attached=true now=71855.215404036
+[pulp:info]  LINUX_FRAME_TICK count=17600 attached=true now=71857.84551291
+[pulp:info]  LINUX_FRAME_TICK count=12200 attached=true now=71858.248117801
+[pulp:info]  LINUX_FRAME_TICK count=17700 attached=true now=71860.46293329
+[pulp:info]  LINUX_FRAME_TICK count=12300 attached=true now=71862.102432977
+[pulp:info]  LINUX_FRAME_TICK count=17800 attached=true now=71863.08308799
+[pulp:info]  LINUX_FRAME_TICK count=17900 attached=true now=71865.619872384
+[pulp:info]  LINUX_FRAME_TICK count=12400 attached=true now=71865.91474223
+[pulp:info]  LINUX_FRAME_TICK count=18000 attached=true now=71868.232468828
+[pulp:info]  LINUX_FRAME_TICK count=12500 attached=true now=71869.698496533
+[pulp:info]  LINUX_FRAME_TICK count=18100 attached=true now=71870.759109045
+[pulp:info]  LINUX_FRAME_TICK count=18200 attached=true now=71873.368896498
+[pulp:info]  LINUX_FRAME_TICK count=12600 attached=true now=71873.564511634

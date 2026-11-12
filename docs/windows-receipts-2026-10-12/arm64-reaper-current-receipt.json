@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "recorded_at_utc": "2026-10-12T22:55:00Z",
+  "purpose": "Current ARM64 Windows REAPER/VST3 acceptance boundary",
+  "guest": {
+    "transport": "direct disposable QEMU ARM64 guest",
+    "ssh": "127.0.0.1:50379",
+    "rdp": "127.0.0.1:53393",
+    "os": "Windows 10 Pro ARM64",
+    "reaper": "C:\\Program Files\\REAPER (arm64)\\reaper.exe",
+    "reaper_sha256": "95B3D2B226519F305A6C575105EBF8A11625A8C2EBA4F306DC47FB6B7774CDB8"
+  },
+  "artifacts": {
+    "vst3": {
+      "path": "C:\\Program Files\\Common Files\\VST3\\Spectr.vst3\\Contents\\arm64-win\\Spectr.vst3",
+      "sha256": "C5E055CEA2F14840B8938CFE61724697BCD11F104FD045336CB23A06724E36CD",
+      "bytes": 24296448
+    },
+    "clap": {
+      "path": "C:\\Program Files\\Common Files\\CLAP\\Spectr.clap",
+      "sha256": "F95B9EAA6EE994BA8051884F0DA89C3982B26D3788F460B27855D81912CF3201",
+      "bytes": 24237056
+    }
+  },
+  "headless": {
+    "audio": "PASS: Spectr-test.exe \"Spectr processes audio\" --reporter compact; 2 assertions",
+    "internal_modulation": "PASS: Spectr applies internal modulation on the audio owner; 3112 assertions",
+    "host_automation_modulation": "PASS: Spectr keeps the modulation target lane audible under host automation; 4674 assertions",
+    "lfo_ramp": "PASS: Spectr-test.exe \"*LFO enable*\" --reporter compact; 11206 assertions"
+  },
+  "reaper": {
+    "cache": "C:\\Users\\admin\\AppData\\Roaming\\REAPER\\reaper-vstplugins64arwmin.ini",
+    "cache_entry": "Spectr.vst3=216CEC616159DD01",
+    "observation": "REAPER project load warning reports VST3: Spectr (Pulp) unavailable",
+    "vst3_acceptance": "BLOCKED",
+    "clap_current_hash_verified": true,
+    "clap_acceptance": "Historical ARM64EC CLAP instantiation remains separately recorded in windows-receipts-2026-10-10/utm-health-receipt.json; this receipt does not silently re-date that observation."
+  },
+  "screenshot": {
+    "path": "docs/windows-receipts-2026-10-12/arm64-reaper-vst3-unavailable.png",
+    "sha256": "6ea89bbd96bf002855dc3132cbddf66e498d995bd413d2686b6a2fce00b1d909",
+    "interpretation": "Negative control: REAPER is running with Dummy Audio, but the native ARM64 VST3 is unavailable to the ARM64X host."
+  },
+  "next_gate": "Build Spectr and its Pulp dependencies as ARM64EC/ARM64X, then require a fresh REAPER scan, visible instance, rendered audio, and matching artifact hashes."
+}

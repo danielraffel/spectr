@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "guest": "Omarchy-virt",
+  "architecture": "aarch64",
+  "kernel": "7.2.3-2-aarch64-ARCH",
+  "host_session": "Hyprland via SDDM",
+  "display": {"wayland_display": "wayland-1", "resolution": "1280x800"},
+  "artifact": "/build/spectr/Spectr",
+  "runtime": "JACK Audio",
+  "sample_rate_hz": 48000,
+  "buffer_frames": 1024,
+  "editor_log": "spectr-omarchy-standalone-20261107.log",
+  "screenshot": {
+    "file": "spectr-omarchy-standalone-20261107.png",
+    "sha256": "87cf50ac12498d9176e89f6ef2a46fcf04fc5057bdd8fe1a1461984ee1dd26ec"
+  },
+  "qualification": "standalone GUI/audio proven; fixed portable-ICU SDK consumer and DAW editor proof remain open"
+}

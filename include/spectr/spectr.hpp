@@ -1795,6 +1795,11 @@ private:
     int   native_output_level_auto_gain_ = -1;
     float native_output_level_auto_gain_db_ = std::numeric_limits<float>::max();
     std::uint64_t native_analyzer_sequence_ = 0;
+    // The analyzer frame last published to the editor, quantised to 0.01 dB
+    // with its viewport, scale and epoch. A frame that matches is not
+    // republished: silence keeps advancing the sequence number, and every
+    // publication costs a script commit and a composite.
+    std::vector<std::int32_t> native_analyzer_published_;
     // Last modulated-field sequence projected to the editor, so a UI tick
     // that finds no new audio frame does not re-dispatch the same overlay.
     std::uint64_t native_modulation_sequence_ = 0;

@@ -1,0 +1,21 @@
+Spectr Linux ARM64 hosted input probe — 2026-11-07
+
+Host: Omarchy AArch64 UTM guest, REAPER 7.x, Wayland/Hyprland with XWayland
+Installed editor windows discovered by xdotool:
+  VST3: Spectr (Pulp) - Track 1 [1/2]  window=6291510  position=(44,98)  size=990x702
+  CLAP: Spectr (Pulp) - Track 1 [2/2]  window=6291525  position=(76,130)  size=990x703
+
+The probe's Lua monitor set parameter 0 (Mix) and parameter 1 (Output) to 0.5 for both formats and recorded those values. XWayland xdotool click dispatches were issued to the VST3 editor after hiding the CLAP editor:
+  relative clicks: (668,36), (668,60), (600,60)
+
+Monitor result:
+  VST3 p0=0.500000000 p1=0.500000000 throughout
+  CLAP p0=0.500000000 p1=0.500000000 throughout
+
+Available pointer tools in the guest:
+  xdotool=/usr/bin/xdotool
+  wtype=/usr/bin/wtype
+  ydotool=unavailable
+  dotool=unavailable
+
+Disposition: INPUT ACCEPTANCE OPEN. The window geometry and XWayland dispatch are proven, but this run did not prove that a pointer press reached a Spectr control. Do not treat it as product input acceptance; repeat with a compositor-native pointer injector or an observed human gesture.

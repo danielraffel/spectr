@@ -1,0 +1,27 @@
+{
+  "schema": 2,
+  "generated_at_utc": "2026-10-15T01:42:39Z",
+  "provider": "Proxmox",
+  "vmid": 300,
+  "guest": "pulp-win-ci",
+  "guest_address": "192.168.86.21",
+  "architecture": "x86_64-win",
+  "transport": {
+    "guest_agent": "UNAVAILABLE: bounded qm guest exec readiness wait expired",
+    "windows_ssh": "PASS: authenticated pulp-rdp@192.168.86.21 fallback"
+  },
+  "focused_test": {
+    "command": "C:\\spectr-win-proof\\build-win\\Spectr-test.exe \\\"Spectr processes audio\\\" --reporter compact",
+    "result": "PASS",
+    "assertions": 2,
+    "cases": 1,
+    "exit_code": 0
+  },
+  "test_executable": {
+    "path": "C:\\spectr-win-proof\\build-win\\Spectr-test.exe",
+    "sha256": "136FACD102F18389E63A8E54FE070B43F4CDDB835A56DD3E56B6F3CD173DE9C7",
+    "bytes": 13670912,
+    "modified_utc": "2026-10-07T17:21:25.2011289Z"
+  },
+  "scope": "Fresh focused x64 DSP validation; this receipt does not upgrade GUI/editor proof or prove the current ARM64 artifact."
+}

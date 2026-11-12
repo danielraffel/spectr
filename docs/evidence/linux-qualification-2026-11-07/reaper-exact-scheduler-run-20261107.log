@@ -1,0 +1,40 @@
+Nov 07 17:11:01 omarchy systemd[483892]: Started [systemd-run] /home/omarchy/start-reaper-user.sh.
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  VST3 setBusArrangements: rejected layout outside explicit supported_bus_layouts (1 in / 1 out buses)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  [plugin-gpu-host] adapter mode=scripted use_gpu=true wants_gpu=true env_disabled=false scripted=true requires_gpu_host=true create_view_null=false build=release
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  X11PluginViewHost: init GPU logical=990x645 physical=993x647 scale=1.0031595
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: created Vulkan surface from X11 window
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: present mode Mailbox (vsync requested: false)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: configured surface (format: 27, mode: 4)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: Dawn initialized (surface: presentable)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: backend_type=Vulkan
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: adapter name="Virtio-GPU Venus (Apple M5 Ultra)" vendor="apple" architecture="Vulkan" description="venus: Mesa 26.2.2-arch1.1" type=integrated backend=Vulkan null=false
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes, gpu-render-time: unavailable)
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  X11PluginViewHost: GPU and Skia surfaces ready
+Nov 07 17:11:01 omarchy start-reaper-user.sh[660003]: [pulp:info]  [plugin-gpu-host] GpuSurface attached to WidgetBridge via ScriptedUiSession (VST3)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:warn]  WidgetBridge: 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png' is not a file under the script directory or a reviewed asset root; not opened
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  VST3 editor: attached (990x645, mode=scripted, gpu=true)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  [plugin-gpu-host] adapter mode=scripted use_gpu=true wants_gpu=true env_disabled=false scripted=true requires_gpu_host=true create_view_null=false build=release
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  X11PluginViewHost: init GPU logical=990x645 physical=993x647 scale=1.0031595
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: created Vulkan surface from X11 window
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 155 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicUniformBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: Warning: maxDynamicStorageBuffersPerPipelineLayout artificially reduced from 507904 to 16 to fit dynamic offset allocation limit.
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: adapter offers timestamp-query but GPU timing was not requested — keeping full device validation
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: enabling indirect-first-instance (Three.js / non-zero firstInstance draws)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: present mode Mailbox (vsync requested: false)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: configured surface (format: 27, mode: 4)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: Dawn initialized (surface: presentable)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: backend_type=Vulkan
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  GpuSurface: adapter name="Virtio-GPU Venus (Apple M5 Ultra)" vendor="apple" architecture="Vulkan" description="venus: Mesa 26.2.2-arch1.1" type=integrated backend=Vulkan null=false
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  SkiaSurface: Graphite initialized on shared Dawn device (presentable: yes, gpu-render-time: unavailable)
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  X11PluginViewHost: GPU and Skia surfaces ready
+Nov 07 17:11:02 omarchy start-reaper-user.sh[660003]: [pulp:info]  [plugin-gpu-host] GpuSurface attached to WidgetBridge via ScriptedUiSession (CLAP)
+Nov 07 17:11:03 omarchy start-reaper-user.sh[660003]: [pulp:warn]  WidgetBridge: 'assets/25ee97e9130cc8e719e4514a227dca176877a5ec0aaaf5cb2f5125b369386249.png' is not a file under the script directory or a reviewed asset root; not opened
+Nov 07 17:11:03 omarchy start-reaper-user.sh[660003]: [pulp:info]  CLAP editor: created (990x645, mode=scripted, gpu=true)
