@@ -1,0 +1,22 @@
+VST3: Spectr index=0
+CLAP: Spectr index=0
+audio_MODE=true JACK
+audio_IDENT_IN=true JackIn
+audio_IDENT_OUT=true JackOut
+audio_BSIZE=true 1024
+audio_SRATE=true 48000
+tick time=0.31552020600066 state=0 pos=0
+play_requested state=1
+tick time=2.2600852260002 state=1 pos=1.1306666666667
+tick time=4.2466545400021 state=1 pos=3.1146666666667
+tick time=6.2166083929988 state=1 pos=1.0773333333333
+tick time=9.2362927700015 state=1 pos=0.10666666666667
+tick time=11.192938959997 state=1 pos=2.0693333333333
+tick time=13.156867170997 state=1 pos=0.032
+tick time=15.149229310999 state=1 pos=2.016
+tick time=17.117656823997 state=1 pos=3.9786666666667
+format=1 peak=0.15910041332245 output_min=0.40000000596046 output_max=0.59946876764297
+format=2 peak=0.15910039842129 output_min=0.39999999602636 output_max=0.59946874777476
+samples=508 playstate=1 position=0.87466666666667
+underrun=0,0,48404084
+completed
