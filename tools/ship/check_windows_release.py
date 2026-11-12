@@ -125,6 +125,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-sha", required=True, help="exact macOS release commit")
+    parser.add_argument("--arm64", required=True, type=Path)
     parser.add_argument("--arm64ec", required=True, type=Path)
     parser.add_argument("--x64", required=True, type=Path)
     args = parser.parse_args()
@@ -134,7 +135,7 @@ def main() -> int:
         parser.error("--version must be X.Y.Z")
     try:
         results = []
-        for path, arch in ((args.arm64ec, "arm64ec-win"), (args.x64, "x86_64-win")):
+        for path, arch in ((args.arm64, "arm64-win"), (args.arm64ec, "arm64ec-win"), (args.x64, "x86_64-win")):
             digest = check_package(path, arch, args.version, args.source_sha)
             results.append(f"PASS {arch} {path} sha256={digest} source={args.source_sha}")
     except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as exc:

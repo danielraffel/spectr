@@ -1780,6 +1780,40 @@ int main(int argc, char** argv) {
     try {
         Rig rig;
         rig.resize(kDesignWidth, kDesignHeight);
+        if (std::getenv("SPECTR_ANALYZER_STALLED_UI") != nullptr) {
+            // A >250 ms active frame receives a nominal resume dt from the
+            // host clock. Feed real captured audio for that interval, then
+            // drive the production editor subscription with that nominal dt.
+            // Each interval fits the ring; skipping one drain does not.
+            constexpr int block_frames = 256;
+            constexpr int interval_frames = spectr::kAnalyzerCaptureFrames * 3 / 4;
+            const std::vector<float> samples(block_frames, 0.1f);
+            const float* channels[]{samples.data(), samples.data()};
+            std::uint64_t previous = rig.processor.read_spectrum().sequence_number;
+            for (int frame = 0; frame < 12; ++frame) {
+                for (int remaining = interval_frames; remaining > 0;) {
+                    const int count = std::min(block_frames, remaining);
+                    rig.processor.bridge().process(channels, 2, count);
+                    remaining -= count;
+                }
+                rig.clock.tick(1.0f / 60.0f);
+                const auto& spectrum = rig.processor.read_spectrum();
+                if (spectrum.num_bins <= 0 || spectrum.sequence_number <= previous
+                    || spectrum.dropped_frames != 0) {
+                    std::fprintf(stderr,
+                                 "FAIL analyzer-stalled-ui frame=%d sequence=%llu "
+                                 "previous=%llu bins=%d dropped=%llu\n",
+                                 frame, static_cast<unsigned long long>(spectrum.sequence_number),
+                                 static_cast<unsigned long long>(previous), spectrum.num_bins,
+                                 static_cast<unsigned long long>(spectrum.dropped_frames));
+                    return 1;
+                }
+                previous = spectrum.sequence_number;
+            }
+            std::printf("OK analyzer-stalled-ui frames=12 dropped=0 sequence=%llu\n",
+                        static_cast<unsigned long long>(previous));
+            return 0;
+        }
         const char* deterministic_analyzer =
             std::getenv("SPECTR_DETERMINISTIC_ANALYZER");
         if (deterministic_analyzer != nullptr
