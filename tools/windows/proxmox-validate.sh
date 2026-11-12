@@ -6,7 +6,11 @@ set -euo pipefail
 # invocation started it, so an interactive session is never interrupted.
 host="${SPECTR_PROXMOX_HOST:-macpro}"
 vmid="${SPECTR_PROXMOX_VMID:-300}"
-build_dir="${SPECTR_PROXMOX_BUILD_DIR:-C:/spectr-win-proof/build-win}"
+# VM 300's maintained warm image keeps the current canonical x64 build here.
+# Preserve the override for disposable/provisioning runs, but do not point the
+# default at the retired C:\\spectr-win-proof tree (which makes a healthy guest
+# report a misleading missing-path failure).
+build_dir="${SPECTR_PROXMOX_BUILD_DIR:-C:/spectr-build-current-x64}"
 test_exe="${SPECTR_PROXMOX_TEST_EXE:-${build_dir}/Spectr-test.exe}"
 guest_ssh_target="${SPECTR_PROXMOX_GUEST_SSH_TARGET:-pulp-rdp@192.168.86.21}"
 started=0
