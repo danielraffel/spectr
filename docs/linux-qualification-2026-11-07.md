@@ -23,7 +23,6 @@ The guest reported `aarch64`, kernel `7.2.3-2-aarch64-ARCH`, Hyprland via SDDM, 
 | [reaper-hosted-utm-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-utm-screen-20261107.png) | `e54368543a53daee23dc78a7e9c686908668bdd201a47e7a445d49a0ec69973b` |
 | [reaper-modulation-proof-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-modulation-proof-20261107.txt) | `8a82b93a97f36be4d14c19cc9043b87455ff11331ebb4f38230ff34a9ac60534` |
 | [reaper-hosted-vst3-clap-receipt-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-receipt-20261107.txt) | `51422e4c3ad6688543464dfab15f49962c30e8c5f71b4f1eee4f2cf659cc1838` |
-| [reaper-hosted-vst3-clap-gpu-20261107.log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log) | `0851dad3566bc24463d98bac4c3db63b458ab55db3db6e17503da3c3bc0c4b40` |
 | [reaper-hosted-live-screen-20261107.png](evidence/linux-qualification-2026-11-07/reaper-hosted-live-screen-20261107.png) | `fd62ba8d29d23e408fa9156f0aed770962a137a2e40b6abec9c587bda6949dff` |
 | [reaper-clap-host-parameter-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-clap-host-parameter-probe-20261107.txt) | `c174bedee5daa31d2868a69e2d5bb89341193164f56c696788d178ea8144d271` |
 | [reaper-x11-child-event-probe-20261107.txt](evidence/linux-qualification-2026-11-07/reaper-x11-child-event-probe-20261107.txt) | `7b543652c3a250b22b8b54add5fe3283df62a62d6ab130accad00c248f726246` |
@@ -81,7 +80,7 @@ parameter surface was visible. A separate CLAP-only probe
 changed Mix from normalized `1.0` to `0.37` and observed that value across
 thirty deferred host ticks. The earlier dual-instance receipt's unchanged CLAP
 value was therefore a probe-order artifact, not evidence of a CLAP adapter
-failure. The corresponding [GPU log](evidence/linux-qualification-2026-11-07/reaper-hosted-vst3-clap-gpu-20261107.log)
+failure. The corresponding [GPU log](evidence/linux-qualification-2026-11-07/reaper-hosted-gpu-latest.log)
 records presentable Vulkan/Dawn/Graphite surfaces and GPU attachment for both
 formats on Virtio-GPU Venus.
 
