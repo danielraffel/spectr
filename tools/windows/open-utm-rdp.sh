@@ -15,30 +15,43 @@ secret_file="${SPECTR_WINDOWS_UTM_SECRET:-$HOME/.config/pulp/secrets/spectr-wind
 reaper_arch="${SPECTR_WINDOWS_REAPER_ARCH:-arm64-win}"
 launch_reaper="${SPECTR_WINDOWS_LAUNCH_REAPER:-0}"
 case "$reaper_arch" in
-  arm64-win|arm64ec-win|arm64x-win) reaper_dir='REAPER (arm64)' ;;
+  arm64-win|arm64ec-win) reaper_dir='REAPER (arm64)' ;;
   x86_64-win) reaper_dir='REAPER (x64)' ;;
   *) echo "unsupported SPECTR_WINDOWS_REAPER_ARCH: $reaper_arch" >&2; exit 2 ;;
 esac
 
 [[ -x "$utmctl" ]] || { echo "UTM is not installed at $utmctl" >&2; exit 1; }
 [[ -f "$secret_file" ]] || { echo "missing credential file: $secret_file" >&2; exit 2; }
+if [[ "$(stat -f %Lp "$secret_file")" != 600 ||
+      "$(stat -f %Lp "$(dirname "$secret_file")")" != 700 ]]; then
+  echo "credential file must be 0600 inside a 0700 directory" >&2
+  exit 2
+fi
 command -v sdl-freerdp >/dev/null || { echo "sdl-freerdp is required" >&2; exit 2; }
+unset username password
 # shellcheck disable=SC1090
 source "$secret_file"
 : "${username:?credential file must define username}"
 : "${password:?credential file must define password}"
+export -n username password
 
 status="$($utmctl list | awk -v uuid="$utm_uuid" '$1 == uuid { print $2; exit }')"
 if [[ "$status" != "started" ]]; then
   "$utmctl" start "$utm_uuid" >/dev/null
 fi
 
-# A direct disposable QEMU session may be the live guest after a restart.
-if ! nc -z 127.0.0.1 "$ssh_port" >/dev/null 2>&1 \
-    && nc -z 127.0.0.1 50375 >/dev/null 2>&1; then
-  ssh_port=50375
-  rdp_port=53389
-fi
+# Windows can open its forwarded TCP port before OpenSSH is ready after boot.
+# Wait for this guest: another QEMU guest on 50375 may have different credentials.
+echo 'Waiting for Windows sign-in services...'
+deadline=$((SECONDS + ${SPECTR_WINDOWS_READY_TIMEOUT:-120}))
+until SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
+    "$repo_root/tools/windows/ssh-qemu.sh" 'echo SPECTR_WINDOWS_READY' >/dev/null 2>&1; do
+  if (( SECONDS >= deadline )); then
+    echo 'Windows SSH did not become ready; check the VM in UTM and try again.' >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
   SPECTR_WINDOWS_RDP_PORT="$rdp_port" \
@@ -49,8 +62,9 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
 # already-authenticated SSH channel before opening RDP.
 ssh_key="${SPECTR_WINDOWS_SSH_KEY:-$HOME/.ssh/id_ed25519_macstudio}"
 [[ -f "$ssh_key" ]] || ssh_key="$HOME/.ssh/id_ed25519"
-if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
-  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes \
+if [[ "${SPECTR_WINDOWS_PREPARE_REAPER:-0}" == 1 &&
+      -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then
+  scp -q -P "$ssh_port" -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
     -o StrictHostKeyChecking=no -i "$ssh_key" \
     "$repo_root/tools/windows/prepare-reaper-demo.ps1" \
     "admin@127.0.0.1:/Users/admin/prepare-reaper-demo.ps1"
@@ -70,12 +84,14 @@ fi
 echo "Windows RDP: 127.0.0.1:$rdp_port"
 echo "Windows user: $username"
 echo "REAPER architecture: $reaper_arch (launch=$launch_reaper)"
-sdl-freerdp \
-  /v:"127.0.0.1:$rdp_port" \
-  /u:"$username" /d:"$rdp_domain" /p:"$password" /cert:ignore \
-  /admin \
-  /size:"${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
-  +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution &
+# Keep the password out of process arguments and the environment. FreeRDP
+# consumes the option stream from a private inherited file descriptor.
+sdl-freerdp /args-from:fd:3 3< <(
+  printf '%s\n' \
+    "/v:127.0.0.1:$rdp_port" "/u:$username" "/d:$rdp_domain" "/p:$password" \
+    /cert:ignore /admin "/size:${SPECTR_WINDOWS_RDP_SIZE:-1920x1080}" \
+    +auto-reconnect /auto-reconnect-max-retries:10 +dynamic-resolution
+) &
 rdp_pid=$!
 # UTM may retain focus after starting the guest. Bring the visible RDP window
 # forward when macOS accessibility automation is available; failure is

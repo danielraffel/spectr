@@ -1,6 +1,6 @@
 # Spectr Status — Live Handoff Dashboard
 
-_Last updated: 2026-10-11. This is the concise state-of-the-world for
+_Last updated: 2026-10-12. This is the concise state-of-the-world for
 Spectr. Refresh it whenever the product branch or its landing gates change._
 
 ## Windows build and runtime checkpoint — 2026-10-11
@@ -46,11 +46,15 @@ Release 1 is a zoomable spectral-isolation effect:
 - AUv2, VST3, CLAP, and Standalone arm64 artifacts. No PKG, signing,
   notarization, or public distribution claim is part of this local M5 trial.
 
-The active product branch is `recon/real-analyzer-integration-20260810` at
-`e2b565e142e82b05ba2d1ab60d515cf3864b763d`, seven clean commits ahead of
-Spectr `origin/main` at `36dfe1bc`. The Release 1 work is committed locally
-but has not been pushed, PR'd, or merged. The ignored `native-react/`
-experiment is not part of the shipping branch.
+The active product branch is `main` at https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903. Spectr provenance/parity hardening is merged through https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903; its post-merge M5 product-acceptance run passed at https://github.com/danielraffel/spectr/actions/runs/38316742820. Historical integration branches and local trial artifacts below are evidence from earlier experiments, not current unreleased branch claims.
+
+## Current landed optimization state
+
+- Pulp provenance/schema contract merged at https://github.com/Generous-Corp/pulp/commit/83ae20909246d3395f7ed2063b78db9015b5298a.
+- Pulp materialized hot-region benchmark merged at https://github.com/Generous-Corp/pulp/commit/c3a55d7e241c4e91d3d9d95fa81833a6b69a6704; a follow-up test split is under review at https://github.com/Generous-Corp/pulp/pull/10164 to keep the benchmark module below the 1,000-line maintainability threshold.
+- Spectr provenance validator hardening is merged through https://github.com/danielraffel/spectr/commit/71eef2292a467f965fe5b077c495e17938d51903; the follow-up fail-closed parity path policy is implemented on the current review branch.
+- Deterministic old/new Chromium geometry evidence is recorded at `/Volumes/Workshop/Code/agent-artifacts/spectr-old-new-regression-20261012/old-new-geometry-regression.json`; it proves matching canvas geometry and shared footer placement, while raw pixels remain diagnostic because the old and new defaults differ.
+
 
 ## Pulp SDK and fresh build evidence
 
@@ -99,9 +103,9 @@ Pulp dependencies.
 
 ## Remaining Release 1 gates
 
-1. Land Pulp realtime visualization PR #7399, then the inspector-off CLI and
-   transport-less VST3 host fixes; publish/select the resulting authoritative
-   development SDK.
+1. Rebuild against the merged Pulp realtime visualization, inspector-off CLI,
+   and transport-less VST3 host fixes; publish/select the resulting
+   authoritative development SDK.
 2. Rebuild all four Spectr formats against that SDK and rerun native,
    Chromium, artifact, validator, and CLI-first audio gates.
 3. Complete the current Logic reopen/Musical Typing/minimum-size checks, the
@@ -141,6 +145,49 @@ variant is a contingency only if the supported host matrix proves that a
 single effect identity cannot reliably combine audio input, MIDI input,
 freeze capture, recall, and keyboard playback. No Release 2 freeze or sampler
 implementation is claimed by the current branch.
+
+## Import provenance regression slice — 2026-10-12
+
+The current provenance validator keeps the v1 runtime/native contract and uses
+a diagnostic-only v2 projection without changing the shipped runtime or native
+parser. The follow-up branch also closes symlink escapes and binds strict
+parity receipts to canonical capture/comparator evidence.
+
+DONE:
+
+- deterministic normalization of semantic, layout, text, paint, and canvas
+  binding arrays with per-row SHA-256 evidence;
+- source-explicit identity when a data-pulp-id exists, otherwise
+  positional-provisional identity with sibling-reorder negative coverage;
+- canonical source/runtime/editor/IR/state-atlas hashes and a 13-script runtime
+  patch allowlist;
+- embedded materialized asset reference, byte-length, and SHA-256 validation;
+- exact before/after browser/native artifact gate with positive and changed-
+  artifact controls; and
+- strict fidelity receipt compatibility checks that reject legacy or forged
+  receipts lacking canonical capture/comparator evidence bound to the supplied
+  artifact hashes;
+- canonical realpath containment checks that reject repository symlinks which
+  resolve outside the repository; and
+- a slim checked-in shadow projection (about 50 KB) in place of the duplicated
+  full materialized document.
+
+OPEN:
+
+- native and JavaScript materialized consumers remain v1-only; the v2 shadow is
+  not authoritative and must not be wired into shipping import yet;
+- same-source browser/native before/after captures require a fixed interaction
+  state and settle protocol; missing captures report NOT_RUN;
+- current browser/native visual receipts with unequal hashes or incomplete
+  canonical evidence remain diagnostic failures, not parity proof; and
+- SDK source commit and per-patch source/target anchor receipts should be
+  filled when the authoritative Pulp SDK is selected.
+- CMake registers the materialized provenance test only when Node.js is
+  discoverable; a host without Node is UNKNOWN for this gate and must not be
+  reported as a passing validation.
+
+The generated manifest is intentionally overall: OPEN until those external
+parity artifacts exist.
 
 ## References
 
@@ -722,7 +769,7 @@ source/artifact tests pass.
 The native target was rebuilt through the governed build wrapper. The current
 binary SHA is `76c76e84681305781e2a5ba0da127cb0eb9bd4496e7a60a8854e38ecd2db146e`;
 the materialized runtime SHA is
-`00a8ca66cd628f3d960ddcf1486ee89e33e432df4691f7f7e409ba4c75ac5212`.
+`8936133916f7270337ad5b6555747233b185f7ec5a181ee3e07752efd4768ff6`.
 The fresh browser oracle and native CPU Skia capture share the same artifact,
 fixture, viewport, state digest, and binary identity. The authenticated join
 passes all provenance checks and remains a measured diagnostic failure:

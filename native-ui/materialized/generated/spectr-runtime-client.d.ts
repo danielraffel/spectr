@@ -2,6 +2,7 @@
 export type SpectrCommand =
   | "ab_toggle"
   | "band_field_set"
+  | "band_group_set"
   | "build_info_copy"
   | "build_info_get"
   | "capture_snapshot"
@@ -71,6 +72,7 @@ export interface SpectrRuntimeClient {
   request<T = unknown>(type: SpectrCommand, payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   abToggle<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   bandFieldSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
+  bandGroupSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   buildInfoCopy<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   buildInfoGet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   captureSnapshot<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;

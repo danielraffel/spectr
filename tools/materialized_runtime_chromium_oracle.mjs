@@ -60,7 +60,7 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
-    if (['artifact', 'fixture', 'chrome', 'out', 'dpr'].some(name => key === `--${name}`)) {
+    if (['artifact', 'fixture', 'chrome', 'out', 'dpr', 'state'].some(name => key === `--${name}`)) {
       const value = argv[++i];
       if (!value || value.startsWith('--')) fail(`${key} requires a value`);
       args[key.slice(2)] = value;
@@ -529,6 +529,26 @@ async function main(argv) {
   for (const key of ['artifact', 'fixture', 'out']) assert(args[key], `--${key} is required`);
   const artifactPath = path.resolve(args.artifact);
   const fixturePath = path.resolve(args.fixture);
+  let sharedState = null;
+  if (args.state) {
+    try { sharedState = JSON.parse(fs.readFileSync(path.resolve(args.state), 'utf8')); }
+    catch (error) { fail(`shared parity state is invalid: ${error.message}`); }
+    assert(sharedState.schema === 'spectr-parity-state-v1' && sharedState.version === 1,
+      'shared parity state has an unsupported schema');
+    assert(sharedState.captureKind === undefined || sharedState.captureKind === 'shared'
+      || sharedState.captureKind === 'browser-only',
+    'shared parity state has an unsupported capture kind');
+    assert(sharedState.authority && typeof sharedState.authority === 'object'
+      && typeof sharedState.authority.browserArtifact === 'string'
+      && typeof sharedState.authority.nativeArtifact === 'string'
+      && typeof sharedState.authority.joinMode === 'string',
+    'shared parity state lacks an authority manifest');
+    if (sharedState.captureKind !== 'browser-only') {
+      assert(sharedState.native && typeof sharedState.native.binarySha256 === 'string'
+        && /^[0-9a-f]{64}$/.test(sharedState.native.binarySha256),
+      'shared parity state lacks a native binary digest');
+    }
+  }
   const outDir = path.resolve(args.out);
   const chrome = path.resolve(args.chrome || CHROME_DEFAULT);
   const dpr = Number(args.dpr || 2);
@@ -574,6 +594,20 @@ async function main(argv) {
   write(path.join(outDir, 'runtime-with-bridge.html'), html);
   const sourceSha256 = sha256(artifactBytes);
   const fixtureSha256 = sha256(fixtureBytes);
+  if (sharedState) {
+    assert(sharedState.source?.sha256 === sourceSha256,
+      'shared parity state source does not match the materialized artifact');
+    assert(sharedState.analyzer?.fixtureSha256 === fixtureSha256,
+      'shared parity state fixture does not match the analyzer fixture');
+    assert(sharedState.viewport?.width === 1320 && sharedState.viewport?.height === 860
+      && sharedState.viewport?.deviceScaleFactor === dpr,
+    'shared parity state viewport does not match the browser capture');
+    assert(sharedState.viewport?.png?.width === Math.round(1320 * dpr)
+      && sharedState.viewport?.png?.height === Math.round(860 * dpr),
+    'shared parity state dimensions do not match the browser capture');
+    assert(sharedState.stateSha256 === stateDigest(sharedState),
+      'shared parity state digest is invalid');
+  }
   const state = {
     schema: 'spectr-materialized-browser-state-v1', version: 1,
     source: { artifactSha256: sourceSha256, htmlSha256: sha256(Buffer.from(document.html)),
@@ -608,6 +642,9 @@ async function main(argv) {
     source: { artifact: artifactPath, artifactSha256: sourceSha256,
       htmlSha256: state.source.htmlSha256, fixture: fixturePath, fixtureSha256 },
     state, stateSha256: state.stateSha256,
+    ...(sharedState && sharedState.captureKind !== 'browser-only'
+      ? { sharedStateSha256: sharedState.stateSha256,
+          sharedStatePath: path.resolve(args.state) } : {}),
     authority: state.authority,
     checks: { strict: true, readiness: true, analyzerFixture: true,
       embeddedAssetsServed: true, consoleNetworkClean: true,

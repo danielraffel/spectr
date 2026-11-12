@@ -132,8 +132,8 @@ if (plantRemount) {
 }
 if (plantScope) {
   // Free identifier in an LFO 2 row. Parses clean; only running it catches it.
-  html = replaceExactlyOnce(html, 'value: value.lfo2Rate || 4',
-                            'value: lfo2RateUndeclared || 4', 'plant-scope');
+  html = replaceExactlyOnce(html, 'value: spectrSettingsRateIndex(value.lfo2Rate || 4)',
+                            'value: spectrSettingsRateIndex(lfo2RateUndeclared || 4)', 'plant-scope');
 }
 if (plantHomograph) {
   // A "Target" heading competing with the TARGETS list.

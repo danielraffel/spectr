@@ -8,7 +8,7 @@ MORPH, PRESET) shows after this:
   TITLE            Reset to <default>
   MODULATION       LFO 1 [switch]  LFO 2 [switch]  [EDIT LFO 1][EDIT LFO 2]
   LFO n PARAMETERS Shape (four glyphs + name), Rate (slider, beats)
-  <TARGET> TARGET  LFO 1 -> <Target> [route switch]   ("LFO off" when the
+  <TARGET> TARGET  LFO 1 -> <Target> [route switch]   ("On, LFO off" when the
                      | Depth                            route is on and its
                      | Hold for Length (Freeze only)    LFO is not)
                    LFO 2 -> <Target> [route switch]

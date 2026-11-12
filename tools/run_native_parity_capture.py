@@ -37,6 +37,8 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--backend", default="skia")
     parser.add_argument("--analyzer-fixture", required=True)
+    parser.add_argument("--design-js",
+                        help="authored native design source whose embedded bytes must match")
     args = parser.parse_args()
 
     shot = Path(args.native_shot).resolve()
@@ -44,8 +46,14 @@ def main():
     state_path = Path(args.state).resolve()
     output = Path(args.output).resolve()
     fixture = Path(args.analyzer_fixture).resolve()
+    design_js = Path(args.design_js).resolve() if args.design_js else None
     if not shot.exists() or not binary.exists() or not state_path.exists():
         fail("native shot, binary, and state manifest must exist")
+    if design_js is not None:
+        if not design_js.is_file():
+            fail("design.js source is missing")
+        if design_js.read_bytes() not in binary.read_bytes():
+            fail("native binary does not embed the exact design.js source bytes")
     if shot != binary:
         fail("--binary must identify the executable invoked by --native-shot")
     state = json.loads(state_path.read_text())

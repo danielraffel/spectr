@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.7 LANGUAGES CXX)
+project(Spectr VERSION 1.0.9 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -77,7 +77,13 @@ endif()
 math(EXPR SPECTR_PROCESSING_LATENCY
      "${SPECTR_FFT_SIZE} + ${SPECTR_ANALYSIS_HOP}")
 
-find_package(Pulp 0.915.0 REQUIRED)
+# The release matrix consumes platform-specific Pulp SDK packages. Their
+# CMake package exports the supported API contract; pinning a numeric version
+# here made a newer Windows ARM64EC SDK reject an otherwise compatible
+# consumer while the macOS acceptance lane intentionally uses an older,
+# known-good SDK. Keep the dependency contract at the package boundary and
+# let each immutable SDK provenance pin select the tested implementation.
+find_package(Pulp REQUIRED)
 
 # Product provenance is recomputed on every configure. Never preserve a SHA
 # from a prior checkout in CMakeCache.txt: acceptance packages must identify
@@ -281,6 +287,10 @@ add_test(NAME Spectr-materialized-static-grid-zindex
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
 set_tests_properties(Spectr-materialized-static-grid-zindex PROPERTIES TIMEOUT 30)
+add_test(NAME Spectr-materialized-pseudo-plane
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_pseudo_plane.py)
+set_tests_properties(Spectr-materialized-pseudo-plane PROPERTIES TIMEOUT 30)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
@@ -433,10 +443,23 @@ set(SPECTR_NATIVE_STANDALONE_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_Standalone")
 set(SPECTR_NATIVE_VST3_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_VST3")
 set(SPECTR_NATIVE_AU_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AU")
 set(SPECTR_NATIVE_CLAP_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_CLAP")
+set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless_AAX")
+
+# AAX ships the same native editor as the other desktop formats by default.
+# Keep the processor-only lane available as an explicit escape hatch for
+# diagnosis, but never select it implicitly: a headless artifact opens in Pro
+# Tools with an empty editor container and can be mistaken for a broken GUI.
+option(SPECTR_AAX_HEADLESS
+    "Build a processor-only AAX artifact (no custom EffectGUI)" OFF)
+set(_spectr_native_formats VST3 AU CLAP Standalone)
+if(PULP_ENABLE_AAX AND NOT SPECTR_AAX_HEADLESS)
+    list(APPEND _spectr_native_formats AAX)
+    set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
+endif()
 
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     NATIVE_UI
-    FORMATS VST3 AU CLAP Standalone
+    FORMATS ${_spectr_native_formats}
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
     PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
@@ -444,6 +467,8 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     MANUFACTURER "Pulp"
     PLUGIN_CODE "${SPECTR_NATIVE_PLUGIN_CODE}"
     MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
     VERSION "${PROJECT_VERSION}"
     CATEGORY Effect
     DESIGN_WIDTH ${SPECTR_AUTHORED_WIDTH}
@@ -483,6 +508,107 @@ foreach(_spectr_native_target
         endif()
     endif()
 endforeach()
+
+# The generated Pulp CLAP wrapper is the shipping entry point; Spectr's
+# standalone clap_entry.cpp is reserved for the shared-host probe.  Add the
+# release version anchor to the real CLAP target so the binary-level release
+# check covers the artifact that ships.
+if(TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    target_sources(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+        src/clap_product_version_anchor.cpp)
+    if(APPLE)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "LINKER:-u,_spectr_product_version_anchor")
+    elseif(WIN32)
+        target_link_options(${SPECTR_NATIVE_CLAP_TARGET} PRIVATE
+            "/INCLUDE:spectr_product_version_anchor")
+    endif()
+endif()
+
+# The generated AAX wrapper is compiled as its own translation unit. Keep the
+# product headers reachable there just as they are for the native core.
+if(TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    target_include_directories(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_NATIVE_AAX_TARGET} PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
+endif()
+
+# The explicit headless lane remains available for isolating processor load
+# problems. Shipping/default AAX is generated above with NATIVE_UI so its entry
+# point can register PULP_AAX_PLUGIN_WITH_GUI and Pro Tools can create the
+# editor. This is deliberately conditional because the headless target must
+# not share the native view stack.
+if(SPECTR_AAX_HEADLESS)
+set(SPECTR_AAX_SOURCES
+    src/spectr.cpp
+    src/mask_renderer.cpp
+    src/param_surface.cpp
+    src/edit_engine.cpp
+    src/editor_authority.cpp
+    src/pattern.cpp
+    src/preset_format.cpp
+    src/snapshot.cpp
+    src/level_controls.cpp)
+set(SPECTR_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless")
+pulp_add_plugin(${SPECTR_AAX_TARGET}
+    AAX_HEADLESS
+    FORMATS AAX
+    SOURCES ${SPECTR_AAX_SOURCES}
+    PROCESSOR_FACTORY spectr::create_spectr
+    PLUGIN_NAME "${SPECTR_NATIVE_PLUGIN_NAME}"
+    BUNDLE_ID "${SPECTR_NATIVE_BUNDLE_ID}.aax"
+    MANUFACTURER "Pulp"
+    MANUFACTURER_CODE "${SPECTR_NATIVE_MANUFACTURER_CODE}"
+    AAX_PRODUCT_CODE "Spct"
+    AAX_NATIVE_CODE "Spct"
+    VERSION "${PROJECT_VERSION}"
+    CATEGORY Effect)
+if(TARGET ${SPECTR_AAX_TARGET}_AAX)
+    target_include_directories(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_AAX PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
+if(TARGET ${SPECTR_AAX_TARGET}_Core)
+    target_include_directories(${SPECTR_AAX_TARGET}_Core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(${SPECTR_AAX_TARGET}_Core PRIVATE
+        SPECTR_AAX_HEADLESS=1
+        SPECTR_PRODUCT_VERSION="${PROJECT_VERSION}"
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT}
+        SPECTR_EDITOR_BACKGROUND_RGB=${SPECTR_EDITOR_BACKGROUND_RGB}
+        SPECTR_FFT_SIZE=${SPECTR_FFT_SIZE}
+        SPECTR_ANALYSIS_HOP=${SPECTR_ANALYSIS_HOP})
+endif()
+endif()
 
 if(SPECTR_BUILD_FORGE_ADAPTER)
     # The adapter is deliberately an interface target over Spectr's existing
@@ -1284,6 +1410,25 @@ set_tests_properties(Spectr-level-target-step-negative-control PROPERTIES
     TIMEOUT 300
     PASS_REGULAR_EXPRESSION "CHECK\\( worst <= kOutputGateDbPerMs \\)")
 
+# The LFO sampling gates (test/test_modulation_freeze.cpp, [lfo-alias]). With
+# every destination reading one phase per block and Output ramping between
+# block ends (SPECTR_MODULATION_PLANT=lfo-point-sample: the read that folded a
+# fast LFO), a spectral target above the block Nyquist must fail the no-fold
+# gate and the Output target must fail its audio-rate gate, so each gate is
+# proven able to see the fold it exists to catch.
+add_test(NAME Spectr-lfo-alias-spectral-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=lfo-point-sample
+        $<TARGET_FILE:Spectr-test> "a spectral target reads the LFO's block mean*")
+set_tests_properties(Spectr-lfo-alias-spectral-negative-control PROPERTIES
+    TIMEOUT 900
+    PASS_REGULAR_EXPRESSION "CHECK\\( run\\.report\\.residual_db < control\\.report\\.residual_db \\+ 3\\.0 \\)")
+add_test(NAME Spectr-lfo-alias-output-negative-control
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_MODULATION_PLANT=lfo-point-sample
+        $<TARGET_FILE:Spectr-test> "the Output target follows a fast LFO at audio rate*")
+set_tests_properties(Spectr-lfo-alias-output-negative-control PROPERTIES
+    TIMEOUT 900
+    PASS_REGULAR_EXPRESSION "CHECK\\( run\\.report\\.sideband_db - run\\.report\\.residual_db > 20\\.0 \\)")
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME Spectr-level-help-pins
@@ -1443,6 +1588,14 @@ set_tests_properties(Spectr-native-shot PROPERTIES
     SKIP_RETURN_CODE 77
     # Shares the lock with Spectr-native-n1-test: both mount the same
     # heavyweight native materialized editor runtime and must not race.
+    RESOURCE_LOCK spectr_native_materialized_editor)
+
+add_test(NAME Spectr-analyzer-stalled-ui
+    COMMAND ${CMAKE_COMMAND} -E env SPECTR_ANALYZER_STALLED_UI=1
+        $<TARGET_FILE:Spectr-native-shot> --backend=skia
+        --out=${CMAKE_CURRENT_BINARY_DIR}/spectr-analyzer-stalled-ui)
+set_tests_properties(Spectr-analyzer-stalled-ui PROPERTIES
+    TIMEOUT 120
     RESOURCE_LOCK spectr_native_materialized_editor)
 
 # Exercise the same shipping binary through its deterministic analyzer seam so
@@ -2282,6 +2435,13 @@ find_program(SPECTR_CHROME_EXECUTABLE
     NAMES "Google Chrome" google-chrome chromium chromium-browser
     PATHS "/Applications/Google Chrome.app/Contents/MacOS")
 
+if(SPECTR_NODE_EXECUTABLE)
+    add_test(NAME Spectr-materialized-provenance
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_provenance.mjs)
+    set_tests_properties(Spectr-materialized-provenance PROPERTIES TIMEOUT 60)
+endif()
+
 # Node-only, deliberately outside the Chrome-gated block below: this executes
 # the shipped reattach ladder out of the materialized document directly, so it
 # still runs on a host with no Chrome -- where every other oracle silently
@@ -2334,6 +2494,24 @@ if(SPECTR_NODE_EXECUTABLE)
             --plant-swallow --expect-fail)
     set_tests_properties(Spectr-materialized-propagation-negative-control PROPERTIES
         TIMEOUT 30)
+
+    # The window an LFO moves is drawn, paint only: the modulation-frame
+    # parser accepts the optional drawn window, renderAll paints one pass
+    # through it and restores the user's window, and nothing writes it into
+    # the live view a publication reads. One plant removes the restore, which
+    # is the defect that would turn an LFO sweep into a user viewport edit.
+    add_test(NAME Spectr-materialized-modulated-viewport
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulated_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-materialized-modulated-viewport PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-materialized-modulated-viewport-control-no-restore
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_modulated_viewport.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            --plant-no-restore --expect-fail)
+    set_tests_properties(Spectr-materialized-modulated-viewport-control-no-restore
+        PROPERTIES TIMEOUT 30)
 
     # The Latency control: does it exist, does it mount, and does changing it
     # say the right thing on the wire. The mode was saved, recalled and
@@ -2646,7 +2824,12 @@ if(SPECTR_NODE_EXECUTABLE)
             stacking-submenus
             escape-closes-all
             no-escape
-            unanswerable-dismisses)
+            unanswerable-dismisses
+            pointer-isolation
+            lifted-pointer-isolation
+            pointerdown-isolation
+            pointerup-isolation
+            click-isolation)
         add_test(NAME Spectr-materialized-band-menu-dismissal-${plant}-control
             COMMAND ${SPECTR_NODE_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_band_menu_dismissal.mjs
@@ -3825,6 +4008,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle
             --dpr 2)
@@ -3837,6 +4021,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
+            --state ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-materialized-parity-state-v1.json
             --chrome ${SPECTR_CHROME_EXECUTABLE}
             --out ${CMAKE_CURRENT_BINARY_DIR}/materialized-runtime-authority-oracle-negative
             --dpr 2
@@ -4349,6 +4534,17 @@ if(Python3_Interpreter_FOUND AND TARGET ${SPECTR_NATIVE_PLUGIN_TARGET}_Standalon
         RESOURCE_LOCK spectr_native_materialized_editor)
 endif()
 
+# macOS codesign treats arbitrary files under Contents/MacOS as nested code.
+# Pulp emits control-shipping evidence beside each plugin binary for local
+# inspection; relocate the AAX evidence into sealed Resources before signing.
+if(APPLE AND TARGET ${SPECTR_NATIVE_AAX_TARGET})
+    add_custom_command(TARGET ${SPECTR_NATIVE_AAX_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DBUNDLE_CONTENTS=$<TARGET_FILE_DIR:${SPECTR_NATIVE_AAX_TARGET}>/..
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/relocate_aax_control_sidecars.cmake
+        VERBATIM)
+endif()
+
 # ── Plugin targets ─────────────────────────────────────────────────────
 
 if(SPECTR_BUILD_WEBVIEW_REFERENCE)
@@ -4398,6 +4594,22 @@ foreach(fmt VST3 AU CLAP Standalone)
         )
     endif()
 endforeach()
+endif()
+
+# The standalone Windows app owns a native editor window.  CMake defaults
+# executable targets to the console subsystem on Windows, which causes a
+# terminal window to flash when Spectr.exe is launched and makes the app exit
+# path look like a failed console command.  Keep plugin targets unchanged and
+# mark only the standalone target as a GUI subsystem executable.
+if(WIN32 AND TARGET Spectr_Standalone)
+    target_sources(Spectr_Standalone PRIVATE
+        src/ui/windows_standalone_host.cpp)
+    set_target_properties(Spectr_Standalone PROPERTIES WIN32_EXECUTABLE TRUE)
+    # Pulp's plugin target helper supplies a console subsystem linker option
+    # for its shared standalone template.  Put the app-specific GUI option on
+    # the final target as well so the executable has no console subsystem even
+    # when that helper option is present in the generated link rule.
+    target_link_options(Spectr_Standalone PRIVATE /SUBSYSTEM:WINDOWS)
 endif()
 
 # Freeze taps through the built AU v2 component, the way a host drives it.

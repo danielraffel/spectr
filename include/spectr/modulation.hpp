@@ -36,6 +36,14 @@ inline constexpr std::size_t kModulationTargetCount = 13;
 /// Internal LFOs.
 inline constexpr std::size_t kLfoCount = 2;
 
+/// The LFO Rate in beats per cycle, 1/1024 .. 4096. The editor offers the
+/// powers of two; a host can automate any value between. One cycle can be
+/// shorter than an audio block (1/1024 beat is 0.49 ms at 120 BPM; the LFO is
+/// sampled once per block, so such a rate is a block-rate stepper rather than
+/// an audio-rate wave) or longer than a song (4096 beats is 34 min).
+inline constexpr float kLfoBeatsMin = 1.0f / 1024.0f;
+inline constexpr float kLfoBeatsMax = 4096.0f;
+
 /// Sentinel meaning "no explicit destination selection has been made", so the
 /// destination follows the single-target `ModulationSettings::target` enum
 /// (the host-automatable lane). It is deliberately distinct from `0x00`,
@@ -59,25 +67,47 @@ struct ModulationRoute {
 };
 using LfoRoutes = std::array<ModulationRoute, kModulationTargetCount>;
 
-/// A fresh LFO drives the whole bank at 50 % Depth: the destination and depth a
-/// 1.0.x instance opened with, so a new instance sounds as it did.
+/// A fresh LFO drives nothing: its switch and each target's switch are
+/// separate controls, so switching the LFO on moves nothing until a target
+/// is switched on too. Every target keeps the 50 % Depth a 1.0.x instance
+/// opened with, so the first target switched on sounds as that LFO did. (The
+/// parameter defaults in param_surface.cpp say the same; a 1.0.x session is
+/// migrated on restore from its single target, never defaulted.)
 inline constexpr LfoRoutes default_lfo_routes() noexcept {
-    LfoRoutes routes{};
-    routes[static_cast<std::size_t>(ModulationTarget::WholeBank)].enabled = true;
-    return routes;
+    return LfoRoutes{};
 }
+
+/// A band group: a set of bands the user selected, driven as one target by
+/// either LFO with its own switch and Depth. Up to kBandGroupCount of them
+/// per session. A group moves its bands by wave x Depth x 12 dB ON TOP OF
+/// Bank (which moves every band): the two stack, so a grouped band under
+/// both hears Bank plus its group. Session state, not host lanes: the
+/// membership is a 64-bit mask, which no automation lane can carry.
+inline constexpr std::size_t kBandGroupCount = 4;
+struct BandGroupRoute {
+    bool  enabled = false;
+    float amount  = 0.5f;  ///< the group's Depth for that LFO, 0..1
+};
+struct BandGroup {
+    std::uint64_t mask = 0;                                ///< bit per band
+    std::array<BandGroupRoute, kLfoCount> lfo{};           ///< per LFO
+    bool defined() const noexcept {
+        return mask != 0 && (lfo[0].enabled || lfo[1].enabled);
+    }
+};
+using BandGroups = std::array<BandGroup, kBandGroupCount>;
 
 struct ModulationSettings {
     bool enabled = false;
     LfoShape shape = LfoShape::Sine;
-    float beats_per_cycle = 4.0f;
+    float beats_per_cycle = 1.0f;
     float depth = 0.5f;
     /// The legacy single-target lane (`4004`). Read-mostly: see
     /// docs/modulation.md. Routing is `routes`.
     ModulationTarget target = ModulationTarget::WholeBank;
     bool lfo2_enabled = false;
     LfoShape lfo2_shape = LfoShape::Sine;
-    float lfo2_beats_per_cycle = 4.0f;
+    float lfo2_beats_per_cycle = 1.0f;
     float lfo2_depth = 0.0f;
     // Legacy destination mask for ALL/NONE composition; bits 0..3 map
     // Bank/A/B/Morph. `kModulationTargetMaskUnset` defers to `target`. Only
@@ -89,6 +119,8 @@ struct ModulationSettings {
     /// SLEWED route level (see `slew_lfo_level`) rather than the raw lane.
     std::array<LfoRoutes, kLfoCount> routes{default_lfo_routes(),
                                             default_lfo_routes()};
+    /// The band groups (set_band_group); ride the session blob.
+    BandGroups groups{};
 };
 
 /// The destinations @p routes enables, as a bit mask in enum order.
@@ -301,6 +333,9 @@ inline constexpr float kModulationViewportZoomOctaves = 1.0f;
 /// The summed modulation coordinate of every destination.
 struct ModulationCoordinates {
     std::array<float, kModulationTargetCount> value{};
+    /// Each band group's summed coordinate and the bands it moves.
+    std::array<float, kBandGroupCount> group{};
+    std::array<std::uint64_t, kBandGroupCount> group_mask{};
 
     float operator[](ModulationTarget t) const noexcept {
         return value[static_cast<std::size_t>(t)];
@@ -365,6 +400,48 @@ inline float modulated_mix(float base, const ModulationCoordinates& coords) noex
 inline float output_modulation_db(const ModulationCoordinates& coords) noexcept {
     const float c = coords[ModulationTarget::Output];
     return std::isfinite(c) ? c * kModulationOutputExcursionDb : 0.0f;
+}
+
+/// The Output destination's coordinate alone -- what `modulation_coordinates`
+/// would put in `coords[ModulationTarget::Output]` for @p wave1 / @p wave2 --
+/// for the per-sample path that evaluates the LFOs at audio rate and must not
+/// pay for every other target each sample. Pinned equal to the full
+/// composition by test.
+inline float output_modulation_coordinate(const ModulationSettings& settings,
+                                          float wave1, float wave2) noexcept {
+    constexpr auto kOutput = static_cast<std::size_t>(ModulationTarget::Output);
+    float coordinate = 0.0f;
+    const float levels[kLfoCount] = {settings.enabled ? settings.depth : 0.0f,
+                                     settings.lfo2_enabled ? settings.lfo2_depth : 0.0f};
+    const float waves[kLfoCount] = {std::clamp(wave1, -1.0f, 1.0f),
+                                    std::clamp(wave2, -1.0f, 1.0f)};
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+        const auto& route = settings.routes[lfo][kOutput];
+        if (!route.enabled || !(levels[lfo] > 0.0f)) continue;
+        coordinate += waves[lfo] * std::clamp(levels[lfo], 0.0f, 1.0f)
+                    * std::clamp(route.amount, 0.0f, 1.0f);
+    }
+    return coordinate;
+}
+
+/// The Bank destination's coordinate alone -- `coords[WholeBank]` for
+/// @p wave1 / @p wave2 -- for the per-sample path that renders Bank's fast
+/// residual as a broadband gain. Pinned equal to the full composition by test.
+inline float bank_modulation_coordinate(const ModulationSettings& settings,
+                                        float wave1, float wave2) noexcept {
+    constexpr auto kBank = static_cast<std::size_t>(ModulationTarget::WholeBank);
+    float coordinate = 0.0f;
+    const float levels[kLfoCount] = {settings.enabled ? settings.depth : 0.0f,
+                                     settings.lfo2_enabled ? settings.lfo2_depth : 0.0f};
+    const float waves[kLfoCount] = {std::clamp(wave1, -1.0f, 1.0f),
+                                    std::clamp(wave2, -1.0f, 1.0f)};
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+        const auto& route = settings.routes[lfo][kBank];
+        if (!route.enabled || !(levels[lfo] > 0.0f)) continue;
+        coordinate += waves[lfo] * std::clamp(levels[lfo], 0.0f, 1.0f)
+                    * std::clamp(route.amount, 0.0f, 1.0f);
+    }
+    return coordinate;
 }
 
 /// Output trim in dB after the Output destination, clamped to the lane range.
@@ -439,6 +516,16 @@ inline BandField apply_field_modulation(const BandField& canonical,
         for (auto& band : out.bands)
             band.gain_db = std::clamp(band.gain_db + delta,
                                       kBandGainMinDb, kBandGainMaxDb);
+    }
+    // Band groups offset their own bands the same way, on top of Bank.
+    for (std::size_t g = 0; g < kBandGroupCount; ++g) {
+        if (coords.group_mask[g] == 0 || coords.group[g] == 0.0f) continue;
+        const float delta = coords.group[g] * kModulationBankExcursionDb;
+        for (std::size_t b = 0; b < kMaxBands; ++b) {
+            if (((coords.group_mask[g] >> b) & 1ull) == 0) continue;
+            out.bands[b].gain_db = std::clamp(out.bands[b].gain_db + delta,
+                                              kBandGainMinDb, kBandGainMaxDb);
+        }
     }
     preserve_authored_mutes(out, canonical);
     return out;
@@ -592,11 +679,19 @@ inline int preset_modulation_step(float offset) noexcept {
 /// Whether @p settings move anything: an LFO that is on, has depth, and has a
 /// live route. An LFO with every destination off is as silent as one at
 /// depth 0, and the editor's overlay must release for it the same way.
+inline bool band_groups_audible(const ModulationSettings& settings,
+                                std::size_t lfo) noexcept {
+    for (const auto& group : settings.groups)
+        if (group.mask != 0 && group.lfo[lfo].enabled && group.lfo[lfo].amount > 0.0f)
+            return true;
+    return false;
+}
+
 inline bool modulation_audible(const ModulationSettings& settings) noexcept {
     return (settings.enabled && settings.depth > 0.0f
-            && lfo_routes_audible(settings.routes[0]))
+            && (lfo_routes_audible(settings.routes[0]) || band_groups_audible(settings, 0)))
         || (settings.lfo2_enabled && settings.lfo2_depth > 0.0f
-            && lfo_routes_audible(settings.routes[1]));
+            && (lfo_routes_audible(settings.routes[1]) || band_groups_audible(settings, 1)));
 }
 
 /// Both LFOs routed through @p settings.routes, evaluated at @p wave1 /
@@ -616,6 +711,23 @@ inline ModulationCoordinates modulation_coordinates(const ModulationSettings& se
         accumulate_modulation(coords, settings.routes[0], settings.depth, wave1);
     if (settings.lfo2_enabled)
         accumulate_modulation(coords, settings.routes[1], settings.lfo2_depth, wave2);
+    // Band groups: each LFO that drives a group adds wave x its level x the
+    // group's Depth, bipolar like Bank.
+    const float levels[kLfoCount] = {settings.enabled ? settings.depth : 0.0f,
+                                     settings.lfo2_enabled ? settings.lfo2_depth : 0.0f};
+    const float waves[kLfoCount] = {std::clamp(wave1, -1.0f, 1.0f),
+                                    std::clamp(wave2, -1.0f, 1.0f)};
+    for (std::size_t g = 0; g < kBandGroupCount; ++g) {
+        const auto& group = settings.groups[g];
+        if (group.mask == 0) continue;
+        coords.group_mask[g] = group.mask;
+        for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo) {
+            const auto& route = group.lfo[lfo];
+            if (!route.enabled || !(levels[lfo] > 0.0f)) continue;
+            coords.group[g] += waves[lfo] * std::clamp(levels[lfo], 0.0f, 1.0f)
+                             * std::clamp(route.amount, 0.0f, 1.0f);
+        }
+    }
     return coords;
 }
 

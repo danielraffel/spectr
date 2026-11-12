@@ -2,12 +2,19 @@
 param(
     [Parameter(Mandatory = $true)] [string]$BuildDir,
     [string]$Destination = '',
-    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win', 'arm64x-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
+    [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$RuntimeArchitecture = '',
     [string]$Receipt = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$validation = Join-Path $PSScriptRoot 'package-validation.ps1'
+if (-not (Test-Path -LiteralPath $validation -PathType Leaf)) { throw "Packaging validation helper is missing: $validation" }
+. $validation
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
+if ([string]::IsNullOrWhiteSpace($RuntimeArchitecture)) {
+    $RuntimeArchitecture = if ($Architecture -eq 'arm64ec-win') { 'arm64-win' } else { $Architecture }
+}
 if ([string]::IsNullOrWhiteSpace($Destination)) {
     $Destination = Join-Path $BuildDir 'VST3\\Spectr.vst3'
 }
@@ -16,6 +23,9 @@ if ([string]::IsNullOrWhiteSpace($Receipt)) {
 }
 $source = Join-Path $BuildDir 'VST3'
 if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "VST3 output directory is missing: $source" }
+$buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Architecture
+if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
+[void](Assert-SpectrBuildInfo $buildInfoSource $Architecture)
 
 $binary = $null
 foreach ($candidate in @(
@@ -25,6 +35,7 @@ foreach ($candidate in @(
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $binary = Get-Item -LiteralPath $candidate; break }
 }
 if ($null -eq $binary) { throw "No Spectr VST3 binary found under $source" }
+Assert-SpectrPeArchitecture $binary.FullName $Architecture
 
 $package = [IO.Path]::GetFullPath($Destination)
 if (Test-Path -LiteralPath $package) { Remove-Item -LiteralPath $package -Recurse -Force }
@@ -35,11 +46,16 @@ New-Item -ItemType Directory -Force -Path $archDir, $resourcesDir | Out-Null
 $targetName = Join-Path $archDir 'Spectr.vst3'
 Copy-Item -LiteralPath $binary.FullName -Destination $targetName
 foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-    $runtimeSource = Join-Path $source $runtime
-    if (Test-Path -LiteralPath $runtimeSource -PathType Leaf) {
+    $runtimeSource = Find-SpectrRuntimeSource $BuildDir $runtime $Architecture
+    if ($null -ne $runtimeSource) {
+        if ($runtime -eq 'wgpu_native.dll') { Assert-SpectrPeArchitecture $runtimeSource $RuntimeArchitecture }
         Copy-Item -LiteralPath $runtimeSource -Destination (Join-Path $archDir $runtime)
     }
 }
+if (-not (Test-Path -LiteralPath (Join-Path $archDir 'icudtl.dat') -PathType Leaf)) {
+    throw 'Required runtime sidecar was not found: icudtl.dat'
+}
+Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $archDir 'Spectr.pulp-build-info.json')
 
 $files = @(Get-ChildItem -LiteralPath $package -Recurse -File)
 $receiptObject = [ordered]@{

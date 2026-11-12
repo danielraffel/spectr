@@ -9,6 +9,7 @@
   const __spectrRuntimeCommands = Object.freeze([
     "ab_toggle",
     "band_field_set",
+    "band_group_set",
     "build_info_copy",
     "build_info_get",
     "capture_snapshot",

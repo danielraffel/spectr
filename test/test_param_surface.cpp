@@ -398,9 +398,9 @@ TEST_CASE("#34: ranges, defaults, and kinds match the scheme") {
     CHECK(enabled->kind == pulp::state::ParamKind::Toggle);
     CHECK(shape->kind == pulp::state::ParamKind::Enum);
     CHECK(shape->value_labels.size() == 4);
-    CHECK(rate->range.min == Approx(0.25f));
-    CHECK(rate->range.max == Approx(16.0f));
-    CHECK(rate->range.default_value == Approx(4.0f));
+    CHECK(rate->range.min == Approx(spectr::kLfoBeatsMin));
+    CHECK(rate->range.max == Approx(spectr::kLfoBeatsMax));
+    CHECK(rate->range.default_value == Approx(1.0f));
     CHECK(depth->range.min == Approx(0.0f));
     CHECK(depth->range.max == Approx(1.0f));
     CHECK(target->kind == pulp::state::ParamKind::Enum);
@@ -416,7 +416,7 @@ TEST_CASE("LFO rate and depth read in a host's lane as the editor shows them",
         REQUIRE(rate->to_string);
         REQUIRE(rate->from_string);
         CHECK(rate->to_string(4.0f) == "4 beats");
-        CHECK(rate->to_string(0.25f) == "0.25 beats");
+        CHECK(rate->to_string(0.25f) == "1/4 beat");
         CHECK(rate->to_string(1.0f) == "1 beat");
         CHECK(rate->from_string("2 beats") == Approx(2.0f));
         CHECK(rate->from_string(rate->to_string(0.5f)) == Approx(0.5f));
@@ -697,6 +697,153 @@ TEST_CASE("#34: simultaneous morph and band automation preserves the band lane")
     CHECK(state.field.bands[7].gain_db == Approx(-6.0f));
 }
 
+TEST_CASE("the LFO Rate runs from 1/1024 to 4096 beats and reads as a fraction below one",
+          "[modulation][rate]") {
+    Wired w;
+    const auto* info = w.store.info(spectr::kParamLfoRate);
+    REQUIRE(info != nullptr);
+    CHECK(info->range.min == Approx(1.0f / 1024.0f));
+    CHECK(info->range.max == Approx(4096.0f));
+    CHECK(info->range.default_value == Approx(1.0f));
+    // A host's normalised midpoint lands on 2 beats, the geometric middle.
+    CHECK(info->range.denormalize(0.5f) == Approx(2.0f).margin(0.01f));
+    // The display string the host prints, and what it parses back.
+    CHECK(info->to_string(1.0f / 1024.0f) == "1/1024 beat");
+    CHECK(info->to_string(0.25f) == "1/4 beat");
+    CHECK(info->to_string(1.0f) == "1 beat");
+    CHECK(info->to_string(4096.0f) == "4096 beats");
+    CHECK(info->from_string("1/1024") == Approx(1.0f / 1024.0f));
+    CHECK(info->from_string("1/4 beat") == Approx(0.25f));
+    CHECK(info->from_string("16 beats") == Approx(16.0f));
+    // Both ends reach the audio owner's settings, and nothing beyond them.
+    w.store.set_value(spectr::kParamLfoRate, 1.0f / 1024.0f);
+    w.store.set_value(spectr::kParamLfo2Rate, 4096.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().beats_per_cycle == Approx(1.0f / 1024.0f));
+    CHECK(w.proc->modulation_settings().lfo2_beats_per_cycle == Approx(4096.0f));
+    // Out-of-range writes land on the bounds (the store clamps, so nothing
+    // changes and the pass reports no drift).
+    w.store.set_value(spectr::kParamLfoRate, 1.0e-6f);
+    w.store.set_value(spectr::kParamLfo2Rate, 1.0e6f);
+    (void)w.proc->apply_surface_params(false);
+    CHECK(w.proc->modulation_settings().beats_per_cycle == Approx(1.0f / 1024.0f));
+    CHECK(w.proc->modulation_settings().lfo2_beats_per_cycle == Approx(4096.0f));
+}
+
+TEST_CASE("a band group moves only its bands, on top of Bank, and rides the session",
+          "[modulation][band-group]") {
+    // The pure composition: a group of bands 12..15 driven by LFO 1 at full
+    // Depth moves those four by the full +12 dB excursion and no other band;
+    // with Bank on as well the four hear Bank plus the group (clamped at the
+    // band range) and the rest hear Bank alone.
+    spectr::ModulationSettings settings;
+    settings.enabled = true;
+    settings.depth = 1.0f;
+    settings.groups[0].mask = 0xFull << 12;
+    settings.groups[0].lfo[0] = {true, 1.0f};
+    spectr::BandField flat{};
+    spectr::SnapshotBank none{};
+    auto coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    CHECK(coords.group[0] == Approx(1.0f));
+    CHECK(coords.group_mask[0] == (0xFull << 12));
+    auto field = spectr::apply_field_modulation(flat, none, 0.0f, coords);
+    for (std::size_t b = 0; b < spectr::kMaxBands; ++b) {
+        INFO("band " << b);
+        CHECK(field.bands[b].gain_db == Approx(b >= 12 && b <= 15 ? 12.0f : 0.0f));
+    }
+    settings.routes[0][0] = {true, 0.5f};  // Bank at half depth: +6 dB everywhere
+    coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    field = spectr::apply_field_modulation(flat, none, 0.0f, coords);
+    for (std::size_t b = 0; b < spectr::kMaxBands; ++b) {
+        INFO("band " << b);
+        CHECK(field.bands[b].gain_db == Approx(b >= 12 && b <= 15 ? 18.0f : 6.0f));
+    }
+    // An LFO that is off drives no group, whatever the group says.
+    settings.enabled = false;
+    coords = spectr::modulation_coordinates(settings, 1.0f, 0.0f);
+    CHECK(coords.group[0] == 0.0f);
+    CHECK(spectr::modulation_audible(settings) == false);
+    settings.enabled = true;
+    settings.routes[0][0].enabled = false;
+    CHECK(spectr::modulation_audible(settings));  // the group alone keeps the overlay alive
+
+    // The processor: groups are keyed by their bands, each LFO has its own
+    // switch and Depth, a group nobody drives is forgotten, and the session
+    // blob carries them.
+    Wired w;
+    const std::uint64_t four = 0xFull << 12;
+    REQUIRE(w.proc->set_band_group(four, 0, true, 0.75f));
+    REQUIRE(w.proc->set_band_group(1ull << 20, 1, true, 0.25f));
+    auto groups = w.proc->band_groups();
+    CHECK(groups[0].mask == four);
+    CHECK(groups[0].lfo[0].enabled);
+    CHECK(groups[0].lfo[0].amount == Approx(0.75f));
+    CHECK_FALSE(groups[0].lfo[1].enabled);
+    CHECK(groups[1].mask == (1ull << 20));
+    CHECK(groups[1].lfo[1].amount == Approx(0.25f));
+    // The same selection edits the same group rather than taking a slot.
+    REQUIRE(w.proc->set_band_group(four, 1, true, 0.5f));
+    groups = w.proc->band_groups();
+    CHECK(groups[0].lfo[1].enabled);
+    CHECK(groups[2].mask == 0);
+    // Both LFOs off: the group is gone.
+    REQUIRE(w.proc->set_band_group(four, 0, false, 0.75f));
+    REQUIRE(w.proc->set_band_group(four, 1, false, 0.5f));
+    CHECK(w.proc->band_groups()[0].mask == 0);
+    // Four slots at most (the LFO 2 group still holds one; let it go first).
+    REQUIRE(w.proc->set_band_group(1ull << 20, 1, false, 0.25f));
+    CHECK(w.proc->band_groups()[1].mask == 0);
+    for (int g = 0; g < 4; ++g) REQUIRE(w.proc->set_band_group(1ull << g, 0, true, 0.5f));
+    CHECK_FALSE(w.proc->set_band_group(1ull << 10, 0, true, 0.5f));
+    // Round trip.
+    const auto blob = w.proc->serialize_plugin_state();
+    Wired reopened;
+    REQUIRE(reopened.proc->deserialize_plugin_state(blob));
+    const auto again = reopened.proc->band_groups();
+    for (int g = 0; g < 4; ++g) {
+        CHECK(again[static_cast<std::size_t>(g)].mask == (1ull << g));
+        CHECK(again[static_cast<std::size_t>(g)].lfo[0].enabled);
+    }
+    CHECK(reopened.proc->modulation_settings().groups[3].mask == (1ull << 3));
+}
+
+TEST_CASE("an LFO switch and its targets are independent controls") {
+    Wired w;
+    w.proc->apply_surface_params(false);
+    const auto mask = [&](std::size_t lfo) {
+        return mask_int(spectr::route_mask(w.proc->modulation_settings().routes[lfo]));
+    };
+    // A fresh instance routes nothing, so switching an LFO on moves nothing
+    // until a target is switched on as well.
+    CHECK(mask(0) == 0);
+    CHECK(mask(1) == 0);
+    CHECK_FALSE(w.proc->modulation_settings().enabled);
+    w.store.set_value(spectr::kParamLfoEnabled, 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    CHECK(w.proc->modulation_settings().enabled);
+    CHECK(mask(0) == 0);
+    CHECK(spectr::resolve_modulation_target_mask(w.proc->modulation_settings()) == 0);
+
+    // A target switched on while its LFO is off stays on, and leaves the LFO
+    // off: neither control writes the other.
+    w.store.set_value(spectr::kParamLfoEnabled, 0.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(
+                          0, static_cast<std::size_t>(spectr::ModulationTarget::Freeze)), 1.0f);
+    w.store.set_value(spectr::lfo_route_enabled_param_id(
+                          1, static_cast<std::size_t>(spectr::ModulationTarget::Length)), 1.0f);
+    REQUIRE(w.proc->apply_surface_params(false));
+    const auto settings = w.proc->modulation_settings();
+    CHECK_FALSE(settings.enabled);
+    CHECK_FALSE(settings.lfo2_enabled);
+    CHECK(settings.routes[0][static_cast<std::size_t>(spectr::ModulationTarget::Freeze)].enabled);
+    CHECK(settings.routes[1][static_cast<std::size_t>(spectr::ModulationTarget::Length)].enabled);
+    CHECK(w.store.get_value(spectr::kParamLfoEnabled) == 0.0f);
+    CHECK(w.store.get_value(spectr::kParamLfo2Enabled) == 0.0f);
+    // The legacy single-target lane never moved, so the routing lanes keep
+    // exactly what was written.
+    CHECK(w.store.get_value(spectr::lfo_route_enabled_param_id(0, 0)) == 0.0f);
+}
+
 TEST_CASE("host target automation reclaims the modulation destination") {
     Wired w;
     w.proc->apply_surface_params(false);  // settle the applied-parameter cache
@@ -707,9 +854,9 @@ TEST_CASE("host target automation reclaims the modulation destination") {
         w.store.set_value(spectr::lfo_route_enabled_param_id(
                               lfo, static_cast<std::size_t>(t)), on ? 1.0f : 0.0f);
     };
+    route(0, spectr::ModulationTarget::WholeBank, true);
     route(0, spectr::ModulationTarget::Morph, true);
     route(0, spectr::ModulationTarget::ViewportPosition, true);
-    route(1, spectr::ModulationTarget::WholeBank, false);
     route(1, spectr::ModulationTarget::SnapshotA, true);
     REQUIRE(w.proc->apply_surface_params(false));
     auto settings = w.proc->modulation_settings();
@@ -745,7 +892,8 @@ TEST_CASE("the legacy LFO Depth lanes set the Depth of every enabled target",
           "[modulation][routing]") {
     Wired w;
     w.proc->apply_surface_params(false);
-    // LFO 1: Bank (default) + Band spread; LFO 2: Morph only.
+    // LFO 1: Bank + Band spread; LFO 2: Morph only.
+    w.store.set_value(spectr::lfo_route_enabled_param_id(0, 0), 1.0f);
     w.store.set_value(spectr::lfo_route_enabled_param_id(0, 5), 1.0f);
     w.store.set_value(spectr::lfo_route_amount_param_id(0, 3), 0.33f);  // Morph off
     w.store.set_value(spectr::lfo_route_enabled_param_id(1, 0), 0.0f);

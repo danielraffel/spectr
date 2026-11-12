@@ -70,6 +70,18 @@ Then double-click `/Users/danielraffel/Desktop/Spectr Windows Demo.command`.
 It starts or reuses the UTM guest, repairs RDP, and opens the Windows desktop;
 the RDP client retries transient reconnects automatically.
 
+The VM SSH helpers use the explicit local key with `IdentityAgent=none`, so
+1Password approval is not required on each connection. The RDP launcher waits
+up to two minutes for Windows SSH after boot and reads the protected local
+credential for automatic sign-in. Opening the desktop preserves REAPER's
+preferences; set `SPECTR_WINDOWS_PREPARE_REAPER=1` only when intentionally
+resetting its startup project and selecting the deterministic dummy audio mode.
+It waits for the retained guest rather than switching to a disposable QEMU
+guest on another port during boot.
+The installer copies the connection helpers into
+`~/Library/Application Support/Pulp/WindowsDemo`; removing the development
+worktree does not break the Desktop launcher. Rerun the installer to update them.
+
 The verified application inventory and executable hashes are recorded in
 [`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
 
@@ -195,7 +207,7 @@ Before the first interactive run, prepare the host once to clear stale failed
 projects and select deterministic Dummy Audio:
 
 ```powershell
-.\tools\windows\prepare-reaper-demo.ps1 -Architecture arm64-win
+.\tools\windows\prepare-reaper-demo.ps1 -Architecture arm64ec-win
 ```
 
 The helper keeps a one-time `REAPER.ini.bak-spectr-demo` backup and writes a
@@ -228,13 +240,30 @@ From the Windows guest, package the warmed build tree:
 
 The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
-`Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
+`Install-Spectr.ps1`, plus double-click launchers for installation and the
+standalone GUI. Runtime sidecars are copied beside the architecture-
 specific VST3 binary so the installed editor can resolve them; legacy root
-copies remain in the handoff ZIP. The installer verifies every manifest hash
+copies remain in the handoff ZIP. The VST3 slice also requires the matching
+`Spectr.pulp-build-info.json` provenance sidecar; its manifest entry includes
+the byte count and SHA-256. The installer verifies every manifest hash
 before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
+
+To create a traditional unsigned Windows installer from an extracted package,
+install Inno Setup 6 on the Windows build machine and run:
+
+```powershell
+.\tools\windows\build-installer.ps1 `
+  -PackageRoot C:\Users\admin\spectr-stage `
+  -PluginArchitecture arm64ec-win `
+  -DisplayArchitecture ARM64EC
+```
+
+Use `arm64-win`/`ARM64` or `x86_64-win`/`Intel64` for the other installers.
+The resulting `Spectr-Windows-*-Setup.exe` installs the standalone GUI,
+VST3, CLAP, runtime sidecars, and shortcuts through the normal Windows wizard.
 
 Install that package into the standard Windows locations from an elevated
 PowerShell prompt:
@@ -245,7 +274,20 @@ powershell -ExecutionPolicy Bypass -File .\tools\windows\install-package.ps1 `
 ```
 
 The installer verifies every manifest hash before copying the standalone,
-VST3, and CLAP artifacts. It is a development installer script, not a signed
+VST3, and CLAP artifacts, then verifies their installed byte counts and
+SHA-256 hashes against the manifest. It writes a JSON receipt beside the ZIP
+(`.zip.install-receipt.json`), or at the path supplied with `-Receipt`. A
+failed retry removes the prior receipt at that path. The receipt proves the
+installed bytes at that moment; REAPER scan, editor, and audio behavior need
+separate evidence. The installer stages new files beside each destination,
+backs up the prior files during replacement, and rolls back on a failed
+install. An interrupted replacement leaves a `.pending.json` journal beside
+the receipt; rerun with the same roots, receipt path, and shortcut setting to
+recover before a new install. The desktop and Start Menu shortcuts join the
+same stage, backup, and rollback plan, and their hashes are recorded in the
+receipt. Destination and receipt locks reject concurrent installers, even
+when they use different roots or receipt paths. It is a development installer
+script, not a signed
 MSI. An earlier UTM session accepted a different CLAP artifact; its exact
 hashes and render statistics remain in
 `docs/windows-receipts-2026-10-10/utm-health-receipt.json`. That historical
@@ -256,6 +298,38 @@ Audio is healthy and the VST3 is discovered, but REAPER reports the exact
 plugin unavailable during project load. Current ARM64 plugin acceptance is
 therefore still open. Ableton remains a separate installation and acceptance
 step.
+
+The package and installer preflight every ZIP entry before extraction and
+reject a manifest with traversal paths, duplicate entries, incorrect byte
+counts or SHA-256 values, missing required files, or a PE machine type that
+does not match its declared `x86_64-win`, `arm64-win`, or `arm64ec-win` layout.
+The self-contained validation helper is
+included in each handoff ZIP. On a Windows guest, run the synthetic positive
+and negative controls with:
+
+```powershell
+.\tools\windows\test-package-validation.ps1
+```
+
+ARM64 Windows handoffs that use the ARM64X/ARM64EC VST3 slice alongside
+native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
+
+```powershell
+.\tools\windows\package-release.ps1 `
+  -BuildDir C:\builds\spectr-arm64-gpu `
+  -Architecture arm64-win `
+  -Vst3Architecture arm64ec-win
+```
+
+The manifest records each artifact architecture. ARM64EC validation requires
+the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected. The
+release package requires `icudtl.dat` and any `wgpu_native.dll` declared by
+the build info. Pulp's Skia Dawn provider can have no wgpu DLL dependency.
+Packaging fails when a declared runtime is missing; a present GPU runtime's PE
+architecture is checked.
+Mixed native ARM64 plus ARM64EC packages fail closed when a shared
+`wgpu_native.dll` is present; provide separate per-artifact runtime sources
+before enabling that combination.
 
 ## Ableton Live 12 versus the installed Live 10 trial
 

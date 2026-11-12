@@ -55,3 +55,8 @@ workflows = [".github/workflows/m5-product-acceptance.yml"]
 
 [ship]
 base_branch = "main"
+
+# This repository has no skill-sync or version-bump gate scripts, so
+# `shipyard pr` skips those gates instead of refusing to start.
+[validation]
+pr_gates = false
