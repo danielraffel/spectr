@@ -932,9 +932,6 @@ public:
     [[nodiscard]] float editor_mode_param(
         pulp::state::ParamID id) const noexcept;
     [[nodiscard]] ModulationSettings modulation_settings() const noexcept;
-    [[nodiscard]] BandModulationOverrides band_modulation_overrides() const noexcept;
-    bool set_band_modulation_group(std::uint64_t members, std::size_t lfo,
-                                   float depth) noexcept;
     bool set_modulation_target_mask(std::uint8_t mask) noexcept;
 
     /// The slots @p macro drives. Out-of-range reads as empty.
@@ -1636,7 +1633,6 @@ private:
     };
     static thread_local SyncPublishOrder t_sync_publish;
     ModulationSettings modulation_{};
-    BandModulationOverrides band_modulation_overrides_{};
     // Guarded by processing_state_mutex_ and published to the audio thread in
     // AudioModulationState, so both sides of a morph agree on what moves.
     bool morph_applies_viewport_ = true;
