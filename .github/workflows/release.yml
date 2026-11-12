@@ -209,6 +209,11 @@ jobs:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
           PULP_SDK_SHA: ${{ steps.sdk.outputs.sha }}
           SPECTR_SHA: ${{ github.sha }}
+          # AAX is optional and PACE-signed by the owner on their own machine
+          # (docs/aax.md). This runner has no AAX SDK and no wraptool, so the
+          # release never carries an AAX, whatever the runner's environment
+          # holds. Shipping one is a deliberate change to this line.
+          SPECTR_AAX_SIGNED: ""
         run: |
           set -euo pipefail
           [[ -f "$HOME/.config/pulp/secrets/sparkle/spectr_ed25519" ]]

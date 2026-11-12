@@ -32,6 +32,23 @@ editor_enabled_artifact = re.search(
 workflow_commands = "\n".join(
     line for line in workflow.splitlines()
     if not line.lstrip().startswith("#"))
+release_workflow = (ROOT / ".github/workflows/release.yml").read_text()
+
+
+def workflow_step(text, name):
+    """The body of the step called `name`, or "" when there is none."""
+    match = re.search(
+        r"(?m)^      - name: " + re.escape(name) + r"\s*$\n((?:        .*\n|\n)*)",
+        text)
+    return match.group(1) if match else ""
+
+
+def enables_aax(text):
+    """Whether any command line in `text` opts a build into AAX."""
+    commands = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    return bool(re.search(r"PULP_ENABLE_AAX=(ON|1|TRUE|YES)|PULP_AAX_SDK_DIR=",
+                          commands, re.IGNORECASE))
 
 EXEMPT_FROM_SCOPE_GATE = (
     "Check out exact admitted Spectr head",
@@ -287,6 +304,26 @@ checks = {
         bool(cmake_scan(CMAKE_PLANTS["dropped-endforeach"](CMAKE_LISTS_TEXT))[0]),
     # A plant that rewrites nothing proves nothing, so the plants are required
     # to bite on THIS checkout rather than on the file they were written for.
+    # AAX is an optional vendor format (docs/aax.md). Neither lane may opt a
+    # build into it -- the runners have no Avid SDK and must not need one --
+    # and the release packages with SPECTR_AAX_SIGNED pinned empty, so an AAX
+    # reaches a release only through an owner's PACE-signed bundle.
+    "the acceptance gate never enables AAX": not enables_aax(workflow),
+    "the release workflow never enables AAX": not enables_aax(release_workflow),
+    "the AAX enable detector reddens on an opt-in":
+        enables_aax("cmake -S . -B b -DPULP_ENABLE_AAX=ON")
+        and enables_aax("cmake -DPULP_AAX_SDK_DIR=/x"),
+    "the release packages with SPECTR_AAX_SIGNED pinned empty":
+        re.search(r'(?m)^          SPECTR_AAX_SIGNED: ""\s*$',
+                  workflow_step(release_workflow,
+                                "Sign, notarize and verify the installer"))
+        is not None,
+    "the acceptance gate selects the AAX option rows":
+        {"^Spectr-aax-option$", "^Spectr-aax-configure$"}
+        <= set(acceptance_patterns),
+    "the AAX option rows are registered in CMakeLists":
+        "add_test(NAME Spectr-aax-option" in CMAKE_LISTS_TEXT
+        and "add_test(NAME Spectr-aax-configure" in CMAKE_LISTS_TEXT,
     "the CMake parse plants still apply to this CMakeLists":
         all(CMAKE_PLANTS[name](CMAKE_LISTS_TEXT) != CMAKE_LISTS_TEXT
             for name in ("unclosed-call", "dropped-endforeach")),

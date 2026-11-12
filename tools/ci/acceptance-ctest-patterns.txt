@@ -473,3 +473,10 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # materialized owner map, hidden relay programs, native hit owner, handler,
 # dispatch chain, and revision change to agree on the production surface.
 ^Spectr-native-canvas-ownership$
+
+# AAX is an optional vendor format: off by default, and enabling it without a
+# developer-supplied Avid SDK must fail with a message naming the fix. The
+# configure row runs scratch configures against the pinned Pulp SDK with no
+# AAX SDK on the runner, which is exactly the state this gate must stay green in.
+^Spectr-aax-option$
+^Spectr-aax-configure$
