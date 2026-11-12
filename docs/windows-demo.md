@@ -70,6 +70,18 @@ Then double-click `/Users/danielraffel/Desktop/Spectr Windows Demo.command`.
 It starts or reuses the UTM guest, repairs RDP, and opens the Windows desktop;
 the RDP client retries transient reconnects automatically.
 
+The VM SSH helpers use the explicit local key with `IdentityAgent=none`, so
+1Password approval is not required on each connection. The RDP launcher waits
+up to two minutes for Windows SSH after boot and reads the protected local
+credential for automatic sign-in. Opening the desktop preserves REAPER's
+preferences; set `SPECTR_WINDOWS_PREPARE_REAPER=1` only when intentionally
+resetting its startup project and selecting the deterministic dummy audio mode.
+It waits for the retained guest rather than switching to a disposable QEMU
+guest on another port during boot.
+The installer copies the connection helpers into
+`~/Library/Application Support/Pulp/WindowsDemo`; removing the development
+worktree does not break the Desktop launcher. Rerun the installer to update them.
+
 The verified application inventory and executable hashes are recorded in
 [`utm-daw-install-receipt.json`](windows-receipts-2026-10-10/utm-daw-install-receipt.json).
 
@@ -228,7 +240,8 @@ From the Windows guest, package the warmed build tree:
 
 The package contains `Standalone/Spectr.exe`, the ARM64 VST3 and CLAP
 artifacts, runtime DLL/data files when present, a SHA-256 manifest, and
-`Install-Spectr.ps1`. Runtime sidecars are copied beside the architecture-
+`Install-Spectr.ps1`, plus double-click launchers for installation and the
+standalone GUI. Runtime sidecars are copied beside the architecture-
 specific VST3 binary so the installed editor can resolve them; legacy root
 copies remain in the handoff ZIP. The VST3 slice also requires the matching
 `Spectr.pulp-build-info.json` provenance sidecar; its manifest entry includes
@@ -237,6 +250,20 @@ before it writes the VST3, CLAP, and standalone files to their standard Windows
 locations. The pre-installer package from the earlier fresh clone was
 35,675,271 bytes with SHA-256
 `AA9314A2A5E3AF1C205CAD40E9E117F7107937303BF42D60A0243C7294614DAE`.
+
+To create a traditional unsigned Windows installer from an extracted package,
+install Inno Setup 6 on the Windows build machine and run:
+
+```powershell
+.\tools\windows\build-installer.ps1 `
+  -PackageRoot C:\Users\admin\spectr-stage `
+  -PluginArchitecture arm64ec-win `
+  -DisplayArchitecture ARM64EC
+```
+
+Use `arm64-win`/`ARM64` or `x86_64-win`/`Intel64` for the other installers.
+The resulting `Spectr-Windows-*-Setup.exe` installs the standalone GUI,
+VST3, CLAP, runtime sidecars, and shortcuts through the normal Windows wizard.
 
 Install that package into the standard Windows locations from an elevated
 PowerShell prompt:
@@ -296,9 +323,10 @@ native ARM64 standalone and CLAP binaries must set the VST3 slice explicitly:
 
 The manifest records each artifact architecture. ARM64EC validation requires
 the PE's ARM64X `.a64xrm` section; an ordinary x64 PE is rejected. The
-current GPU build requires `icudtl.dat`, discovered from the build's release
-sidecar directory and copied beside the VST3 binary; `wgpu_native.dll` is
-included and architecture-checked when a dynamically linked build provides it.
+release package requires `icudtl.dat` and any `wgpu_native.dll` declared by
+the build info. Pulp's Skia Dawn provider can have no wgpu DLL dependency.
+Packaging fails when a declared runtime is missing; a present GPU runtime's PE
+architecture is checked.
 Mixed native ARM64 plus ARM64EC packages fail closed when a shared
 `wgpu_native.dll` is present; provide separate per-artifact runtime sources
 before enabling that combination.

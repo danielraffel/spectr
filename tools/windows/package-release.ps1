@@ -4,7 +4,8 @@ param(
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Architecture = 'arm64-win',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$Vst3Architecture = '',
     [ValidateSet('x86_64-win', 'arm64-win', 'arm64ec-win')] [string]$RuntimeArchitecture = '',
-    [string]$Output = ''
+    [string]$Output = '',
+    [string]$RuntimeSource = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,7 +50,11 @@ function Resolve-SpectrCMakeArtifact {
 
 $buildInfoSource = Find-SpectrBuildInfoSource $BuildDir $Vst3Architecture
 if ($null -eq $buildInfoSource) { throw 'Required VST3 metadata sidecar was not found: Spectr.pulp-build-info.json' }
-[void](Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture)
+$buildInfo = Assert-SpectrBuildInfo $buildInfoSource $Vst3Architecture
+$declaredRuntimeFiles = @()
+if ($null -ne $buildInfo.PSObject.Properties['bundled_runtime_libraries']) {
+    $declaredRuntimeFiles = @($buildInfo.bundled_runtime_libraries | ForEach-Object { [string]$_.file })
+}
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path (Split-Path $BuildDir -Parent) ("Spectr-windows-$Architecture.zip")
 }
@@ -79,18 +84,28 @@ try {
 
     $runtimeSidecars = @()
     foreach ($runtime in @('icudtl.dat', 'wgpu_native.dll')) {
-        $source = Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture
+        $source = if ($runtime -eq 'wgpu_native.dll' -and -not [string]::IsNullOrWhiteSpace($RuntimeSource)) {
+            $resolvedRuntime = (Resolve-Path -LiteralPath $RuntimeSource -ErrorAction Stop).Path
+            if (-not (Test-Path -LiteralPath $resolvedRuntime -PathType Leaf)) { throw "Runtime source is not a file: $RuntimeSource" }
+            $resolvedRuntime
+        } else { Find-SpectrRuntimeSource $BuildDir $runtime $Vst3Architecture }
         if ($null -ne $source) {
             if ($runtime -eq 'wgpu_native.dll' -and $Architecture -ne $Vst3Architecture) {
                 throw 'Mixed-architecture packages cannot include one shared wgpu_native.dll; provide per-artifact runtime sources'
             }
             $runtimeSidecars += $runtime
             Copy-Item -LiteralPath $source -Destination (Join-Path $stage $runtime)
-            # The VST3 loader resolves its sidecar runtime beside the
-            # architecture-specific binary. Keep the root copy for existing
-            # handoffs, but also package the runtime inside the bundle so the
-            # installer cannot silently omit it.
-            Copy-Item -LiteralPath $source -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime")
+            # Each Windows target resolves its sidecars beside its own binary.
+            # Keep the root copy for existing handoffs, but stage a copy for
+            # every target so standalone and CLAP cannot silently omit ICU or
+            # another declared runtime.
+            foreach ($targetPath in @(
+                "VST3\Spectr.vst3\Contents\$Vst3Architecture\$runtime",
+                "CLAP\$runtime",
+                "Standalone\$runtime"
+            )) {
+                Copy-Item -LiteralPath $source -Destination (Join-Path $stage $targetPath)
+            }
         }
     }
     # Carry the verified installer beside the artifacts so a handoff ZIP is
@@ -102,7 +117,23 @@ try {
     }
     Copy-Item -LiteralPath $installerSource -Destination (Join-Path $stage 'Install-Spectr.ps1')
     Copy-Item -LiteralPath $validation -Destination (Join-Path $stage 'Spectr-PackageValidation.ps1')
-    if ($runtimeSidecars -notcontains 'icudtl.dat') { throw "Required runtime sidecar was not found: icudtl.dat" }
+    # Keep the extracted handoff double-clickable.  The PowerShell installer
+    # remains parameterized for automation; these two small launchers are the
+    # user-facing entry points and are also consumed by the Inno installer.
+    foreach ($launcher in @('Install-Spectr.cmd', 'Launch-Spectr.cmd')) {
+        $launcherSource = Join-Path $PSScriptRoot $launcher
+        if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) {
+            throw "Windows launcher is missing: $launcherSource"
+        }
+        Copy-Item -LiteralPath $launcherSource -Destination (Join-Path $stage $launcher)
+    }
+    $requiredRuntimes = @('icudtl.dat')
+    if ($declaredRuntimeFiles -contains 'wgpu_native.dll') { $requiredRuntimes += 'wgpu_native.dll' }
+    foreach ($requiredRuntime in $requiredRuntimes) {
+        if ($runtimeSidecars -notcontains $requiredRuntime) {
+            throw "Required runtime sidecar was not found: $requiredRuntime"
+        }
+    }
     Copy-Item -LiteralPath $buildInfoSource -Destination (Join-Path $stage "VST3\Spectr.vst3\Contents\$Vst3Architecture\Spectr.pulp-build-info.json")
     Assert-SpectrPeArchitecture $bin $Architecture
     Assert-SpectrPeArchitecture $vst3 $Vst3Architecture

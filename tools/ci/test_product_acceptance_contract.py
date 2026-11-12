@@ -100,6 +100,19 @@ checks = {
     "every product step is scope-gated": not scope_gate_violations(workflow),
     "PR pushes collapse to one run": (
         "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow),
+    # Fork PRs never reach the self-hosted lane: its VM mounts the host's
+    # shared ccache and configure-check cache writable. The skipped job is
+    # renamed so the required check stays unreported (a skipped job would read
+    # as passing); a same-repo PR or dispatch keeps the exact required name.
+    "fork PRs are skipped": (
+        "    if: ${{ github.event_name != 'pull_request' || "
+        "github.event.pull_request.head.repo.full_name == github.repository }}\n" in workflow),
+    "required check name kept off fork PRs": (
+        "    name: ${{ (github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name != github.repository) && "
+        "'Spectr M5 product-acceptance gate (fork PR, not run)' || "
+        "'Spectr M5 product-acceptance gate' }}\n" in workflow
+        and config["governance"]["required_status_checks"] == ["Spectr M5 product-acceptance gate"]),
     "exact labels": "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]" in workflow,
     "no hosted label": not re.search(r"runs-on:.*(macos-|ubuntu-|windows-)", workflow, re.I),
     # `runner_provider` MUST be declared, and MUST be inert. Those are two
