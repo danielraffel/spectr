@@ -451,8 +451,19 @@ set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}AAXHeadless_AAX")
 # Tools with an empty editor container and can be mistaken for a broken GUI.
 option(SPECTR_AAX_HEADLESS
     "Build a processor-only AAX artifact (no custom EffectGUI)" OFF)
+# AAX itself is off unless a developer opts in with -DPULP_ENABLE_AAX=ON and
+# their own out-of-tree Avid SDK (docs/aax.md). cmake/SpectrAAX.cmake decides
+# which artifact that builds and refuses combinations that cannot work.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SpectrAAX.cmake)
+spectr_aax_platform(_spectr_aax_platform)
+spectr_resolve_aax(_spectr_aax "${PULP_ENABLE_AAX}" "${PULP_HAS_AAX}"
+    "${SPECTR_AAX_HEADLESS}" "${_spectr_aax_platform}")
+if(_spectr_aax_ERROR)
+    message(FATAL_ERROR "Spectr: ${_spectr_aax_ERROR}")
+endif()
+message(STATUS "Spectr: AAX ${_spectr_aax_MODE}")
 set(_spectr_native_formats VST3 AU CLAP Standalone)
-if(PULP_ENABLE_AAX AND NOT SPECTR_AAX_HEADLESS)
+if(_spectr_aax_MODE STREQUAL "native")
     list(APPEND _spectr_native_formats AAX)
     set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
 endif()
@@ -546,7 +557,7 @@ endif()
 # point can register PULP_AAX_PLUGIN_WITH_GUI and Pro Tools can create the
 # editor. This is deliberately conditional because the headless target must
 # not share the native view stack.
-if(SPECTR_AAX_HEADLESS)
+if(_spectr_aax_MODE STREQUAL "headless")
 set(SPECTR_AAX_SOURCES
     src/spectr.cpp
     src/mask_renderer.cpp
@@ -740,6 +751,19 @@ include(CTest)
 # runs in every configuration regardless of which identity this tree builds.
 add_test(NAME Spectr-plugin-identity
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/test/identity_check.cmake)
+
+# AAX stays optional: off by default, and enabling it without a usable
+# developer-supplied SDK fails with a message that says what to do. The first
+# test exercises cmake/SpectrAAX.cmake directly; the second configures scratch
+# projects against this build's real Pulp SDK package, with no AAX SDK present.
+add_test(NAME Spectr-aax-option
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/test/aax_option_test.cmake)
+add_test(NAME Spectr-aax-configure
+    COMMAND ${CMAKE_COMMAND}
+        -DSPECTR_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DPULP_DIR_UNDER_TEST=${Pulp_DIR}
+        -DSCRATCH=${CMAKE_CURRENT_BINARY_DIR}/aax-configure-test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/test/aax_configure_test.cmake)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
 

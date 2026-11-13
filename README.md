@@ -19,7 +19,10 @@ controls independently. Its reviewed HTML design is embedded source-preservingly
 through Pulp's native WebView bridge, with a narrow runtime adapter connecting
 the design's live band/zoom state to native C++ DSP and state.
 
-The production path builds AU, VST3, CLAP, and Standalone artifacts. The test
+The production path builds AU, VST3, CLAP, and Standalone artifacts. An AAX
+(Pro Tools) target is optional, off by default, and builds only against a
+developer's own Avid AAX SDK; signing it is an owner step (see
+[docs/aax.md](docs/aax.md)). The test
 suite covers the shared spectral-mask DSP, exact latency and mute behavior,
 state round-trip, actual CLAP/VST3 artifact hosting, and a headless Standalone
 launch. Visible host validation is tracked in the canonical goal document.

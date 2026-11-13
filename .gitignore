@@ -39,3 +39,13 @@ __pycache__/
 
 # Installed parser toolchain (created by the product-acceptance workflow)
 tools/wp1-parser/node_modules/
+
+# AAX is optional and developer-supplied (docs/aax.md). The Avid SDK, PACE
+# tooling, wrap configuration and signed bundles live outside this repository;
+# these patterns catch a copy dropped into the tree by mistake.
+/aax-sdk/
+/AAX_SDK*/
+/aax_sdk*/
+/external/aax*/
+*.aaxplugin/
+wraptool*.cfg
