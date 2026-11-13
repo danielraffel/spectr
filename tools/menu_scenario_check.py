@@ -66,6 +66,11 @@ SCENARIO = ";".join([
     # leaving it mounted would test menu hit-routing rather than zoom.
     "close_before_zoom=escape",
     "zoom=wheel:378,400,-240,12",
+    # Wheel zoom publishes the live viewport on the next animation frame (it
+    # coalesces a stream of wheel events into one processing_state_set), and
+    # the reading after a step is taken in the same tick that delivered it.
+    # Read the zoomed viewport one settle step later, as `settle_fit` does.
+    "settle_zoom=wait",
     "o_fit=rpress:378,400",        "fit=row:Fit full range",
     "settle_fit=wait",
     # Escape and outside-click, with a selection live, where no DAW can be
@@ -970,7 +975,7 @@ def main():
                bool(assigned['macros'][macro]) and cleared['macros'][macro] == []
                and closed(f'clear{number}'), str(cleared['macros'][macro]))
 
-    zoomed = step(steps, "zoom")
+    zoomed = step(steps, "settle_zoom")
     after_fit = step(steps, "settle_fit")
     record("Fit full range", "no selection",
            "the processor's viewport returns to 20 Hz - 20 kHz, menu closed",
