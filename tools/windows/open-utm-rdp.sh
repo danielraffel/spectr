@@ -12,6 +12,13 @@ ssh_port="${SPECTR_WINDOWS_SSH_PORT:-50376}"
 rdp_port="${SPECTR_WINDOWS_RDP_PORT:-53390}"
 rdp_domain="${SPECTR_WINDOWS_RDP_DOMAIN:-PULP-WIN-CI}"
 secret_file="${SPECTR_WINDOWS_UTM_SECRET:-$HOME/.config/pulp/secrets/spectr-windows-utm-admin}"
+reaper_arch="${SPECTR_WINDOWS_REAPER_ARCH:-arm64-win}"
+launch_reaper="${SPECTR_WINDOWS_LAUNCH_REAPER:-0}"
+case "$reaper_arch" in
+  arm64-win|arm64ec-win) reaper_dir='REAPER (arm64)' ;;
+  x86_64-win) reaper_dir='REAPER (x64)' ;;
+  *) echo "unsupported SPECTR_WINDOWS_REAPER_ARCH: $reaper_arch" >&2; exit 2 ;;
+esac
 
 [[ -x "$utmctl" ]] || { echo "UTM is not installed at $utmctl" >&2; exit 1; }
 [[ -f "$secret_file" ]] || { echo "missing credential file: $secret_file" >&2; exit 2; }
@@ -64,11 +71,19 @@ if [[ "${SPECTR_WINDOWS_PREPARE_REAPER:-0}" == 1 &&
   SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
     SPECTR_WINDOWS_SSH_KEY="$ssh_key" \
     "$repo_root/tools/windows/ssh-qemu.sh" \
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\admin\\prepare-reaper-demo.ps1 -Architecture arm64ec-win' >/dev/null
+    "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\admin\\prepare-reaper-demo.ps1 -Architecture $reaper_arch" >/dev/null
+fi
+
+if [[ "$launch_reaper" == 1 ]]; then
+  SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
+    SPECTR_WINDOWS_SSH_KEY="$ssh_key" \
+    "$repo_root/tools/windows/ssh-qemu.sh" \
+    "powershell.exe -NoProfile -Command \"Start-Process 'C:\\\\Program Files\\\\$reaper_dir\\\\reaper.exe' -ArgumentList '-new'\"" >/dev/null
 fi
 
 echo "Windows RDP: 127.0.0.1:$rdp_port"
 echo "Windows user: $username"
+echo "REAPER architecture: $reaper_arch (launch=$launch_reaper)"
 # Keep the password out of process arguments and the environment. FreeRDP
 # consumes the option stream from a private inherited file descriptor.
 sdl-freerdp /args-from:fd:3 3< <(

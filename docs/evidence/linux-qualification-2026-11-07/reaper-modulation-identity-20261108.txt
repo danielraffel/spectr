@@ -1,0 +1,23 @@
+Spectr ARM64 Omarchy UTM fresh REAPER hosted modulation receipt
+Run date: 2026-11-08 UTC
+Guest: Omarchy-virt, aarch64, kernel 7.2.3-2-aarch64-ARCH
+Host: REAPER 7.85, JACK 48000 Hz, 1024 frames
+
+Installed modules were hashed immediately before/after this run:
+VST3 1224883b1580960966f328905550b29083b713ad370051640b76143cbe1cf5a4
+CLAP ae4e39f095cd7924c698047adb9391240f7a890bd3e6de1d58e68ab833df1a05
+Standalone ace01f57b4aeedc310f6f63832ee23619e0d5786e5a74ed71f450006aa0cc265
+
+The automation script configured Band Count, LFO 1 Bank, LFO 1 Bank Depth,
+LFO Rate, and LFO Enabled on both formats, then inserted Output automation.
+Both editors were hosted while JACK playback was active.
+
+VST3 peak=0.19362106919289 output_min=0.40000000596046 output_max=0.59946876764297
+CLAP peak=0.16113197803497 output_min=0.39999999602636 output_max=0.59946874777476
+samples=458 playstate=1 position=0.896
+underrun=0,0,113767338
+completed
+
+The detailed host receipt is reaper-modulation-proof-20261108.txt. The
+reported underrun tuple is zero for the underrun count; the final field is a
+host time/counter value, not an underrun count.

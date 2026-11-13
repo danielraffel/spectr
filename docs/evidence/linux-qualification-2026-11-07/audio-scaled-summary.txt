@@ -1,0 +1,7 @@
+VST3: Spectr index=0
+output_range=0,1
+envelope_points=3
+CLAP: Spectr index=0
+output_range=-24,24
+envelope_points=3
+project_saved

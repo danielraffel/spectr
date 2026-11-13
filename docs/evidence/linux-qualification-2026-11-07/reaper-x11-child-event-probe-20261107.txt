@@ -1,0 +1,21 @@
+# REAPER/X11 child event probe — 2026-11-07
+
+Guest: Omarchy-virt, native AArch64, Hyprland/Xwayland, DISPLAY=:0.
+
+The probe selected the actual Spectr VST3 child window reported by
+`xdotool search --onlyvisible --name Spectr` (window geometry 990x673 at
+Xwayland position 112,60). A native Xlib helper called `XSelectInput` on that
+child for ButtonPress, ButtonRelease, MotionNotify, EnterNotify, and
+LeaveNotify, then waited eight seconds.
+
+During the wait, both of these injections were sent toward the child:
+
+- Xdotool: `mousemove --window <child> 450 44 click 1`
+- Ydotool: compositor input through `/tmp/.ydotool_socket`, mapped to the
+  child’s Hyprland logical coordinates.
+
+The helper emitted no pointer events. The hosted REAPER Lua monitor continued
+to report VST3 Mix `1.000000000`. This is a negative compositor/Xwayland
+transport receipt. It does not contradict Pulp’s synthetic XSendEvent nested
+window test, which passes; it shows that this UTM Hyprland/Xwayland path is not
+producing ordinary pointer events on the embedded child window.

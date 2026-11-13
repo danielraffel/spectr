@@ -38,6 +38,24 @@ SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
   SPECTR_WINDOWS_RDP_PORT="$rdp_port" \
   "$repo_root/tools/windows/ensure-rdp-over-ssh.sh"
 
+# A full guest disk otherwise turns staging into a misleading plugin/UTM
+# failure. Keep a bounded reserve for one package and its logs.
+min_free_mb="${SPECTR_WINDOWS_MIN_FREE_MB:-2048}"
+disk_probe="$(SPECTR_WINDOWS_SSH_PORT="$ssh_port" \
+  "$repo_root/tools/windows/ssh-qemu.sh" \
+  'powershell.exe -NoProfile -NonInteractive -Command "(Get-PSDrive C).Free"' 2>/dev/null \
+  | tr -cd '0-9\n' | tail -n 1)"
+if [[ -z "$disk_probe" ]]; then
+  echo "FAIL-CLOSED: could not read free space on the Windows guest C: drive" >&2
+  exit 1
+fi
+min_free_bytes=$((min_free_mb * 1024 * 1024))
+if (( disk_probe < min_free_bytes )); then
+  printf 'FAIL-CLOSED: Windows guest C: has %s MiB free; need at least %s MiB. Remove named disposable installers/caches, then retry.\n' \
+    "$((disk_probe / 1024 / 1024))" "$min_free_mb" >&2
+  exit 1
+fi
+
 ssh_key="${SPECTR_WINDOWS_SSH_KEY:-$HOME/.ssh/id_ed25519_macstudio}"
 [[ -f "$ssh_key" ]] || ssh_key="$HOME/.ssh/id_ed25519"
 if [[ -f "$repo_root/tools/windows/prepare-reaper-demo.ps1" && -f "$ssh_key" ]]; then

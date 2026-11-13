@@ -1,0 +1,20 @@
+Spectr ARM64 Omarchy UTM native-pointer probe
+Run date: 2026-11-08 UTC
+Guest: Omarchy-virt, aarch64, Hyprland/XWayland
+Host: REAPER 7.85
+
+Current installed module hashes:
+VST3 1224883b1580960966f328905550b29083b713ad370051640b76143cbe1cf5a4
+CLAP ae4e39f095cd7924c698047adb9391240f7a890bd3e6de1d58e68ab833df1a05
+
+ydotoold was present at /usr/bin/ydotoold on /run/user/1000/ydotool.socket.
+A compositor-native absolute move placed the Hyprland cursor at 374,244,
+inside the fresh VST3 editor at Hyprland geometry 112,60 size 990x673.
+A native left click and a native press/move/release drag were dispatched
+through /tmp/.ydotool_socket.
+
+The REAPER monitor observed 5,000 deferred ticks with VST3 Mix remaining
+normalized 1.000000000 before and after both native input attempts.
+Result: POINTER INPUT NOT PROVEN. The guest input daemon and compositor
+cursor movement work, but the embedded XWayland child/control dispatch did
+not produce a host parameter change in this run.

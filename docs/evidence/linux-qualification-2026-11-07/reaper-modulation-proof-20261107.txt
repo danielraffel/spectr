@@ -1,0 +1,31 @@
+VST3: Spectr index=0
+configured Band Count index=137 normalized=1
+configured LFO 1 Bank index=156 normalized=1
+configured LFO 1 Bank Depth index=169 normalized=0.25
+configured LFO Rate index=144 normalized=0.5
+configured LFO Enabled index=142 normalized=1
+CLAP: Spectr index=0
+configured Band Count index=137 normalized=0
+configured LFO 1 Bank index=156 normalized=0
+configured LFO 1 Bank Depth index=169 normalized=0.5
+configured LFO Rate index=144 normalized=0.00024390226457173
+configured LFO Enabled index=142 normalized=0
+audio_MODE=true JACK
+audio_IDENT_IN=true JackIn
+audio_IDENT_OUT=true JackOut
+audio_BSIZE=true 1024
+audio_SRATE=true 48000
+tick time=0.31661235699721 state=0 pos=0
+play_requested state=1
+tick time=2.6883079079998 state=1 pos=1.5573333333333
+tick time=5.1387495569943 state=1 pos=0.010666666666667
+tick time=7.5999198750069 state=1 pos=2.464
+tick time=10.825963661002 state=1 pos=1.728
+tick time=12.802344049007 state=1 pos=3.6906666666667
+tick time=14.770789672999 state=1 pos=1.6746666666667
+tick time=16.789387986006 state=1 pos=3.68
+format=1 peak=0.19362106919289 output_min=0.40000000596046 output_max=0.59946876764297
+format=2 peak=0.16113197803497 output_min=0.39999999602636 output_max=0.59946874777476
+samples=456 playstate=1 position=0.896
+underrun=0,0,80418105
+completed
