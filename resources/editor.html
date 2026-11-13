@@ -268,6 +268,11 @@ document.addEventListener('DOMContentLoaded', async function() {
       }
       template = template.split(needle).join(replacement);
     };
+    // Keep literal template delimiters inside source patch snippets without
+    // terminating the adapter's own String.raw template.
+    const spectrTemplate = (text) => text
+      .replaceAll('__BT__', String.fromCharCode(96))
+      .replaceAll('__D__', '${');
 
     // One analyzer source feeds every imported visualization. In a native
     // WebView, silence before the first valid publication is intentional:
@@ -682,6 +687,63 @@ window.FilterBank = FilterBank;`,
       'onPointerUp={onPointerUp}',
       'onPointerUp={event => { onPointerUp(event); flushNativeProcessingStatePublication(); }}',
       'flush final publication after pointer release');
+    // Context-menu actions are discrete gestures. They update the bank refs
+    // synchronously, so publish their queued full-state snapshot before the
+    // native acceptance surface reads it; pointer drags keep frame coalescing.
+    replaceSpectrSource(
+      spectrTemplate(String.raw`        onMuteBand: (b) => {
+          const cur = targetGainsRef.current[b];
+          commitGain(b, isMuted(cur) ? restoreMutedGain(b) : -Infinity);
+          if (onStatus) onStatus(isMuted(cur) ? __BT__BAND __D__b + 1} UNMUTED__BT__ : __BT__BAND __D__b + 1} MUTED__BT__);
+        },`),
+      spectrTemplate(String.raw`        onMuteBand: (b) => {
+          const cur = targetGainsRef.current[b];
+          commitGain(b, isMuted(cur) ? restoreMutedGain(b) : -Infinity);
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus(isMuted(cur) ? __BT__BAND __D__b + 1} UNMUTED__BT__ : __BT__BAND __D__b + 1} MUTED__BT__);
+        },`),
+      'flush band context mute publication');
+    replaceSpectrSource(
+      spectrTemplate(String.raw`        onZeroBand: (b) => { commitGain(b, 0); if (onStatus) onStatus(__BT__BAND __D__b + 1} RESET__BT__); },`),
+      spectrTemplate(String.raw`        onZeroBand: (b) => {
+          commitGain(b, 0);
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus(__BT__BAND __D__b + 1} RESET__BT__);
+        },`),
+      'flush band context reset publication');
+    replaceSpectrSource(
+      spectrTemplate(String.raw`          commitMany(map);
+          if (onStatus) onStatus(__BT__BAND __D__b + 1} SOLO__BT__);`),
+      spectrTemplate(String.raw`          commitMany(map);
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus(__BT__BAND __D__b + 1} SOLO__BT__);`),
+      'flush band context solo publication');
+    replaceSpectrSource(
+      spectrTemplate(String.raw`          commitMany(map);
+          if (onStatus) onStatus(__BT____D__map.size} BAND__D__map.size === 1 ? __BT____BT__ : __BT__S__BT__} ZEROED__BT__);`),
+      spectrTemplate(String.raw`          commitMany(map);
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus(__BT____D__map.size} BAND__D__map.size === 1 ? __BT____BT__ : __BT__S__BT__} ZEROED__BT__);`),
+      'flush selection zero publication');
+    replaceSpectrSource(
+      spectrTemplate(String.raw`          if (!result) { if (onStatus) onStatus("NO SELECTION"); return; }
+          if (onStatus) onStatus(__BT____D__result.count} BAND__D__result.count === 1 ? __BT____BT__ : __BT__S__BT__} __D__result.muted ? __BT__MUTED__BT__ : __BT__UNMUTED__BT__}__BT__);`),
+      spectrTemplate(String.raw`          if (!result) { if (onStatus) onStatus("NO SELECTION"); return; }
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus(__BT____D__result.count} BAND__D__result.count === 1 ? __BT____BT__ : __BT__S__BT__} __D__result.muted ? __BT__MUTED__BT__ : __BT__UNMUTED__BT__}__BT__);`),
+      'flush selection mute publication');
+    replaceSpectrSource(
+      spectrTemplate(String.raw`        onFitView: () => {
+          setView({ lmin: Math.log10(20), lmax: Math.log10(2e4) });
+          if (onStatus) onStatus("VIEW → 20 Hz – 20 kHz");
+        }`),
+      spectrTemplate(String.raw`        onFitView: () => {
+          setView({ lmin: Math.log10(20), lmax: Math.log10(2e4) });
+          queueNativeProcessingStatePublication();
+          flushNativeProcessingStatePublication();
+          if (onStatus) onStatus("VIEW → 20 Hz – 20 kHz");
+        }`),
+      'flush fit-view publication');
     replaceSpectrSource(
       String.raw`      const next = new Array(N).fill(0);
       // Map old → new by proportional index
