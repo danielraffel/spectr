@@ -93,6 +93,9 @@ _expect_refused("PULP_ENABLE_AAX=ON with a directory that is not an AAX SDK"
     "not look like a valid AAX SDK root")
 
 set(_in_tree_sdk "${SCRATCH}/src/aax-sdk")
+# file(WRITE) creates missing parents, but making the SDK layout explicit keeps
+# this stand-in readable and independent of that behaviour.
+file(MAKE_DIRECTORY "${_in_tree_sdk}/Interfaces" "${_in_tree_sdk}/Libs/AAXLibrary")
 foreach(_stub Interfaces/AAX.h Interfaces/AAX_Exports.cpp Libs/AAXLibrary/CMakeLists.txt)
     file(WRITE "${_in_tree_sdk}/${_stub}" "")
 endforeach()
