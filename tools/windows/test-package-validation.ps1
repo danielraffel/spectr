@@ -241,6 +241,15 @@ try {
     foreach ($path in @((Join-Path $installRoot 'VST3\Spectr.vst3'), (Join-Path $installRoot 'CLAP\Spectr.clap'), (Join-Path $installRoot 'Standalone\Spectr.exe'))) {
         if (-not (Test-Path -LiteralPath $path)) { throw "Installer did not install $path" }
     }
+    $unrelatedClap = Join-Path $installRoot 'CLAP\Unrelated.clap'
+    Set-Content -LiteralPath $unrelatedClap -Value 'must survive Spectr install' -NoNewline
+    $unrelatedClapHash = (Get-FileHash -LiteralPath $unrelatedClap -Algorithm SHA256).Hash
+    & (Join-Path $PSScriptRoot 'install-package.ps1') -Package $package -Vst3Root (Join-Path $installRoot 'VST3') -ClapRoot (Join-Path $installRoot 'CLAP') -StandaloneRoot (Join-Path $installRoot 'Standalone') -Receipt $installReceipt -NoShortcuts | Out-Null
+    if (-not (Test-Path -LiteralPath $unrelatedClap -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $unrelatedClap -Algorithm SHA256).Hash -ne $unrelatedClapHash) {
+        throw 'Installer removed or changed an unrelated CLAP plugin'
+    }
+    Write-Output 'PASS: installer preserves unrelated CLAP plugins'
     $receipt = Get-Content -LiteralPath $installReceipt -Raw | ConvertFrom-Json
     if ($receipt.schema -ne 'spectr.windows.install.v1' -or $receipt.status -ne 'installed_files_match_manifest') { throw 'Install receipt has wrong schema or status' }
     if ($receipt.package.sha256 -ne (Get-FileHash $package -Algorithm SHA256).Hash) { throw 'Install receipt package hash differs' }
@@ -268,13 +277,13 @@ try {
 
     $corruptRoot = Join-Path $temp 'corrupt-install'
     $corruptReceipt = Join-Path $temp 'corrupt-install-receipt.json'
-    $global:SpectrTestCorruptDestination = Join-Path $corruptRoot 'CLAP'
+    $global:SpectrTestCorruptDestination = Join-Path $corruptRoot 'CLAP\icudtl.dat'
     function Copy-Item {
         param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force)
         Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
         if ($Destination.StartsWith(($global:SpectrTestCorruptDestination + '.'), [StringComparison]::OrdinalIgnoreCase) -and
             $Destination.EndsWith('.new', [StringComparison]::OrdinalIgnoreCase)) {
-            Set-Content -LiteralPath (Join-Path $Destination 'icudtl.dat') -Value 'corrupted during copy' -NoNewline
+            Set-Content -LiteralPath $Destination -Value 'corrupted during copy' -NoNewline
         }
     }
     try {
@@ -293,14 +302,18 @@ try {
     $oldFiles = @(
         (Join-Path $installRoot 'VST3\Spectr.vst3\Contents\arm64-win\Spectr.vst3'),
         (Join-Path $installRoot 'CLAP\Spectr.clap'),
-        (Join-Path $installRoot 'Standalone\Spectr.exe')
+        (Join-Path $installRoot 'CLAP\icudtl.dat'),
+        (Join-Path $installRoot 'CLAP\wgpu_native.dll'),
+        (Join-Path $installRoot 'Standalone\Spectr.exe'),
+        (Join-Path $installRoot 'Standalone\icudtl.dat'),
+        (Join-Path $installRoot 'Standalone\wgpu_native.dll')
     )
     $oldHashes = @()
     for ($index = 0; $index -lt $oldFiles.Count; $index++) {
         Set-Content -LiteralPath $oldFiles[$index] -Value "prior install $index" -NoNewline
         $oldHashes += (Get-FileHash -LiteralPath $oldFiles[$index] -Algorithm SHA256).Hash
     }
-    $global:SpectrTestFailSwap = Join-Path $installRoot 'CLAP'
+    $global:SpectrTestFailSwap = Join-Path $installRoot 'CLAP\icudtl.dat'
     function Move-Item {
         param([string]$LiteralPath, [string]$Destination, [switch]$Force)
         if ($Destination -eq $global:SpectrTestFailSwap -and $LiteralPath.EndsWith('.new')) {
@@ -338,9 +351,13 @@ try {
         schema = 'spectr.windows.install.pending.v1'
         id = $interruptedId
         destinations = @(
-            [ordered]@{ path = [IO.Path]::GetFullPath($interruptedVst3); had_original = $true },
-            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'CLAP')); had_original = $true },
-            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'Standalone')); had_original = $true }
+            [ordered]@{ path = [IO.Path]::GetFullPath($interruptedVst3); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'CLAP\Spectr.clap')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'CLAP\icudtl.dat')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'CLAP\wgpu_native.dll')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'Standalone\Spectr.exe')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'Standalone\icudtl.dat')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $installRoot 'Standalone\wgpu_native.dll')); had_original = $true; active = $true }
         )
     }
     $interruptedJournal | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "$installReceipt.pending.json"
@@ -415,9 +432,13 @@ try {
         schema = 'spectr.windows.install.pending.v1'
         id = $committedReceipt.transaction_id
         destinations = @(
-            [ordered]@{ path = [IO.Path]::GetFullPath($committedVst3); had_original = $true },
-            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'CLAP')); had_original = $true },
-            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'Standalone')); had_original = $true }
+            [ordered]@{ path = [IO.Path]::GetFullPath($committedVst3); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'CLAP\Spectr.clap')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'CLAP\icudtl.dat')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'CLAP\wgpu_native.dll')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'Standalone\Spectr.exe')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'Standalone\icudtl.dat')); had_original = $true; active = $true },
+            [ordered]@{ path = [IO.Path]::GetFullPath((Join-Path $committedRoot 'Standalone\wgpu_native.dll')); had_original = $true; active = $true }
         )
         package = $committedReceipt.package
         installed_files = $committedReceipt.installed_files
@@ -478,7 +499,7 @@ try {
     } finally { $heldPendingLock.Dispose() }
     Write-Output 'PASS: pending journal identity is locked before install'
 
-    $global:SpectrTestFailSwap = $freshClapRoot
+    $global:SpectrTestFailSwap = Join-Path $freshClapRoot 'Spectr.clap'
     function Move-Item {
         param([string]$LiteralPath, [string]$Destination, [switch]$Force)
         if ($Destination -eq $global:SpectrTestFailSwap -and $LiteralPath.EndsWith('.new')) {
