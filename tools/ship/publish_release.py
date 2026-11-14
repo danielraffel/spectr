@@ -132,6 +132,8 @@ def main() -> int:
                     help="verified native Windows ARM64 package to publish with macOS")
     ap.add_argument("--windows-x64", type=Path,
                     help="verified Windows x64 package to publish with macOS")
+    ap.add_argument("--require-windows", action="store_true",
+                    help="require native ARM64, ARM64EC, and x64 Windows assets")
     ap.add_argument("--verify-attempts", type=int, default=12,
                     help="live-feed checks, 15 s apart, before calling the publish broken")
     ap.add_argument("--dry-run", action="store_true")
@@ -146,6 +148,12 @@ def main() -> int:
                if args.windows_arm64 else
                (args.windows_arm64ec, args.windows_x64)
                if args.windows_arm64ec else None)
+    complete_windows = windows == (
+        args.windows_arm64, args.windows_arm64ec, args.windows_x64)
+    if (args.require_windows or args.reuse_draft) and not complete_windows:
+        raise SystemExit(
+            "complete release publication requires --windows-arm64, "
+            "--windows-arm64ec, and --windows-x64 together")
     if windows and ((len(windows) == 3 and windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
                     or windows[-2].name != f"Spectr-windows-arm64ec-{args.version}.zip"
                     or windows[-1].name != f"Spectr-windows-x64-{args.version}.zip"):
