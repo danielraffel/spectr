@@ -131,6 +131,13 @@ checks = {
         "'Spectr M5 product-acceptance gate' }}\n" in workflow
         and config["governance"]["required_status_checks"] == ["Spectr M5 product-acceptance gate"]),
     "exact labels": "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]" in workflow,
+    # Release signing must target the m5studio-only label. The generic Spectr
+    # labels are shared by acceptance hosts and cannot constrain GitHub's job
+    # assignment on their own.
+    "release runner is isolated": (
+        "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]"
+        in release_workflow
+    ),
     "no hosted label": not re.search(r"runs-on:.*(macos-|ubuntu-|windows-)", workflow, re.I),
     # `runner_provider` MUST be declared, and MUST be inert. Those are two
     # separate requirements and this repo has been burned by the first.
