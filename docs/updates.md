@@ -237,22 +237,25 @@ number.
 The combined release workflow is manually dispatched on a prepared
 `release/vX.Y.Z` branch with checked-in `release-notes.md`. A push alone does
 not publish anything. First build both Windows ZIPs from that exact, clean
-branch head and complete the separate ARM64EC and x64 DAW UI, audio, and trace
+branch head and complete the separate ARM64, ARM64EC, and x64 DAW UI, audio, and trace
 checks. Run `tools/ship/check_windows_release.py` against the branch SHA and
 version. Create a **draft** `vX.Y.Z` release targeted at that SHA and upload
-only the two Windows ZIPs. Keep it a draft while the macOS job runs.
+all three Windows ZIPs (native ARM64, ARM64EC, and x64). Keep it a draft while
+the macOS job runs.
 
 Use `gh release view vX.Y.Z --json assets` to obtain each staged ZIP's
 `apiUrl` and `digest` (without putting credentials in workflow inputs).
 Dispatch `.github/workflows/release.yml` on `release/vX.Y.Z` with
-`windows_arm64ec_url`, `windows_arm64ec_sha256`, `windows_x64_url`, and
-`windows_x64_sha256`. The transient Tart guest authenticates to the draft,
-requires the tag and both asset identities to match the exact branch head,
+`windows_arm64_url`, `windows_arm64_sha256`, `windows_arm64ec_url`,
+`windows_arm64ec_sha256`, `windows_x64_url`, and `windows_x64_sha256`. The
+transient Tart guest authenticates to the draft, requires the tag and all three
+asset identities to match the exact branch head,
 downloads the ZIPs, checks their digests and embedded source, then builds,
-signs, and notarizes the macOS package. `publish_release.py --reuse-draft`
-checks the draft again, uploads only the macOS package and appcast, verifies
-the complete draft, publishes it, and checks the live Sparkle feed. A failure
-before publication leaves the draft for inspection and a safe rerun.
+signs, and notarizes the macOS package. `publish_release.py --reuse-draft
+--require-windows` checks the draft again, uploads the macOS package and
+appcast, verifies the complete platform set, publishes it, and checks the live
+Sparkle feed. A failure before publication leaves the draft for inspection and
+a safe rerun.
 
 The notes are inline rather than a `sparkle:releaseNotesLink` because GitHub
 serves release assets with `Content-Disposition: attachment`, which Sparkle's

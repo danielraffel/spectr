@@ -170,10 +170,26 @@ class PublishOrdering(unittest.TestCase):
         self.assertIn(str(arm), steps[1])
         self.assertIn(str(x64), steps[1])
 
+    def test_require_windows_rejects_an_incomplete_platform_set(self) -> None:
+        argv = [
+            "publish_release.py", "--version", "1.0.9",
+            "--pkg", "a/Spectr-1.0.9.pkg", "--appcast", "a/appcast.xml",
+            "--notes", "n.md", "--windows-arm64ec",
+            "a/Spectr-windows-arm64ec-1.0.9.zip", "--windows-x64",
+            "a/Spectr-windows-x64-1.0.9.zip", "--require-windows",
+            "--dry-run",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with self.assertRaises(SystemExit) as error:
+                publish_release.main()
+        self.assertIn("requires --windows-arm64", str(error.exception))
+
     def test_reuse_draft_never_creates_or_publishes_partial_assets(self) -> None:
+        native = Path("a/Spectr-windows-arm64-1.0.9.zip")
         steps = publish_release.plan("1.0.9", Path("a/Spectr-1.0.9.pkg"),
                                      Path("a/appcast.xml"), Path("n.md"),
                                      "a" * 40, windows=(
+                                         native,
                                          Path("a/Spectr-windows-arm64ec-1.0.9.zip"),
                                          Path("a/Spectr-windows-x64-1.0.9.zip")),
                                      reuse_draft=True)
@@ -186,23 +202,24 @@ class PublishOrdering(unittest.TestCase):
     def test_reuse_draft_rechecks_asset_identity_before_publish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            native = root / "Spectr-windows-arm64-1.0.9.zip"
             arm = root / "Spectr-windows-arm64ec-1.0.9.zip"
             x64 = root / "Spectr-windows-x64-1.0.9.zip"
             pkg = root / "Spectr-1.0.9.pkg"
             appcast = root / "appcast.xml"
             notes = root / "notes.md"
-            for path in (arm, x64, pkg, appcast, notes):
+            for path in (native, arm, x64, pkg, appcast, notes):
                 path.write_bytes(path.name.encode())
             target = "a" * 40
-            windows = (arm, x64)
+            windows = (native, arm, x64)
             expected = {path.name: publish_release._digest(path)
-                        for path in (arm, x64, pkg, appcast)}
+                        for path in (native, arm, x64, pkg, appcast)}
             calls = []
 
             def gh(cmd, **kwargs):
                 calls.append(cmd)
                 if cmd[:3] == ["gh", "release", "view"]:
-                    names = [arm.name, x64.name]
+                    names = [native.name, arm.name, x64.name]
                     if any(c[:3] == ["gh", "release", "upload"] for c in calls):
                         names += [pkg.name, appcast.name]
                     return subprocess.CompletedProcess(cmd, 0, json.dumps({
@@ -216,7 +233,8 @@ class PublishOrdering(unittest.TestCase):
 
             argv = ["publish_release.py", "--version", "1.0.9", "--target", target,
                     "--pkg", str(pkg), "--appcast", str(appcast), "--notes", str(notes),
-                    "--windows-arm64ec", str(arm), "--windows-x64", str(x64),
+                    "--windows-arm64", str(native), "--windows-arm64ec", str(arm),
+                    "--windows-x64", str(x64),
                     "--reuse-draft", "--verify-attempts", "1"]
             with mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(publish_release, "check_macos_package"), \
