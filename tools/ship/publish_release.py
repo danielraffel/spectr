@@ -102,6 +102,11 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
     steps = [] if reuse_draft else [["gh", "release", "create", tag, "--repo", REPO_SLUG, "--draft",
          "--target", target, "--title", title or f"Spectr {version}",
          "--notes-file", str(notes)]]
+    if reuse_draft:
+        # A pre-created draft may have stale or empty body text. Keep the
+        # public release notes tied to the exact source revision we publish.
+        steps.append(["gh", "release", "edit", tag, "--repo", REPO_SLUG,
+                      "--notes-file", str(notes)])
     upload = ["gh", "release", "upload", tag, "--repo", REPO_SLUG]
     if reuse_draft:
         upload.append("--clobber")
@@ -177,16 +182,16 @@ def main() -> int:
         if not windows or not re.fullmatch(r"[0-9a-f]{40}", target):
             raise SystemExit("--reuse-draft requires both Windows assets and an exact target SHA")
         check_draft(args.version, target, windows, allow_existing_macos=True)
-    mutation_steps = steps[:2] if args.reuse_draft else steps[:3]
+    mutation_steps = steps[:3]
     for index, cmd in enumerate(mutation_steps):
-        if args.reuse_draft and index == 1:
+        if args.reuse_draft and index == 2:
             check_draft(args.version, target, windows, (args.pkg, args.appcast))
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "
                   "last step above was the publish", file=sys.stderr)
             return 1
-    verify = steps[2] if args.reuse_draft else steps[3]
+    verify = steps[3]
     for attempt in range(1, args.verify_attempts + 1):
         print(f"+ ({attempt}/{args.verify_attempts}) " + " ".join(verify), flush=True)
         if subprocess.run(verify).returncode == 0:
