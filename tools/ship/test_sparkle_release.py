@@ -194,10 +194,11 @@ class PublishOrdering(unittest.TestCase):
                                          Path("a/Spectr-windows-x64-1.0.9.zip")),
                                      reuse_draft=True)
         self.assertEqual([s[2] if s[0] == "gh" else "verify" for s in steps],
-                         ["upload", "edit", "verify"])
-        self.assertNotIn(str(Path("a/Spectr-windows-arm64ec-1.0.9.zip")), steps[0])
-        self.assertNotIn(str(Path("a/Spectr-windows-x64-1.0.9.zip")), steps[0])
-        self.assertIn("--clobber", steps[0])
+                         ["edit", "upload", "edit", "verify"])
+        self.assertIn("--notes-file", steps[0])
+        self.assertNotIn(str(Path("a/Spectr-windows-arm64ec-1.0.9.zip")), steps[1])
+        self.assertNotIn(str(Path("a/Spectr-windows-x64-1.0.9.zip")), steps[1])
+        self.assertIn("--clobber", steps[1])
 
     def test_reuse_draft_rechecks_asset_identity_before_publish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,7 +243,7 @@ class PublishOrdering(unittest.TestCase):
                     mock.patch.object(publish_release.subprocess, "run", side_effect=gh):
                 self.assertEqual(publish_release.main(), 0)
             self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "view"]]), 2)
-            self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "edit"]]), 1)
+            self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "edit"]]), 2)
             self.assertEqual(len([c for c in calls if c[:3] == ["gh", "release", "create"]]), 0)
 
             def wrong_tag(cmd, **kwargs):
@@ -277,7 +278,8 @@ class PublishOrdering(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     publish_release.main()
             self.assertTrue(any(c[:3] == ["gh", "release", "upload"] for c in calls))
-            self.assertFalse(any(c[:3] == ["gh", "release", "edit"] for c in calls))
+            self.assertFalse(any(c[:3] == ["gh", "release", "edit"] and
+                                 "--draft=false" in c for c in calls))
 
     def test_expect_version_reads_the_newest_item(self) -> None:
         feed = ('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
