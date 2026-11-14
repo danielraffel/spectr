@@ -254,4 +254,5 @@ jobs:
             --windows-arm64 "${{ steps.version.outputs.native }}" \
             --windows-arm64ec "${{ steps.version.outputs.arm }}" \
             --windows-x64 "${{ steps.version.outputs.x64 }}" \
+            --require-windows \
             --reuse-draft
