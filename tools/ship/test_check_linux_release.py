@@ -17,10 +17,13 @@ def make_archive(path: Path, *, source: str = SHA, arch: str = "aarch64",
                  tamper: bool = False) -> None:
     root = "Spectr-v1.0.10"
     vdir = "aarch64-linux" if arch == "aarch64" else "x86_64-linux"
+    machine = 183 if arch == "aarch64" else 62
+    elf = bytearray(b"\x7fELF" + bytes([2]) + b"\0" * 13)
+    elf[18:20] = machine.to_bytes(2, "little")
     files = {
-        "Spectr": b"standalone",
-        "Spectr.clap": b"clap",
-        f"Spectr.vst3/Contents/{vdir}/Spectr.so": b"vst3",
+        "Spectr": bytes(elf),
+        "Spectr.clap": bytes(elf),
+        f"Spectr.vst3/Contents/{vdir}/Spectr.so": bytes(elf),
         "install.sh": (b"#!/bin/sh\n"
                         b"SPECTR_VST3_DIR SPECTR_CLAP_DIR SPECTR_BIN_DIR\n"),
         "uninstall.sh": (b"#!/bin/sh\n"
@@ -42,7 +45,10 @@ def make_archive(path: Path, *, source: str = SHA, arch: str = "aarch64",
                 data += b"tampered"
             info = tarfile.TarInfo(f"{root}/{name}")
             info.size = len(data)
-            info.mode = 0o755 if name.endswith(".sh") else 0o644
+            info.mode = 0o755 if name.endswith(".sh") or name in {
+                "Spectr", "Spectr.clap",
+                f"Spectr.vst3/Contents/{vdir}/Spectr.so",
+            } else 0o644
             archive.addfile(info, io.BytesIO(data))
 
 

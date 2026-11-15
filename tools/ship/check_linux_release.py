@@ -77,6 +77,22 @@ def check_archive(path: Path, arch: str, version: str, source_sha: str) -> str:
         )
         for relative in required:
             read(relative)
+        binary_paths = (
+            "Spectr",
+            "Spectr.clap",
+            "Spectr.vst3/Contents/" + ("aarch64-linux" if arch == "aarch64" else "x86_64-linux") + "/Spectr.so",
+        )
+        expected_machine = 183 if arch == "aarch64" else 62
+        for relative in binary_paths:
+            member = files[f"{root}/{relative}"]
+            if member.mode & 0o111 == 0:
+                raise ValueError(f"release binary is not executable: {relative}")
+            data = read(relative)
+            if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] != 2:
+                raise ValueError(f"release binary is not a 64-bit ELF: {relative}")
+            machine = int.from_bytes(data[18:20], "little")
+            if machine != expected_machine:
+                raise ValueError(f"release binary architecture differs from {arch}: {relative}")
         for script in ("install.sh", "uninstall.sh"):
             member = files[f"{root}/{script}"]
             if member.mode & 0o111 == 0:
