@@ -76,14 +76,17 @@ jobs:
           persist-credentials: false
 
       - name: Check out the pinned Pulp installer recipe
-        uses: actions/checkout@v4
-        with:
-          repository: Generous-Corp/pulp
-          ref: ${{ env.PULP_ROOT_REF }}
-          path: pulp
-          fetch-depth: 1
-          clean: true
-          persist-credentials: false
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep the installer recipe outside the Spectr worktree. CMake's
+          # release provenance check intentionally treats every untracked
+          # entry below the product root as dirty; an in-tree checkout would
+          # therefore make an otherwise clean Spectr source tree unverifiable.
+          pulp_root="$RUNNER_TEMP/pulp"
+          git clone --depth 1 --branch "$PULP_ROOT_REF" \
+            https://github.com/Generous-Corp/pulp "$pulp_root"
+          test -x "$pulp_root/tools/scripts/build_combined_installer.sh"
 
       - name: Select the exact tagged product source
         id: source
@@ -101,10 +104,8 @@ jobs:
           )
           tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
           [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "tag target is not an exact commit" >&2; exit 1; }
-          # The SDK checkout is an intentional nested repository used only by
-          # the workflow. Exclude it before the product's clean-source guard,
-          # then build the immutable source named by the release tag.
-          printf '/pulp/\n' >> .git/info/exclude
+          # Build the immutable source named by the release tag. The Pulp
+          # checkout is outside this worktree, so it cannot dirty provenance.
           git checkout --detach "$tag_sha"
           git status --porcelain --untracked-files=normal
           echo "SPECTR_RELEASE_SOURCE_SHA=$tag_sha" >> "$GITHUB_ENV"
@@ -235,7 +236,7 @@ jobs:
         env:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
           PULP_SDK_SHA: ${{ steps.sdk.outputs.sha }}
-          SPECTR_SHA: ${{ github.sha }}
+          SPECTR_SHA: ${{ steps.source.outputs.sha }}
           # AAX is optional and PACE-signed by the owner on their own machine
           # (docs/aax.md). This runner has no AAX SDK and no wraptool, so the
           # release never carries an AAX, whatever the runner's environment
@@ -244,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -f "$HOME/.config/pulp/secrets/sparkle/spectr_ed25519" ]]
-          PULP_ROOT="$GITHUB_WORKSPACE/pulp" \
+          PULP_ROOT="$RUNNER_TEMP/pulp" \
           PULP_DIR_EXPECTED="$PULP_SDK_ROOT/lib/cmake/Pulp" \
           PULP_SDK_SHA_EXPECTED="$PULP_SDK_SHA" \
           SPECTR_SHA_EXPECTED="$SPECTR_SHA" \
