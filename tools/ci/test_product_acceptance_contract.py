@@ -138,6 +138,14 @@ checks = {
         "runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]"
         in release_workflow
     ),
+    # GitHub's macOS images still provide Bash 3.2.  Bash 4-only lowercase
+    # parameter expansion (`${VAR,,}`) aborts the release before any artifact
+    # is built, so keep the boolean normalization portable.
+    "release workflow is Bash 3.2 compatible": (
+        "${INCLUDE_LINUX,,}" not in release_workflow
+        and "include_linux=$(printf '%s' \"$INCLUDE_LINUX\" | tr '[:upper:]' '[:lower:]')"
+        in release_workflow
+    ),
     "no hosted label": not re.search(r"runs-on:.*(macos-|ubuntu-|windows-)", workflow, re.I),
     # `runner_provider` MUST be declared, and MUST be inert. Those are two
     # separate requirements and this repo has been burned by the first.
