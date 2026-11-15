@@ -184,6 +184,19 @@ class PublishOrdering(unittest.TestCase):
                 publish_release.main()
         self.assertIn("requires --windows-arm64", str(error.exception))
 
+    def test_require_linux_rejects_an_incomplete_platform_set(self) -> None:
+        argv = [
+            "publish_release.py", "--version", "1.0.9",
+            "--pkg", "a/Spectr-1.0.9.pkg", "--appcast", "a/appcast.xml",
+            "--notes", "n.md", "--linux-aarch64",
+            "a/Spectr-v1.0.9-linux-aarch64.tar.xz", "--require-linux",
+            "--dry-run",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            with self.assertRaises(SystemExit) as error:
+                publish_release.main()
+        self.assertIn("requires --linux-aarch64", str(error.exception))
+
     def test_reuse_draft_never_creates_or_publishes_partial_assets(self) -> None:
         native = Path("a/Spectr-windows-arm64-1.0.9.zip")
         steps = publish_release.plan("1.0.9", Path("a/Spectr-1.0.9.pkg"),

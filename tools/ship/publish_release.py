@@ -40,6 +40,7 @@ import time
 from pathlib import Path
 
 from check_macos_release import check_package as check_macos_package
+from check_linux_release import check_archive as check_linux_archive
 from check_windows_release import check_package as check_windows_package
 
 HERE = Path(__file__).resolve().parent
@@ -57,6 +58,7 @@ def _digest(path: Path) -> str:
 
 def check_draft(version: str, target: str, windows: tuple[Path, Path],
                 macos: tuple[Path, Path] | None = None,
+                linux: tuple[Path, Path] | None = None,
                 allow_existing_macos: bool = False) -> None:
     """Refuse a changed draft, tag, or asset set before any publication step."""
     tag = f"v{version}"
@@ -81,12 +83,16 @@ def check_draft(version: str, target: str, windows: tuple[Path, Path],
     expected = {path.name: _digest(path) for path in windows}
     if macos:
         expected.update({path.name: _digest(path) for path in macos})
+    if linux:
+        expected.update({path.name: _digest(path) for path in linux})
     for name, digest in expected.items():
         if by_name.get(name, {}).get("digest") != digest:
             raise ValueError(f"{tag}: missing or changed draft asset {name}")
     allowed = {path.name for path in windows}
     if macos or allow_existing_macos:
         allowed.update((f"Spectr-{version}.pkg", "appcast.xml"))
+    if linux:
+        allowed.update(path.name for path in linux)
     if not (set(by_name) <= allowed if allow_existing_macos and not macos
             else set(by_name) == allowed):
         raise ValueError(f"{tag}: unexpected draft asset set")
@@ -95,6 +101,7 @@ def check_draft(version: str, target: str, windows: tuple[Path, Path],
 def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
          title: str | None = None,
          windows: tuple[Path, Path] | None = None,
+         linux: tuple[Path, Path] | None = None,
          reuse_draft: bool = False) -> list[list[str]]:
     tag = f"v{version}"
     if appcast.name != "appcast.xml":
@@ -113,6 +120,8 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
     upload.extend((str(pkg), str(appcast)))
     if not reuse_draft and windows:
         upload.extend(str(asset) for asset in windows)
+    if not reuse_draft and linux:
+        upload.extend(str(asset) for asset in linux)
     steps += [
         upload,
         ["gh", "release", "edit", tag, "--repo", REPO_SLUG, "--draft=false", "--latest"],
@@ -139,6 +148,12 @@ def main() -> int:
                     help="verified Windows x64 package to publish with macOS")
     ap.add_argument("--require-windows", action="store_true",
                     help="require native ARM64, ARM64EC, and x64 Windows assets")
+    ap.add_argument("--linux-aarch64", type=Path,
+                    help="verified Linux AArch64 archive")
+    ap.add_argument("--linux-x86_64", type=Path,
+                    help="verified Linux x86_64 archive")
+    ap.add_argument("--require-linux", action="store_true",
+                    help="require both qualified Linux archives")
     ap.add_argument("--verify-attempts", type=int, default=12,
                     help="live-feed checks, 15 s apart, before calling the publish broken")
     ap.add_argument("--dry-run", action="store_true")
@@ -159,6 +174,16 @@ def main() -> int:
         raise SystemExit(
             "complete release publication requires --windows-arm64, "
             "--windows-arm64ec, and --windows-x64 together")
+    linux = ((args.linux_aarch64, args.linux_x86_64)
+             if args.linux_aarch64 and args.linux_x86_64 else None)
+    if args.require_linux and linux is None:
+        raise SystemExit(
+            "complete Linux publication requires --linux-aarch64 and --linux-x86_64 together")
+    if (args.linux_aarch64 is None) != (args.linux_x86_64 is None):
+        raise SystemExit("Linux AArch64 and x86_64 assets must be supplied together")
+    if linux and (linux[0].name != f"Spectr-v{args.version}-linux-aarch64.tar.xz"
+                  or linux[1].name != f"Spectr-v{args.version}-linux-x86_64.tar.xz"):
+        raise SystemExit("Linux package filenames must match the release version and architecture")
     if windows and ((len(windows) == 3 and windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
                     or windows[-2].name != f"Spectr-windows-arm64ec-{args.version}.zip"
                     or windows[-1].name != f"Spectr-windows-x64-{args.version}.zip"):
@@ -169,7 +194,7 @@ def main() -> int:
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
         ).stdout.strip()
     steps = plan(args.version, args.pkg, args.appcast, args.notes, target,
-                 args.title, windows, args.reuse_draft)
+                 args.title, windows, linux, args.reuse_draft)
     if args.dry_run:
         for cmd in steps:
             print(" ".join(cmd))
@@ -186,14 +211,20 @@ def main() -> int:
                 raise SystemExit(f"missing {asset}")
             print(f"verified {arch} sha256=" +
                   check_windows_package(asset, arch, args.version, target), flush=True)
+    if linux:
+        for asset, arch in zip(linux, ("aarch64", "x86_64")):
+            print(f"verified linux-{arch} sha256=" +
+                  check_linux_archive(asset, arch, args.version, target), flush=True)
     if args.reuse_draft:
         if not windows or not re.fullmatch(r"[0-9a-f]{40}", target):
             raise SystemExit("--reuse-draft requires both Windows assets and an exact target SHA")
-        check_draft(args.version, target, windows, allow_existing_macos=True)
+        check_draft(args.version, target, windows, linux=linux,
+                    allow_existing_macos=True)
     mutation_steps = steps[:3]
     for index, cmd in enumerate(mutation_steps):
         if args.reuse_draft and index == 2:
-            check_draft(args.version, target, windows, (args.pkg, args.appcast))
+            check_draft(args.version, target, windows,
+                        macos=(args.pkg, args.appcast), linux=linux)
         print("+ " + " ".join(cmd), flush=True)
         if subprocess.run(cmd).returncode != 0:
             print("publish_release: stopped; the release is still a draft unless the "

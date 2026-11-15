@@ -37,6 +37,27 @@ on:
         description: SHA-256 for the exact-head x64 ZIP
         required: true
         type: string
+      include_linux:
+        description: Include both independently qualified Linux archives
+        required: false
+        default: false
+        type: boolean
+      linux_aarch64_url:
+        description: GitHub API URL for the qualified Linux AArch64 archive
+        required: false
+        type: string
+      linux_aarch64_sha256:
+        description: SHA-256 for the qualified Linux AArch64 archive
+        required: false
+        type: string
+      linux_x86_64_url:
+        description: GitHub API URL for the qualified Linux x86_64 archive
+        required: false
+        type: string
+      linux_x86_64_sha256:
+        description: SHA-256 for the qualified Linux x86_64 archive
+        required: false
+        type: string
 
 concurrency:
   group: spectr-release-${{ github.ref }}
@@ -63,6 +84,11 @@ jobs:
       WINDOWS_ARM64_SHA256: ${{ inputs.windows_arm64_sha256 }}
       WINDOWS_X64_URL: ${{ inputs.windows_x64_url }}
       WINDOWS_X64_SHA256: ${{ inputs.windows_x64_sha256 }}
+      INCLUDE_LINUX: ${{ inputs.include_linux || false }}
+      LINUX_AARCH64_URL: ${{ inputs.linux_aarch64_url }}
+      LINUX_AARCH64_SHA256: ${{ inputs.linux_aarch64_sha256 }}
+      LINUX_X86_64_URL: ${{ inputs.linux_x86_64_url }}
+      LINUX_X86_64_SHA256: ${{ inputs.linux_x86_64_sha256 }}
       # Identity hashes are public selectors, not private credentials. The
       # signing keychain and notarization profile stay on the trusted runner.
       APP_ID: ${{ vars.SPECTR_DEVELOPER_ID_APPLICATION_HASH }}
@@ -102,19 +128,33 @@ jobs:
           print(match.group(1))
           PY
           )
+          # The workflow is dispatched from a reviewed release branch. Keep
+          # that identity separate from the immutable product tag: the former
+          # supplies the workflow and release scripts, while the latter is the
+          # source tree that is built and signed.
+          workflow_head=$(git rev-parse HEAD)
+          [[ "$workflow_head" == "$GITHUB_SHA" ]] || { echo "workflow checkout differs from GITHUB_SHA" >&2; exit 1; }
+          release_tools="$RUNNER_TEMP/spectr-release-tools-$GITHUB_RUN_ID"
+          mkdir -p "$release_tools/ship" "$release_tools/ci"
+          cp tools/ship/*.py "$release_tools/ship/"
+          cp tools/ci/validate_release_sdk.py "$release_tools/ci/"
+          test -f "$RELEASE_NOTES_FILE"
+          cp "$RELEASE_NOTES_FILE" "$RUNNER_TEMP/spectr-release-notes-$GITHUB_RUN_ID.md"
+          echo "RELEASE_TOOLS=$release_tools" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES_FILE=$RUNNER_TEMP/spectr-release-notes-$GITHUB_RUN_ID.md" >> "$GITHUB_ENV"
           # The commits endpoint peels an annotated tag to its commit, so
           # tag_sha is always a commit SHA, never a tag object SHA.
           tag_sha=$(gh api "repos/danielraffel/spectr/commits/refs/tags/v$version" --jq '.sha')
           [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "tag target is not an exact commit" >&2; exit 1; }
-          # The dispatched release/vX.Y.Z head must be the tagged commit, so
-          # the reviewed branch is exactly what is built, signed and published.
-          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag commit differs from GITHUB_SHA" >&2; exit 1; }
+          git fetch --no-tags origin "refs/tags/v$version:refs/tags/v$version"
+          git checkout --detach "$tag_sha"
           head_sha=$(git rev-parse HEAD)
           [[ "$head_sha" == "$tag_sha" ]] || { echo "checked-out HEAD differs from the tag commit" >&2; exit 1; }
           # The Pulp checkout is outside this worktree, so it cannot dirty provenance.
           dirty=$(git status --porcelain --untracked-files=normal)
           [[ -z "$dirty" ]] || { echo "source tree is dirty:" >&2; echo "$dirty" >&2; exit 1; }
           echo "SPECTR_RELEASE_SOURCE_SHA=$tag_sha" >> "$GITHUB_ENV"
+          echo "workflow_sha=$workflow_head" >> "$GITHUB_OUTPUT"
           echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
       - name: Read the release version and notes
@@ -144,6 +184,10 @@ jobs:
           arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
           native="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64-$version.zip"
           x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
+          include_linux=${INCLUDE_LINUX,,}
+          [[ "$include_linux" == true || "$include_linux" == false ]] || {
+            echo "include_linux must be boolean" >&2; exit 1;
+          }
           [[ "$WINDOWS_ARM64_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_ARM64EC_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_X64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
             echo "Windows asset URLs must be GitHub release asset API URLs" >&2; exit 1;
           }
@@ -153,8 +197,24 @@ jobs:
           [[ "$WINDOWS_ARM64_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
             echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
           }
+          linux_aarch64=""
+          linux_x86_64=""
+          if [[ "$include_linux" == true ]]; then
+            [[ "$LINUX_AARCH64_URL" == https://api.github.com/repos/*/releases/assets/* && "$LINUX_X86_64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
+              echo "Linux asset URLs must be GitHub release asset API URLs" >&2; exit 1;
+            }
+            [[ "$LINUX_AARCH64_URL" != *\?* && "$LINUX_X86_64_URL" != *\?* ]] || {
+              echo "Linux asset URLs must not contain query credentials" >&2; exit 1;
+            }
+            [[ "$LINUX_AARCH64_SHA256" =~ ^[[:xdigit:]]{64}$ && "$LINUX_X86_64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+              echo "Linux asset digests must be 64 hexadecimal characters" >&2; exit 1;
+            }
+            linux_aarch64="$RUNNER_TEMP/spectr-linux-assets/Spectr-v$version-linux-aarch64.tar.xz"
+            linux_x86_64="$RUNNER_TEMP/spectr-linux-assets/Spectr-v$version-linux-x86_64.tar.xz"
+            mkdir -p "$RUNNER_TEMP/spectr-linux-assets"
+          fi
           draft_assets=$(gh release view "v$version" --repo danielraffel/spectr --json assets)
-          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" python3 - <<'PY'
+          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" INCLUDE_LINUX="$include_linux" python3 - <<'PY'
           import json, os, sys
           assets = json.loads(os.environ['DRAFT_ASSETS'])['assets']
           expected = {
@@ -165,8 +225,15 @@ jobs:
               f"Spectr-windows-x64-{os.environ['RELEASE_VERSION']}.zip": (
                   os.environ['WINDOWS_X64_URL'], os.environ['WINDOWS_X64_SHA256']),
           }
-          if len(assets) != 3 or {a.get('name') for a in assets} != set(expected):
-              sys.exit('draft must contain exactly the three named Windows assets')
+          if os.environ['INCLUDE_LINUX'] == 'true':
+              expected.update({
+                  f"Spectr-v{os.environ['RELEASE_VERSION']}-linux-aarch64.tar.xz": (
+                      os.environ['LINUX_AARCH64_URL'], os.environ['LINUX_AARCH64_SHA256']),
+                  f"Spectr-v{os.environ['RELEASE_VERSION']}-linux-x86_64.tar.xz": (
+                      os.environ['LINUX_X86_64_URL'], os.environ['LINUX_X86_64_SHA256']),
+              })
+          if len(assets) != len(expected) or {a.get('name') for a in assets} != set(expected):
+              sys.exit('draft asset set does not match the selected platform set')
           for asset in assets:
               url, digest = expected[asset['name']]
               if asset.get('apiUrl') != url or asset.get('digest') != 'sha256:' + digest.lower():
@@ -175,16 +242,30 @@ jobs:
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$native" "$WINDOWS_ARM64_URL"
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$x64" "$WINDOWS_X64_URL"
+          if [[ "$include_linux" == true ]]; then
+            curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$linux_aarch64" "$LINUX_AARCH64_URL"
+            curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$linux_x86_64" "$LINUX_X86_64_URL"
+          fi
           printf '%s  %s\n' "$WINDOWS_ARM64_SHA256" "$native" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
-          python3 tools/ship/check_windows_release.py \
+          python3 "$RELEASE_TOOLS/ship/check_windows_release.py" \
             --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
             --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
+          if [[ "$include_linux" == true ]]; then
+            printf '%s  %s\n' "$LINUX_AARCH64_SHA256" "$linux_aarch64" | shasum -a 256 --check
+            printf '%s  %s\n' "$LINUX_X86_64_SHA256" "$linux_x86_64" | shasum -a 256 --check
+            python3 "$RELEASE_TOOLS/ship/check_linux_release.py" \
+              --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
+              --aarch64 "$linux_aarch64" --x86_64 "$linux_x86_64"
+          fi
           {
             echo "arm=$arm"
             echo "native=$native"
             echo "x64=$x64"
+            [[ "$include_linux" == true ]] && echo "linux_aarch64=$linux_aarch64"
+            [[ "$include_linux" == true ]] && echo "linux_x86_64=$linux_x86_64"
+            echo "include_linux=$include_linux"
             echo "version=$version"
             echo "notes=$RELEASE_NOTES_FILE"
           } >> "$GITHUB_OUTPUT"
@@ -226,7 +307,7 @@ jobs:
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
             -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
-          python3 tools/ci/validate_release_sdk.py \
+          python3 "$RELEASE_TOOLS/ci/validate_release_sdk.py" \
             --sdk-root "$PULP_SDK_ROOT" --build-dir build \
             --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA"
 
@@ -267,11 +348,11 @@ jobs:
         run: |
           set -euo pipefail
           pkg="artifacts/Spectr-${{ steps.version.outputs.version }}.pkg"
-          python3 tools/ship/make_appcast.py \
+          python3 "$RELEASE_TOOLS/ship/make_appcast.py" \
             --pkg "$pkg" --version "${{ steps.version.outputs.version }}" \
             --notes "${{ steps.version.outputs.notes }}" --app build/Spectr.app \
             --out artifacts/appcast.xml
-          python3 tools/ship/check_sparkle.py appcast \
+          python3 "$RELEASE_TOOLS/ship/check_sparkle.py" appcast \
             --appcast artifacts/appcast.xml --pkg "$pkg" \
             --expect-version "${{ steps.version.outputs.version }}" \
             --channel release --require-notes
@@ -279,7 +360,7 @@ jobs:
       - name: Publish draft, upload assets, then verify the live latest feed
         run: |
           set -euo pipefail
-          PATH=/opt/homebrew/bin:$PATH python3 tools/ship/publish_release.py \
+          publish_args=( \
             --version "${{ steps.version.outputs.version }}" \
             --target "$SPECTR_RELEASE_SOURCE_SHA" \
             --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
@@ -289,4 +370,13 @@ jobs:
             --windows-arm64ec "${{ steps.version.outputs.arm }}" \
             --windows-x64 "${{ steps.version.outputs.x64 }}" \
             --require-windows \
-            --reuse-draft
+            --reuse-draft \
+          )
+          if [[ "$INCLUDE_LINUX" == true ]]; then
+            publish_args+=( \
+              --linux-aarch64 "${{ steps.version.outputs.linux_aarch64 }}" \
+              --linux-x86_64 "${{ steps.version.outputs.linux_x86_64 }}" \
+              --require-linux \
+            )
+          fi
+          PATH=/opt/homebrew/bin:$PATH python3 "$RELEASE_TOOLS/ship/publish_release.py" "${publish_args[@]}"
