@@ -331,6 +331,22 @@ checks = {
     "the AAX option rows are registered in CMakeLists":
         "add_test(NAME Spectr-aax-option" in CMAKE_LISTS_TEXT
         and "add_test(NAME Spectr-aax-configure" in CMAKE_LISTS_TEXT,
+    "the release source step separates workflow and product provenance, peels annotated tags and fails on a dirty tree":
+        all(x in workflow_step(release_workflow, "Select the exact tagged product source")
+            for x in ('commits/refs/tags/v$version',
+                      'workflow_head=$(git rev-parse HEAD)',
+                      '[[ "$workflow_head" == "$GITHUB_SHA" ]]',
+                      'git checkout --detach "$tag_sha"',
+                      '[[ "$head_sha" == "$tag_sha" ]]',
+                      '[[ -z "$dirty" ]]'))
+        and "git/ref/tags" not in workflow_step(release_workflow, "Select the exact tagged product source"),
+    "the release asset step uses exported release tools": (
+        'python3 "$RELEASE_TOOLS/ship/check_windows_release.py"'
+        in workflow_step(release_workflow, "Read the release version and notes")
+        and 'python3 "$RELEASE_TOOLS/ship/check_linux_release.py"'
+        in workflow_step(release_workflow, "Read the release version and notes")
+        and 'python3 "$release_tools/ship/' not in workflow_step(
+            release_workflow, "Read the release version and notes")),
     "the CMake parse plants still apply to this CMakeLists":
         all(CMAKE_PLANTS[name](CMAKE_LISTS_TEXT) != CMAKE_LISTS_TEXT
             for name in ("unclosed-call", "dropped-endforeach")),
