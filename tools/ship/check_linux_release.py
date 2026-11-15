@@ -113,7 +113,7 @@ def main() -> int:
             if path:
                 digest = check_archive(path, arch, args.version, args.source_sha)
                 print(f"PASS {arch} {path} sha256={digest} source={args.source_sha}")
-    except (OSError, ValueError, KeyError, tarfile.TarError) as exc:
+    except (OSError, EOFError, ValueError, KeyError, tarfile.TarError) as exc:
         print(f"FAIL {exc}", file=sys.stderr)
         return 1
     return 0
