@@ -76,7 +76,7 @@ jobs:
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PULP_ROOT_REF: v1.124.0
+      PULP_ROOT_REF: v0.980.0
       RELEASE_NOTES_FILE: ${{ inputs.release_notes_file || 'release-notes.md' }}
       WINDOWS_ARM64EC_URL: ${{ inputs.windows_arm64ec_url }}
       WINDOWS_ARM64EC_SHA256: ${{ inputs.windows_arm64ec_sha256 }}
@@ -110,7 +110,7 @@ jobs:
           # entry below the product root as dirty; an in-tree checkout would
           # therefore make an otherwise clean Spectr source tree unverifiable.
           pulp_root="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID"
-          git clone --depth 1 --branch "$PULP_ROOT_REF" \
+          git clone --filter=blob:none --branch "$PULP_ROOT_REF" \
             https://github.com/Generous-Corp/pulp "$pulp_root"
           test -x "$pulp_root/tools/scripts/build_combined_installer.sh"
 
