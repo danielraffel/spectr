@@ -48,8 +48,9 @@ permissions:
 jobs:
   publish:
     name: Build and publish Spectr release
-    # spectr-release is advertised only by the trusted m5studio signing lane;
-    # the generic Spectr labels are also used by acceptance-only hosts.
+    # Signed publication is restricted to the trusted m5studio lane. The
+    # acceptance labels are intentionally insufficient: they are shared by
+    # other hosts that may run untrusted product checks.
     runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]
     timeout-minutes: 180
     env:
@@ -75,14 +76,46 @@ jobs:
           persist-credentials: false
 
       - name: Check out the pinned Pulp installer recipe
-        uses: actions/checkout@v4
-        with:
-          repository: Generous-Corp/pulp
-          ref: ${{ env.PULP_ROOT_REF }}
-          path: pulp
-          fetch-depth: 1
-          clean: true
-          persist-credentials: false
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep the installer recipe outside the Spectr worktree. CMake's
+          # release provenance check intentionally treats every untracked
+          # entry below the product root as dirty; an in-tree checkout would
+          # therefore make an otherwise clean Spectr source tree unverifiable.
+          pulp_root="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID"
+          git clone --depth 1 --branch "$PULP_ROOT_REF" \
+            https://github.com/Generous-Corp/pulp "$pulp_root"
+          test -x "$pulp_root/tools/scripts/build_combined_installer.sh"
+
+      - name: Select the exact tagged product source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          match = re.search(r'project\s*\(\s*Spectr\s+VERSION\s+(\d+\.\d+\.\d+)', Path('CMakeLists.txt').read_text())
+          if not match:
+              raise SystemExit('CMakeLists.txt has no Spectr product version')
+          print(match.group(1))
+          PY
+          )
+          # The commits endpoint peels an annotated tag to its commit, so
+          # tag_sha is always a commit SHA, never a tag object SHA.
+          tag_sha=$(gh api "repos/danielraffel/spectr/commits/refs/tags/v$version" --jq '.sha')
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "tag target is not an exact commit" >&2; exit 1; }
+          # The dispatched release/vX.Y.Z head must be the tagged commit, so
+          # the reviewed branch is exactly what is built, signed and published.
+          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag commit differs from GITHUB_SHA" >&2; exit 1; }
+          head_sha=$(git rev-parse HEAD)
+          [[ "$head_sha" == "$tag_sha" ]] || { echo "checked-out HEAD differs from the tag commit" >&2; exit 1; }
+          # The Pulp checkout is outside this worktree, so it cannot dirty provenance.
+          dirty=$(git status --porcelain --untracked-files=normal)
+          [[ -z "$dirty" ]] || { echo "source tree is dirty:" >&2; echo "$dirty" >&2; exit 1; }
+          echo "SPECTR_RELEASE_SOURCE_SHA=$tag_sha" >> "$GITHUB_ENV"
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
       - name: Read the release version and notes
         id: version
@@ -106,8 +139,7 @@ jobs:
           [[ -s "$RELEASE_NOTES_FILE" ]]
           draft=$(gh release view "v$version" --repo danielraffel/spectr --json isDraft --jq '.isDraft')
           [[ "$draft" == true ]] || { echo "v$version must already be a draft" >&2; exit 1; }
-          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
-          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag target differs from GITHUB_SHA" >&2; exit 1; }
+          [[ "$SPECTR_RELEASE_SOURCE_SHA" == "${{ steps.source.outputs.sha }}" ]] || { echo "tag source changed during checkout" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
           arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
           native="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64-$version.zip"
@@ -147,7 +179,7 @@ jobs:
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
           python3 tools/ship/check_windows_release.py \
-            --version "$version" --source-sha "$GITHUB_SHA" \
+            --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
             --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
           {
             echo "arm=$arm"
@@ -193,24 +225,24 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
-            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
           python3 tools/ci/validate_release_sdk.py \
             --sdk-root "$PULP_SDK_ROOT" --build-dir build \
-            --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA"
 
       - name: Build the signed package inputs through the governed builder
         env:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
         run: |
           set -euo pipefail
-          pulp/tools/ci/governed-build.sh cmake --build build --parallel 4 \
+          "$RUNNER_TEMP/pulp-$GITHUB_RUN_ID/tools/ci/governed-build.sh" cmake --build build --parallel 4 \
             --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
 
       - name: Sign, notarize and verify the installer
         env:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
           PULP_SDK_SHA: ${{ steps.sdk.outputs.sha }}
-          SPECTR_SHA: ${{ github.sha }}
+          SPECTR_SHA: ${{ steps.source.outputs.sha }}
           # AAX is optional and PACE-signed by the owner on their own machine
           # (docs/aax.md). This runner has no AAX SDK and no wraptool, so the
           # release never carries an AAX, whatever the runner's environment
@@ -219,7 +251,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -f "$HOME/.config/pulp/secrets/sparkle/spectr_ed25519" ]]
-          PULP_ROOT="$GITHUB_WORKSPACE/pulp" \
+          PULP_ROOT="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID" \
           PULP_DIR_EXPECTED="$PULP_SDK_ROOT/lib/cmake/Pulp" \
           PULP_SDK_SHA_EXPECTED="$PULP_SDK_SHA" \
           SPECTR_SHA_EXPECTED="$SPECTR_SHA" \
@@ -249,7 +281,7 @@ jobs:
           set -euo pipefail
           PATH=/opt/homebrew/bin:$PATH python3 tools/ship/publish_release.py \
             --version "${{ steps.version.outputs.version }}" \
-            --target "$GITHUB_SHA" \
+            --target "$SPECTR_RELEASE_SOURCE_SHA" \
             --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
             --appcast artifacts/appcast.xml \
             --notes "${{ steps.version.outputs.notes }}" \
