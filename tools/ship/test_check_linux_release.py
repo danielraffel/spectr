@@ -21,8 +21,10 @@ def make_archive(path: Path, *, source: str = SHA, arch: str = "aarch64",
         "Spectr": b"standalone",
         "Spectr.clap": b"clap",
         f"Spectr.vst3/Contents/{vdir}/Spectr.so": b"vst3",
-        "install.sh": b"#!/bin/sh\n",
-        "uninstall.sh": b"#!/bin/sh\n",
+        "install.sh": (b"#!/bin/sh\n"
+                        b"SPECTR_VST3_DIR SPECTR_CLAP_DIR SPECTR_BIN_DIR\n"),
+        "uninstall.sh": (b"#!/bin/sh\n"
+                          b"SPECTR_VST3_DIR SPECTR_CLAP_DIR SPECTR_BIN_DIR\n"),
         "README.md": b"Spectr Linux\n",
     }
     manifest = ("Spectr Linux qualification build\n"

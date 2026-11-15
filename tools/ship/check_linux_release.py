@@ -81,6 +81,10 @@ def check_archive(path: Path, arch: str, version: str, source_sha: str) -> str:
             member = files[f"{root}/{script}"]
             if member.mode & 0o111 == 0:
                 raise ValueError(f"{script} is not executable")
+            script_text = read(script).decode("utf-8")
+            for marker in ("SPECTR_VST3_DIR", "SPECTR_CLAP_DIR", "SPECTR_BIN_DIR"):
+                if marker not in script_text:
+                    raise ValueError(f"{script} is not a functional installer")
         sums = read("SHA256SUMS").decode("utf-8")
         listed = set()
         for line in sums.splitlines():
