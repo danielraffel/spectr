@@ -184,7 +184,10 @@ jobs:
           arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
           native="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64-$version.zip"
           x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
-          include_linux=${INCLUDE_LINUX,,}
+          # macOS runners use the system Bash 3.2, which does not implement
+          # Bash 4's `${VAR,,}` lowercase expansion. Normalize with the
+          # portable tool available on every supported runner instead.
+          include_linux=$(printf '%s' "$INCLUDE_LINUX" | tr '[:upper:]' '[:lower:]')
           [[ "$include_linux" == true || "$include_linux" == false ]] || {
             echo "include_linux must be boolean" >&2; exit 1;
           }
