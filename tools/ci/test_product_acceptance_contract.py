@@ -331,10 +331,12 @@ checks = {
     "the AAX option rows are registered in CMakeLists":
         "add_test(NAME Spectr-aax-option" in CMAKE_LISTS_TEXT
         and "add_test(NAME Spectr-aax-configure" in CMAKE_LISTS_TEXT,
-    "the release source step pins the tag commit to GITHUB_SHA, peels annotated tags and fails on a dirty tree":
+    "the release source step separates workflow and product provenance, peels annotated tags and fails on a dirty tree":
         all(x in workflow_step(release_workflow, "Select the exact tagged product source")
             for x in ('commits/refs/tags/v$version',
-                      '[[ "$tag_sha" == "$GITHUB_SHA" ]]',
+                      'workflow_head=$(git rev-parse HEAD)',
+                      '[[ "$workflow_head" == "$GITHUB_SHA" ]]',
+                      'git checkout --detach "$tag_sha"',
                       '[[ "$head_sha" == "$tag_sha" ]]',
                       '[[ -z "$dirty" ]]'))
         and "git/ref/tags" not in workflow_step(release_workflow, "Select the exact tagged product source"),
