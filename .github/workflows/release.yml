@@ -134,6 +134,14 @@ jobs:
           # source tree that is built and signed.
           workflow_head=$(git rev-parse HEAD)
           [[ "$workflow_head" == "$GITHUB_SHA" ]] || { echo "workflow checkout differs from GITHUB_SHA" >&2; exit 1; }
+          release_tools="$RUNNER_TEMP/spectr-release-tools-$GITHUB_RUN_ID"
+          mkdir -p "$release_tools/ship" "$release_tools/ci"
+          cp tools/ship/*.py "$release_tools/ship/"
+          cp tools/ci/validate_release_sdk.py "$release_tools/ci/"
+          test -f "$RELEASE_NOTES_FILE"
+          cp "$RELEASE_NOTES_FILE" "$RUNNER_TEMP/spectr-release-notes-$GITHUB_RUN_ID.md"
+          echo "RELEASE_TOOLS=$release_tools" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES_FILE=$RUNNER_TEMP/spectr-release-notes-$GITHUB_RUN_ID.md" >> "$GITHUB_ENV"
           # The commits endpoint peels an annotated tag to its commit, so
           # tag_sha is always a commit SHA, never a tag object SHA.
           tag_sha=$(gh api "repos/danielraffel/spectr/commits/refs/tags/v$version" --jq '.sha')
@@ -241,13 +249,13 @@ jobs:
           printf '%s  %s\n' "$WINDOWS_ARM64_SHA256" "$native" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
-          python3 tools/ship/check_windows_release.py \
+          python3 "$release_tools/ship/check_windows_release.py" \
             --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
             --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
           if [[ "$include_linux" == true ]]; then
             printf '%s  %s\n' "$LINUX_AARCH64_SHA256" "$linux_aarch64" | shasum -a 256 --check
             printf '%s  %s\n' "$LINUX_X86_64_SHA256" "$linux_x86_64" | shasum -a 256 --check
-            python3 tools/ship/check_linux_release.py \
+            python3 "$release_tools/ship/check_linux_release.py" \
               --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
               --aarch64 "$linux_aarch64" --x86_64 "$linux_x86_64"
           fi
@@ -299,7 +307,7 @@ jobs:
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
             -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
-          python3 tools/ci/validate_release_sdk.py \
+          python3 "$RELEASE_TOOLS/ci/validate_release_sdk.py" \
             --sdk-root "$PULP_SDK_ROOT" --build-dir build \
             --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA"
 
@@ -340,11 +348,11 @@ jobs:
         run: |
           set -euo pipefail
           pkg="artifacts/Spectr-${{ steps.version.outputs.version }}.pkg"
-          python3 tools/ship/make_appcast.py \
+          python3 "$RELEASE_TOOLS/ship/make_appcast.py" \
             --pkg "$pkg" --version "${{ steps.version.outputs.version }}" \
             --notes "${{ steps.version.outputs.notes }}" --app build/Spectr.app \
             --out artifacts/appcast.xml
-          python3 tools/ship/check_sparkle.py appcast \
+          python3 "$RELEASE_TOOLS/ship/check_sparkle.py" appcast \
             --appcast artifacts/appcast.xml --pkg "$pkg" \
             --expect-version "${{ steps.version.outputs.version }}" \
             --channel release --require-notes
@@ -371,4 +379,4 @@ jobs:
               --require-linux \
             )
           fi
-          PATH=/opt/homebrew/bin:$PATH python3 tools/ship/publish_release.py "${publish_args[@]}"
+          PATH=/opt/homebrew/bin:$PATH python3 "$RELEASE_TOOLS/ship/publish_release.py" "${publish_args[@]}"
