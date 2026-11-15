@@ -83,7 +83,7 @@ jobs:
           # release provenance check intentionally treats every untracked
           # entry below the product root as dirty; an in-tree checkout would
           # therefore make an otherwise clean Spectr source tree unverifiable.
-          pulp_root="$RUNNER_TEMP/pulp"
+          pulp_root="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID"
           git clone --depth 1 --branch "$PULP_ROOT_REF" \
             https://github.com/Generous-Corp/pulp "$pulp_root"
           test -x "$pulp_root/tools/scripts/build_combined_installer.sh"
@@ -229,7 +229,7 @@ jobs:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
         run: |
           set -euo pipefail
-          pulp/tools/ci/governed-build.sh cmake --build build --parallel 4 \
+          "$RUNNER_TEMP/pulp-$GITHUB_RUN_ID/tools/ci/governed-build.sh" cmake --build build --parallel 4 \
             --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
 
       - name: Sign, notarize and verify the installer
@@ -245,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -f "$HOME/.config/pulp/secrets/sparkle/spectr_ed25519" ]]
-          PULP_ROOT="$RUNNER_TEMP/pulp" \
+          PULP_ROOT="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID" \
           PULP_DIR_EXPECTED="$PULP_SDK_ROOT/lib/cmake/Pulp" \
           PULP_SDK_SHA_EXPECTED="$PULP_SDK_SHA" \
           SPECTR_SHA_EXPECTED="$SPECTR_SHA" \
