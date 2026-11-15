@@ -48,8 +48,9 @@ permissions:
 jobs:
   publish:
     name: Build and publish Spectr release
-    # spectr-release is advertised only by the trusted m5studio signing lane;
-    # the generic Spectr labels are also used by acceptance-only hosts.
+    # Signed publication is restricted to the trusted m5studio lane. The
+    # acceptance labels are intentionally insufficient: they are shared by
+    # other hosts that may run untrusted product checks.
     runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]
     timeout-minutes: 180
     env:
