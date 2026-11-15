@@ -229,7 +229,7 @@ jobs:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
         run: |
           set -euo pipefail
-          pulp/tools/ci/governed-build.sh cmake --build build --parallel 4 \
+          "$RUNNER_TEMP/pulp-$GITHUB_RUN_ID/tools/ci/governed-build.sh" cmake --build build --parallel 4 \
             --target Spectr_Standalone Spectr_AU Spectr_VST3 Spectr_CLAP
 
       - name: Sign, notarize and verify the installer
