@@ -48,8 +48,9 @@ permissions:
 jobs:
   publish:
     name: Build and publish Spectr release
-    # spectr-release is advertised only by the trusted m5studio signing lane;
-    # the generic Spectr labels are also used by acceptance-only hosts.
+    # Signed publication is restricted to the trusted m5studio lane. The
+    # acceptance labels are intentionally insufficient: they are shared by
+    # other hosts that may run untrusted product checks.
     runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]
     timeout-minutes: 180
     env:
@@ -84,6 +85,31 @@ jobs:
           clean: true
           persist-credentials: false
 
+      - name: Select the exact tagged product source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          match = re.search(r'project\s*\(\s*Spectr\s+VERSION\s+(\d+\.\d+\.\d+)', Path('CMakeLists.txt').read_text())
+          if not match:
+              raise SystemExit('CMakeLists.txt has no Spectr product version')
+          print(match.group(1))
+          PY
+          )
+          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "tag target is not an exact commit" >&2; exit 1; }
+          # The SDK checkout is an intentional nested repository used only by
+          # the workflow. Exclude it before the product's clean-source guard,
+          # then build the immutable source named by the release tag.
+          printf '/pulp/\n' >> .git/info/exclude
+          git checkout --detach "$tag_sha"
+          git status --porcelain --untracked-files=normal
+          echo "SPECTR_RELEASE_SOURCE_SHA=$tag_sha" >> "$GITHUB_ENV"
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+
       - name: Read the release version and notes
         id: version
         shell: bash
@@ -106,8 +132,7 @@ jobs:
           [[ -s "$RELEASE_NOTES_FILE" ]]
           draft=$(gh release view "v$version" --repo danielraffel/spectr --json isDraft --jq '.isDraft')
           [[ "$draft" == true ]] || { echo "v$version must already be a draft" >&2; exit 1; }
-          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
-          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag target differs from GITHUB_SHA" >&2; exit 1; }
+          [[ "$SPECTR_RELEASE_SOURCE_SHA" == "${{ steps.source.outputs.sha }}" ]] || { echo "tag source changed during checkout" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
           arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
           native="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64-$version.zip"
@@ -147,7 +172,7 @@ jobs:
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
           python3 tools/ship/check_windows_release.py \
-            --version "$version" --source-sha "$GITHUB_SHA" \
+            --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
             --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
           {
             echo "arm=$arm"
@@ -193,10 +218,10 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
-            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$GITHUB_SHA"
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
           python3 tools/ci/validate_release_sdk.py \
             --sdk-root "$PULP_SDK_ROOT" --build-dir build \
-            --pin tools/ci/pulp-sdk-release.json --product-sha "$GITHUB_SHA"
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA"
 
       - name: Build the signed package inputs through the governed builder
         env:
@@ -249,7 +274,7 @@ jobs:
           set -euo pipefail
           PATH=/opt/homebrew/bin:$PATH python3 tools/ship/publish_release.py \
             --version "${{ steps.version.outputs.version }}" \
-            --target "$GITHUB_SHA" \
+            --target "$SPECTR_RELEASE_SOURCE_SHA" \
             --pkg "artifacts/Spectr-${{ steps.version.outputs.version }}.pkg" \
             --appcast artifacts/appcast.xml \
             --notes "${{ steps.version.outputs.notes }}" \
