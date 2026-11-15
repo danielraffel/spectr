@@ -102,12 +102,18 @@ jobs:
           print(match.group(1))
           PY
           )
-          tag_sha=$(gh api "repos/danielraffel/spectr/git/ref/tags/v$version" --jq '.object.sha')
+          # The commits endpoint peels an annotated tag to its commit, so
+          # tag_sha is always a commit SHA, never a tag object SHA.
+          tag_sha=$(gh api "repos/danielraffel/spectr/commits/refs/tags/v$version" --jq '.sha')
           [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "tag target is not an exact commit" >&2; exit 1; }
-          # Build the immutable source named by the release tag. The Pulp
-          # checkout is outside this worktree, so it cannot dirty provenance.
-          git checkout --detach "$tag_sha"
-          git status --porcelain --untracked-files=normal
+          # The dispatched release/vX.Y.Z head must be the tagged commit, so
+          # the reviewed branch is exactly what is built, signed and published.
+          [[ "$tag_sha" == "$GITHUB_SHA" ]] || { echo "draft tag commit differs from GITHUB_SHA" >&2; exit 1; }
+          head_sha=$(git rev-parse HEAD)
+          [[ "$head_sha" == "$tag_sha" ]] || { echo "checked-out HEAD differs from the tag commit" >&2; exit 1; }
+          # The Pulp checkout is outside this worktree, so it cannot dirty provenance.
+          dirty=$(git status --porcelain --untracked-files=normal)
+          [[ -z "$dirty" ]] || { echo "source tree is dirty:" >&2; echo "$dirty" >&2; exit 1; }
           echo "SPECTR_RELEASE_SOURCE_SHA=$tag_sha" >> "$GITHUB_ENV"
           echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
