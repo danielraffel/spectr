@@ -15,7 +15,7 @@ SHA = "a" * 40
 
 def make_archive(path: Path, *, source: str = SHA, arch: str = "aarch64",
                  tamper: bool = False) -> None:
-    root = f"Spectr-v1.0.10-linux-{arch}"
+    root = "Spectr-v1.0.10"
     vdir = "aarch64-linux" if arch == "aarch64" else "x86_64-linux"
     files = {
         "Spectr": b"standalone",

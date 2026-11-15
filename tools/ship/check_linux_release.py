@@ -23,15 +23,23 @@ def check_archive(path: Path, arch: str, version: str, source_sha: str) -> str:
     expected_name = f"Spectr-v{version}-linux-{arch}.tar.xz"
     if path.name != expected_name:
         raise ValueError(f"archive name must be {expected_name}")
-    root = expected_name.removesuffix(".tar.xz")
+    # The filename carries the architecture; the archive has one stable
+    # product directory so the same install scripts and README work in every
+    # Linux lane.
+    root = f"Spectr-v{version}"
     with tarfile.open(path, mode="r:xz") as archive:
         files: dict[str, tarfile.TarInfo] = {}
         for member in archive.getmembers():
-            name = _safe_name(member.name)
+            raw_name = member.name.rstrip("/")
+            name = _safe_name(raw_name)
+            if name == root and member.isdir():
+                continue
             if not name.startswith(root + "/"):
                 raise ValueError(f"entry is outside release root: {name}")
             if name in files:
                 raise ValueError(f"duplicate archive entry: {name}")
+            if member.isdir():
+                continue
             if member.issym() or member.islnk() or member.isdev():
                 raise ValueError(f"special archive entry is not allowed: {name}")
             if member.isfile():
