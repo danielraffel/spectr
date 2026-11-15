@@ -264,6 +264,9 @@ checks = {
     "no warm path": "$HOME/Code/pulp-sdk" not in config_text and "-B build" not in config_text,
     "release SHA": bool(re.fullmatch(r"[0-9a-f]{40}", pin["source_git_sha"])),
     "asset digest": bool(re.fullmatch(r"[0-9a-f]{64}", pin["asset_sha256"])),
+    "release recipe ref matches SDK pin": (
+        (m := re.search(r"(?m)^      PULP_ROOT_REF: (\S+)$", release_workflow))
+        is not None and m.group(1) == pin["release_tag"]),
     "source root authority": ("rev-parse --show-toplevel" in cmake
                               and "_spectr_git_root STREQUAL _spectr_source_root" in cmake),
     "package rechecks exact head": ("SPECTR_SHA_AFTER_BUILD" in package

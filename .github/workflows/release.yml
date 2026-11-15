@@ -110,7 +110,7 @@ jobs:
           # entry below the product root as dirty; an in-tree checkout would
           # therefore make an otherwise clean Spectr source tree unverifiable.
           pulp_root="$RUNNER_TEMP/pulp-$GITHUB_RUN_ID"
-          git clone --depth 1 --branch "$PULP_ROOT_REF" \
+          git clone --filter=blob:none --branch "$PULP_ROOT_REF" \
             https://github.com/Generous-Corp/pulp "$pulp_root"
           test -x "$pulp_root/tools/scripts/build_combined_installer.sh"
 
