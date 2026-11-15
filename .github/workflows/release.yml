@@ -249,13 +249,13 @@ jobs:
           printf '%s  %s\n' "$WINDOWS_ARM64_SHA256" "$native" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
-          python3 "$release_tools/ship/check_windows_release.py" \
+          python3 "$RELEASE_TOOLS/ship/check_windows_release.py" \
             --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
             --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
           if [[ "$include_linux" == true ]]; then
             printf '%s  %s\n' "$LINUX_AARCH64_SHA256" "$linux_aarch64" | shasum -a 256 --check
             printf '%s  %s\n' "$LINUX_X86_64_SHA256" "$linux_x86_64" | shasum -a 256 --check
-            python3 "$release_tools/ship/check_linux_release.py" \
+            python3 "$RELEASE_TOOLS/ship/check_linux_release.py" \
               --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
               --aarch64 "$linux_aarch64" --x86_64 "$linux_x86_64"
           fi

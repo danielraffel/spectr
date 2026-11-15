@@ -340,6 +340,13 @@ checks = {
                       '[[ "$head_sha" == "$tag_sha" ]]',
                       '[[ -z "$dirty" ]]'))
         and "git/ref/tags" not in workflow_step(release_workflow, "Select the exact tagged product source"),
+    "the release asset step uses exported release tools": (
+        'python3 "$RELEASE_TOOLS/ship/check_windows_release.py"'
+        in workflow_step(release_workflow, "Read the release version and notes")
+        and 'python3 "$RELEASE_TOOLS/ship/check_linux_release.py"'
+        in workflow_step(release_workflow, "Read the release version and notes")
+        and 'python3 "$release_tools/ship/' not in workflow_step(
+            release_workflow, "Read the release version and notes")),
     "the CMake parse plants still apply to this CMakeLists":
         all(CMAKE_PLANTS[name](CMAKE_LISTS_TEXT) != CMAKE_LISTS_TEXT
             for name in ("unclosed-call", "dropped-endforeach")),
