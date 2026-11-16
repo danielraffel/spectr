@@ -355,3 +355,18 @@ development build. Retain exact source/SDK pins, raw traces, workload and host
 metadata, and before/after results. Spectr-specific fixes stay in Spectr; generic
 rendering/host fixes follow the SDK source-authority routing. Never ship the
 instrumented development build as the release artifact.
+
+### Direct downloads in release tables
+
+Every release selection table should explain who each build is for and link
+its filename directly to that tag's asset. Readers should not need to scroll
+to GitHub's Assets section. Use the version-specific asset URL, not `latest`,
+so an older release's table always downloads its own build. Keep architecture
+names explicit; there is no single default download across operating systems.
+Only list builds actually included in that release.
+
+The release workflow runs `tools/ship/link_release_downloads.py` before
+appcast generation and publication. It converts bare backticked installer or
+archive filenames in table cells into direct download links, preserving
+existing links and prose. Other Pulp products can use the same helper with
+their own `--repository` and `--tag`.

@@ -345,6 +345,13 @@ jobs:
           [[ -f "$pkg" ]]
           shasum -a 256 "$pkg" | tee artifacts/package.sha256
 
+      - name: Link downloads in the release selection table
+        run: |
+          python3 "$RELEASE_TOOLS/ship/link_release_downloads.py" \
+            --notes "${{ steps.version.outputs.notes }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "v${{ steps.version.outputs.version }}"
+
       - name: Generate and verify the signed Sparkle feed
         env:
           PULP_SDK_ROOT: ${{ steps.sdk.outputs.root }}
