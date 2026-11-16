@@ -330,3 +330,18 @@ check in the plug-in that downloads the signed package or a signed hot-reload
 pack, verifies it, and hot-swaps the DSP/UI in a running host through Pulp's
 reload path, without the plug-in ever running an installer inside the DAW's
 process. Until then, no updater code goes into the plug-in bundles.
+
+### Direct downloads in release tables
+
+Every release selection table should explain who each build is for and link
+its filename directly to that tag's asset. Readers should not need to scroll
+to GitHub's Assets section. Use the version-specific asset URL, not `latest`,
+so an older release's table always downloads its own build. Keep architecture
+names explicit; there is no single default download across operating systems.
+Only list builds actually included in that release.
+
+The release workflow runs `tools/ship/link_release_downloads.py` before
+appcast generation and publication. It converts bare backticked installer or
+archive filenames in table cells into direct download links, preserving
+existing links and prose. Other Pulp products can use the same helper with
+their own `--repository` and `--tag`.
