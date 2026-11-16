@@ -347,6 +347,14 @@ apply. Keep architecture-specific assets distinct and link their filenames in
 the download table. Do not replace the ARM package or updater feed with an
 Intel-only package.
 
+Optional payloads are checked before they enter the package. The Diagnostics
+app and a pre-wrapped AAX must contain every target architecture. The AAX's
+`pulp-build-info.json` must name this version, the clean exact source SHA,
+the same SDK SHA with `provenance_kind: release` (Pulp refuses to configure
+against a release SDK that is not distribution eligible), and a Release build.
+Its binary must also contain no `SPECTR_*` test-seam name, the same scan the
+rebuilt formats get.
+
 Qualification must cover the physical target: installed standalone and hosted
 editors, audio, automation/state restoration, resizing, dropdowns, and presets.
 Inherited SDK improvements are not performance evidence. Capture frame timings

@@ -268,8 +268,10 @@ if [[ -n "${SPECTR_AAX_SIGNED:-}" ]]; then
     "$SPECTR_AAX_SIGNED/Contents/Info.plist" 2>/dev/null || true)"
   [[ "$AAX_VER" == "$VER" ]] || {
     echo "SPECTR_AAX_SIGNED is version '${AAX_VER:-unknown}', the package is $VER" >&2; exit 2; }
+  # Architectures, exact source/SDK SHAs, a release-kind (distribution-
+  # eligible) SDK, Release build, and no SPECTR_* test seam in the binary.
   python3 "$TOOLS_ROOT/tools/ship/optional_macos_payload.py" aax "$SPECTR_AAX_SIGNED" \
-    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED"
+    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED" --source-root "$ROOT"
   args+=(--plugin aax "$SPECTR_AAX_SIGNED")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
