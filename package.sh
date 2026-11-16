@@ -234,6 +234,8 @@ args=(
 if [[ -n "${DIAG_APP:-}" ]]; then
   [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
   [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
+  python3 "$TOOLS_ROOT/tools/ship/optional_macos_payload.py" diagnostics "$DIAG_APP" \
+    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED"
   DIAG_STAGE="$OUT/diagnostics-staging"
   rm -rf "$DIAG_STAGE"
   mkdir -p "$DIAG_STAGE"
@@ -266,6 +268,8 @@ if [[ -n "${SPECTR_AAX_SIGNED:-}" ]]; then
     "$SPECTR_AAX_SIGNED/Contents/Info.plist" 2>/dev/null || true)"
   [[ "$AAX_VER" == "$VER" ]] || {
     echo "SPECTR_AAX_SIGNED is version '${AAX_VER:-unknown}', the package is $VER" >&2; exit 2; }
+  python3 "$TOOLS_ROOT/tools/ship/optional_macos_payload.py" aax "$SPECTR_AAX_SIGNED" \
+    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED"
   args+=(--plugin aax "$SPECTR_AAX_SIGNED")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)
