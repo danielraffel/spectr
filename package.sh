@@ -4,7 +4,9 @@
 # this wrapper owns only Spectr's artifact paths and fail-closed provenance.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Backfill a platform for an existing tag without changing its product source.
+ROOT="$(cd "${SPECTR_SOURCE_ROOT:-$TOOLS_ROOT}" && pwd)"
 BUILD="${BUILD:-$ROOT/build}"
 OUT="${OUT:-$ROOT/artifacts}"
 VER="${VER:-}"
@@ -64,6 +66,9 @@ git -C "$PULP_ROOT" merge-base --is-ancestor "$PULP_INSTALLER_FLOOR" HEAD 2>/dev
 
 CACHE="$BUILD/CMakeCache.txt"
 [[ -f "$CACHE" ]] || { echo "missing Spectr build cache: $CACHE" >&2; exit 2; }
+# Installer host eligibility must describe the payload, not the packaging host.
+# Require an explicit CMake target, including when cross-compiling on ARM.
+ARCHITECTURES="$(python3 "$TOOLS_ROOT/tools/ship/macos_architectures.py" "$CACHE")"
 grep -q '^CMAKE_BUILD_TYPE:STRING=Release$' "$CACHE" || {
   echo "Spectr installer inputs must come from a Release build" >&2
   exit 2
@@ -175,6 +180,9 @@ CLAP="$BUILD/CLAP/$BUNDLE_NAME.clap"
 APP="$BUILD/$BUNDLE_NAME.app"
 for artifact in "$AU" "$VST3" "$CLAP" "$APP"; do
   [[ -d "$artifact" ]] || { echo "missing installer input: $artifact" >&2; exit 2; }
+  executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$artifact/Contents/Info.plist")"
+  python3 "$TOOLS_ROOT/tools/ship/macos_architectures.py" "$CACHE" \
+    --binary "$artifact/Contents/MacOS/$executable" >/dev/null
 done
 # The rebuilt products must read no SPECTR_* test seam: their names are absent.
 python3 "$ROOT/tools/check_no_test_seams.py" --expect absent "$APP" "$AU" "$VST3" "$CLAP"
@@ -205,7 +213,7 @@ args=(
   --sign-identity "$APP_ID"
   --installer-identity "$INST_ID"
   --out "$OUT"
-  --architectures arm64
+  --architectures "$ARCHITECTURES"
   --plugin au "$AU"
   --plugin vst3 "$VST3"
   --plugin clap "$CLAP"
@@ -226,6 +234,8 @@ args=(
 if [[ -n "${DIAG_APP:-}" ]]; then
   [[ -d "$DIAG_APP" ]] || { echo "DIAG_APP does not exist: $DIAG_APP" >&2; exit 2; }
   [[ -f "${DIAG_ENT:-}" ]] || { echo "DIAG_ENT must name DiagnosticKit.entitlements" >&2; exit 2; }
+  python3 "$TOOLS_ROOT/tools/ship/optional_macos_payload.py" diagnostics "$DIAG_APP" \
+    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED"
   DIAG_STAGE="$OUT/diagnostics-staging"
   rm -rf "$DIAG_STAGE"
   mkdir -p "$DIAG_STAGE"
@@ -258,6 +268,10 @@ if [[ -n "${SPECTR_AAX_SIGNED:-}" ]]; then
     "$SPECTR_AAX_SIGNED/Contents/Info.plist" 2>/dev/null || true)"
   [[ "$AAX_VER" == "$VER" ]] || {
     echo "SPECTR_AAX_SIGNED is version '${AAX_VER:-unknown}', the package is $VER" >&2; exit 2; }
+  # Architectures, exact source/SDK SHAs, a release-kind (distribution-
+  # eligible) SDK, Release build, and no SPECTR_* test seam in the binary.
+  python3 "$TOOLS_ROOT/tools/ship/optional_macos_payload.py" aax "$SPECTR_AAX_SIGNED" \
+    "$CACHE" "$VER" "$SPECTR_SHA_EXPECTED" "$PULP_SDK_SHA_EXPECTED" --source-root "$ROOT"
   args+=(--plugin aax "$SPECTR_AAX_SIGNED")
 fi
 [[ "${NOTARIZE:-1}" == 1 ]] || args+=(--no-notarize)

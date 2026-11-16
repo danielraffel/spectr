@@ -17,7 +17,11 @@ PRODUCTS = {
 }
 
 
-def check_package(path: Path, version: str, source_sha: str) -> None:
+def check_package(path: Path, version: str, source_sha: str,
+                  architectures: tuple[str, ...] = ("arm64",)) -> None:
+    if (not architectures or not set(architectures) <= {"arm64", "x86_64"}
+            or len(set(architectures)) != len(architectures)):
+        raise ValueError("unsupported macOS release architectures")
     with tempfile.TemporaryDirectory(prefix="spectr-release-pkg-") as directory:
         expanded = Path(directory) / "expanded"
         subprocess.run(["pkgutil", "--expand-full", str(path), str(expanded)],
@@ -36,5 +40,5 @@ def check_package(path: Path, version: str, source_sha: str) -> None:
                     or product.get("source_git_sha") != source_sha
                     or product.get("source_git_dirty") is not False
                     or build.get("type") != "Release"
-                    or "arm64" not in build.get("archs", [])):
+                    or sorted(build.get("archs", [])) != sorted(architectures)):
                 raise ValueError(f"{path}: {fmt} does not match release source/version")
