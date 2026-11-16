@@ -4050,9 +4050,9 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
             for (const float v : packed) finite = finite && std::isfinite(v);
             const double level = e["level_ms"].getWithDefault<double>(0.0);
             if (finite && std::isfinite(level) && level > 0.0) {
-                auto* rows = std::array<std::array<float, n>*, 4>{
+                const std::array<std::array<float, n>*, 4> rows{
                     &saved_auto_gain_estimate.ww, &saved_auto_gain_estimate.dd,
-                    &saved_auto_gain_estimate.re, &saved_auto_gain_estimate.im}.data();
+                    &saved_auto_gain_estimate.re, &saved_auto_gain_estimate.im};
                 for (int r = 0; r < 4; ++r)
                     std::copy_n(packed.begin() + static_cast<std::ptrdiff_t>(r * n), n,
                                 rows[r]->begin());

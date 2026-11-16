@@ -232,6 +232,9 @@ TEST_CASE("Auto Gain v2 starts warm from a saved session",
     std::vector<std::uint8_t> blob;
     RenderOptions save;
     save.finish = [&](pulp::format::HeadlessHost& host, spectr::Spectr& plugin) {
+        const auto supplemental = plugin.serialize_plugin_state();
+        const auto saved = choc::json::parse(std::string(supplemental.begin(), supplemental.end()));
+        REQUIRE(saved.hasObjectMember("auto_gain_estimate"));
         blob = pulp::format::plugin_state_io::serialize(host.state(), plugin);
     };
     const auto first = render(in, kHighBoost, Mode::v2, save);
