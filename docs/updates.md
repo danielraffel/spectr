@@ -330,3 +330,28 @@ check in the plug-in that downloads the signed package or a signed hot-reload
 pack, verifies it, and hot-swaps the DSP/UI in a running host through Pulp's
 reload path, without the plug-in ever running an installer inside the DAW's
 process. Until then, no updater code goes into the plug-in bundles.
+
+### macOS architecture backfills
+
+`package.sh` reads the explicit `CMAKE_OSX_ARCHITECTURES` from the Release
+build cache, verifies every main Mach-O executable with `lipo`, and passes
+the matching host eligibility to the shared installer recipe. Supported targets
+are `arm64`, `x86_64`, and `arm64;x86_64`; never infer them from the packaging host.
+The package provenance checker accepts an explicit architecture tuple for Intel
+or universal verification; its default remains ARM64 for the existing updater.
+
+To add a platform to an existing release without changing its product source,
+run the current packaging wrapper with `SPECTR_SOURCE_ROOT` pointing to the
+clean exact-tag product checkout. All existing source and SDK SHA checks still
+apply. Keep architecture-specific assets distinct and link their filenames in
+the download table. Do not replace the ARM package or updater feed with an
+Intel-only package.
+
+Qualification must cover the physical target: installed standalone and hosted
+editors, audio, automation/state restoration, resizing, dropdowns, and presets.
+Inherited SDK improvements are not performance evidence. Capture frame timings
+and, for observed stalls, repeat the same workload in a separate tracing-enabled
+development build. Retain exact source/SDK pins, raw traces, workload and host
+metadata, and before/after results. Spectr-specific fixes stay in Spectr; generic
+rendering/host fixes follow the SDK source-authority routing. Never ship the
+instrumented development build as the release artifact.
