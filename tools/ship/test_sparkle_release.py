@@ -399,6 +399,15 @@ class IntelLinuxPublish(unittest.TestCase):
                                 or (fault == "updater-after-publish" and snapshots >= 3)):
                             value["assets"][0]["digest"] = "sha256:" + "9" * 64
                     elif "/git/ref/" in cmd[2]:
+                        if fault == "tag-api-forbidden":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Forbidden (HTTP 403)")
+                        if published and fault == "missing-published-tag":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
+                        if not published and fault != "annotated-tag" and fault != "wrong-source":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
                         value = {"object": {"type": "commit", "sha": (
                             "b" * 40 if fault == "wrong-source" else "a" * 40)}}
                         if fault == "annotated-tag":
@@ -406,9 +415,13 @@ class IntelLinuxPublish(unittest.TestCase):
                     elif "/git/tags/" in cmd[2]:
                         value = {"object": {"type": "commit", "sha": "a" * 40}}
                     else:
+                        if "/releases/tags/" in cmd[2] and not published:
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
                         assets = [{"name": name, "digest": digest}
                                   for name, digest in expected.items()] if uploaded else []
-                        value = {"tag_name": "v1.0.11", "draft": not published,
+                        value = {"id": 11, "tag_name": "v1.0.11", "draft": not published,
+                                 "target_commitish": "a" * 40,
                                  "prerelease": False, "assets": assets}
                         if uploaded and fault == "changed-upload":
                             value["assets"][0]["digest"] = "sha256:" + "0" * 64
@@ -419,6 +432,21 @@ class IntelLinuxPublish(unittest.TestCase):
                             value["assets"][0].pop("digest")
                         if uploaded and fault == "duplicate-name":
                             value["assets"].append(value["assets"][0])
+                        if fault == "wrong-draft-target" or (
+                                uploaded and fault == "changed-draft-target"):
+                            value["target_commitish"] = "b" * 40
+                        if uploaded and fault == "replaced-release":
+                            value["id"] = 12
+                        if "/releases?" in cmd[2]:
+                            self.assertIn("--paginate", cmd)
+                            self.assertIn("--slurp", cmd)
+                            value = [[updater], [value]]
+                            if fault == "missing-draft":
+                                value = [[updater]]
+                            elif fault == "duplicate-draft":
+                                value[1].append(value[1][0])
+                            elif fault == "invalid-release-list":
+                                value = {"message": "not a release list"}
                     return subprocess.CompletedProcess(cmd, 0, json.dumps(value))
                 if cmd[2] == "upload":
                     uploaded = True
@@ -454,6 +482,10 @@ class IntelLinuxPublish(unittest.TestCase):
                 calls = self._exercise(fault)
                 self.assertEqual([cmd[2] for cmd in calls if cmd[1] == "release"],
                                  ["create", "upload", "edit"])
+                self.assertFalse(any("/releases/tags/" in cmd[2] for cmd in calls
+                                     if cmd[1] == "api"))
+                self.assertEqual(sum("/releases/11" in cmd[2] for cmd in calls
+                                     if cmd[1] == "api"), 3)
 
     def test_invalid_local_inputs_do_not_create_a_release(self) -> None:
         for fault in ("invalid-package", "changed-local-input", "invalid-signature",
@@ -464,13 +496,20 @@ class IntelLinuxPublish(unittest.TestCase):
 
     def test_remote_changes_leave_the_release_unpublished(self) -> None:
         for fault in ("wrong-source", "changed-upload", "extra-appcast",
-                      "missing-digest", "duplicate-name", "updater-before-publish"):
+                      "missing-digest", "duplicate-name", "updater-before-publish",
+                      "wrong-draft-target", "changed-draft-target", "replaced-release",
+                      "missing-draft", "duplicate-draft", "invalid-release-list",
+                      "tag-api-forbidden"):
             with self.subTest(fault=fault):
                 calls = self._exercise(fault)
                 self.assertFalse(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
 
     def test_changed_updater_after_publication_is_not_reported_as_success(self) -> None:
         calls = self._exercise("updater-after-publish")
+        self.assertTrue(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
+
+    def test_published_release_requires_the_actual_tag(self) -> None:
+        calls = self._exercise("missing-published-tag")
         self.assertTrue(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
 
 

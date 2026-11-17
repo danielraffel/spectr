@@ -159,8 +159,11 @@ def intel_linux_plan(version: str, pkg: Path, linux: tuple[Path, Path],
     ]
 
 
-def _github_json(path: str) -> dict:
-    result = subprocess.run([PLATFORM_GH, "api", path], capture_output=True,
+def _github_json(path: str, *, paginate: bool = False) -> dict | list:
+    cmd = [PLATFORM_GH, "api", path]
+    if paginate:
+        cmd.extend(("--paginate", "--slurp"))
+    result = subprocess.run(cmd, capture_output=True,
                             text=True, check=True)
     return json.loads(result.stdout)
 
@@ -193,14 +196,38 @@ def _updater_snapshot() -> dict:
 
 
 def _check_intel_linux_remote(version: str, target: str, assets: dict[str, str],
-                              *, draft: bool) -> None:
+                              *, draft: bool, release_id: int | None = None) -> int:
     tag = f"v{version}"
-    release = _github_json(f"repos/{REPO_SLUG}/releases/tags/{tag}")
-    if (release.get("tag_name") != tag or release.get("draft") is not draft
+    if release_id is None:
+        # A new draft may have neither a published tag endpoint nor a Git ref.
+        # Find it through the authenticated release list, then retain its ID
+        # across upload and publication so a replacement cannot be accepted.
+        pages = _github_json(f"repos/{REPO_SLUG}/releases?per_page=100", paginate=True)
+        if (not isinstance(pages, list) or any(not isinstance(page, list) for page in pages)
+                or any(not isinstance(item, dict) for page in pages for item in page)):
+            raise ValueError("release listing is unavailable")
+        matches = [item for page in pages for item in page if item.get("tag_name") == tag]
+        if len(matches) != 1:
+            raise ValueError("platform draft is missing or ambiguous")
+        release_id = matches[0].get("id")
+        if type(release_id) is not int or release_id <= 0:
+            raise ValueError("platform draft has an invalid release ID")
+    release = _github_json(f"repos/{REPO_SLUG}/releases/{release_id}")
+    if (release.get("id") != release_id or release.get("tag_name") != tag
+            or release.get("draft") is not draft
             or release.get("prerelease") is not False
             or _asset_digests(release) != assets):
         raise ValueError("platform release state or exact asset set changed")
-    ref = _github_json(f"repos/{REPO_SLUG}/git/ref/tags/{tag}").get("object", {})
+    if draft and release.get("target_commitish") != target:
+        raise ValueError("platform draft target does not name the qualified source")
+    try:
+        ref = _github_json(f"repos/{REPO_SLUG}/git/ref/tags/{tag}").get("object", {})
+    except subprocess.CalledProcessError as exc:
+        # GitHub creates a missing tag only when the draft is published. Other
+        # failures must stay fatal; an existing tag must already match target.
+        if draft and "(HTTP 404)" in (exc.stderr or ""):
+            return release_id
+        raise
     # The release may use an already-created annotated tag. Resolve its
     # immutable object rather than comparing the tag object's SHA to a commit.
     for _ in range(4):
@@ -209,6 +236,7 @@ def _check_intel_linux_remote(version: str, target: str, assets: dict[str, str],
         ref = _github_json(f"repos/{REPO_SLUG}/git/tags/{ref['sha']}").get("object", {})
     if ref.get("type") != "commit" or ref.get("sha") != target:
         raise ValueError("platform release tag does not name the qualified source")
+    return release_id
 
 
 def publish_intel_linux(version: str, pkg: Path, linux: tuple[Path, Path],
@@ -237,13 +265,13 @@ def publish_intel_linux(version: str, pkg: Path, linux: tuple[Path, Path],
         raise ValueError("qualified platform inputs changed during validation")
     updater = _updater_snapshot()
     subprocess.run(steps[0], check=True)
-    _check_intel_linux_remote(version, target, {}, draft=True)
+    release_id = _check_intel_linux_remote(version, target, {}, draft=True)
     subprocess.run(steps[1], check=True)
-    _check_intel_linux_remote(version, target, expected, draft=True)
+    _check_intel_linux_remote(version, target, expected, draft=True, release_id=release_id)
     if _updater_snapshot() != updater:
         raise ValueError("updater release changed; leaving platform release as a draft")
     subprocess.run(steps[2], check=True)
-    _check_intel_linux_remote(version, target, expected, draft=False)
+    _check_intel_linux_remote(version, target, expected, draft=False, release_id=release_id)
     if _updater_snapshot() != updater:
         raise ValueError("platform release published, but updater preservation is unproven")
     print(f"published v{version}: Intel/Linux assets verified; updater unchanged")
