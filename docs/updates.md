@@ -364,6 +364,33 @@ metadata, and before/after results. Spectr-specific fixes stay in Spectr; generi
 rendering/host fixes follow the SDK source-authority routing. Never ship the
 instrumented development build as the release artifact.
 
+### Intel and Linux patch releases
+
+A source-changing Intel/Linux patch uses its own product version and exact
+source tag. It cannot be published as an unchanged-source architecture backfill.
+After the installed-product qualification above, `publish_release.py` accepts
+`--intel-pkg` with both `--linux-aarch64` and `--linux-x86_64`, `--notes`, and an
+explicit 40-character `--target`. The Intel package name includes
+`-macos-x86_64`; the Linux archives retain their canonical architecture names.
+Use `--dry-run` to review the commands before publishing.
+
+This mode validates the Intel package as x86_64, checks its installer signature,
+stapled notarization and Gatekeeper assessment, and validates both Linux archives
+against the exact source. It then creates a new draft, uploads without replacing assets,
+and checks the remote tag and complete asset digests before publication. It
+publishes with `--latest=false`, includes no appcast, and verifies that the
+existing latest release and all its asset digests remain unchanged. The current
+Apple silicon updater therefore continues to use its existing release. A read
+error or changed source, asset set or updater stops publication or reports the
+post-publication verification failure; it never silently promotes the patch.
+
+The mode cannot be combined with the ARM package, an appcast, Windows inputs or
+`--reuse-draft`. The existing full-release publication path retains its updater
+and complete-platform requirements. Use the official SDK containing the needed
+platform fixes, and retain the package signature/notarization and actual
+installed UI/audio/state evidence; publication validation does not establish
+runtime qualification. The tool prefers `ghapp` when it is available.
+
 ### Direct downloads in release tables
 
 Every release selection table should explain who each build is for and link
