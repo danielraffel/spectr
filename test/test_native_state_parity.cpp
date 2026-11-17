@@ -337,6 +337,21 @@ struct NativeEditorRig {
     }
 };
 
+// A real host advances a frame by ticking the frame clock AND polling the
+// scripted session: the poll services JS timers and commits each canvas's
+// recorded commands to its native widget. settle() only ticks the clock, so a
+// canvas's committed command stream and every setTimeout stand still under it.
+void pump_host_frames(NativeEditorRig& rig, int frames) {
+    for (int frame = 0; frame < frames; ++frame) {
+        rig.clock.tick(1.0f / 60.0f);
+        // poll() answers "did anything change"; false is an idle frame. Only a
+        // reported error is a failure.
+        std::string error;
+        (void)rig.session->poll(&error);
+        REQUIRE(error.empty());
+    }
+}
+
 // Root-space rectangle, so paint geometry and hit geometry can be compared in
 // one coordinate space regardless of where a view sits in the tree.
 struct RootRect {
@@ -2024,13 +2039,9 @@ TEST_CASE("native semantic popup navigation owns one visible highlight and selec
 
     focus_and_open();
     const pulp::view::Point outside{1200.0f, 430.0f};
-    auto* outside_target = rig.root->hit_test(outside);
-    REQUIRE(outside_target != nullptr);
-    REQUIRE(pulp::view::transfer_input_focus(*rig.root, outside_target));
-    REQUIRE(pulp::view::deliver_mouse_down(*rig.root, outside_target, outside,
-                                           /*modifiers=*/0,
-                                           /*click_count=*/1,
-                                           /*bubble=*/true));
+    const auto overlay_press = pulp::view::route_press_to_active_overlay(
+        *rig.root, outside);
+    REQUIRE(overlay_press.consume_press);
     settle(rig.clock, 10);
     REQUIRE(spectr::visible_count(rig.processor.layout()) == 40);
     require_runtime_contract(
@@ -2123,7 +2134,9 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
             REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
                 *rig.root, static_cast<int>(pulp::view::KeyCode::down),
                 pulp::view::kModNone, true));
-            settle(rig.clock, 8);
+            // Service the same deferred JS frame callbacks as the native
+            // host; clock ticks alone leave the popup ownership claim queued.
+            pump_host_frames(rig, 8);
         };
         open_from_keyboard();
         REQUIRE(rig.root->interaction().active_overlay != nullptr);
@@ -2131,7 +2144,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::escape),
             pulp::view::kModNone, true));
-        settle(rig.clock, 8);
+        pump_host_frames(rig, 8);
         require_runtime_contract(
             rig, "!document.querySelector(" + js_string(options) + ")",
             "Escape left a dropdown open");
@@ -2141,7 +2154,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         CAPTURE(describe_control(*rig.root->interaction().active_overlay));
         REQUIRE_FALSE(rig.root->interaction().active_overlay->overlay_contains(outside));
         rig.root->simulate_click(outside);
-        settle(rig.clock, 8);
+        pump_host_frames(rig, 8);
         require_runtime_contract(
             rig, "!document.querySelector(" + js_string(options) + ")",
             "outside press left a dropdown open");
@@ -2165,7 +2178,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::down),
             pulp::view::kModNone, true));
-        settle(rig.clock, 4);
+        pump_host_frames(rig, 4);
         require_runtime_contract(
             rig,
             "(() => { const items = Array.from(document.querySelectorAll("
@@ -2176,7 +2189,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::up),
             pulp::view::kModNone, true));
-        settle(rig.clock, 4);
+        pump_host_frames(rig, 4);
         require_runtime_contract(
             rig,
             "(() => { const items = Array.from(document.querySelectorAll("
@@ -2197,7 +2210,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         rig.root->simulate_hover({
             std::stof(hover_point.substr(0, comma)),
             std::stof(hover_point.substr(comma + 1))});
-        settle(rig.clock, 4);
+        pump_host_frames(rig, 4);
         require_runtime_contract(
             rig,
             "(() => { const items = Array.from(document.querySelectorAll("
@@ -2213,7 +2226,7 @@ TEST_CASE("every native dropdown dismisses by Escape and outside press",
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
             pulp::view::kModNone, true));
-        settle(rig.clock, 8);
+        pump_host_frames(rig, 8);
         require_runtime_contract(
             rig, "!document.querySelector(" + js_string(options) + ")",
             "Return did not select the highlighted option and close the dropdown");
@@ -2569,14 +2582,12 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         });
     REQUIRE(overflow_draw != overflow_canvas.commands().end());
     REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
-    // The captured 13px line box is painted with the 3px CSS half-leading
-    // retained around the 10px face.  This is the non-image canary for the
-    // toolbar's optical vertical centering at both 1x and Retina scale.
-    // The baseline sits a fraction above the nominal because it comes from the
-    // face's real ascent rather than a fixed fraction of the em, so the margin
-    // spans a face's worth of ascent variation.  A broken centering moves this
-    // by pixels, not by fractions of one.
-    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.0f).margin(0.25f));
+    // The external Chromium toolbar-baseline oracle measures a 13px run
+    // with primary-font ascent 10 / descent 3; Menlo supplies the glyph but
+    // its own 2px descent is not the captured cascade's descent. Retain the
+    // product's +0.5px optical shift, then snap on the captured frame grid:
+    // floor(820.5 + 6 + 10 + .5) - 820.5 = 16.5.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.5f).margin(0.01f));
 
     const auto require_captured_toolbar_label = [&](std::string_view text,
                                                      float expected_width) {
@@ -5033,7 +5044,12 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
         // silently falls back to handing back the whole box, which is centred
         // by construction and would pass this assertion while measuring
         // nothing.
+        // SDK 1.149 measures ink in the Label's local coordinates, including
+        // own_text_box(). Translate from the native node once; text_rect()
+        // already includes that offset and would count it twice.
+        const auto native_box = pulp::view::ViewInspector::absolute_bounds(label);
         const auto extents = label.painted_text_extents(label_box.width);
+
         // Positive control on the instrument: an unmeasured span is that
         // degenerate case wearing a different name.
         REQUIRE(extents.measured);
@@ -5061,14 +5077,14 @@ TEST_CASE("the settings copy button centres its feedback and answers a press",
         // the first time, and a correctly hugged label passes.
         REQUIRE(extents.ink.width < button_box.width - 1.0f);
         const float ink_centre
-            = label_box.x + extents.ink.x + extents.ink.width * 0.5f;
+            = native_box.x + extents.ink.x + extents.ink.width * 0.5f;
         const float button_centre = button_box.x + button_box.width * 0.5f;
         INFO("state \"" << label.text() << "\": button ["
                         << button_box.x << "," << button_box.y << " "
                         << button_box.width << "x" << button_box.height
                         << "] label [" << label_box.x << "," << label_box.y
                         << " " << label_box.width << "x" << label_box.height
-                        << "] ink x=" << (label_box.x + extents.ink.x)
+                        << "] ink x=" << (native_box.x + extents.ink.x)
                         << " w=" << extents.ink.width
                         << " ink_centre=" << ink_centre
                         << " button_centre=" << button_centre
@@ -5741,7 +5757,7 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
         const auto press = [&](pulp::view::KeyCode key) {
             REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
                 *rig.root, static_cast<int>(key), pulp::view::kModNone, true));
-            settle(rig.clock, 6);
+            pump_host_frames(rig, 6);
         };
         const auto open_from_keyboard = [&] {
             rig.bridge().load_script(
@@ -5789,7 +5805,7 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
             require_highlight_at((seed + step) % count, "ArrowUp skipped or stalled");
         }
         press(pulp::view::KeyCode::escape);
-        settle(rig.clock, 8);
+        pump_host_frames(rig, 8);
         require_runtime_contract(
             rig, "!document.querySelector(" + js_string(options) + ")",
             "Escape left the dropdown open");
@@ -5807,12 +5823,12 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::down),
             pulp::view::kModNone, true));
-        settle(rig.clock, 8);
+        pump_host_frames(rig, 8);
         for (int i = 0; i < steps; ++i) {
             REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
                 *rig.root, static_cast<int>(pulp::view::KeyCode::down),
                 pulp::view::kModNone, true));
-            settle(rig.clock, 6);
+            pump_host_frames(rig, 6);
         }
         // Read the highlighted label BEFORE committing, so the expectation is
         // the painted state rather than a number this test assumes.
@@ -5829,7 +5845,7 @@ TEST_CASE("native dropdown arrows reach every option and commit the highlighted 
         REQUIRE(pulp::view::WidgetBridge::dispatch_key_for_root(
             *rig.root, static_cast<int>(pulp::view::KeyCode::enter),
             pulp::view::kModNone, true));
-        settle(rig.clock, 12);
+        pump_host_frames(rig, 12);
         require_app_state(rig, "s.settings.bandCount === " + highlighted,
                           "Enter committed an option other than the highlighted one");
         REQUIRE(spectr::visible_count(rig.processor.layout()) == std::stoi(highlighted));
@@ -7988,21 +8004,6 @@ TEST_CASE("host automation of the viewport and LFO shape re-renders nothing",
     storage.require_unchanged();
 }
 
-// A real host advances a frame by ticking the frame clock AND polling the
-// scripted session: the poll services JS timers and commits each canvas's
-// recorded commands to its native widget. settle() only ticks the clock, so a
-// canvas's committed command stream and every setTimeout stand still under it.
-void pump_host_frames(NativeEditorRig& rig, int frames) {
-    for (int frame = 0; frame < frames; ++frame) {
-        rig.clock.tick(1.0f / 60.0f);
-        // poll() answers "did anything change"; false is an idle frame. Only a
-        // reported error is a failure.
-        std::string error;
-        (void)rig.session->poll(&error);
-        REQUIRE(error.empty());
-    }
-}
-
 // The canvas that painted `text` last frame, searched through the tree.
 const pulp::view::CanvasWidget* canvas_painting(const View& view,
                                                 std::string_view text) {
@@ -8300,7 +8301,7 @@ bool press_key(NativeEditorRig& rig, pulp::view::KeyCode key,
                std::uint16_t modifiers = pulp::view::kModNone) {
     const bool consumed = pulp::view::WidgetBridge::dispatch_key_for_root(
         *rig.root, static_cast<int>(key), modifiers, true);
-    settle(rig.clock, 8);
+    pump_host_frames(rig, 8);
     return consumed;
 }
 
@@ -11813,7 +11814,7 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     // The base each control holds stays the user's (and the host's) and is
     // never written. Each knob shows ONE indicator: its needle and value arc
     // move to the value playing, in violet, its readout prints that value,
-    // and the base is a tick on the ring. BANDS re-lays the plot at the count
+    // with no second mark at the base. BANDS re-lays the plot at the count
     // playing, without a React commit.
     PatternStoragePoison storage;
     NativeEditorRig rig;
@@ -11847,17 +11848,17 @@ TEST_CASE("Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS show what their LFO
     CHECK(state("String(globalThis.__spectrModControls.state.intensityPull > 0.99)") == "true");
     CHECK(state("String(globalThis.__spectrModControls.state.outputDb > 5.9)") == "true");
     // Each knob's one needle shows the value playing, in violet, its readout
-    // prints it, and the base is a tick...
+    // prints it. The no-base-tick patch keeps the base out of the drawing.
     for (const std::string name : {"intensity", "mix", "output-trim"}) {
         const std::string drawn = "(globalThis.__spectrModControls.drawn['" + name + "'] || {})";
         CHECK(state(("String(" + drawn + ".active)").c_str()) == "true");
         CHECK(state(("String(" + drawn + ".needleStroke)").c_str()) == "rgb(205,180,255)");
-        CHECK(state(("String((" + drawn + ".base || '').length > 0)").c_str()) == "true");
+        CHECK(state(("String(" + drawn + ".base === '')").c_str()) == "true");
         CHECK(state(("String(document.querySelector('[data-spectr-" + name + "-readout]').textContent"
                      " !== document.querySelector('[data-spectr-knob=\"" + name
                      + "\"]').getAttribute('aria-valuetext'))").c_str()) == "true");
     }
-    // ...of the base, which neither the knob nor the host lane moved.
+    // The base remains unchanged in both the knob and the host lane.
     CHECK(state("String(document.querySelector('[data-spectr-knob=\"intensity\"]').getAttribute('aria-valuenow'))") == "100");
     CHECK(rig.store.get_value(spectr::kParamIntensity) == intensity_before);
     CHECK(rig.store.get_value(spectr::kMix) == mix_before);

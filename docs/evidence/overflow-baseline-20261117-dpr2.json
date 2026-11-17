@@ -1,0 +1,65 @@
+{
+  "schema": "spectr-toolbar-baseline-browser-v1",
+  "deviceScaleFactor": 2,
+  "browserArtifactSha256": "804af6bb166e9efb8066a755d36221ba70bbaf5cdbd6ae1c671272d77f68cfa1",
+  "measurements": [
+    {
+      "before": {
+        "x": 96,
+        "y": 826,
+        "width": 7.0234375,
+        "height": 13,
+        "bottom": 839
+      },
+      "after": {
+        "x": 96,
+        "y": 826,
+        "width": 7.0234375,
+        "height": 13,
+        "bottom": 839
+      },
+      "baseline": 836,
+      "offset": 10,
+      "parent": {
+        "x": 85,
+        "y": 825.5,
+        "width": 29.0234375,
+        "height": 13.5,
+        "bottom": 839
+      },
+      "node": {
+        "x": 85,
+        "y": 819.5,
+        "width": 29.0234375,
+        "height": 26,
+        "bottom": 845.5
+      },
+      "font": "10px / 10px \"JetBrains Mono\", ui-monospace, monospace",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, monospace",
+      "lineHeight": "10px",
+      "letterSpacing": "1px",
+      "fontBoundingBoxAscent": 9,
+      "fontBoundingBoxDescent": 2,
+      "actualAscent": 3.8818359375,
+      "actualDescent": -2.392578125,
+      "browser": {
+        "protocolVersion": "1.3",
+        "product": "Chrome/156.0.8078.80",
+        "revision": "@fb096c0011f9d50f0a264a9376420cdea9c421e3",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+        "jsVersion": "15.6.75.27"
+      },
+      "platformFonts": [
+        {
+          "familyName": "Menlo",
+          "postScriptName": "Menlo-Regular",
+          "isCustomFont": false,
+          "glyphCount": 1
+        }
+      ],
+      "primaryFontAscent": 10,
+      "primaryFontDescent": 3,
+      "runtimeHtmlSha256": "5437de84ef065887baf98ed2091338a9fff038eeeee2febffebc42ca5875eb53"
+    }
+  ]
+}

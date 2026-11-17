@@ -480,3 +480,14 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # AAX SDK on the runner, which is exactly the state this gate must stay green in.
 ^Spectr-aax-option$
 ^Spectr-aax-configure$
+
+# These native canaries exposed stale harness assumptions during SDK 1.149
+# qualification. Keep each selected independently so later SDK upgrades cannot
+# leave dropdown traversal, copy-label placement, host-key policy or the
+# single modulation indicator unmeasured.
+^native dropdown arrows reach every option
+^the settings copy button centres
+^in a plug-in, plain-key shortcuts
+^in a plug-in, Keyboard shortcuts in DAW
+^in the standalone, plain-key shortcuts
+^Modulated INTENSITY, MIX, OUTPUT, MORPH and BANDS
