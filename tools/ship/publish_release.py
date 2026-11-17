@@ -34,6 +34,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -46,6 +47,7 @@ from check_windows_release import check_package as check_windows_package
 HERE = Path(__file__).resolve().parent
 REPO_SLUG = "danielraffel/spectr"
 LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
+PLATFORM_GH = "ghapp" if shutil.which("ghapp") else "gh"
 
 
 def _digest(path: Path) -> str:
@@ -132,11 +134,157 @@ def plan(version: str, pkg: Path, appcast: Path, notes: Path, target: str,
     return steps
 
 
+def intel_linux_plan(version: str, pkg: Path, linux: tuple[Path, Path],
+                     notes: Path, target: str, title: str | None = None) -> list[list[str]]:
+    """A separately versioned platform release must not move the ARM feed."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("invalid platform release version")
+    if not re.fullmatch(r"[0-9a-f]{40}", target):
+        raise ValueError("Intel/Linux publication requires an exact target SHA")
+    expected = (f"Spectr-{version}-macos-x86_64.pkg",
+                f"Spectr-v{version}-linux-aarch64.tar.xz",
+                f"Spectr-v{version}-linux-x86_64.tar.xz")
+    assets = (pkg, *linux)
+    if tuple(path.name for path in assets) != expected:
+        raise ValueError("Intel/Linux filenames must match the version and architectures")
+    tag = f"v{version}"
+    return [
+        [PLATFORM_GH, "release", "create", tag, "--repo", REPO_SLUG, "--draft",
+         "--latest=false", "--target", target, "--title", title or f"Spectr {version}",
+         "--notes-file", str(notes)],
+        [PLATFORM_GH, "release", "upload", tag, "--repo", REPO_SLUG,
+         *(str(path) for path in assets)],
+        [PLATFORM_GH, "release", "edit", tag, "--repo", REPO_SLUG,
+         "--draft=false", "--latest=false"],
+    ]
+
+
+def _github_json(path: str, *, paginate: bool = False) -> dict | list:
+    cmd = [PLATFORM_GH, "api", path]
+    if paginate:
+        cmd.extend(("--paginate", "--slurp"))
+    result = subprocess.run(cmd, capture_output=True,
+                            text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def _asset_digests(release: dict) -> dict[str, str]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("release assets are unavailable")
+    result = {}
+    for asset in assets:
+        name, digest = asset.get("name"), asset.get("digest")
+        if (not isinstance(name, str) or not name or name in result
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
+            raise ValueError("release contains duplicate names or missing asset digests")
+        result[name] = digest
+    return result
+
+
+def _updater_snapshot() -> dict:
+    release = _github_json(f"repos/{REPO_SLUG}/releases/latest")
+    tag = release.get("tag_name")
+    if (release.get("draft") is not False or release.get("prerelease") is not False
+            or not isinstance(tag, str) or not re.fullmatch(r"v\d+\.\d+\.\d+", tag)):
+        raise ValueError("current updater release is unavailable")
+    assets = _asset_digests(release)
+    if "appcast.xml" not in assets or f"Spectr-{tag[1:]}.pkg" not in assets:
+        raise ValueError("current updater release is missing its feed or ARM package")
+    return {"id": release["id"], "tag": tag, "assets": assets}
+
+
+def _check_intel_linux_remote(version: str, target: str, assets: dict[str, str],
+                              *, draft: bool, release_id: int | None = None) -> int:
+    tag = f"v{version}"
+    if release_id is None:
+        # A new draft may have neither a published tag endpoint nor a Git ref.
+        # Find it through the authenticated release list, then retain its ID
+        # across upload and publication so a replacement cannot be accepted.
+        pages = _github_json(f"repos/{REPO_SLUG}/releases?per_page=100", paginate=True)
+        if (not isinstance(pages, list) or any(not isinstance(page, list) for page in pages)
+                or any(not isinstance(item, dict) for page in pages for item in page)):
+            raise ValueError("release listing is unavailable")
+        matches = [item for page in pages for item in page if item.get("tag_name") == tag]
+        if len(matches) != 1:
+            raise ValueError("platform draft is missing or ambiguous")
+        release_id = matches[0].get("id")
+        if type(release_id) is not int or release_id <= 0:
+            raise ValueError("platform draft has an invalid release ID")
+    release = _github_json(f"repos/{REPO_SLUG}/releases/{release_id}")
+    if (release.get("id") != release_id or release.get("tag_name") != tag
+            or release.get("draft") is not draft
+            or release.get("prerelease") is not False
+            or _asset_digests(release) != assets):
+        raise ValueError("platform release state or exact asset set changed")
+    if draft and release.get("target_commitish") != target:
+        raise ValueError("platform draft target does not name the qualified source")
+    try:
+        ref = _github_json(f"repos/{REPO_SLUG}/git/ref/tags/{tag}").get("object", {})
+    except subprocess.CalledProcessError as exc:
+        # GitHub creates a missing tag only when the draft is published. Other
+        # failures must stay fatal; an existing tag must already match target.
+        if draft and "(HTTP 404)" in (exc.stderr or ""):
+            return release_id
+        raise
+    # The release may use an already-created annotated tag. Resolve its
+    # immutable object rather than comparing the tag object's SHA to a commit.
+    for _ in range(4):
+        if ref.get("type") != "tag":
+            break
+        ref = _github_json(f"repos/{REPO_SLUG}/git/tags/{ref['sha']}").get("object", {})
+    if ref.get("type") != "commit" or ref.get("sha") != target:
+        raise ValueError("platform release tag does not name the qualified source")
+    return release_id
+
+
+def publish_intel_linux(version: str, pkg: Path, linux: tuple[Path, Path],
+                        notes: Path, target: str, title: str | None = None,
+                        *, dry_run: bool = False) -> int:
+    steps = intel_linux_plan(version, pkg, linux, notes, target, title)
+    if dry_run:
+        for cmd in steps:
+            print(" ".join(cmd))
+        return 0
+    assets = (pkg, *linux)
+    for path in (*assets, notes):
+        if not path.is_file():
+            raise ValueError(f"missing {path}")
+    expected = {path.name: _digest(path) for path in assets}
+    check_macos_package(pkg, version, target, architectures=("x86_64",))
+    subprocess.run(["pkgutil", "--check-signature", str(pkg)], check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["xcrun", "stapler", "validate", str(pkg)], check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["spctl", "--assess", "--type", "install", str(pkg)], check=True,
+                   capture_output=True, text=True)
+    for path, arch in zip(linux, ("aarch64", "x86_64")):
+        check_linux_archive(path, arch, version, target)
+    if {path.name: _digest(path) for path in assets} != expected:
+        raise ValueError("qualified platform inputs changed during validation")
+    updater = _updater_snapshot()
+    subprocess.run(steps[0], check=True)
+    release_id = _check_intel_linux_remote(version, target, {}, draft=True)
+    subprocess.run(steps[1], check=True)
+    _check_intel_linux_remote(version, target, expected, draft=True, release_id=release_id)
+    if _updater_snapshot() != updater:
+        raise ValueError("updater release changed; leaving platform release as a draft")
+    subprocess.run(steps[2], check=True)
+    _check_intel_linux_remote(version, target, expected, draft=False, release_id=release_id)
+    if _updater_snapshot() != updater:
+        raise ValueError("platform release published, but updater preservation is unproven")
+    print(f"published v{version}: Intel/Linux assets verified; updater unchanged")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--version", required=True)
-    ap.add_argument("--pkg", type=Path, required=True)
-    ap.add_argument("--appcast", type=Path, required=True)
+    ap.add_argument("--pkg", type=Path)
+    ap.add_argument("--appcast", type=Path)
+    ap.add_argument("--intel-pkg", type=Path,
+                    help="publish a separate Intel/Linux release without moving the ARM updater")
     ap.add_argument("--notes", type=Path, required=True)
     ap.add_argument("--title")
     ap.add_argument("--target", help="commit to tag (default: HEAD; must be the newest)")
@@ -160,6 +308,17 @@ def main() -> int:
     ap.add_argument("--reuse-draft", action="store_true",
                     help="upload into an existing draft vX.Y.Z release")
     args = ap.parse_args()
+    if args.intel_pkg:
+        if (args.pkg or args.appcast or args.windows_arm64 or args.windows_arm64ec
+                or args.windows_x64 or args.require_windows or args.reuse_draft):
+            raise SystemExit("Intel/Linux publication cannot include updater/Windows inputs or reuse a draft")
+        if not args.linux_aarch64 or not args.linux_x86_64 or not args.target:
+            raise SystemExit("--intel-pkg requires both Linux archives and an exact --target")
+        return publish_intel_linux(args.version, args.intel_pkg,
+                                  (args.linux_aarch64, args.linux_x86_64),
+                                  args.notes, args.target, args.title, dry_run=args.dry_run)
+    if not args.pkg or not args.appcast:
+        raise SystemExit("updater publication requires --pkg and --appcast")
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
     if bool(args.windows_arm64ec) != bool(args.windows_x64):

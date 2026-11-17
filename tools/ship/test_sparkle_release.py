@@ -329,5 +329,189 @@ class NoAccidentalNewFeed(unittest.TestCase):
             self.assertFalse(make_appcast.fetch_previous("none", "practice", dest))
 
 
+class IntelLinuxPublish(unittest.TestCase):
+    def test_plan_preserves_the_updater_and_never_clobbers_assets(self) -> None:
+        paths = (Path("Spectr-1.0.11-macos-x86_64.pkg"),
+                 Path("Spectr-v1.0.11-linux-aarch64.tar.xz"),
+                 Path("Spectr-v1.0.11-linux-x86_64.tar.xz"))
+        steps = publish_release.intel_linux_plan(
+            "1.0.11", paths[0], paths[1:], Path("notes.md"), "a" * 40)
+        self.assertEqual([cmd[2] for cmd in steps], ["create", "upload", "edit"])
+        self.assertIn("--draft", steps[0])
+        self.assertIn("--latest=false", steps[0])
+        self.assertIn("--draft=false", steps[2])
+        self.assertIn("--latest=false", steps[2])
+        self.assertNotIn("--clobber", steps[1])
+        self.assertFalse(any("appcast.xml" in arg for cmd in steps for arg in cmd))
+        for target, pkg in (("main", paths[0]),
+                            ("a" * 40, Path("Spectr-1.0.11.pkg"))):
+            with self.assertRaises(ValueError):
+                publish_release.intel_linux_plan(
+                    "1.0.11", pkg, paths[1:], Path("notes.md"), target)
+
+    def test_cli_refuses_partial_or_mixed_publication_modes(self) -> None:
+        base = ["publish_release.py", "--version", "1.0.11", "--intel-pkg",
+                "Spectr-1.0.11-macos-x86_64.pkg", "--notes", "notes.md",
+                "--target", "a" * 40, "--dry-run"]
+        linux = ["--linux-aarch64", "Spectr-v1.0.11-linux-aarch64.tar.xz",
+                 "--linux-x86_64", "Spectr-v1.0.11-linux-x86_64.tar.xz"]
+        for extra in ([], linux + ["--appcast", "appcast.xml"],
+                      linux + ["--require-windows"], linux + ["--reuse-draft"]):
+            with self.subTest(extra=extra), mock.patch.object(sys, "argv", base + extra), \
+                    mock.patch.object(publish_release.subprocess, "run") as run:
+                with self.assertRaises(SystemExit):
+                    publish_release.main()
+                run.assert_not_called()
+
+    def _exercise(self, fault: str | None = None) -> list[list[str]]:
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg = root / "Spectr-1.0.11-macos-x86_64.pkg"
+            linux = (root / "Spectr-v1.0.11-linux-aarch64.tar.xz",
+                     root / "Spectr-v1.0.11-linux-x86_64.tar.xz")
+            notes = root / "notes.md"
+            for path in (pkg, *linux, notes):
+                path.write_bytes(path.name.encode())
+            expected = {path.name: publish_release._digest(path) for path in (pkg, *linux)}
+            updater = {"id": 7, "tag_name": "v1.0.10", "draft": False,
+                       "prerelease": False, "assets": [
+                           {"name": "appcast.xml", "digest": "sha256:" + "1" * 64},
+                           {"name": "Spectr-1.0.10.pkg", "digest": "sha256:" + "2" * 64}]}
+            snapshots = 0
+            uploaded = False
+            published = False
+
+            def gh(cmd, **kwargs):
+                nonlocal snapshots, uploaded, published
+                calls.append(cmd)
+                if cmd[0] in ("pkgutil", "xcrun", "spctl"):
+                    if ((fault == "invalid-signature" and cmd[0] == "pkgutil")
+                            or (fault == "invalid-notarization" and cmd[0] == "xcrun")
+                            or (fault == "gatekeeper-refusal" and cmd[0] == "spctl")):
+                        raise subprocess.CalledProcessError(1, cmd)
+                    return subprocess.CompletedProcess(cmd, 0)
+                if cmd[1] == "api":
+                    if cmd[2].endswith("/releases/latest"):
+                        snapshots += 1
+                        value = json.loads(json.dumps(updater))
+                        if ((fault == "updater-before-publish" and snapshots >= 2)
+                                or (fault == "updater-after-publish" and snapshots >= 3)):
+                            value["assets"][0]["digest"] = "sha256:" + "9" * 64
+                    elif "/git/ref/" in cmd[2]:
+                        if fault == "tag-api-forbidden":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Forbidden (HTTP 403)")
+                        if published and fault == "missing-published-tag":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
+                        if not published and fault != "annotated-tag" and fault != "wrong-source":
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
+                        value = {"object": {"type": "commit", "sha": (
+                            "b" * 40 if fault == "wrong-source" else "a" * 40)}}
+                        if fault == "annotated-tag":
+                            value = {"object": {"type": "tag", "sha": "c" * 40}}
+                    elif "/git/tags/" in cmd[2]:
+                        value = {"object": {"type": "commit", "sha": "a" * 40}}
+                    else:
+                        if "/releases/tags/" in cmd[2] and not published:
+                            raise subprocess.CalledProcessError(
+                                1, cmd, stderr="gh: Not Found (HTTP 404)")
+                        assets = [{"name": name, "digest": digest}
+                                  for name, digest in expected.items()] if uploaded else []
+                        value = {"id": 11, "tag_name": "v1.0.11", "draft": not published,
+                                 "target_commitish": "a" * 40,
+                                 "prerelease": False, "assets": assets}
+                        if uploaded and fault == "changed-upload":
+                            value["assets"][0]["digest"] = "sha256:" + "0" * 64
+                        if uploaded and fault == "extra-appcast":
+                            value["assets"].append({"name": "appcast.xml",
+                                                    "digest": "sha256:" + "0" * 64})
+                        if uploaded and fault == "missing-digest":
+                            value["assets"][0].pop("digest")
+                        if uploaded and fault == "duplicate-name":
+                            value["assets"].append(value["assets"][0])
+                        if fault == "wrong-draft-target" or (
+                                uploaded and fault == "changed-draft-target"):
+                            value["target_commitish"] = "b" * 40
+                        if uploaded and fault == "replaced-release":
+                            value["id"] = 12
+                        if "/releases?" in cmd[2]:
+                            self.assertIn("--paginate", cmd)
+                            self.assertIn("--slurp", cmd)
+                            value = [[updater], [value]]
+                            if fault == "missing-draft":
+                                value = [[updater]]
+                            elif fault == "duplicate-draft":
+                                value[1].append(value[1][0])
+                            elif fault == "invalid-release-list":
+                                value = {"message": "not a release list"}
+                    return subprocess.CompletedProcess(cmd, 0, json.dumps(value))
+                if cmd[2] == "upload":
+                    uploaded = True
+                if cmd[2] == "edit":
+                    published = True
+                return subprocess.CompletedProcess(cmd, 0)
+
+            def macos(*args, **kwargs):
+                self.assertEqual(kwargs["architectures"], ("x86_64",))
+                if fault == "invalid-package":
+                    raise ValueError("invalid package provenance")
+                if fault == "changed-local-input":
+                    pkg.write_bytes(b"replacement after validation began")
+
+            with mock.patch.object(publish_release, "check_macos_package", side_effect=macos), \
+                    mock.patch.object(publish_release, "check_linux_archive") as validate_linux, \
+                    mock.patch.object(publish_release.subprocess, "run", side_effect=gh):
+                if fault and fault != "annotated-tag":
+                    with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                        publish_release.publish_intel_linux(
+                            "1.0.11", pkg, linux, notes, "a" * 40)
+                else:
+                    self.assertEqual(publish_release.publish_intel_linux(
+                        "1.0.11", pkg, linux, notes, "a" * 40), 0)
+                    self.assertEqual(validate_linux.call_args_list, [
+                        mock.call(linux[0], "aarch64", "1.0.11", "a" * 40),
+                        mock.call(linux[1], "x86_64", "1.0.11", "a" * 40)])
+        return calls
+
+    def test_publication_binds_both_tag_forms_assets_and_updater(self) -> None:
+        for fault in (None, "annotated-tag"):
+            with self.subTest(fault=fault):
+                calls = self._exercise(fault)
+                self.assertEqual([cmd[2] for cmd in calls if cmd[1] == "release"],
+                                 ["create", "upload", "edit"])
+                self.assertFalse(any("/releases/tags/" in cmd[2] for cmd in calls
+                                     if cmd[1] == "api"))
+                self.assertEqual(sum("/releases/11" in cmd[2] for cmd in calls
+                                     if cmd[1] == "api"), 3)
+
+    def test_invalid_local_inputs_do_not_create_a_release(self) -> None:
+        for fault in ("invalid-package", "changed-local-input", "invalid-signature",
+                      "invalid-notarization", "gatekeeper-refusal"):
+            with self.subTest(fault=fault):
+                calls = self._exercise(fault)
+                self.assertFalse(any(cmd[0] == publish_release.PLATFORM_GH for cmd in calls))
+
+    def test_remote_changes_leave_the_release_unpublished(self) -> None:
+        for fault in ("wrong-source", "changed-upload", "extra-appcast",
+                      "missing-digest", "duplicate-name", "updater-before-publish",
+                      "wrong-draft-target", "changed-draft-target", "replaced-release",
+                      "missing-draft", "duplicate-draft", "invalid-release-list",
+                      "tag-api-forbidden"):
+            with self.subTest(fault=fault):
+                calls = self._exercise(fault)
+                self.assertFalse(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
+
+    def test_changed_updater_after_publication_is_not_reported_as_success(self) -> None:
+        calls = self._exercise("updater-after-publish")
+        self.assertTrue(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
+
+    def test_published_release_requires_the_actual_tag(self) -> None:
+        calls = self._exercise("missing-published-tag")
+        self.assertTrue(any(cmd[1:3] == ["release", "edit"] for cmd in calls))
+
+
 if __name__ == "__main__":
     unittest.main()
