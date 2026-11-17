@@ -10590,7 +10590,11 @@ function restoreMaterializedLayout(node, bridge) {
     const textButtonCorrections = [
       { text: "CLEAR", basisWidth: 55, face: "JetBrainsMono-Regular",
         box: { left: 10, top: 6, width: 35, height: 13, start: 0, length: 5 } },
+      // Chromium's run rect uses the primary JetBrains Mono metrics even
+      // though Menlo supplies this glyph. Preserve that measured 10/3 split;
+      // deriving the descent from Menlo alone paints the ellipsis 1px low.
       { text: "⋯", basisWidth: 27.03125, face: "Menlo-Regular",
+        ascent: 10, descent: 3,
         box: { left: 10, top: 6, width: 7.03125, height: 13,
                start: 0, length: 1 } }
     ];
@@ -10604,7 +10608,7 @@ function restoreMaterializedLayout(node, bridge) {
       if (!id) continue;
       g5.setCapturedLineBoxes(
         String(id), [correction.box], correction.basisWidth,
-        correction.face, false
+        correction.face, false, correction.ascent, correction.descent
       );
       const targets = Array.isArray(node.__pulpAnonymousTextTargets)
         ? node.__pulpAnonymousTextTargets : [];
@@ -10612,12 +10616,12 @@ function restoreMaterializedLayout(node, bridge) {
         const targetId = target && target.id;
         if (!targetId || String(targetId) === String(id)) continue;
         g5.setCapturedLineBoxes(String(targetId), [correction.box],
-          correction.basisWidth, correction.face, false);
+          correction.basisWidth, correction.face, false, correction.ascent, correction.descent);
       }
       const labelId = node.__pulpId || node.id;
       if (labelId && String(labelId) !== String(id))
         g5.setCapturedLineBoxes(String(labelId), [correction.box],
-          correction.basisWidth, correction.face, false);
+          correction.basisWidth, correction.face, false, correction.ascent, correction.descent);
       textButtonReceipt.push({ text: correction.text,
                                line_top: correction.box.top });
     }

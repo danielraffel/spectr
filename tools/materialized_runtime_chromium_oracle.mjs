@@ -65,6 +65,7 @@ function parseArgs(argv) {
       if (!value || value.startsWith('--')) fail(`${key} requires a value`);
       args[key.slice(2)] = value;
     } else if (key === '--plant-missing-asset') args.plantMissingAsset = true;
+    else if (key === '--toolbar-baseline') args.toolbarBaseline = true;
     else if (key === '--help') args.help = true;
     else fail(`unknown argument ${key}`);
   }
@@ -332,7 +333,7 @@ function injectBridge(html, bridge) {
   return html.slice(0, end) + bridge + html.slice(end);
 }
 
-async function browserCapture({ html, assets, fixture, chrome, outDir, dpr }) {
+async function browserCapture({ html, assets, fixture, chrome, outDir, dpr, toolbarBaseline }) {
   const files = new Map([['runtime.html', Buffer.from(html)] ]);
   const server = http.createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname).replace(/^\/+/, '');
@@ -424,6 +425,50 @@ async function browserCapture({ html, assets, fixture, chrome, outDir, dpr }) {
     }
     assert(ready, 'materialized runtime did not expose its readiness marker');
     await evaluate('document.fonts?.ready || Promise.resolve()');
+    // A zero-size inline-block exposes the real browser baseline. Wrap the
+    // anonymous flex text item so the marker shares its inline formatting
+    // context, rather than becoming a separate centered flex item. Check the
+    // run geometry before/after so the probe cannot silently move the label.
+    if (toolbarBaseline) {
+      const baselineProbe = await evaluate(`(() => {
+        const rect = r => ({x:r.x,y:r.y,width:r.width,height:r.height,bottom:r.bottom});
+        return Array.from(document.querySelectorAll('*')).filter(n => n.textContent === '⋯' && Array.from(n.childNodes).some(c => c.nodeType === 3)).map(n => {
+          const text = Array.from(n.childNodes).find(n => n.nodeType === 3);
+          const range = document.createRange(); range.selectNodeContents(text);
+          const before = rect(range.getBoundingClientRect());
+          const style = getComputedStyle(n);
+          const marker = document.createElement('i');
+          marker.style.cssText = 'display:inline-block;width:0;height:0;padding:0;margin:0;border:0;vertical-align:baseline';
+          const wrapper = document.createElement('span');
+          text.replaceWith(wrapper); wrapper.append(text); wrapper.append(marker);
+          const baseline = marker.getBoundingClientRect().top;
+          range.selectNodeContents(text);
+          const after = rect(range.getBoundingClientRect());
+          marker.remove(); wrapper.replaceWith(text);
+          const canvas = document.createElement('canvas').getContext('2d');
+          canvas.font = '10px Menlo';
+          const m = canvas.measureText('⋯');
+          return {before, after, baseline, offset:baseline-before.y, parent:rect(n.parentElement.getBoundingClientRect()), node:rect(n.getBoundingClientRect()),font:style.font,fontFamily:style.fontFamily,lineHeight:style.lineHeight,letterSpacing:style.letterSpacing,fontBoundingBoxAscent:m.fontBoundingBoxAscent,fontBoundingBoxDescent:m.fontBoundingBoxDescent, actualAscent:m.actualBoundingBoxAscent,actualDescent:m.actualBoundingBoxDescent};
+        });
+      })()`);
+      await command('DOM.enable'); await command('CSS.enable');
+      const doc = await command('DOM.getDocument', {depth: -1});
+      const flatten = n => [n, ...(n.children || []).flatMap(flatten)];
+      const tn = flatten(doc.root).find(n => n.nodeType === 3 && n.nodeValue === '⋯');
+      const fonts = tn ? await command('CSS.getPlatformFontsForNode', {nodeId: tn.nodeId}) : null;
+      assert(baselineProbe.length === 1, 'expected one overflow glyph');
+      const measured = baselineProbe[0];
+      assert(JSON.stringify(measured.before) === JSON.stringify(measured.after), 'baseline marker changed the text run geometry');
+      assert(fonts?.fonts?.length === 1 && fonts.fonts[0].postScriptName === 'Menlo-Regular', 'toolbar baseline qualification requires the captured Menlo face');
+      assert(measured.before.height === 13 && measured.offset === 10, 'toolbar Chromium primary-font metrics changed');
+      const version = await command('Browser.getVersion');
+      measured.browser = version;
+      measured.platformFonts = fonts.fonts;
+      measured.primaryFontAscent = measured.offset;
+      measured.primaryFontDescent = measured.before.height - measured.offset;
+      measured.runtimeHtmlSha256 = sha256(Buffer.from(html));
+      write(path.join(outDir, 'baseline-probe.json'), JSON.stringify(baselineProbe, null, 2));
+    }
     const firstSequence = await evaluate(`new Promise((resolve, reject) => {
       const deadline = Date.now() + 5000;
       const poll = () => { const frame = window.SpectrAnalyzer?.debugSnapshot?.();
@@ -523,7 +568,7 @@ async function browserCapture({ html, assets, fixture, chrome, outDir, dpr }) {
 async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log('usage: node tools/materialized_runtime_chromium_oracle.mjs --artifact FILE --fixture FILE --chrome PATH --out DIR [--dpr 2]');
+    console.log('usage: node tools/materialized_runtime_chromium_oracle.mjs --artifact FILE --fixture FILE --chrome PATH --out DIR [--dpr 2] [--toolbar-baseline]');
     return;
   }
   for (const key of ['artifact', 'fixture', 'out']) assert(args[key], `--${key} is required`);
@@ -626,7 +671,7 @@ async function main(argv) {
   state.stateSha256 = stateDigest(state);
   if (args.plantMissingAsset) {
     try {
-      await browserCapture({ html, assets, fixture, chrome, outDir, dpr });
+      await browserCapture({ html, assets, fixture, chrome, outDir, dpr, toolbarBaseline: args.toolbarBaseline });
       fail(`planted missing asset unexpectedly passed: ${missingAsset}`);
     } catch (error) {
       const message = String(error.message || error);
@@ -636,7 +681,7 @@ async function main(argv) {
       return;
     }
   }
-  const browser = await browserCapture({ html, assets, fixture, chrome, outDir, dpr });
+  const browser = await browserCapture({ html, assets, fixture, chrome, outDir, dpr, toolbarBaseline: args.toolbarBaseline });
   const receipt = {
     schema: SCHEMA, version: 1,
     source: { artifact: artifactPath, artifactSha256: sourceSha256,

@@ -2582,10 +2582,12 @@ TEST_CASE("native frozen state atlas interactions and persistence",
         });
     REQUIRE(overflow_draw != overflow_canvas.commands().end());
     REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
-    // Chromium's captured baseline: the 13px box's bottom minus Menlo's
-    // rounded 2px descent, snapped at the label's 820.5px frame origin.
-    // This pins the same placement as the native N1 toolbar canary.
-    REQUIRE(overflow_draw->f[1] == Catch::Approx(17.5f).margin(0.01f));
+    // The external Chromium toolbar-baseline oracle measures a 13px run
+    // with primary-font ascent 10 / descent 3; Menlo supplies the glyph but
+    // its own 2px descent is not the captured cascade's descent. Retain the
+    // product's +0.5px optical shift, then snap on the captured frame grid:
+    // floor(820.5 + 6 + 10 + .5) - 820.5 = 16.5.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.5f).margin(0.01f));
 
     const auto require_captured_toolbar_label = [&](std::string_view text,
                                                      float expected_width) {

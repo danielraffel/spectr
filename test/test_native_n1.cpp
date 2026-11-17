@@ -494,12 +494,12 @@ TEST_CASE("native N1 mounts live QuickJS widgets without an editor fallback",
         });
     REQUIRE(overflow_draw != overflow_canvas.commands().end());
     REQUIRE(overflow_draw->f[0] == Catch::Approx(10.0f).margin(0.01f));
-    // SDK 1.149 paints captured text from Chromium's line-box bottom minus
-    // the rounded typographic descent, then snaps in captured-frame space.
-    // Menlo's 10px descent rounds to 2: floor(820.5 + 6 + 13 - 2 + .5)
-    // - 820.5 = 17.5. Keep the line geometry and face assertions above so a
-    // different box/font cannot accidentally satisfy this baseline canary.
-    REQUIRE(overflow_draw->f[1] == Catch::Approx(17.5f).margin(0.01f));
+    // The external Chromium toolbar-baseline oracle measures a 13px run
+    // with primary-font ascent 10 / descent 3; Menlo supplies the glyph but
+    // its own 2px descent is not the captured cascade's descent. Retain the
+    // product's +0.5px optical shift, then snap on the captured frame grid:
+    // floor(820.5 + 6 + 10 + .5) - 820.5 = 16.5.
+    REQUIRE(overflow_draw->f[1] == Catch::Approx(16.5f).margin(0.01f));
 
     session->bridge()->load_script(R"js(
       const analyzer = globalThis.SpectrAnalyzer;
