@@ -28,8 +28,10 @@ starts with none open (pass A asserts it) and nothing can reach a speaker.
 Zero pollution, by Pulp's daw-smoke ReaperSession: a fresh portable REAPER
 resource directory (seeded from a copy of the user's settings, never written
 back) and a temporary scan folder, both removed on exit; every REAPER this
-starts is capped by --timeout and stopped. AU is not covered: REAPER finds an
-AU only through the system registry, which needs an install into
+starts is capped by --timeout and stopped. Mapped-executable receipts cover
+the initial and save/reopen hosts only; separate offline render processes
+are not verified. AU is not covered: REAPER finds an AU only through the
+system registry, which needs an install into
 ~/Library/Audio/Plug-Ins/Components.
 
 Usage:
@@ -60,6 +62,8 @@ from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
+
+from reaper_loaded_binary import verify_loaded_binary
 
 SR = 48000
 LOOP_MIN_SECONDS = 0.25  # FreezeSource::kLoopMinSeconds: shorter holds are spectral
@@ -563,6 +567,8 @@ def run(args) -> int:
                 shutil.copy2(cache, out / cache.name)
             return 1
         time.sleep(1.0)
+        verify_loaded_binary(session.proc, plugin, out / "loaded-binary-initial.json",
+                             "initial project-authoring host only; offline renders excluded")
         session.terminate()
         base = (out / "base.rpp").read_text()
         pass_a = status.read_text()
@@ -672,6 +678,8 @@ def run(args) -> int:
                         status.exists() and "resaved" in status.read_text()):
                     time.sleep(1)
                 time.sleep(1.0)
+                verify_loaded_binary(proc, plugin, out / f"loaded-binary-{dest.stem}.json",
+                                     f"{dest.stem} save/reopen host only; offline renders excluded")
             finally:
                 smoke.stop_reaper_process(proc)
             return status.read_text().strip() if status.exists() else "no status"
