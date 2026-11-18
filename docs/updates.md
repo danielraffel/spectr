@@ -391,6 +391,43 @@ platform fixes, and retain the package signature/notarization and actual
 installed UI/audio/state evidence; publication validation does not establish
 runtime qualification. The tool prefers `ghapp` when it is available.
 
+### Repairing only Intel on an existing release
+
+An unchanged-source Intel rebuild can replace or add its canonical
+`Spectr-VERSION-macos-x86_64.pkg` on an existing stable release using
+`release-intel-backfill.yml`, dispatched **from main**. Stage the exact
+installed-and-qualified signed/notarized package as a same-repository release
+asset first. Supply its asset ID and SHA256, the existing product tag's exact
+commit, the official release SDK source SHA, and the current Intel asset's
+SHA256 (or `absent` when adding it). A changed product source requires a new
+product version; this lane refuses to change the tag.
+
+The workflow uses the existing trusted release runner and its `GITHUB_TOKEN`.
+It resolves the actual Homebrew `gh` Mach-O binary beneath its formula Cellar,
+checks its version, and binds its absolute path and SHA256 for both the staged
+download and the publisher. Fleet PATH shims are never used with this token.
+It verifies the staged asset's API identity/name/digest/size, downloads it,
+checks all four formats' product and official SDK provenance, and verifies
+the installer signature, stapled notarization and Gatekeeper assessment.
+It snapshots every paginated asset and the release notes/download table,
+then rechecks them immediately before one targeted Intel upload. Terminal
+verification requires unchanged non-Intel asset IDs/digests/sizes, notes,
+release identity, latest selection, and updater assets, allowing only the
+specified Intel change. Preflight and terminal snapshots remain in run logs.
+The lane needs neither ARM64EC nor new Linux/Windows/ARM macOS inputs.
+
+`publish_release.py --backfill-intel-pkg PKG --version VERSION --target SHA
+--sdk-source-sha SDK_SHA --intel-sha256 SHA256 --previous-intel-sha256 OLD_SHA256
+--dry-run` performs the same read-only preflight locally. Actual replacement is
+restricted to the named main Actions workflow; local `ghapp` deliberately does
+not support `release upload --clobber`. Both release workflows share one
+concurrency group. GitHub offers no atomic compare-and-swap for assets:
+replacement can briefly make the Intel asset unavailable. Never retry a
+failed replacement blindly; inspect the live asset and requalify its accepted
+previous digest first. Upload success alone is not a passing terminal check.
+This lane preserves notes verbatim; make separately reviewed corrections to
+qualification claims and download-table rows when needed.
+
 ### Direct downloads in release tables
 
 Every release selection table should explain who each build is for and link

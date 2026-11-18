@@ -43,6 +43,7 @@ from pathlib import Path
 from check_macos_release import check_package as check_macos_package
 from check_linux_release import check_archive as check_linux_archive
 from check_windows_release import check_package as check_windows_package
+from release_github_cli import actions_context as _backfill_actions_context, actions_gh
 
 HERE = Path(__file__).resolve().parent
 REPO_SLUG = "danielraffel/spectr"
@@ -160,7 +161,7 @@ def intel_linux_plan(version: str, pkg: Path, linux: tuple[Path, Path],
 
 
 def _github_json(path: str, *, paginate: bool = False) -> dict | list:
-    cmd = [PLATFORM_GH, "api", path]
+    cmd = [actions_gh() if _backfill_actions_context() else PLATFORM_GH, "api", path]
     if paginate:
         cmd.extend(("--paginate", "--slurp"))
     result = subprocess.run(cmd, capture_output=True,
@@ -278,6 +279,121 @@ def publish_intel_linux(version: str, pkg: Path, linux: tuple[Path, Path],
     return 0
 
 
+def _published_snapshot(endpoint: str) -> dict:
+    """Read every asset page; preserve notes, selection table and release identity."""
+    release = _github_json(endpoint)
+    if (not isinstance(release, dict) or type(release.get("id")) is not int
+            or release["id"] <= 0 or release.get("draft") is not False
+            or release.get("prerelease") is not False):
+        raise ValueError("backfill requires an existing published stable release")
+    if release.get("immutable") is True:
+        raise ValueError("immutable releases require a new product release, not an asset backfill")
+    fields = ("id", "tag_name", "name", "body", "draft", "prerelease", "published_at", "target_commitish")
+    if any(key not in release for key in fields):
+        raise ValueError("release metadata is incomplete")
+    pages = _github_json(
+        f"repos/{REPO_SLUG}/releases/{release['id']}/assets?per_page=100", paginate=True)
+    if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+        raise ValueError("release asset listing is incomplete")
+    assets = [asset for page in pages for asset in page]
+    _asset_digests({"assets": assets})
+    by_name = {}
+    for asset in assets:
+        asset_id = asset.get("id")
+        url = f"https://api.github.com/repos/{REPO_SLUG}/releases/assets/{asset_id}"
+        if (type(asset_id) is not int or asset_id <= 0 or asset.get("url") != url
+                or asset.get("state") != "uploaded"
+                or type(asset.get("size")) is not int or asset["size"] <= 0):
+            raise ValueError("release asset identity, size or upload state is invalid")
+        by_name[asset["name"]] = {key: asset[key] for key in ("id", "url", "size", "digest")}
+    return {"metadata": {key: release[key] for key in fields}, "assets": by_name}
+
+
+def _check_backfill_tag(version: str, target: str) -> None:
+    ref = _github_json(f"repos/{REPO_SLUG}/git/ref/tags/v{version}").get("object", {})
+    for _ in range(4):
+        if ref.get("type") != "tag":
+            break
+        ref = _github_json(f"repos/{REPO_SLUG}/git/tags/{ref['sha']}").get("object", {})
+    if ref.get("type") != "commit" or ref.get("sha") != target:
+        raise ValueError("backfill tag does not name the qualified product source")
+
+
+def backfill_intel(version: str, pkg: Path, target: str, sdk_sha: str,
+                   package_sha256: str, previous_sha256: str, *, dry_run: bool = False) -> int:
+    """Change only an explicitly selected Intel asset on an unchanged-source tag.
+
+    GitHub has no compare-and-swap asset upload: serialize release ownership,
+    recheck immediately before upload, and never retry --clobber automatically.
+    A failed terminal check is a failure, even if upload itself succeeded.
+    """
+    if not dry_run and not _backfill_actions_context():
+        raise ValueError("Intel backfill publication requires the main-only release-intel-backfill Actions workflow")
+    if (not re.fullmatch(r"\d+\.\d+\.\d+", version)
+            or not re.fullmatch(r"[0-9a-f]{40}", target)
+            or not re.fullmatch(r"[0-9a-f]{40}", sdk_sha)
+            or not re.fullmatch(r"[0-9a-f]{64}", package_sha256)
+            or (previous_sha256 != "absent"
+                and not re.fullmatch(r"[0-9a-f]{64}", previous_sha256))):
+        raise ValueError("backfill requires exact version, product/SDK SHAs and package digests")
+    if pkg.name != f"Spectr-{version}-macos-x86_64.pkg" or not pkg.is_file():
+        raise ValueError("backfill requires the canonical versioned Intel package")
+    expected_digest = "sha256:" + package_sha256
+    if _digest(pkg) != expected_digest:
+        raise ValueError("Intel package SHA256 differs from the qualified input")
+    check_macos_package(pkg, version, target, architectures=("x86_64",), sdk_source_sha=sdk_sha)
+    for command in (["pkgutil", "--check-signature", str(pkg)],
+                    ["xcrun", "stapler", "validate", str(pkg)],
+                    ["spctl", "--assess", "--type", "install", str(pkg)]):
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    endpoint = f"repos/{REPO_SLUG}/releases/tags/v{version}"
+    latest_endpoint = f"repos/{REPO_SLUG}/releases/latest"
+    baseline = _published_snapshot(endpoint)
+    if baseline["metadata"]["tag_name"] != f"v{version}":
+        raise ValueError("backfill release tag changed")
+    _check_backfill_tag(version, target)
+    latest = _published_snapshot(latest_endpoint)
+    previous = baseline["assets"].get(pkg.name)
+    actual_previous = previous["digest"][7:] if previous else "absent"
+    if actual_previous != previous_sha256:
+        raise ValueError("existing Intel asset differs from the explicitly accepted previous digest")
+    if expected_digest == (previous or {}).get("digest"):
+        raise ValueError("Intel asset already has the qualified digest; no replacement needed")
+    cli = actions_gh() if _backfill_actions_context() else PLATFORM_GH
+    command = [cli, "release", "upload", f"v{version}", "--repo", REPO_SLUG, str(pkg)]
+    if previous is not None:
+        command.append("--clobber")
+    # Detect concurrent publishing, changed notes/table/feed, or a changed local
+    # input before touching a published asset. Do the same work in --dry-run.
+    if (_published_snapshot(endpoint) != baseline
+            or _published_snapshot(latest_endpoint) != latest
+            or _digest(pkg) != expected_digest):
+        raise ValueError("release, updater or local input changed during backfill preflight")
+    _check_backfill_tag(version, target)
+    if dry_run:
+        print("validated backfill; would run: " + " ".join(command))
+        return 0
+    print(json.dumps({"phase": "backfill-preflight", "release": baseline, "latest": latest,
+                      "qualified_intel_digest": expected_digest}, sort_keys=True), flush=True)
+    subprocess.run(command, check=True)
+    after = _published_snapshot(endpoint)
+    _check_backfill_tag(version, target)
+    intended = after["assets"].get(pkg.name, {})
+    expected_assets = dict(baseline["assets"])
+    expected_assets[pkg.name] = intended
+    if (after["metadata"] != baseline["metadata"] or after["assets"] != expected_assets
+            or intended.get("digest") != expected_digest or intended.get("size") != pkg.stat().st_size
+            or _digest(pkg) != expected_digest):
+        raise ValueError("Intel upload completed, but exact asset/notes preservation is unproven")
+    latest_expected = after if latest["metadata"]["id"] == baseline["metadata"]["id"] else latest
+    if _published_snapshot(latest_endpoint) != latest_expected:
+        raise ValueError("Intel upload completed, but latest release/updater preservation is unproven")
+    print(json.dumps({"phase": "backfill-verified", "release": after,
+                      "latest": latest_expected}, sort_keys=True), flush=True)
+    print(f"backfilled v{version}: {pkg.name} {expected_digest}; all other assets and notes unchanged")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--version", required=True)
@@ -285,7 +401,12 @@ def main() -> int:
     ap.add_argument("--appcast", type=Path)
     ap.add_argument("--intel-pkg", type=Path,
                     help="publish a separate Intel/Linux release without moving the ARM updater")
-    ap.add_argument("--notes", type=Path, required=True)
+    ap.add_argument("--backfill-intel-pkg", type=Path,
+                    help="add/replace only Intel on an existing unchanged-source release")
+    ap.add_argument("--sdk-source-sha", help="exact official SDK source for Intel backfill")
+    ap.add_argument("--intel-sha256", help="exact qualified Intel package SHA256")
+    ap.add_argument("--previous-intel-sha256", help="accepted old Intel digest, or 'absent'")
+    ap.add_argument("--notes", type=Path)
     ap.add_argument("--title")
     ap.add_argument("--target", help="commit to tag (default: HEAD; must be the newest)")
     ap.add_argument("--windows-arm64ec", type=Path,
@@ -308,6 +429,21 @@ def main() -> int:
     ap.add_argument("--reuse-draft", action="store_true",
                     help="upload into an existing draft vX.Y.Z release")
     args = ap.parse_args()
+    if args.backfill_intel_pkg:
+        if any((args.pkg, args.appcast, args.intel_pkg, args.notes, args.title,
+                args.windows_arm64, args.windows_arm64ec, args.windows_x64,
+                args.require_windows, args.linux_aarch64, args.linux_x86_64,
+                args.require_linux, args.reuse_draft)):
+            raise SystemExit("Intel backfill cannot change notes/updater or include other platform lanes")
+        if not all((args.target, args.sdk_source_sha, args.intel_sha256, args.previous_intel_sha256)):
+            raise SystemExit("Intel backfill requires --target, --sdk-source-sha, --intel-sha256 and --previous-intel-sha256")
+        return backfill_intel(args.version, args.backfill_intel_pkg, args.target,
+                              args.sdk_source_sha, args.intel_sha256,
+                              args.previous_intel_sha256, dry_run=args.dry_run)
+    if any((args.sdk_source_sha, args.intel_sha256, args.previous_intel_sha256)):
+        raise SystemExit("Intel backfill pins require --backfill-intel-pkg")
+    if not args.notes:
+        raise SystemExit("publication requires --notes")
     if args.intel_pkg:
         if (args.pkg or args.appcast or args.windows_arm64 or args.windows_arm64ec
                 or args.windows_x64 or args.require_windows or args.reuse_draft):

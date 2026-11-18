@@ -3,3 +3,4 @@ self-hosted-runner:
     - spectr-build
     - spectr-build-vm
     - spectr-gate-fast
+    - spectr-release

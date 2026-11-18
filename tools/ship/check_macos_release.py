@@ -18,7 +18,8 @@ PRODUCTS = {
 
 
 def check_package(path: Path, version: str, source_sha: str,
-                  architectures: tuple[str, ...] = ("arm64",)) -> None:
+                  architectures: tuple[str, ...] = ("arm64",), *,
+                  sdk_source_sha: str | None = None) -> None:
     if (not architectures or not set(architectures) <= {"arm64", "x86_64"}
             or len(set(architectures)) != len(architectures)):
         raise ValueError("unsupported macOS release architectures")
@@ -42,3 +43,8 @@ def check_package(path: Path, version: str, source_sha: str,
                     or build.get("type") != "Release"
                     or sorted(build.get("archs", [])) != sorted(architectures)):
                 raise ValueError(f"{path}: {fmt} does not match release source/version")
+            if sdk_source_sha is not None:
+                sdk = info.get("pulp_sdk", {})
+                if (sdk.get("source_git_sha") != sdk_source_sha
+                        or sdk.get("provenance_kind") != "release"):
+                    raise ValueError(f"{path}: {fmt} does not match the official release SDK")
