@@ -1,0 +1,110 @@
+name: Spectr Intel installer backfill
+
+# An already qualified, signed/notarized Intel installer can repair the Intel
+# asset on an existing product tag without republishing the other platforms.
+# Release mutation uses this trusted main workflow's GITHUB_TOKEN: local
+# ghapp's privileged grammar intentionally does not allow upload --clobber.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing stable product release version (without v)
+        required: true
+        type: string
+      product_sha:
+        description: Exact existing product tag commit, 40 lowercase hex characters
+        required: true
+        type: string
+      sdk_sha:
+        description: Official release SDK source SHA used by every packaged format
+        required: true
+        type: string
+      intel_asset_id:
+        description: Same-repository staged Intel package release asset ID
+        required: true
+        type: string
+      intel_sha256:
+        description: SHA256 of the exact installed/qualified Intel package
+        required: true
+        type: string
+      previous_intel_sha256:
+        description: Accepted current Intel package SHA256, or absent to add it
+        required: true
+        type: string
+
+concurrency:
+  group: spectr-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    if: github.repository == 'danielraffel/spectr' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-release]
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ inputs.version }}
+      PRODUCT_SHA: ${{ inputs.product_sha }}
+      SDK_SHA: ${{ inputs.sdk_sha }}
+      INTEL_ASSET_ID: ${{ inputs.intel_asset_id }}
+      INTEL_SHA256: ${{ inputs.intel_sha256 }}
+      PREVIOUS_INTEL_SHA256: ${{ inputs.previous_intel_sha256 }}
+    steps:
+      - name: Check out the exact reviewed workflow head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Validate staged asset identity and download qualified package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from pathlib import Path
+          env = os.environ
+          for key, pattern in {
+              'VERSION': r'\d+\.\d+\.\d+', 'PRODUCT_SHA': r'[0-9a-f]{40}',
+              'SDK_SHA': r'[0-9a-f]{40}', 'INTEL_ASSET_ID': r'[1-9][0-9]*',
+              'INTEL_SHA256': r'[0-9a-f]{64}',
+              'PREVIOUS_INTEL_SHA256': r'(absent|[0-9a-f]{64})',
+          }.items():
+              if not re.fullmatch(pattern, env[key]):
+                  raise SystemExit(f'invalid {key}')
+          endpoint = f"repos/danielraffel/spectr/releases/assets/{env['INTEL_ASSET_ID']}"
+          result = subprocess.run(['gh', 'api', endpoint], check=True, capture_output=True, text=True)
+          asset = json.loads(result.stdout)
+          name = f"Spectr-{env['VERSION']}-macos-x86_64.pkg"
+          if (asset.get('id') != int(env['INTEL_ASSET_ID']) or asset.get('name') != name
+                  or asset.get('url') != f'https://api.github.com/{endpoint}'
+                  or asset.get('digest') != 'sha256:' + env['INTEL_SHA256']
+                  or asset.get('state') != 'uploaded' or type(asset.get('size')) is not int
+                  or asset['size'] <= 0):
+              raise SystemExit('staged Intel asset identity/name/digest/state mismatch')
+          root = Path(env['RUNNER_TEMP']) / (
+              'spectr-intel-backfill-' + env['GITHUB_RUN_ID'] + '-' + env.get('GITHUB_RUN_ATTEMPT', '1'))
+          root.mkdir(exist_ok=False)
+          pkg = root / name
+          with pkg.open('xb') as stream:
+              subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream', endpoint],
+                             stdout=stream, check=True)
+          digest = hashlib.sha256(pkg.read_bytes()).hexdigest()
+          if pkg.stat().st_size != asset['size'] or digest != env['INTEL_SHA256']:
+              raise SystemExit('downloaded Intel package bytes differ from the staged asset')
+          with open(env['GITHUB_ENV'], 'a') as output:
+              output.write(f'INTEL_PKG={pkg}\n')
+          PY
+
+      - name: Validate provenance, signature and notarization; backfill only Intel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/ship/publish_release.py --version "$VERSION" \
+            --backfill-intel-pkg "$INTEL_PKG" --target "$PRODUCT_SHA" \
+            --sdk-source-sha "$SDK_SHA" --intel-sha256 "$INTEL_SHA256" \
+            --previous-intel-sha256 "$PREVIOUS_INTEL_SHA256"

@@ -60,7 +60,7 @@ on:
         type: string
 
 concurrency:
-  group: spectr-release-${{ github.ref }}
+  group: spectr-release
   cancel-in-progress: false
 
 permissions:
