@@ -25,6 +25,7 @@ import ed25519_verify  # noqa: E402
 import make_appcast  # noqa: E402
 import publish_release  # noqa: E402
 import release_notes_html  # noqa: E402
+import release_github_cli  # noqa: E402
 
 RELEASE_BODY = """Spectr 1.0.7 adds Sparkle updates.
 
@@ -589,6 +590,7 @@ class IntelBackfill(unittest.TestCase):
 
             with mock.patch.object(publish_release, "_published_snapshot", side_effect=snapshot), \
                     mock.patch.object(publish_release, "_backfill_actions_context", return_value=True), \
+                    mock.patch.object(publish_release, "actions_gh", return_value="/opt/homebrew/Cellar/gh/fixture/bin/gh"), \
                     mock.patch.object(publish_release, "_check_backfill_tag") as tag, \
                     mock.patch.object(publish_release, "check_macos_package", side_effect=package), \
                     mock.patch.object(publish_release.subprocess, "run", side_effect=run):
@@ -616,6 +618,7 @@ class IntelBackfill(unittest.TestCase):
                     calls = self.exercise(absent=absent, same_latest=same_latest)
                     self.assertEqual(len(calls), 1)
                     self.assertEqual(calls[0][1:3], ["release", "upload"])
+                    self.assertEqual(calls[0][0], "/opt/homebrew/Cellar/gh/fixture/bin/gh")
                     self.assertEqual("--clobber" in calls[0], not absent)
                     self.assertFalse(any("arm64ec" in arg for arg in calls[0]))
 
@@ -660,12 +663,12 @@ class IntelBackfill(unittest.TestCase):
         context = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "danielraffel/spectr",
                    "GITHUB_REF": "refs/heads/main", "GH_TOKEN": "fixture-not-a-token",
                    "GITHUB_WORKFLOW_REF": "danielraffel/spectr/.github/workflows/release-intel-backfill.yml@refs/heads/main"}
-        with mock.patch.dict(publish_release.os.environ, context, clear=True):
+        with mock.patch.dict(release_github_cli.os.environ, context, clear=True):
             self.assertTrue(publish_release._backfill_actions_context())
         for key in context:
             invalid = dict(context)
             invalid.pop(key)
-            with self.subTest(key=key), mock.patch.dict(publish_release.os.environ, invalid, clear=True), \
+            with self.subTest(key=key), mock.patch.dict(release_github_cli.os.environ, invalid, clear=True), \
                     mock.patch.object(publish_release.subprocess, "run") as run:
                 with self.assertRaisesRegex(ValueError, "main-only"):
                     publish_release.backfill_intel("1.0.11", Path("unread.pkg"), "a" * 40,
@@ -735,7 +738,8 @@ class IntelBackfill(unittest.TestCase):
                         kwargs["stdout"].write(b"wrong bytes" if fault == "bytes" else data)
                     return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(asset))
 
-                with mock.patch.dict(os.environ, env), mock.patch.object(subprocess, "run", side_effect=staged) as run:
+                with mock.patch.dict(os.environ, env), mock.patch.object(subprocess, "run", side_effect=staged) as run, \
+                        mock.patch.object(release_github_cli, "actions_gh", return_value="/opt/homebrew/Cellar/gh/fixture/bin/gh"):
                     if fault:
                         with self.assertRaises(SystemExit):
                             exec(compile(source, "staged-download", "exec"), {})
@@ -744,6 +748,44 @@ class IntelBackfill(unittest.TestCase):
                         exec(compile(source, "staged-download", "exec"), {})
                         self.assertIn("INTEL_PKG=", Path(env["GITHUB_ENV"]).read_text())
                         self.assertEqual(run.call_count, 2)
+                        self.assertTrue(all(call.args[0][0] == "/opt/homebrew/Cellar/gh/fixture/bin/gh"
+                                            for call in run.call_args_list))
+
+    def test_shadowed_path_cannot_select_the_fleet_gh_shim(self):
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actual = root / "Cellar/gh/2.83.0/bin/gh"
+            actual.parent.mkdir(parents=True)
+            actual.write_bytes(b"\xcf\xfa\xed\xfe" + b"fixture native executable")
+            actual.chmod(0o500)
+            actual = actual.resolve()
+            opt = root / "opt/gh"
+            opt.parent.mkdir()
+            opt.symlink_to(root / "Cellar/gh/2.83.0", target_is_directory=True)
+            shim = root / "shadow/gh"
+            shim.parent.mkdir()
+            shim.write_text("#!/bin/sh\nexit 99\n")
+            shim.chmod(0o700)
+            resolver = release_github_cli.resolve_binary
+            with mock.patch.dict(os.environ, {"PATH": str(shim.parent),
+                                              "SPECTR_RELEASE_GH": str(actual),
+                                              "SPECTR_RELEASE_GH_SHA256": release_github_cli.digest(actual)}), \
+                    mock.patch.object(release_github_cli, "actions_context", return_value=True), \
+                    mock.patch.object(release_github_cli, "resolve_binary", side_effect=lambda: resolver(root)), \
+                    mock.patch.object(publish_release, "_backfill_actions_context", return_value=True), \
+                    mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "{}")) as run:
+                self.assertEqual(release_github_cli.actions_gh(), str(actual))
+                publish_release._github_json("repos/danielraffel/spectr/releases/latest")
+                self.assertEqual(run.call_args.args[0][0], str(actual))
+                with mock.patch.dict(os.environ, {"SPECTR_RELEASE_GH_SHA256": "0" * 64}):
+                    with self.assertRaisesRegex(ValueError, "verified workflow selection"):
+                        release_github_cli.actions_gh()
+            actual.chmod(0o700)
+            actual.write_text("#!/bin/sh\nexec ghapp \"$@\"\n")
+            actual.chmod(0o500)
+            with self.assertRaisesRegex(ValueError, "Mach-O"):
+                resolver(root)
 
 
 if __name__ == "__main__":

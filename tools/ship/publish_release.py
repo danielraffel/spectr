@@ -33,7 +33,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -44,20 +43,12 @@ from pathlib import Path
 from check_macos_release import check_package as check_macos_package
 from check_linux_release import check_archive as check_linux_archive
 from check_windows_release import check_package as check_windows_package
+from release_github_cli import actions_context as _backfill_actions_context, actions_gh
 
 HERE = Path(__file__).resolve().parent
 REPO_SLUG = "danielraffel/spectr"
 LATEST = f"https://github.com/{REPO_SLUG}/releases/latest/download"
 PLATFORM_GH = "ghapp" if shutil.which("ghapp") else "gh"
-
-
-def _backfill_actions_context() -> bool:
-    return (os.environ.get("GITHUB_ACTIONS") == "true"
-            and os.environ.get("GITHUB_REPOSITORY") == REPO_SLUG
-            and os.environ.get("GITHUB_REF") == "refs/heads/main"
-            and os.environ.get("GITHUB_WORKFLOW_REF") ==
-            f"{REPO_SLUG}/.github/workflows/release-intel-backfill.yml@refs/heads/main"
-            and bool(os.environ.get("GH_TOKEN")))
 
 
 def _digest(path: Path) -> str:
@@ -170,7 +161,7 @@ def intel_linux_plan(version: str, pkg: Path, linux: tuple[Path, Path],
 
 
 def _github_json(path: str, *, paginate: bool = False) -> dict | list:
-    cmd = ["gh" if _backfill_actions_context() else PLATFORM_GH, "api", path]
+    cmd = [actions_gh() if _backfill_actions_context() else PLATFORM_GH, "api", path]
     if paginate:
         cmd.extend(("--paginate", "--slurp"))
     result = subprocess.run(cmd, capture_output=True,
@@ -368,7 +359,8 @@ def backfill_intel(version: str, pkg: Path, target: str, sdk_sha: str,
         raise ValueError("existing Intel asset differs from the explicitly accepted previous digest")
     if expected_digest == (previous or {}).get("digest"):
         raise ValueError("Intel asset already has the qualified digest; no replacement needed")
-    command = ["gh", "release", "upload", f"v{version}", "--repo", REPO_SLUG, str(pkg)]
+    cli = actions_gh() if _backfill_actions_context() else PLATFORM_GH
+    command = [cli, "release", "upload", f"v{version}", "--repo", REPO_SLUG, str(pkg)]
     if previous is not None:
         command.append("--clobber")
     # Detect concurrent publishing, changed notes/table/feed, or a changed local

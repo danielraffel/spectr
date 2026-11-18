@@ -403,6 +403,9 @@ SHA256 (or `absent` when adding it). A changed product source requires a new
 product version; this lane refuses to change the tag.
 
 The workflow uses the existing trusted release runner and its `GITHUB_TOKEN`.
+It resolves the actual Homebrew `gh` Mach-O binary beneath its formula Cellar,
+checks its version, and binds its absolute path and SHA256 for both the staged
+download and the publisher. Fleet PATH shims are never used with this token.
 It verifies the staged asset's API identity/name/digest/size, downloads it,
 checks all four formats' product and official SDK provenance, and verifies
 the installer signature, stapled notarization and Gatekeeper assessment.

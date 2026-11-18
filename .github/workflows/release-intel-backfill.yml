@@ -54,19 +54,28 @@ jobs:
       PREVIOUS_INTEL_SHA256: ${{ inputs.previous_intel_sha256 }}
     steps:
       - name: Check out the exact reviewed workflow head
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
+
+      - name: Select the actual GitHub CLI for the ordinary Actions token
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/ship/release_github_cli.py >> "$GITHUB_ENV"
 
       - name: Validate staged asset identity and download qualified package
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, re, subprocess
+          import hashlib, json, os, re, subprocess, sys
           from pathlib import Path
+          sys.path.insert(0, str(Path('tools/ship').resolve()))
+          from release_github_cli import actions_gh
+          gh = actions_gh()
           env = os.environ
           for key, pattern in {
               'VERSION': r'\d+\.\d+\.\d+', 'PRODUCT_SHA': r'[0-9a-f]{40}',
@@ -77,7 +86,7 @@ jobs:
               if not re.fullmatch(pattern, env[key]):
                   raise SystemExit(f'invalid {key}')
           endpoint = f"repos/danielraffel/spectr/releases/assets/{env['INTEL_ASSET_ID']}"
-          result = subprocess.run(['gh', 'api', endpoint], check=True, capture_output=True, text=True)
+          result = subprocess.run([gh, 'api', endpoint], check=True, capture_output=True, text=True)
           asset = json.loads(result.stdout)
           name = f"Spectr-{env['VERSION']}-macos-x86_64.pkg"
           if (asset.get('id') != int(env['INTEL_ASSET_ID']) or asset.get('name') != name
@@ -91,7 +100,7 @@ jobs:
           root.mkdir(exist_ok=False)
           pkg = root / name
           with pkg.open('xb') as stream:
-              subprocess.run(['gh', 'api', '-H', 'Accept: application/octet-stream', endpoint],
+              subprocess.run([gh, 'api', '-H', 'Accept: application/octet-stream', endpoint],
                              stdout=stream, check=True)
           digest = hashlib.sha256(pkg.read_bytes()).hexdigest()
           if pkg.stat().st_size != asset['size'] or digest != env['INTEL_SHA256']:
