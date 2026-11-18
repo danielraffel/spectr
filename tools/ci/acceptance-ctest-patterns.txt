@@ -35,6 +35,9 @@ Built Spectr
 Spectr editor
 # A backtick in an editor.html String.raw patch silently unmounts the mirror.
 ^Spectr-editor-html-raw-templates$
+# Bind real-host qualification to the mapped executable, including stale-copy
+# and real Mach-O mapping controls, rather than only the intended scan path.
+^Spectr-reaper-loaded-binary-receipts$
 # The generated native-client contract is a pure source/provenance gate. It
 # must be selected explicitly so a missing CMake registration cannot silently
 # make the typed bridge seam disappear from acceptance.

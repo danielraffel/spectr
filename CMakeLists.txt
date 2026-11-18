@@ -283,6 +283,10 @@ set(SPECTR_NATIVE_ASSET_SOURCES
 # them produces a visually valid home frame that cannot satisfy interaction
 # contracts.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME Spectr-reaper-loaded-binary-receipts
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_reaper_loaded_binary.py)
+set_tests_properties(Spectr-reaper-loaded-binary-receipts PROPERTIES TIMEOUT 90)
 add_test(NAME Spectr-materialized-static-grid-zindex
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_static_grid_zindex.py)
