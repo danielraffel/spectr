@@ -30,14 +30,14 @@ jobs:
         run: |
           set -euo pipefail
           cd source
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$PWD/sdk/lib/cmake/Pulp" -DSPECTR_EXPECTED_PULP_SDK_SHA=53b987f84b80143cc6d1e6118bdefe53b5ad22d4 -DSPECTR_EXPECTED_PRODUCT_GIT_SHA=76e8ef65aa1a668a024861379c61e45f73fdf1bc -DSPECTR_SPARKLE_CHANNEL=off -DSPECTR_ENABLE_TEST_SEAMS=OFF -DSPECTR_ENABLE_PERF_FIXTURES=OFF
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$PWD/../sdk/lib/cmake/Pulp" -DSPECTR_EXPECTED_PULP_SDK_SHA=53b987f84b80143cc6d1e6118bdefe53b5ad22d4 -DSPECTR_EXPECTED_PRODUCT_GIT_SHA=76e8ef65aa1a668a024861379c61e45f73fdf1bc -DSPECTR_SPARKLE_CHANNEL=off -DSPECTR_ENABLE_TEST_SEAMS=OFF -DSPECTR_ENABLE_PERF_FIXTURES=OFF
           cmake --build build --target Spectr_Standalone Spectr_CLAP Spectr_VST3 --parallel 4
       - name: Package and validate
         run: |
           set -euo pipefail
           cd source
           mkdir out
-          python3 tools/ci/package-linux-temp.py "$PWD" "$PWD/out" x86_64 76e8ef65aa1a668a024861379c61e45f73fdf1bc 53b987f84b80143cc6d1e6118bdefe53b5ad22d4
+          python3 ../tools/ci/package-linux-temp.py "$PWD" "$PWD/out" x86_64 76e8ef65aa1a668a024861379c61e45f73fdf1bc 53b987f84b80143cc6d1e6118bdefe53b5ad22d4
           python3 tools/ship/check_linux_release.py --version 1.0.11 --source-sha 76e8ef65aa1a668a024861379c61e45f73fdf1bc --x86_64 source/out/Spectr-v1.0.11-linux-x86_64.tar.xz
       - uses: actions/upload-artifact@v4
         with:
