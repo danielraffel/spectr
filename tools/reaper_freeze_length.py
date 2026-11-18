@@ -198,14 +198,16 @@ SCANNED = {
 }
 
 
-def warm_scan(reaper: Path, ini: Path, fmt: str, timeout: float) -> bool:
+def warm_scan(reaper: Path, ini: Path, fmt: str, timeout: float,
+              env: dict | None = None) -> bool:
     """Launch REAPER once and wait until its cache holds a FINISHED scan of
     the plugin, then close it. Without this the scripted launch can come up
-    with the scan half done and insert nothing."""
+    with the scan half done and insert nothing. ``env`` is passed only to
+    this owned child, without mutating the calling process environment."""
     pattern = SCANNED[fmt]
     glob = "reaper-vstplugins*.ini" if fmt == "vst3" else "reaper-clap-*.ini"
     proc = subprocess.Popen([str(reaper), "-cfgfile", str(ini), "-newinst", "-nosplash"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     deadline, found = time.time() + timeout, False
     try:
         while time.time() < deadline and not found:
