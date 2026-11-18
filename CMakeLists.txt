@@ -283,6 +283,10 @@ set(SPECTR_NATIVE_ASSET_SOURCES
 # them produces a visually valid home frame that cannot satisfy interaction
 # contracts.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME Spectr-reaper-production-audio-oracles
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_reaper_production_audio.py)
+set_tests_properties(Spectr-reaper-production-audio-oracles PROPERTIES TIMEOUT 60)
 add_test(NAME Spectr-reaper-loaded-binary-receipts
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_reaper_loaded_binary.py)

@@ -38,6 +38,8 @@ Spectr editor
 # Bind real-host qualification to the mapped executable, including stale-copy
 # and real Mach-O mapping controls, rather than only the intended scan path.
 ^Spectr-reaper-loaded-binary-receipts$
+# Production-build host/audio harness controls; this source test never launches a DAW.
+^Spectr-reaper-production-audio-oracles$
 # The generated native-client contract is a pure source/provenance gate. It
 # must be selected explicitly so a missing CMake registration cannot silently
 # make the typed bridge seam disappear from acceptance.
