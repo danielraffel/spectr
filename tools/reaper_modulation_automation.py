@@ -50,6 +50,8 @@ import sys
 import time
 from pathlib import Path
 
+from reaper_loaded_binary import verify_loaded_binary
+
 PASS_SECONDS = 9.0
 # Inside the record pass (the second): the control pass is the first 9 s.
 GESTURE_DELAY_MS = 14000
@@ -376,13 +378,16 @@ def run(args) -> int:
         deadline = time.time() + 4 * PASS_SECONDS + 30
         while time.time() < deadline and not (out / "done.txt").exists():
             time.sleep(1.0)
+        loaded_binary = verify_loaded_binary(
+            session.proc, plugin, out / "loaded-binary.json",
+            "completed live automation/modulation host only")
         session.terminate()
         host_log = (out / "host.log").read_text() if (out / "host.log").exists() else ""
         ui_log = session.captured_log()
         (out / "reaper-stdout.txt").write_text(ui_log)
         failures, facts = analyse(host_log, ui_log)
         (out / "result.json").write_text(json.dumps({"format": fmt, "failures": failures,
-                                                     "facts": facts}, indent=2))
+                                                     "facts": facts, "loaded_binary": loaded_binary}, indent=2))
         log(f"{fmt}: " + json.dumps(facts))
         for f in failures:
             log(f"FAIL {fmt}: {f}")
