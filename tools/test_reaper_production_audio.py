@@ -4,9 +4,13 @@ import math
 import struct
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from argparse import Namespace
 import plistlib
+import os
+import subprocess
+import types
+import sys
 from pathlib import Path
 
 import reaper_production_audio as qual
@@ -81,6 +85,41 @@ class HostFactsTests(unittest.TestCase):
 
 
 class PreflightTests(unittest.TestCase):
+    def test_scan_receives_sanitized_environment_without_global_mutation(self):
+        with tempfile.TemporaryDirectory(prefix="spectr-scan-environment-") as root:
+            root = Path(root)
+            bundle = root / "Spectr.clap"
+            (bundle / "Contents/MacOS").mkdir(parents=True)
+            executable = bundle / "Contents/MacOS/Spectr"
+            executable.write_bytes(b"release fixture bytes")
+            (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Spectr"}))
+            reaper = root / "REAPER"
+            reaper.write_bytes(b"host fixture; must never execute")
+            session = Mock(portable=root)
+            session.place_plugin.return_value = None
+            scanner = Mock(return_value=False)
+            helpers = types.SimpleNamespace(load_reaper_smoke=lambda _: types.SimpleNamespace(
+                ReaperSession=Mock(return_value=session)), silence_audio_device=Mock(), warm_scan=scanner)
+            args = Namespace(out=root / "evidence", plugin=bundle,
+                             expected_sha256=qual.sha256(executable), reaper=reaper,
+                             pulp_repo=root, timeout=5)
+            # The whole run stops at the mocked scan: no host process is started.
+            with patch.dict(os.environ, {"SPECTR_EVAL": "inherited", "KEEP_SCAN_VAR": "present"}):
+                with patch.dict(sys.modules, {"reaper_freeze_length": helpers}):
+                    with patch("reaper_production_audio.sys.platform", "darwin"):
+                        with patch("reaper_production_audio.subprocess.run", return_value=
+                                   subprocess.CompletedProcess([], 0, "PASS", "")):
+                            with patch("reaper_production_audio.subprocess.Popen") as launch:
+                                self.assertEqual(qual.run(args), 1)
+                                launch.assert_not_called()
+                scan_env = scanner.call_args.kwargs["env"]
+                self.assertEqual(scan_env["KEEP_SCAN_VAR"], "present")
+                self.assertFalse(any(key.startswith("SPECTR_") for key in scan_env))
+                self.assertIsNot(scan_env, os.environ)
+                self.assertEqual(os.environ["SPECTR_EVAL"], "inherited")
+            scanner.assert_called_once()
+            session.cleanup.assert_called_once()
+
     def test_wrong_release_digest_writes_failure_without_launching_host(self):
         with tempfile.TemporaryDirectory(prefix="spectr-preflight-") as root:
             root = Path(root)

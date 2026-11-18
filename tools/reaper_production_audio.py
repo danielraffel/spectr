@@ -2,7 +2,8 @@
 """Production Spectr host automation, audio and cold-reopen qualification.
 
 Opt-in macOS VST3/CLAP only; no install and no editor interaction. Uses normal
-REAPER parameter/envelope APIs and an in-process synchronous offline render.
+REAPER parameter/envelope APIs and an in-process synchronous offline render
+from a temporary copied bundle, not the installed plugin path.
 Every rendering host is hashed before and after rendering, then stopped. The
 provided executable digest must come from the exact release artifact being
 qualified. This does not establish package provenance or visible widget behavior.
@@ -327,7 +328,8 @@ def host_environment(environment: dict) -> dict:
 
 
 def host_command(reaper: Path, script: Path, ini: Path, project: Path | None) -> list[str]:
-    # REAPER consumes the Lua startup script only when it precedes -cfgfile.
+    # Put Lua before -cfgfile following an observed Windows REAPER launch fix;
+    # this is a conservative order, not a proven exclusive macOS requirement.
     return [str(reaper), str(script), "-cfgfile", str(ini), "-newinst", "-nosplash",
             "-ignoreerrors"] + ([str(project)] if project else [])
 
@@ -335,7 +337,8 @@ def host_command(reaper: Path, script: Path, ini: Path, project: Path | None) ->
 def run(args) -> int:
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)  # never remove or reuse existing evidence
-    result = {"status": "FAIL", "scope": "provided VST3/CLAP bundle; host Output automation and cold reopen",
+    result = {"status": "FAIL", "scope": "temporary copied VST3/CLAP bundle; host Output automation and cold reopen",
+              "installed_path_verified": False,
               "gui_verified": False, "package_provenance_verified": False,
               "separate_render_processes_used": False, "expected_sha256": args.expected_sha256}
     session = None
@@ -366,12 +369,12 @@ def run(args) -> int:
             raise RuntimeError("isolated plugin staging failed")
         ini = session.portable / "reaper.ini"
         silence_audio_device(ini)
-        if not warm_scan(reaper, ini, fmt, args.timeout):
+        base_env = host_environment(os.environ)
+        if not warm_scan(reaper, ini, fmt, args.timeout, env=base_env):
             raise RuntimeError("isolated plugin scan did not complete")
         write_input(out / "input.wav")
         script = out / "qualification.lua"
         script.write_text(LUA)
-        base_env = host_environment(os.environ)
         base_env.update(REAPER_PRODUCTION_QUAL_DIR=str(out),
                         REAPER_PRODUCTION_QUAL_FX=("CLAP: " if fmt == "clap" else "VST3: ") + "Spectr")
         result["stages"] = {}

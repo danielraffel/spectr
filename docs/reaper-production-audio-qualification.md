@@ -6,6 +6,10 @@ REAPER. Implementing the harness and passing those tests does **not** qualify a
 release; qualification requires successful retained runtime evidence for each
 exact artifact and host architecture being advertised.
 
+The measured executable is a temporary signature-preserving copy of the
+provided bundle. Actual installed-path plugin discovery/loading remains a
+separate product proof; `installed_path_verified` is always false.
+
 The harness does not open or drive the plugin editor. Visible controls, menus,
 modulation markers, repaint and real mouse gestures remain separate GUI checks.
 It does not test LFO modulation, wet spectral processing, freeze loops, AU,
@@ -38,7 +42,9 @@ in a temporary scan folder using Pulp's session helper and never installs into
 real plugin directories. AU is deliberately unsupported. The temporary REAPER
 configuration points input and output at a nonexistent audio device, and host
 facts require that no output device opened. Production fixture variables from
-the calling environment are removed; no plugin fixture flags are set. The
+the calling environment are removed for the scan child and both rendering children
+using per-child environment dictionaries; the parent environment is not changed.
+No plugin fixture flags are set. The
 existing release test-seam checker must accept the supplied bundle before any
 REAPER launch.
 
@@ -80,7 +86,7 @@ The retained `result.json` carries terminal PASS/FAIL, exact expected executable
 hash, host executable path/hash, parameter/envelope facts before and after each
 render, all four mapped-file receipts, project and WAV hashes, measured audio
 metrics, and explicit `gui_verified: false` and
-`package_provenance_verified: false`. A missing status, timeout, absent module,
+`package_provenance_verified: false` and `installed_path_verified: false`. A missing status, timeout, absent module,
 stale same-name module, ambiguous mapping, changed hash, failed render, wrong
 state, or bad audio never becomes a passing result. Every artifact must obtain
 its own complete evidence directory. No runtime result is checked in with this
