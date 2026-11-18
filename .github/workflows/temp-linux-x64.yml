@@ -1,0 +1,37 @@
+name: temporary Spectr Linux x86_64 v1.0.11 build
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 76e8ef65aa1a668a024861379c61e45f73fdf1bc
+          fetch-depth: 0
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfontconfig1-dev libx11-dev libxext-dev libwayland-dev libvulkan-dev ninja-build
+      - name: Pulp SDK
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o sdk.tar.gz https://github.com/Generous-Corp/pulp/releases/download/v1.149.0/pulp-sdk-linux-x64.tar.gz
+          echo '8eadfd42b37595a844c5d5cbc2058098bf4b4d12aa755b0bfd12ff1322a038ac  sdk.tar.gz' | sha256sum -c -
+          mkdir sdk && tar -xzf sdk.tar.gz -C sdk --strip-components=1
+      - name: Configure and build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$PWD/sdk/lib/cmake/Pulp" -DSPECTR_EXPECTED_PULP_SDK_SHA=53b987f84b80143cc6d1e6118bdefe53b5ad22d4 -DSPECTR_EXPECTED_PRODUCT_GIT_SHA=76e8ef65aa1a668a024861379c61e45f73fdf1bc -DSPECTR_SPARKLE_CHANNEL=off -DSPECTR_ENABLE_TEST_SEAMS=OFF -DSPECTR_ENABLE_PERF_FIXTURES=OFF
+          cmake --build build --target Spectr_Standalone Spectr_CLAP Spectr_VST3 --parallel 4
+      - name: Package and validate
+        run: |
+          set -euo pipefail
+          mkdir out
+          python3 tools/ci/package-linux-temp.py "$PWD" "$PWD/out" x86_64 76e8ef65aa1a668a024861379c61e45f73fdf1bc 53b987f84b80143cc6d1e6118bdefe53b5ad22d4
+          python3 tools/ship/check_linux_release.py --version 1.0.11 --source-sha 76e8ef65aa1a668a024861379c61e45f73fdf1bc --x86_64 out/Spectr-v1.0.11-linux-x86_64.tar.xz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spectr-v1.0.11-linux-x86_64-76e8
+          path: out/Spectr-v1.0.11-linux-x86_64.tar.xz
+          if-no-files-found: error
