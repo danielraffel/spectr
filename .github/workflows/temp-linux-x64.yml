@@ -10,7 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 76e8ef65aa1a668a024861379c61e45f73fdf1bc
           fetch-depth: 0
       - name: Prepare clean exact source
         run: |
