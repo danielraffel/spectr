@@ -153,8 +153,31 @@ class AudioTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def test_expected_audio_and_reopen_pass(self):
-        self.assertEqual(len(qual.analyse_audio(self.source, self.rendered)["window_gains"]), 6)
+        metrics = qual.analyse_audio(self.source, self.rendered)
+        self.assertEqual(len(metrics["window_gains"]), 6)
+        self.assertEqual(metrics["continuity_covered_seconds"], 8.5)
+        self.assertEqual(len(metrics["continuity_window_gains"]), 340)
+        self.assertTrue(all(abs(w["end"] - w["start"] - 0.05) < 1e-9
+                            for w in metrics["continuity_window_gains"]))
         self.assertEqual(qual.compare_reopened(self.rendered, self.rendered)["peak_sample_error"], 0)
+
+    def test_audio_only_in_old_analysis_windows_fails_even_when_reopen_matches(self):
+        damaged = (qual.SR, [[v if any(start <= i/qual.SR < end for start, end, _ in qual.WINDOWS)
+                              else 0 for i, v in enumerate(channel)] for channel in self.rendered[1]])
+        # Identical damaged renders cannot substitute for coverage of each render.
+        self.assertEqual(qual.compare_reopened(damaged, damaged)["peak_sample_error"], 0)
+        with self.assertRaisesRegex(ValueError, "short-window silence"):
+            qual.analyse_audio(self.source, damaged)
+
+    def test_brief_dropouts_outside_old_analysis_windows_fail(self):
+        for second in (0.11, 0.5, 2.5, 3.5, 5.75, 6.5, 8.8):
+            with self.subTest(second=second):
+                damaged = (qual.SR, [list(channel) for channel in self.rendered[1]])
+                a, b = round(second * qual.SR), round((second + 0.02) * qual.SR)
+                # One-channel 20 ms dropout must also be rejected.
+                damaged[1][1][a:b] = [0] * (b-a)
+                with self.assertRaisesRegex(ValueError, "short-window"):
+                    qual.analyse_audio(self.source, damaged)
 
     def test_ignored_envelope_and_bypassed_plugin_fail(self):
         with self.assertRaisesRegex(ValueError, "expected -12"):

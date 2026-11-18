@@ -31,6 +31,12 @@ SECONDS = 9
 REQUIRED = {"Output": 0.5, "Mix": 0.0, "Intensity": 0.37,
             "Auto Gain": 0.0, "LFO Enabled": 0.0}
 WINDOWS = ((1.0, 2.0, 0.0), (4.0, 5.0, -12.0), (7.0, 8.0, 0.0))
+# Cover all settled audio, not just the three spectral-analysis windows.
+# The bounded 100 ms margins allow startup/host block settling and ten times
+# Output's 10 ms smoother (src/spectr.cpp); they are exclusions, not proof.
+CONTINUITY_SEGMENTS = ((0.1, 2.9, 0.0), (3.1, 5.9, -12.0), (6.1, 9.0, 0.0))
+CONTINUITY_EXCLUSIONS = ((0.0, 0.1), (2.9, 3.1), (5.9, 6.1))
+CONTINUITY_WINDOW_SAMPLES = SR // 20  # 50 ms, with no gaps inside each segment
 
 LUA = r'''
 local dir = os.getenv("REAPER_PRODUCTION_QUAL_DIR")
@@ -252,7 +258,29 @@ def analyse_audio(source, rendered) -> dict:
                 raise ValueError("unexpected non-probe energy in dry output")
             gains.append({"start": start, "end": end, "channel": index, "gain_db": gain,
                           "non_probe_power_fraction": residual})
-    return {"window_gains": gains, "tolerance_db": 0.25}
+    continuity = []
+    covered_samples = 0
+    for start, end, wanted in CONTINUITY_SEGMENTS:
+        segment_end = round(end * SR)
+        for a in range(round(start * SR), segment_end, CONTINUITY_WINDOW_SAMPLES):
+            b = min(a + CONTINUITY_WINDOW_SAMPLES, segment_end)
+            covered_samples += b - a
+            for index, channel in enumerate(channels):
+                input_power = sum(v * v for v in reference[index][a:b]) / (b - a)
+                output_power = sum(v * v for v in channel[a:b]) / (b - a)
+                if input_power < 1e-6 or output_power < 1e-10:
+                    raise ValueError(f"short-window silence at {a/SR:.3f}s channel {index}")
+                gain = 10 * math.log10(output_power / input_power)
+                if abs(gain - wanted) > 0.25:
+                    raise ValueError(f"short-window Output gain {gain:.3f} dB at {a/SR:.3f}s "
+                                     f"channel {index}, expected {wanted} dB")
+                continuity.append({"start": a / SR, "end": b / SR,
+                                   "channel": index, "gain_db": gain})
+    return {"window_gains": gains, "tolerance_db": 0.25,
+            "continuity_window_gains": continuity,
+            "continuity_window_seconds": CONTINUITY_WINDOW_SAMPLES / SR,
+            "continuity_covered_seconds": covered_samples / SR,
+            "continuity_excluded_intervals": CONTINUITY_EXCLUSIONS}
 
 
 def compare_reopened(first, reopened) -> dict:

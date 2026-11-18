@@ -76,11 +76,19 @@ The deterministic stereo input contains 431 Hz and 997 Hz tones. Audio must be
 48 kHz stereo, exactly nine seconds, finite and unclipped. Stable one-second
 windows must reproduce the expected absolute gain within 0.25 dB on both
 channels. Each tone must independently obey the same gain, and unexpected
-non-probe energy must stay below 0.1 percent of output power. A cold-reopened
+non-probe energy must stay below 0.1 percent of output power. Additionally,
+contiguous 50 ms windows check absolute gain within 0.25 dB on both channels
+throughout 0.1–2.9, 3.1–5.9 and 6.1–9.0 seconds: 8.5 of the nine seconds.
+Only 0–0.1 seconds of startup and ±0.1 seconds around the two automation
+transitions are excluded, allowing initial host/DSP settling and ten times the
+Output control's 10 ms smoother. Those bounded margins are explicitly unproven;
+no other gaps are permitted. The result retains every short-window gain and
+its exact coverage/exclusions. A cold-reopened
 render must additionally match the first render within a peak sample error of
 0.0003. These tolerances allow PCM quantization and ordinary render noise while
 rejecting silence, bypass, an ignored lane, a wrong uniform gain, changed
-spectrum with equal RMS, and materially different reopened audio.
+spectrum with equal RMS, missing audio between the original spectral windows,
+brief one-channel dropouts, and materially different reopened audio.
 
 The retained `result.json` carries terminal PASS/FAIL, exact expected executable
 hash, host executable path/hash, parameter/envelope facts before and after each
