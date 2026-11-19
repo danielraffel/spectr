@@ -76,14 +76,20 @@ local function main()
   assert(fxname:find("Spectr", 1, true), "wrong FX name")
   local prefix = os.getenv("REAPER_PRODUCTION_QUAL_FX"):match("^([^:]+:)")
   assert(fxname:sub(1, #prefix) == prefix, "wrong FX format")
+  -- REAPER may expose the host's own parameters (for example Bypass) more
+  -- than once around a plug-in.  Only the product controls used by this
+  -- qualification need a unique name; rejecting unrelated host parameters
+  -- made a valid installed module fail before automation could run.
+  local required = { ["Output"]=0.5, ["Mix"]=0, ["Intensity"]=0.37,
+                     ["Auto Gain"]=0, ["LFO Enabled"]=0 }
   local idx = {}
   for i = 0, reaper.TrackFX_GetNumParams(tr, fx) - 1 do
     local _, name = reaper.TrackFX_GetParamName(tr, fx, i, "")
-    assert(idx[name] == nil, "ambiguous parameter: " .. name)
-    idx[name] = i
+    if required[name] ~= nil then
+      assert(idx[name] == nil, "ambiguous parameter: " .. name)
+      idx[name] = i
+    end
   end
-  local required = { ["Output"]=0.5, ["Mix"]=0, ["Intensity"]=0.37,
-                     ["Auto Gain"]=0, ["LFO Enabled"]=0 }
   for name, value in pairs(required) do
     assert(idx[name] ~= nil, "missing parameter: " .. name)
     if phase == "author" then reaper.TrackFX_SetParamNormalized(tr, fx, idx[name], value) end
