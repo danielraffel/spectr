@@ -149,14 +149,18 @@ int main(int argc, char** argv) {
         std::printf("param %u '%s' = %.2f (range %.1f..%.1f)\n", pid, info.name, v0, info.min_value, info.max_value);
 
         check(gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, false), "editor supports embedded cocoa");
-        check(gui->create(plugin, CLAP_WINDOW_API_COCOA, false), "gui.create (the plug-in's EditorFactory)");
+        const bool created = gui->create(plugin, CLAP_WINDOW_API_COCOA, false);
+        check(created, "gui.create (the plug-in's EditorFactory)");
+        if (!created) return 1;
         uint32_t w = 0, hgt = 0;
         gui->get_size(plugin, &w, &hgt);
         std::printf("editor size %ux%u\n", w, hgt);
         // A parent view in no window: nothing can be ordered on screen.
         NSView* parent = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, w, hgt)];
         clap_window_t win{}; win.api = CLAP_WINDOW_API_COCOA; win.cocoa = (__bridge void*)parent;
-        check(gui->set_parent(plugin, &win), "gui.set_parent onto an NSView in no window");
+        const bool parented = gui->set_parent(plugin, &win);
+        check(parented, "gui.set_parent onto an NSView in no window");
+        if (!parented) return 1;
         gui->show(plugin);
         check(parent.subviews.count == 1, "the editor attached one native host view");
         if (parent.subviews.count != 1) return 1;
