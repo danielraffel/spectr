@@ -8,6 +8,10 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+#include <pulp/vellum_audio/audio_display_provider.hpp>
+#include <pulp/dataplane/value_channel_set.hpp>
+#endif
 // The SDK compiles a scripted editor's scripts and verifies its document on a
 // background worker when a host instantiates the plug-in, from what the
 // plug-in says they are (Processor::editor_prewarm).
@@ -1041,9 +1045,21 @@ public:
     /// Analyze everything captured since the last call. One poll suffices:
     /// the bridge runs the latest_window backlog policy (see analyzer_config).
     /// UI thread only, like every other bridge read.
-    void drain_analyzer() { (void)bridge_.poll(); }
+    void drain_analyzer();
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
+
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() noexcept {
+        return audio_display_provider_.get();
+    }
+#endif
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    const pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() const noexcept {
+        return audio_display_provider_.get();
+    }
+    pulp::view::ValueChannelSet* value_channels() override { return &value_channels_; }
+#endif
 
     /// One UI-thread reading of the level Spectr handed the host.
     ///
@@ -1428,6 +1444,13 @@ private:
     std::array<float*, kMaximumChannels>       output_channels_{};
 
     pulp::view::VisualizationBridge       bridge_{};
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    std::unique_ptr<pulp::vellum_audio::AudioDisplayProvider> audio_display_provider_{};
+    pulp::view::ValueChannelSet value_channels_{};
+    pulp::dataplane::MeterSource* output_meter_ = nullptr;
+    pulp::dataplane::VectorSource* analyzer_vector_ = nullptr;
+#endif
+    std::uint32_t audio_display_sequence_ = 0;
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};

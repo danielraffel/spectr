@@ -139,6 +139,14 @@ namespace {
 
 
 Spectr::Spectr() : editor_authority_(*this) {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    audio_display_provider_ = std::make_unique<pulp::vellum_audio::AudioDisplayProvider>(
+        std::vector<pulp::vellum_audio::AudioDisplayProvider::ChannelSpec>{
+            {"output", "linear", ::vellum::value::ChannelShape::meter, 0.0f},
+            {"analyzer", "dBFS", ::vellum::value::ChannelShape::vector, -120.0f}});
+    output_meter_ = value_channels_.declare_meter("output", "linear");
+    analyzer_vector_ = value_channels_.declare_vector("analyzer", "dBFS");
+#endif
     prime_negative_control_seams();
     auto_gain_tap_.bind(&freeze_source_, &auto_gain_material_);
 #if defined(SPECTR_NATIVE_EDITOR)
@@ -178,6 +186,30 @@ Spectr::Spectr() : editor_authority_(*this) {
 #endif
     native_command_registry_.register_command(redo);
     native_command_registry_.add_handler(this);
+#endif
+}
+
+void Spectr::drain_analyzer() {
+    (void)bridge_.poll();
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    if (audio_display_provider_ == nullptr)
+        return;
+    const auto& spectrum = bridge_.read_spectrum();
+    pulp::vellum_audio::AudioFrameInfo info;
+    info.viewport_min_hz = state().get_value(kParamViewportCenter) -
+                           state().get_value(kParamViewportWidth) * 0.5f;
+    info.viewport_max_hz = state().get_value(kParamViewportCenter) +
+                           state().get_value(kParamViewportWidth) * 0.5f;
+    info.floor_db = spectrum.floor_db;
+    info.sample_rate = spectrum.sample_rate;
+    info.epoch = spectrum.epoch;
+    info.sequence = static_cast<std::uint32_t>(spectrum.sequence_number);
+    info.dropped_frames = static_cast<std::uint32_t>(spectrum.dropped_frames);
+    audio_display_provider_->publish_scope(1,
+        std::span<const float>(spectrum.magnitude_db.data(),
+                               static_cast<std::size_t>(std::max(0, spectrum.num_bins))), info);
+    if (analyzer_vector_ != nullptr)
+        analyzer_vector_->publish(spectrum.magnitude_db.data(), spectrum.num_bins);
 #endif
 }
 
@@ -3303,6 +3335,10 @@ void Spectr::process(
         // Output trim remains a product-level post gain.
         if (target_output_gain != output_gain_.target())
             output_gain_.set_target(target_output_gain);
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        std::array<float, pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels> display_rms{};
+        std::array<float, pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels> display_peak{};
+#endif
         if (!processed) {
             output_gain_.skip(static_cast<int>(output.num_samples()));
             for (std::size_t ch = 0; ch < output.num_channels(); ++ch) {
@@ -3314,10 +3350,41 @@ void Spectr::process(
             // every channel so stereo/multichannel relationships stay exact.
             for (std::size_t sample = 0; sample < output.num_samples(); ++sample) {
                 const float out_gain = output_gain_.next();
-                for (std::size_t ch = 0; ch < output.num_channels(); ++ch)
-                    output_channels_[ch][sample] *= out_gain;
+                for (std::size_t ch = 0; ch < output.num_channels(); ++ch) {
+                    const float value = output_channels_[ch][sample] *= out_gain;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+                    display_rms[ch] += value * value;
+                    display_peak[ch] = std::max(display_peak[ch], std::abs(value));
+#endif
+                }
+            }
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+            const float scale = output.num_samples() > 0
+                                    ? 1.0f / static_cast<float>(output.num_samples()) : 0.0f;
+            for (std::size_t ch = 0; ch < output.num_channels(); ++ch)
+                display_rms[ch] = std::sqrt(display_rms[ch] * scale);
+#endif
+        }
+
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        if (audio_display_provider_ != nullptr && output.num_channels() > 0 &&
+            output.num_channels() <= pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels) {
+            pulp::vellum_audio::AudioFrameInfo info;
+            info.sample_rate = sample_rate_;
+            info.epoch = static_cast<std::uint64_t>(sample_rate_ * 1000.0);
+            info.sequence = ++audio_display_sequence_;
+            audio_display_provider_->publish_meter(
+                0, std::span<const float>(display_rms.data(), output.num_channels()),
+                std::span<const float>(display_peak.data(), output.num_channels()), info);
+            if (output_meter_ != nullptr) {
+                pulp::dataplane::MeterFrame frame;
+                frame.channels = static_cast<int>(output.num_channels());
+                std::copy_n(display_rms.data(), frame.channels, frame.rms.data());
+                std::copy_n(display_peak.data(), frame.channels, frame.peak.data());
+                output_meter_->publish(frame);
             }
         }
+#endif
 
         // Publish post-engine audio to the UI thread via VisualizationBridge.
 #if !defined(SPECTR_AAX_HEADLESS)

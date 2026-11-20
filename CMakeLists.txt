@@ -556,9 +556,11 @@ target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     # The processor sources retain the legacy bridge helpers for the default
     # editor contract even while the package factory owns the opt-in editor.
-    target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC Pulp::view)
+    target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC Pulp::view Pulp::vellum-audio)
     target_sources(${SPECTR_NATIVE_CORE_TARGET} PRIVATE
         src/ui/vellum_editor_update_stub.cpp)
+    target_compile_definitions(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
+        SPECTR_VELLUM_EDITOR_PACKAGE=1)
 endif()
 foreach(_spectr_native_target
         ${SPECTR_NATIVE_CORE_TARGET}
@@ -924,7 +926,10 @@ endif()
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_gpu.cpp)
-    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value Vellum::MirrorView_core)
+    target_sources(Spectr-test PRIVATE test/test_vellum_audio_display.cpp)
+    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Pulp::vellum-audio
+        Vellum::Value Vellum::MirrorView_core)
+    target_compile_definitions(Spectr-test PRIVATE SPECTR_VELLUM_EDITOR_PACKAGE=1)
     if(APPLE)
         # The layout test decodes the captured PNG with ImageIO.
         target_link_libraries(Spectr-test PRIVATE "-framework ImageIO"

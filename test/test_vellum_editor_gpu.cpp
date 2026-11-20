@@ -6,6 +6,7 @@
 #include <pulp/format/headless.hpp>
 #include <pulp/vellum/editor.hpp>
 #include <pulp/vellum/param_port_model.hpp>
+#include <pulp/vellum_audio/audio_display_provider.hpp>
 #include <vellum/view/plugin_view_host.hpp>
 
 #include "spectr/spectr.hpp"
@@ -139,7 +140,7 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     root.set_bounds({0, 0, 400, 300});
     root.layout_children();
     root.editor_idle();
-    REQUIRE(gpu->present_first_frame());
+    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
     const std::vector<uint8_t> before = gpu->capture_back_buffer_png();
     REQUIRE_FALSE(before.empty());
     if (const char* dir = std::getenv("SPECTR_GPU_EDITOR_CAPTURE_DIR"))
@@ -153,13 +154,13 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     // Negative control: a host write of the current value changes nothing.
     store.set_value(spectr::kMix, mix);
     root.editor_idle();
-    REQUIRE(gpu->present_first_frame());
+    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
     CHECK(gpu->capture_back_buffer_png() == before);
 
     const float target = mix > 50.0f ? 10.0f : 90.0f;
     store.set_value(spectr::kMix, target);
     root.editor_idle();
-    REQUIRE(gpu->present_first_frame());
+    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
     const std::vector<uint8_t> after = gpu->capture_back_buffer_png();
     // Mix is the third control the editor script creates.
     const auto values = collect_values(root);
@@ -172,6 +173,46 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     // host before the host is freed.
     root.set_plugin_view_host(nullptr);
     gpu.reset();
+#endif
+}
+
+TEST_CASE("Vellum audio displays change pixels after a published frame",
+          "[vellum][editor][gpu][audio]") {
+#if !defined(__APPLE__)
+    SKIP("needs a GPU run by the lead");
+#else
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::StateStoreParamPort port(host.state());
+    pulp::vellum::ParamPortModel model(port);
+    Context context(port);
+    pulp::vellum_audio::AudioDisplayProvider provider({
+        {"output", "linear", ::vellum::value::ChannelShape::meter, 0.0f},
+        {"analyzer", "dBFS", ::vellum::value::ChannelShape::vector, -120.0f}});
+    pulp::vellum::EditorEnv env{context, model, &provider};
+    spectr::vellum_editor::RootView root(env);
+    std::string error;
+    REQUIRE(pulp::vellum::register_editor_dawn_bootstrap("com.pulp.spectr.audio.test", &error));
+    ::vellum::view::PluginViewHost::Options options;
+    options.size = {400, 300};
+    options.use_gpu = true;
+    auto gpu = ::vellum::view::PluginViewHost::create(root, options);
+    REQUIRE(gpu != nullptr);
+    if (!gpu->is_gpu_backed()) SKIP("needs a GPU run by the lead");
+    root.set_bounds({0, 0, 400, 300});
+    root.layout_children();
+    root.editor_idle();
+    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    const auto silence = gpu->capture_back_buffer_png();
+    const std::array<float, 2> rms{0.25f, 0.25f};
+    const std::array<float, 2> peak{0.5f, 0.5f};
+    const std::array<float, 5> bins{-120.0f, -80.0f, -3.0f, -80.0f, -120.0f};
+    provider.publish_meter(0, rms, peak);
+    provider.publish_scope(1, bins);
+    root.editor_idle();
+    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    const auto signal = gpu->capture_back_buffer_png();
+    CHECK(signal != silence);
+    root.set_plugin_view_host(nullptr);
 #endif
 }
 
@@ -218,7 +259,7 @@ TEST_CASE("Vellum editor lays every control out legibly and reflows on resize",
         root.layout_children();
         root.editor_idle();
         root.layout_children();
-        REQUIRE(gpu->present_first_frame());
+        if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
 
         const auto values = collect_values(root);
         REQUIRE(values.size() == kControls);

@@ -5,14 +5,17 @@
 // editor, and this view resolves the existing Spectr allowlist for bindings.
 
 #include <pulp/vellum/editor_env.hpp>
+#include <pulp/vellum_audio/audio_widgets.hpp>
 #include <vellum/view/scripted_ui.hpp>
 #include <vellum/view/view.hpp>
 
 #include <array>
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <span>
 #include "spectr/spectr.hpp"
 
 namespace spectr::vellum_editor {
@@ -20,6 +23,26 @@ namespace spectr::vellum_editor {
 class RootView final : public ::vellum::view::View {
   public:
     explicit RootView(::pulp::vellum::EditorEnv& env) : env_(env) {
+        visual_provider_ = dynamic_cast<::pulp::vellum_audio::AudioDisplayProvider*>(env_.visuals);
+        if (visual_provider_ == nullptr && env_.visuals != nullptr) {
+            owned_visual_provider_ = std::make_unique<::pulp::vellum_audio::AudioDisplayProvider>(
+                std::vector<::pulp::vellum_audio::AudioDisplayProvider::ChannelSpec>{
+                    {"output", "linear", ::vellum::value::ChannelShape::meter, 0.0f},
+                    {"analyzer", "dBFS", ::vellum::value::ChannelShape::vector, -120.0f}});
+            visual_provider_ = owned_visual_provider_.get();
+        }
+        if (visual_provider_ != nullptr) {
+            auto meter = std::make_unique<::pulp::vellum_audio::LevelMeter>();
+            meter_ = meter.get();
+            meter_->set_feed(visual_provider_, 0);
+            add_child(std::move(meter));
+            auto scope = std::make_unique<::pulp::vellum_audio::AnalyzerScope>();
+            scope_ = scope.get();
+            scope_->set_feed(visual_provider_, 1);
+            scope_->configure_mapping({48000.0, ::spectr::kAnalyzerFftSize, 240, 20.0, 20000.0,
+                                        -120.0f, 0.0f});
+            add_child(std::move(scope));
+        }
         ::vellum::view::ScriptedUiOptions options;
         options.script_name = "spectr-vellum-editor.js";
         options.script_source = layout_script();
@@ -36,6 +59,27 @@ class RootView final : public ::vellum::view::View {
     void editor_idle() {
         if (scripted_session_ != nullptr)
             (void)scripted_session_->poll();
+        if (owned_visual_provider_ != nullptr && env_.visuals != nullptr) {
+            std::array<float, 32> rms{}, peak{};
+            const auto count = env_.visuals->read_meter(0, rms, peak);
+            const auto bounded_count = std::min<std::size_t>(count, rms.size());
+            if (bounded_count != 0)
+                owned_visual_provider_->publish_meter(
+                    0, std::span<const float>(rms.data(), bounded_count),
+                    std::span<const float>(peak.data(), bounded_count));
+            std::array<float, ::pulp::vellum_audio::AudioDisplayProvider::kMaxScopeSamples> bins{};
+            const auto samples = env_.visuals->read_vector(1, bins);
+            if (samples != 0)
+                owned_visual_provider_->publish_scope(1, std::span<const float>(bins.data(), samples));
+        }
+        if (meter_ != nullptr) meter_->sample();
+        if (scope_ != nullptr) scope_->sample();
+        const auto b = bounds();
+        if (scope_ != nullptr)
+            scope_->set_bounds({24.0f, std::max(0.0f, b.height - 78.0f),
+                                std::max(120.0f, b.width - 88.0f), 64.0f});
+        if (meter_ != nullptr)
+            meter_->set_bounds({b.width - 48.0f, std::max(0.0f, b.height - 78.0f), 24.0f, 64.0f});
     }
 
     ::pulp::vellum::EditorEnv& env() noexcept { return env_; }
@@ -117,6 +161,10 @@ class RootView final : public ::vellum::view::View {
     }
 
     ::pulp::vellum::EditorEnv& env_;
+    ::pulp::vellum_audio::AudioDisplayProvider* visual_provider_ = nullptr;
+    std::unique_ptr<::pulp::vellum_audio::AudioDisplayProvider> owned_visual_provider_;
+    ::pulp::vellum_audio::LevelMeter* meter_ = nullptr;
+    ::pulp::vellum_audio::AnalyzerScope* scope_ = nullptr;
     std::unique_ptr<::vellum::view::ScriptedUiSession> scripted_session_;
 };
 
