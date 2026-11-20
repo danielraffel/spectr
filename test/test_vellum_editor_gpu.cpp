@@ -11,12 +11,19 @@
 #include "spectr/spectr.hpp"
 #include "spectr/vellum_editor.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vellum/view/accessibility.hpp>
 #include <cstdlib>
 #include <fstream>
+#include <string>
 #include <vector>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <ImageIO/ImageIO.h>
+#endif
 
 namespace {
 
@@ -42,6 +49,67 @@ std::vector<::vellum::view::AccessibilityValueInterface*> collect_values(::vellu
     for (size_t i = 0; i < v.child_count(); ++i)
         for (auto* child : collect_values(*v.child_at(i))) out.push_back(child);
     return out;
+}
+
+struct Pixels {
+    size_t width = 0, height = 0;
+    std::vector<uint8_t> rgba;
+};
+
+#ifdef __APPLE__
+Pixels decode_png(const std::vector<uint8_t>& png) {
+    Pixels out;
+    CFDataRef data = CFDataCreate(nullptr, png.data(), static_cast<CFIndex>(png.size()));
+    CGImageSourceRef source = CGImageSourceCreateWithData(data, nullptr);
+    CGImageRef image = source ? CGImageSourceCreateImageAtIndex(source, 0, nullptr) : nullptr;
+    if (image) {
+        out.width = CGImageGetWidth(image);
+        out.height = CGImageGetHeight(image);
+        out.rgba.assign(out.width * out.height * 4, 0);
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(
+            out.rgba.data(), out.width, out.height, 8, out.width * 4, space,
+            kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        CGContextDrawImage(ctx, CGRectMake(0, 0, static_cast<CGFloat>(out.width),
+                                           static_cast<CGFloat>(out.height)), image);
+        CGContextRelease(ctx);
+        CGColorSpaceRelease(space);
+        CGImageRelease(image);
+    }
+    if (source) CFRelease(source);
+    CFRelease(data);
+    return out;
+}
+#endif
+
+// Root-relative rectangle of a view: bounds are in the parent's space.
+::vellum::view::Rect absolute_bounds(const ::vellum::view::View& v) {
+    auto r = v.bounds();
+    for (const auto* p = v.parent(); p != nullptr; p = p->parent()) {
+        r.x += p->bounds().x;
+        r.y += p->bounds().y;
+    }
+    return r;
+}
+
+// Fraction of pixels inside `r` that differ from the frame's corner pixel
+// (the clear colour). A control that drew nothing, or drew into a 2 px box,
+// reads near zero.
+double painted_fraction(const Pixels& px, const ::vellum::view::Rect& r) {
+    const size_t x0 = static_cast<size_t>(std::max(0.0f, std::floor(r.x)));
+    const size_t y0 = static_cast<size_t>(std::max(0.0f, std::floor(r.y)));
+    const size_t x1 = std::min(px.width, static_cast<size_t>(std::ceil(r.right())));
+    const size_t y1 = std::min(px.height, static_cast<size_t>(std::ceil(r.bottom())));
+    if (x1 <= x0 || y1 <= y0) return 0.0;
+    size_t differing = 0;
+    for (size_t y = y0; y < y1; ++y)
+        for (size_t x = x0; x < x1; ++x) {
+            const uint8_t* p = &px.rgba[(y * px.width + x) * 4];
+            if (std::abs(int(p[0]) - px.rgba[0]) + std::abs(int(p[1]) - px.rgba[1]) +
+                    std::abs(int(p[2]) - px.rgba[2]) > 12)
+                ++differing;
+        }
+    return static_cast<double>(differing) / static_cast<double>((x1 - x0) * (y1 - y0));
 }
 
 } // namespace
@@ -102,6 +170,86 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
 
     // Tear down as pulp::vellum::Editor does: the root stops pointing at the
     // host before the host is freed.
+    root.set_plugin_view_host(nullptr);
+    gpu.reset();
+#endif
+}
+
+// Minimum edge a control may shrink to, and the fraction of its own box it
+// must paint into. A knob's track ring and thumb cover far more than 5% of its
+// square; the old single-column layout gave each knob a sliver that is
+// near-empty.
+TEST_CASE("Vellum editor lays every control out legibly and reflows on resize",
+          "[vellum][editor][gpu][layout]") {
+#if !defined(__APPLE__)
+    SKIP("Vellum ships its GPU plug-in view host on macOS only");
+#else
+    constexpr float kMinEdge = 24.0f;
+    constexpr double kMinPaintedFraction = 0.05;
+    constexpr double kMinFramePaintedFraction = 0.05;
+
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::StateStoreParamPort port(host.state());
+    pulp::vellum::ParamPortModel model(port);
+    Context context(port);
+    pulp::vellum::EditorEnv env{context, model, nullptr};
+    spectr::vellum_editor::RootView root(env);
+
+    std::string error;
+    REQUIRE(pulp::vellum::register_editor_dawn_bootstrap("com.pulp.spectr.layout.test", &error));
+    ::vellum::view::PluginViewHost::Options options;
+    options.size = {400, 300};
+    options.use_gpu = true;
+    auto gpu = ::vellum::view::PluginViewHost::create(root, options);
+    REQUIRE(gpu != nullptr);
+    if (!gpu->is_gpu_backed())
+        SKIP("no GPU adapter: the host fell back without a surface");
+
+    const char* capture_dir = std::getenv("SPECTR_GPU_EDITOR_CAPTURE_DIR");
+    // 14 model controls + 2 LFOs x 13 routes x {amount, Depth}.
+    constexpr size_t kControls = 14 + 2 * 13 * 2;
+
+    struct Size { float w, h; };
+    for (const Size size : {Size{400, 300}, Size{800, 600}}) {
+        CAPTURE(size.w, size.h);
+        // The editor host resizes the surface and the root together.
+        gpu->set_size(static_cast<uint32_t>(size.w), static_cast<uint32_t>(size.h));
+        root.set_bounds({0, 0, size.w, size.h});
+        root.layout_children();
+        root.editor_idle();
+        root.layout_children();
+        REQUIRE(gpu->present_first_frame());
+
+        const auto values = collect_values(root);
+        REQUIRE(values.size() == kControls);
+        const auto png = gpu->capture_back_buffer_png();
+        REQUIRE_FALSE(png.empty());
+        if (capture_dir)
+            std::ofstream(std::string(capture_dir) + "/layout-" + std::to_string(int(size.w)) +
+                              "x" + std::to_string(int(size.h)) + ".png",
+                          std::ios::binary)
+                .write(reinterpret_cast<const char*>(png.data()),
+                       static_cast<std::streamsize>(png.size()));
+        const Pixels px = decode_png(png);
+        REQUIRE(px.width > 0);
+
+        size_t bad_bounds = 0, unpainted = 0;
+        for (auto* value : values) {
+            const auto* view = dynamic_cast<const ::vellum::view::View*>(value);
+            REQUIRE(view != nullptr);
+            const auto r = absolute_bounds(*view);
+            if (r.width < kMinEdge || r.height < kMinEdge || r.x < 0 || r.y < 0 ||
+                r.right() > size.w + 0.5f || r.bottom() > size.h + 0.5f)
+                ++bad_bounds;
+            if (painted_fraction(px, r) < kMinPaintedFraction) ++unpainted;
+        }
+        CHECK(bad_bounds == 0);
+        CHECK(unpainted == 0);
+
+        const ::vellum::view::Rect whole{0, 0, float(px.width), float(px.height)};
+        CHECK(painted_fraction(px, whole) > kMinFramePaintedFraction);
+    }
+
     root.set_plugin_view_host(nullptr);
     gpu.reset();
 #endif
