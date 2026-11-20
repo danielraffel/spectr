@@ -26,14 +26,21 @@ class RootView final : public ::vellum::view::View {
             "[" + control_script_keys() + "] .forEach((key) => {\n"
             "  const id = key.replace(/[^a-zA-Z0-9]/g, '_');\n"
             "  createKnob(id, 'root');\n"
-            "  setValue(id, getParam(key));\n"
-            "  on(id, 'change', (value) => setParam(key, value));\n"
+            "  bindWidgetToParam(id, key);\n"
             "});\n";
         scripted_session_ = std::make_unique<::vellum::view::ScriptedUiSession>(
             *this, env_.params, std::move(options));
         std::string error;
         if (!scripted_session_->load(&error))
             scripted_session_.reset();
+    }
+
+    /// One editor frame: pumps the scripted session, which pushes bound
+    /// parameter values into their widgets. The editor host calls this from
+    /// its idle tick.
+    void editor_idle() {
+        if (scripted_session_ != nullptr)
+            (void)scripted_session_->poll();
     }
 
     ::pulp::vellum::EditorEnv& env() noexcept { return env_; }

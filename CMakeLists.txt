@@ -923,6 +923,7 @@ if(SPECTR_SDK_HAS_DESIGN_IMPORT)
 endif()
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
+    target_sources(Spectr-test PRIVATE test/test_vellum_editor_gpu.cpp)
     target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value Vellum::MirrorView_core)
 endif()
 target_link_libraries(Spectr-test PRIVATE
