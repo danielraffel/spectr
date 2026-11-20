@@ -6,6 +6,7 @@
 #include <pulp/format/headless.hpp>
 #include <pulp/vellum/editor.hpp>
 #include <pulp/vellum/param_port_model.hpp>
+#include <pulp/vellum_audio/audio_display_provider.hpp>
 #include <vellum/view/plugin_view_host.hpp>
 
 #include "spectr/spectr.hpp"
@@ -92,6 +93,25 @@ Pixels decode_png(const std::vector<uint8_t>& png) {
     return r;
 }
 
+// Fraction of pixels inside `r` that differ between two frames of one size.
+double changed_fraction(const Pixels& a, const Pixels& b, const ::vellum::view::Rect& r) {
+    if (a.width != b.width || a.height != b.height) return 0.0;
+    const size_t x0 = static_cast<size_t>(std::max(0.0f, std::floor(r.x)));
+    const size_t y0 = static_cast<size_t>(std::max(0.0f, std::floor(r.y)));
+    const size_t x1 = std::min(a.width, static_cast<size_t>(std::ceil(r.right())));
+    const size_t y1 = std::min(a.height, static_cast<size_t>(std::ceil(r.bottom())));
+    if (x1 <= x0 || y1 <= y0) return 0.0;
+    size_t changed = 0;
+    for (size_t y = y0; y < y1; ++y)
+        for (size_t x = x0; x < x1; ++x) {
+            const size_t i = (y * a.width + x) * 4;
+            if (std::abs(int(a.rgba[i]) - int(b.rgba[i])) + std::abs(int(a.rgba[i + 1]) - int(b.rgba[i + 1])) +
+                    std::abs(int(a.rgba[i + 2]) - int(b.rgba[i + 2])) > 12)
+                ++changed;
+        }
+    return static_cast<double>(changed) / static_cast<double>((x1 - x0) * (y1 - y0));
+}
+
 // Fraction of pixels inside `r` that differ from the frame's corner pixel
 // (the clear colour). A control that drew nothing, or drew into a 2 px box,
 // reads near zero.
@@ -172,6 +192,74 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     // host before the host is freed.
     root.set_plugin_view_host(nullptr);
     gpu.reset();
+#endif
+}
+
+TEST_CASE("Vellum audio displays change pixels after a published frame",
+          "[vellum][editor][gpu][audio]") {
+#if !defined(__APPLE__)
+    SKIP("needs a GPU run by the lead");
+#else
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    pulp::format::StateStoreParamPort port(host.state());
+    pulp::vellum::ParamPortModel model(port);
+    Context context(port);
+    pulp::vellum_audio::AudioDisplayProvider provider({
+        {"output", "linear", ::vellum::value::ChannelShape::meter, 0.0f},
+        {"analyzer", "dBFS", ::vellum::value::ChannelShape::vector, -120.0f}});
+    pulp::vellum::EditorEnv env{context, model, &provider};
+    spectr::vellum_editor::RootView root(env);
+    std::string error;
+    REQUIRE(pulp::vellum::register_editor_dawn_bootstrap("com.pulp.spectr.audio.test", &error));
+    ::vellum::view::PluginViewHost::Options options;
+    options.size = {400, 300};
+    options.use_gpu = true;
+    auto gpu = ::vellum::view::PluginViewHost::create(root, options);
+    REQUIRE(gpu != nullptr);
+    if (!gpu->is_gpu_backed()) SKIP("needs a GPU run by the lead");
+    root.set_bounds({0, 0, 400, 300});
+    root.layout_children();
+    root.editor_idle();
+    REQUIRE(gpu->present_first_frame());
+    const auto silence = gpu->capture_back_buffer_png();
+    REQUIRE(root.audio_row() != nullptr);
+    REQUIRE(root.audio_scope() != nullptr);
+    REQUIRE(root.audio_meter() != nullptr);
+    const auto row = absolute_bounds(*root.audio_row());
+    // The displays sit in their own row: no bound control overlaps it.
+    const auto controls = collect_values(root);
+    REQUIRE(controls.size() == 66);
+    std::size_t overlapping = 0;
+    for (auto* control : controls) {
+        auto* view = dynamic_cast<::vellum::view::View*>(control);
+        REQUIRE(view != nullptr);
+        const auto r = absolute_bounds(*view);
+        if (r.x < row.right() && r.right() > row.x && r.y < row.bottom() && r.bottom() > row.y)
+            ++overlapping;
+    }
+    CHECK(overlapping == 0);
+
+    const std::array<float, 2> rms{0.25f, 0.25f};
+    const std::array<float, 2> peak{0.5f, 0.5f};
+    // A frame the scope's mapping accepts: fft_size / 2 + 1 bins, one peak.
+    std::vector<float> bins(::spectr::kAnalyzerDisplayBins, -120.0f);
+    bins[bins.size() / 8] = -3.0f;
+    provider.publish_meter(0, rms, peak);
+    provider.publish_scope(1, bins);
+    root.editor_idle();
+    REQUIRE(gpu->present_first_frame());
+    const auto signal = gpu->capture_back_buffer_png();
+    if (const char* dir = std::getenv("SPECTR_GPU_EDITOR_CAPTURE_DIR"))
+        std::ofstream(std::string(dir) + "/audio-signal.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(signal.data()), static_cast<std::streamsize>(signal.size()));
+    const auto quiet = decode_png(silence);
+    const auto loud = decode_png(signal);
+    // Each display changes inside its own box; a frame either one drops leaves
+    // its box unchanged. Thresholds sit well below a drawn trace or bar and
+    // well above anti-aliasing noise at the box edges.
+    CHECK(changed_fraction(quiet, loud, absolute_bounds(*root.audio_scope())) > 0.01);
+    CHECK(changed_fraction(quiet, loud, absolute_bounds(*root.audio_meter())) > 0.05);
+    root.set_plugin_view_host(nullptr);
 #endif
 }
 

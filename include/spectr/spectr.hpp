@@ -8,6 +8,12 @@
 // Milestone 4.
 
 #include <pulp/format/processor.hpp>
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+#include <pulp/vellum_audio/audio_display_provider.hpp>
+#include <algorithm>
+#include <span>
+#include <pulp/dataplane/value_channel_set.hpp>
+#endif
 // The SDK compiles a scripted editor's scripts and verifies its document on a
 // background worker when a host instantiates the plug-in, from what the
 // plug-in says they are (Processor::editor_prewarm).
@@ -391,6 +397,43 @@ inline constexpr int kSpectralLatency =
 // its upper spectrum is never silently truncated.
 inline constexpr int kAnalyzerFftSize =
     kSpectralFftSize > 8192 ? 8192 : kSpectralFftSize;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+/// FFT size the Vellum analyzer scope maps: the largest power-of-two
+/// reduction of kAnalyzerFftSize whose bin count fits one display frame.
+inline constexpr int kAnalyzerDisplayFftSize = [] {
+    int fft = kAnalyzerFftSize;
+    while (fft > 2 && static_cast<std::size_t>(fft / 2 + 1) >
+                          pulp::vellum_audio::AudioDisplayProvider::kMaxScopeSamples)
+        fft /= 2;
+    return fft;
+}();
+inline constexpr std::size_t kAnalyzerDisplayBins =
+    static_cast<std::size_t>(kAnalyzerDisplayFftSize / 2 + 1);
+
+/// Reduce an analyzer spectrum of fft/2+1 bins to `out.size()` bins of a
+/// smaller power-of-two FFT: bin 0 is kept, and each output bin takes the
+/// maximum of the input bins it covers, so a narrow peak stays visible.
+/// Returns the number of bins written (0 when the sizes do not reduce).
+inline std::size_t pool_analyzer_bins(std::span<const float> in, std::span<float> out) noexcept {
+    if (in.empty() || out.empty() || out.size() > in.size())
+        return 0;
+    if (out.size() == 1 || in.size() == out.size()) {
+        std::copy_n(in.begin(), out.size(), out.begin());
+        return out.size();
+    }
+    const std::size_t factor = (in.size() - 1) / (out.size() - 1);
+    if (factor == 0 || (out.size() - 1) * factor != in.size() - 1)
+        return 0;
+    out[0] = in[0];
+    for (std::size_t k = 1; k < out.size(); ++k) {
+        float m = in[(k - 1) * factor + 1];
+        for (std::size_t j = 2; j <= factor; ++j)
+            m = std::max(m, in[(k - 1) * factor + j]);
+        out[k] = m;
+    }
+    return out.size();
+}
+#endif
 inline constexpr int kAnalyzerAnalysisHopUncapped =
     (kSpectralAnalysisHop * kAnalyzerFftSize + kSpectralFftSize - 1)
         / kSpectralFftSize;
@@ -1041,9 +1084,22 @@ public:
     /// Analyze everything captured since the last call. One poll suffices:
     /// the bridge runs the latest_window backlog policy (see analyzer_config).
     /// UI thread only, like every other bridge read.
-    void drain_analyzer() { (void)bridge_.poll(); }
+    void drain_analyzer();
+    /// Publish the finished block's per-channel RMS and peak to the editor's
+    /// audio display feed. Real-time safe: no allocation, no locks.
+    void publish_output_meters(const pulp::audio::BufferView<float>& output) noexcept;
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
+
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() noexcept {
+        return audio_display_provider_.get();
+    }
+    const pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() const noexcept {
+        return audio_display_provider_.get();
+    }
+    pulp::view::ValueChannelSet* value_channels() override { return &value_channels_; }
+#endif
 
     /// One UI-thread reading of the level Spectr handed the host.
     ///
@@ -1428,6 +1484,17 @@ private:
     std::array<float*, kMaximumChannels>       output_channels_{};
 
     pulp::view::VisualizationBridge       bridge_{};
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    std::unique_ptr<pulp::vellum_audio::AudioDisplayProvider> audio_display_provider_{};
+    pulp::view::ValueChannelSet value_channels_{};
+    pulp::dataplane::MeterSource* output_meter_ = nullptr;
+    pulp::dataplane::VectorSource* analyzer_vector_ = nullptr;
+    std::array<float, kAnalyzerDisplayBins> analyzer_display_bins_{};
+    /// Advances on every prepare(), so a reader can tell a reconfigured
+    /// stream from a continuing one.
+    std::uint64_t audio_display_epoch_ = 0;
+#endif
+    std::uint32_t audio_display_sequence_ = 0;
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
