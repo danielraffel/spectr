@@ -1,3 +1,4 @@
+#include <pulp/format/processor.hpp>
 #include "pulp-vellum/editor-packages/SpectrVellumEditor.hpp"
 
 // Force the generated package header and the root view to compile together.
