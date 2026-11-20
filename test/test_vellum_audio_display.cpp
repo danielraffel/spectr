@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -145,4 +147,57 @@ TEST_CASE("Analyzer bins pool to a display frame and keep a narrow peak") {
     STATIC_REQUIRE(spectr::kAnalyzerDisplayBins <=
                    pulp::vellum_audio::AudioDisplayProvider::kMaxScopeSamples);
     STATIC_REQUIRE(spectr::kAnalyzerFftSize % spectr::kAnalyzerDisplayFftSize == 0);
+}
+
+TEST_CASE("Spectr meter frames carry a new epoch after a re-prepare") {
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.prepare(48000.0, 256);
+    pulp::audio::Buffer<float> input(2, 256), output(2, 256);
+    for (std::size_t i = 0; i < 256; ++i)
+        input.channel(0)[i] = input.channel(1)[i] = 0.25f;
+    const float* input_channels[] = {input.channel(0).data(), input.channel(1).data()};
+    pulp::audio::BufferView<const float> input_view(input_channels, 2, 256);
+    auto run = [&] {
+        auto output_view = output.view();
+        host.process(output_view, input_view);
+    };
+    auto* plugin = host.processor_as<spectr::Spectr>();
+    REQUIRE(plugin != nullptr);
+    run();
+    pulp::vellum_audio::AudioFrameInfo first{};
+    REQUIRE(plugin->audio_display_provider()->read_info(0, first));
+    run();
+    pulp::vellum_audio::AudioFrameInfo same{};
+    REQUIRE(plugin->audio_display_provider()->read_info(0, same));
+    CHECK(same.epoch == first.epoch);
+    host.prepare(44100.0, 256);
+    run();
+    pulp::vellum_audio::AudioFrameInfo after{};
+    REQUIRE(plugin->audio_display_provider()->read_info(0, after));
+    CHECK(after.epoch != first.epoch);
+}
+
+TEST_CASE("Spectr publishes output meters on every block while an LFO modulates") {
+    // Modulation sends process() down its per-event path; the meters must
+    // publish there too, on every block, or they freeze while an LFO runs.
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.state().set_value(spectr::kParamAutoGain, 0.0f);
+    host.state().set_value(spectr::kParamLfoEnabled, 1.0f);
+    host.prepare(48000.0, 256);
+    pulp::audio::Buffer<float> input(2, 256), output(2, 256);
+    for (std::size_t i = 0; i < 256; ++i)
+        input.channel(0)[i] = input.channel(1)[i] = 0.25f;
+    const float* input_channels[] = {input.channel(0).data(), input.channel(1).data()};
+    pulp::audio::BufferView<const float> input_view(input_channels, 2, 256);
+    auto* plugin = host.processor_as<spectr::Spectr>();
+    REQUIRE(plugin != nullptr);
+    std::uint32_t last = 0;
+    for (int block = 0; block < 6; ++block) {
+        auto output_view = output.view();
+        host.process(output_view, input_view);
+        pulp::vellum_audio::AudioFrameInfo info{};
+        REQUIRE(plugin->audio_display_provider()->read_info(0, info));
+        CHECK(info.sequence > last);
+        last = info.sequence;
+    }
 }

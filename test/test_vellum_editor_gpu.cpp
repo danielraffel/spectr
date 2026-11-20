@@ -159,7 +159,7 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     root.set_bounds({0, 0, 400, 300});
     root.layout_children();
     root.editor_idle();
-    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    REQUIRE(gpu->present_first_frame());
     const std::vector<uint8_t> before = gpu->capture_back_buffer_png();
     REQUIRE_FALSE(before.empty());
     if (const char* dir = std::getenv("SPECTR_GPU_EDITOR_CAPTURE_DIR"))
@@ -173,13 +173,13 @@ TEST_CASE("Vellum editor repaints a host Mix change on the GPU host", "[vellum][
     // Negative control: a host write of the current value changes nothing.
     store.set_value(spectr::kMix, mix);
     root.editor_idle();
-    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    REQUIRE(gpu->present_first_frame());
     CHECK(gpu->capture_back_buffer_png() == before);
 
     const float target = mix > 50.0f ? 10.0f : 90.0f;
     store.set_value(spectr::kMix, target);
     root.editor_idle();
-    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    REQUIRE(gpu->present_first_frame());
     const std::vector<uint8_t> after = gpu->capture_back_buffer_png();
     // Mix is the third control the editor script creates.
     const auto values = collect_values(root);
@@ -220,7 +220,7 @@ TEST_CASE("Vellum audio displays change pixels after a published frame",
     root.set_bounds({0, 0, 400, 300});
     root.layout_children();
     root.editor_idle();
-    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    REQUIRE(gpu->present_first_frame());
     const auto silence = gpu->capture_back_buffer_png();
     REQUIRE(root.audio_row() != nullptr);
     REQUIRE(root.audio_scope() != nullptr);
@@ -247,7 +247,7 @@ TEST_CASE("Vellum audio displays change pixels after a published frame",
     provider.publish_meter(0, rms, peak);
     provider.publish_scope(1, bins);
     root.editor_idle();
-    if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+    REQUIRE(gpu->present_first_frame());
     const auto signal = gpu->capture_back_buffer_png();
     if (const char* dir = std::getenv("SPECTR_GPU_EDITOR_CAPTURE_DIR"))
         std::ofstream(std::string(dir) + "/audio-signal.png", std::ios::binary)
@@ -306,7 +306,7 @@ TEST_CASE("Vellum editor lays every control out legibly and reflows on resize",
         root.layout_children();
         root.editor_idle();
         root.layout_children();
-        if (!gpu->present_first_frame()) { root.set_plugin_view_host(nullptr); gpu.reset(); SKIP("needs a GPU run by the lead"); }
+        REQUIRE(gpu->present_first_frame());
 
         const auto values = collect_values(root);
         REQUIRE(values.size() == kControls);

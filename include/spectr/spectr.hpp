@@ -1085,6 +1085,9 @@ public:
     /// the bridge runs the latest_window backlog policy (see analyzer_config).
     /// UI thread only, like every other bridge read.
     void drain_analyzer();
+    /// Publish the finished block's per-channel RMS and peak to the editor's
+    /// audio display feed. Real-time safe: no allocation, no locks.
+    void publish_output_meters(const pulp::audio::BufferView<float>& output) noexcept;
     const pulp::view::WaveformData& read_waveform() { return bridge_.read_waveform(); }
     const pulp::signal::MultiChannelMeterData& read_meter() { return bridge_.read_meter(); }
 
@@ -1092,8 +1095,6 @@ public:
     pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() noexcept {
         return audio_display_provider_.get();
     }
-#endif
-#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
     const pulp::vellum_audio::AudioDisplayProvider* audio_display_provider() const noexcept {
         return audio_display_provider_.get();
     }
@@ -1488,11 +1489,12 @@ private:
     pulp::view::ValueChannelSet value_channels_{};
     pulp::dataplane::MeterSource* output_meter_ = nullptr;
     pulp::dataplane::VectorSource* analyzer_vector_ = nullptr;
+    std::array<float, kAnalyzerDisplayBins> analyzer_display_bins_{};
+    /// Advances on every prepare(), so a reader can tell a reconfigured
+    /// stream from a continuing one.
+    std::uint64_t audio_display_epoch_ = 0;
 #endif
     std::uint32_t audio_display_sequence_ = 0;
-#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
-    std::array<float, kAnalyzerDisplayBins> analyzer_display_bins_{};
-#endif
     SnapshotBank                          snapshots_{};
     PatternLibrary                        patterns_{};
     std::unique_ptr<pulp::view::ABCompare> ab_{};
