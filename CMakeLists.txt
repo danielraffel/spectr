@@ -514,8 +514,12 @@ if(_spectr_aax_MODE STREQUAL "native")
     set(SPECTR_NATIVE_AAX_TARGET "${SPECTR_NATIVE_PLUGIN_TARGET}_AAX")
 endif()
 
+set(_spectr_native_ui_args NATIVE_UI)
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    set(_spectr_native_ui_args UI SpectrVellumEditor)
+endif()
 pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
-    NATIVE_UI
+    ${_spectr_native_ui_args}
     FORMATS ${_spectr_native_formats}
     SOURCES ${SPECTR_NATIVE_SOURCES}
     PROCESSOR_FACTORY spectr::create_spectr
@@ -534,8 +538,28 @@ pulp_add_plugin(${SPECTR_NATIVE_PLUGIN_TARGET}
     DESIGN_MIN_HEIGHT ${SPECTR_HOST_MIN_HEIGHT}
     DESIGN_MAX_WIDTH ${SPECTR_HOST_MAX_WIDTH}
     DESIGN_MAX_HEIGHT ${SPECTR_HOST_MAX_HEIGHT})
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    foreach(_spectr_vellum_format_target
+            ${SPECTR_NATIVE_CORE_TARGET}
+            ${SPECTR_NATIVE_STANDALONE_TARGET}
+            ${SPECTR_NATIVE_VST3_TARGET}
+            ${SPECTR_NATIVE_AU_TARGET}
+            ${SPECTR_NATIVE_CLAP_TARGET})
+        if(TARGET ${_spectr_vellum_format_target})
+            target_compile_options(${_spectr_vellum_format_target} PRIVATE
+                "-include${CMAKE_CURRENT_SOURCE_DIR}/include/spectr/vellum_editor_prelude.hpp")
+        endif()
+    endforeach()
+endif()
 target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
     ${SPECTR_NATIVE_VIEW_TARGET} spectr_native_assets)
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    # The processor sources retain the legacy bridge helpers for the default
+    # editor contract even while the package factory owns the opt-in editor.
+    target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC Pulp::view)
+    target_sources(${SPECTR_NATIVE_CORE_TARGET} PRIVATE
+        src/ui/vellum_editor_update_stub.cpp)
+endif()
 foreach(_spectr_native_target
         ${SPECTR_NATIVE_CORE_TARGET}
         ${SPECTR_NATIVE_STANDALONE_TARGET}
@@ -899,7 +923,7 @@ if(SPECTR_SDK_HAS_DESIGN_IMPORT)
 endif()
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
-    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value)
+    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value Vellum::MirrorView_core)
 endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis

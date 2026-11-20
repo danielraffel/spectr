@@ -11,7 +11,10 @@ SHA=$(jq -r .source_git_sha "$SDK/sdk-provenance.json")
 ~/bin/leased-build -- cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DPulp_DIR="$SDK/lib/cmake/Pulp" -DVellum_DIR="$VELLUM/lib/cmake/Vellum" -DSPECTR_EXPECTED_PULP_SDK_SHA="$SHA" -DSPECTR_VELLUM_EDITOR_PACKAGE=ON -DSPECTR_ENABLE_TEST_SEAMS=ON
 ~/bin/leased-build -- cmake --build "$BUILD" --target Spectr_CLAP Spectr-test
 /usr/bin/clang++ -std=c++20 -fobjc-arc -mmacosx-version-min=13.4 -I"$SDK/include" -I"$SDK/include/clap" -framework AppKit -framework ImageIO -framework UniformTypeIdentifiers tools/vellum-step0/clap_editor_probe.mm -o tools/vellum-step0/clap_editor_probe
-PULP_DISABLE_PLUGIN_GPU=1 tools/vellum-step0/clap_editor_probe "$BUILD/CLAP/Spectr.clap" "$OUT" 1 0.75 > "$OUT/editor-probe.log" 2>&1 && PROBE_RC=0 || PROBE_RC=$?
+# Keep the GPU path enabled. A headless sandbox may report the Vellum backend
+# as Null, which is recorded in the probe log for the lead to repeat outside
+# the sandbox with a real GPU.
+tools/vellum-step0/clap_editor_probe "$BUILD/CLAP/Spectr.clap" "$OUT" 1 0.75 > "$OUT/editor-probe.log" 2>&1 && PROBE_RC=0 || PROBE_RC=$?
 echo "probe_exit_code=$PROBE_RC" >> "$OUT/editor-probe.log"
 P="$SDK/bin/pulp"; B="$BUILD/CLAP/Spectr.clap"
 "$P" audio render --plugin "$B" --out "$OUT/dry.wav" --duration-ms 250 --input-signal sine:440,-12 --initial-param 1=0 --json > "$OUT/dry.json"
