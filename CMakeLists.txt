@@ -228,7 +228,35 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/vellum_editor.hpp
 )
+
+# The Vellum editor package is an opt-in port slice. Keeping it off preserves
+# the shipping native editor until the installed Pulp/Vellum package exposes
+# the model-backed scripted session; enabling it compiles the package root and
+# its allowlist resolver without adding a second bridge or widget tree.
+option(SPECTR_VELLUM_EDITOR_PACKAGE
+    "Compile the model-backed Vellum editor package slice" OFF)
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    if(NOT COMMAND pulp_add_vellum_editor_package)
+        include(PulpVellumEditorPackage)
+    endif()
+    if(NOT COMMAND pulp_add_vellum_editor_package OR NOT TARGET pulp::vellum)
+        message(FATAL_ERROR
+            "SPECTR_VELLUM_EDITOR_PACKAGE requires pulp::vellum and "
+            "pulp_add_vellum_editor_package from the local SDK")
+    endif()
+    pulp_add_vellum_editor_package(SpectrVellumEditor
+        VIEW_HEADER spectr/vellum_editor.hpp
+        VIEW_TYPE spectr::vellum_editor::RootView
+        VIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    add_library(Spectr-vellum-editor-package-check OBJECT EXCLUDE_FROM_ALL
+        src/ui/vellum_editor_package.cpp)
+    target_link_libraries(Spectr-vellum-editor-package-check PRIVATE
+        SpectrVellumEditor)
+    target_include_directories(Spectr-vellum-editor-package-check PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+endif()
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
 #

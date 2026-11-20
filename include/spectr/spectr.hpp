@@ -38,6 +38,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -999,6 +1000,11 @@ public:
     /// True when @p id is edited through the three calls below.
     [[nodiscard]] static bool is_editor_plain_param(
         pulp::state::ParamID id) noexcept;
+    /// Resolve a Vellum model key through the existing editor allowlist.
+    /// Numeric keys remain compatible with the scripted bridge; named keys
+    /// use the StateStore's published parameter names.
+    [[nodiscard]] static std::optional<pulp::state::ParamID>
+    resolve_editor_param_key(std::string_view key) noexcept;
     /// Write @p value. Inside an open drag gesture for @p id this is the
     /// value alone; otherwise it is a complete begin/value/end bracket.
     /// Returns false for a parameter outside the set above or before the

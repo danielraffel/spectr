@@ -253,6 +253,27 @@ TEST_CASE("Level parameters are registered at their reserved IDs",
     CHECK(Spectr::is_editor_plain_param(spectr::kParamAutoGain));
 }
 
+TEST_CASE("Vellum editor keys use the existing editable-parameter allowlist",
+          "[vellum][params]") {
+    const auto mix = spectr::Spectr::resolve_editor_param_key("Mix");
+    REQUIRE(mix);
+    CHECK(*mix == spectr::kMix);
+
+    const auto intensity = spectr::Spectr::resolve_editor_param_key("Intensity");
+    REQUIRE(intensity);
+    CHECK(*intensity == spectr::kParamIntensity);
+
+    const auto auto_gain = spectr::Spectr::resolve_editor_param_key("Auto Gain");
+    REQUIRE(auto_gain);
+    CHECK(*auto_gain == spectr::kParamAutoGain);
+
+    const auto numeric = spectr::Spectr::resolve_editor_param_key("5000");
+    REQUIRE(numeric);
+    CHECK(*numeric == spectr::kParamIntensity);
+    CHECK_FALSE(spectr::Spectr::resolve_editor_param_key("band-gain-0"));
+    CHECK_FALSE(spectr::Spectr::resolve_editor_param_key("999999"));
+}
+
 // ── Intensity on audio ────────────────────────────────────────────────────
 
 TEST_CASE("Intensity 50 % turns a +12 dB shape into +6.0 dB",
