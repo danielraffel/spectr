@@ -1243,6 +1243,33 @@ Spectr::resolve_editor_param_key(std::string_view key) noexcept {
     if (auto id = named("Auto Gain", kParamAutoGain)) return id;
     if (auto id = named("Freeze Hold for Length", kParamFreezeHoldForLength)) return id;
 
+    const std::array named_controls{
+        std::pair{"LFO Enabled", kParamLfoEnabled},
+        std::pair{"LFO Shape", kParamLfoShape},
+        std::pair{"LFO Rate", kParamLfoRate},
+        std::pair{"LFO Depth", kParamLfoDepth},
+        std::pair{"LFO Target", kParamLfoTarget},
+        std::pair{"LFO 2 Enabled", kParamLfo2Enabled},
+        std::pair{"LFO 2 Shape", kParamLfo2Shape},
+        std::pair{"LFO 2 Rate", kParamLfo2Rate},
+        std::pair{"LFO 2 Depth", kParamLfo2Depth}};
+    for (const auto& [name, param] : named_controls)
+        if (auto id = named(name, param)) return id;
+
+    static constexpr const char* route_names[kRouteTargetCount] = {
+        "Bank", "Snapshot A", "Snapshot B", "Morph", "Band shift",
+        "Band spread", "Freeze", "Length", "Intensity", "Mix", "Output",
+        "Bands", "Preset"};
+    for (std::size_t lfo = 0; lfo < kLfoCount; ++lfo)
+        for (std::size_t target = 0; target < kRouteTargetCount; ++target) {
+            const auto enabled = lfo_route_enabled_param_id(lfo, target);
+            const auto amount = lfo_route_amount_param_id(lfo, target);
+            const auto prefix = std::string("LFO ") + std::to_string(lfo + 1) + " "
+                + route_names[target];
+            if (auto id = named(prefix, enabled)) return id;
+            if (auto id = named(prefix + " Depth", amount)) return id;
+        }
+
     pulp::state::ParamID id{};
     const auto* first = key.data();
     const auto* last = first + key.size();
