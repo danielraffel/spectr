@@ -205,9 +205,13 @@ void Spectr::drain_analyzer() {
     info.epoch = spectrum.epoch;
     info.sequence = static_cast<std::uint32_t>(spectrum.sequence_number);
     info.dropped_frames = static_cast<std::uint32_t>(spectrum.dropped_frames);
-    audio_display_provider_->publish_scope(1,
+    const auto bins = pool_analyzer_bins(
         std::span<const float>(spectrum.magnitude_db.data(),
-                               static_cast<std::size_t>(std::max(0, spectrum.num_bins))), info);
+                               static_cast<std::size_t>(std::max(0, spectrum.num_bins))),
+        analyzer_display_bins_);
+    if (bins != 0)
+        audio_display_provider_->publish_scope(
+            1, std::span<const float>(analyzer_display_bins_.data(), bins), info);
     if (analyzer_vector_ != nullptr)
         analyzer_vector_->publish(spectrum.magnitude_db.data(), spectrum.num_bins);
 #endif
@@ -3338,6 +3342,10 @@ void Spectr::process(
 #if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
         std::array<float, pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels> display_rms{};
         std::array<float, pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels> display_peak{};
+        // Spectr accepts more channels than a meter frame holds; meter the
+        // first kMaxMeterChannels and never index past the frame.
+        const std::size_t metered_channels = std::min(
+            output.num_channels(), pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels);
 #endif
         if (!processed) {
             output_gain_.skip(static_cast<int>(output.num_samples()));
@@ -3353,32 +3361,34 @@ void Spectr::process(
                 for (std::size_t ch = 0; ch < output.num_channels(); ++ch) {
                     const float value = output_channels_[ch][sample] *= out_gain;
 #if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
-                    display_rms[ch] += value * value;
-                    display_peak[ch] = std::max(display_peak[ch], std::abs(value));
+                    if (ch < metered_channels) {
+                        display_rms[ch] += value * value;
+                        display_peak[ch] = std::max(display_peak[ch], std::abs(value));
+                    }
 #endif
                 }
             }
 #if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
             const float scale = output.num_samples() > 0
                                     ? 1.0f / static_cast<float>(output.num_samples()) : 0.0f;
-            for (std::size_t ch = 0; ch < output.num_channels(); ++ch)
+            for (std::size_t ch = 0; ch < metered_channels; ++ch)
                 display_rms[ch] = std::sqrt(display_rms[ch] * scale);
 #endif
         }
 
 #if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
-        if (audio_display_provider_ != nullptr && output.num_channels() > 0 &&
-            output.num_channels() <= pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels) {
+        if (audio_display_provider_ != nullptr && metered_channels > 0) {
             pulp::vellum_audio::AudioFrameInfo info;
             info.sample_rate = sample_rate_;
             info.epoch = static_cast<std::uint64_t>(sample_rate_ * 1000.0);
             info.sequence = ++audio_display_sequence_;
             audio_display_provider_->publish_meter(
-                0, std::span<const float>(display_rms.data(), output.num_channels()),
-                std::span<const float>(display_peak.data(), output.num_channels()), info);
+                0, std::span<const float>(display_rms.data(), metered_channels),
+                std::span<const float>(display_peak.data(), metered_channels), info);
             if (output_meter_ != nullptr) {
                 pulp::dataplane::MeterFrame frame;
-                frame.channels = static_cast<int>(output.num_channels());
+                frame.channels = static_cast<int>(std::min<std::size_t>(
+                    metered_channels, pulp::dataplane::MeterFrame::kMaxChannels));
                 std::copy_n(display_rms.data(), frame.channels, frame.rms.data());
                 std::copy_n(display_peak.data(), frame.channels, frame.peak.data());
                 output_meter_->publish(frame);

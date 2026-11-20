@@ -31,18 +31,9 @@ class RootView final : public ::vellum::view::View {
                     {"analyzer", "dBFS", ::vellum::value::ChannelShape::vector, -120.0f}});
             visual_provider_ = owned_visual_provider_.get();
         }
-        if (visual_provider_ != nullptr) {
-            auto meter = std::make_unique<::pulp::vellum_audio::LevelMeter>();
-            meter_ = meter.get();
-            meter_->set_feed(visual_provider_, 0);
-            add_child(std::move(meter));
-            auto scope = std::make_unique<::pulp::vellum_audio::AnalyzerScope>();
-            scope_ = scope.get();
-            scope_->set_feed(visual_provider_, 1);
-            scope_->configure_mapping({48000.0, ::spectr::kAnalyzerFftSize, 240, 20.0, 20000.0,
-                                        -120.0f, 0.0f});
-            add_child(std::move(scope));
-        }
+        // A column: the scripted control groups grow into the space above a
+        // fixed-height audio row, so the displays never cover a control.
+        flex().direction = ::vellum::view::FlexDirection::column;
         ::vellum::view::ScriptedUiOptions options;
         options.script_name = "spectr-vellum-editor.js";
         options.script_source = layout_script();
@@ -51,7 +42,38 @@ class RootView final : public ::vellum::view::View {
         std::string error;
         if (!scripted_session_->load(&error))
             scripted_session_.reset();
+        if (visual_provider_ != nullptr) {
+            auto row = std::make_unique<::vellum::view::View>();
+            row->flex().direction = ::vellum::view::FlexDirection::row;
+            row->flex().gap = 6;
+            row->flex().padding = 6;
+            row->flex().preferred_height = kAudioRowHeight;
+            row->flex().flex_shrink = 0;
+            auto scope = std::make_unique<::pulp::vellum_audio::AnalyzerScope>();
+            scope_ = scope.get();
+            scope_->set_feed(visual_provider_, 1);
+            scope_->configure_mapping({48000.0, ::spectr::kAnalyzerDisplayFftSize, 240, 20.0, 20000.0,
+                                        -120.0f, 0.0f});
+            scope_->flex().flex_grow = 1;
+            row->add_child(std::move(scope));
+            auto meter = std::make_unique<::pulp::vellum_audio::LevelMeter>();
+            meter_ = meter.get();
+            meter_->set_feed(visual_provider_, 0);
+            meter_->flex().preferred_width = 24;
+            meter_->flex().flex_shrink = 0;
+            row->add_child(std::move(meter));
+            audio_row_ = row.get();
+            add_child(std::move(row));
+        }
     }
+
+    /// The audio display views, or null when the editor has no feed.
+    ::vellum::view::View* audio_row() noexcept { return audio_row_; }
+    ::vellum::view::View* audio_scope() noexcept { return scope_; }
+    ::vellum::view::View* audio_meter() noexcept { return meter_; }
+
+    /// Height of the audio display row under the control groups.
+    static constexpr float kAudioRowHeight = 64.0f;
 
     /// One editor frame: pumps the scripted session, which pushes bound
     /// parameter values into their widgets. The editor host calls this from
@@ -74,12 +96,6 @@ class RootView final : public ::vellum::view::View {
         }
         if (meter_ != nullptr) meter_->sample();
         if (scope_ != nullptr) scope_->sample();
-        const auto b = bounds();
-        if (scope_ != nullptr)
-            scope_->set_bounds({24.0f, std::max(0.0f, b.height - 78.0f),
-                                std::max(120.0f, b.width - 88.0f), 64.0f});
-        if (meter_ != nullptr)
-            meter_->set_bounds({b.width - 48.0f, std::max(0.0f, b.height - 78.0f), 24.0f, 64.0f});
     }
 
     ::pulp::vellum::EditorEnv& env() noexcept { return env_; }
@@ -109,7 +125,8 @@ class RootView final : public ::vellum::view::View {
             "setFlex('root', 'gap', 4);\n"
             "setFlex('root', 'padding', 6);\n"
             "setFlex('root', 'width', '100%');\n"
-            "setFlex('root', 'height', '100%');\n"
+            "setFlex('root', 'flex_grow', 1);\n"
+            "setFlex('root', 'min_height', 0);\n"
             "const group = (gid, title, perRow, grow, keys) => {\n"
             "  createLabel(gid + '_title', title, 'root');\n"
             "  setFlex(gid + '_title', 'height', 14);\n"
@@ -165,6 +182,7 @@ class RootView final : public ::vellum::view::View {
     std::unique_ptr<::pulp::vellum_audio::AudioDisplayProvider> owned_visual_provider_;
     ::pulp::vellum_audio::LevelMeter* meter_ = nullptr;
     ::pulp::vellum_audio::AnalyzerScope* scope_ = nullptr;
+    ::vellum::view::View* audio_row_ = nullptr;
     std::unique_ptr<::vellum::view::ScriptedUiSession> scripted_session_;
 };
 

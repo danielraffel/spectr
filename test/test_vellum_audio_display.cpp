@@ -87,11 +87,62 @@ TEST_CASE("Spectr publishes post-engine levels for a known sine") {
     CHECK(rms[0] > 0.01f);
     CHECK(peak[0] > rms[0]);
     plugin->drain_analyzer();
-    std::array<float, 4097> bins{};
+    std::array<float, pulp::vellum_audio::AudioDisplayProvider::kMaxScopeSamples> bins{};
     const auto count = provider->read_vector(1, bins);
-    REQUIRE(count > 0);
+    // The scope maps exactly kAnalyzerDisplayBins; any other count is dropped.
+    REQUIRE(count == spectr::kAnalyzerDisplayBins);
     const auto peak_bin = static_cast<std::size_t>(
         std::distance(bins.begin(), std::max_element(bins.begin(), bins.begin() + count)));
-    CHECK(std::abs(static_cast<double>(peak_bin) * 48000.0 / 8192.0 - 997.0) <=
-          48000.0 / 8192.0);
+    const double bin_hz = 48000.0 / spectr::kAnalyzerDisplayFftSize;
+    CHECK(std::abs(static_cast<double>(peak_bin) * bin_hz - 997.0) <= bin_hz);
+}
+
+TEST_CASE("Spectr meters every channel of an eight-channel bus") {
+    // Eight channels fill the dataplane meter frame exactly; every channel
+    // reaches the display provider.
+    constexpr std::size_t kChannels = 8;
+    pulp::format::HeadlessHost host(spectr::create_spectr);
+    host.state().set_value(spectr::kParamAutoGain, 0.0f);
+    host.prepare(48000.0, 256, static_cast<int>(kChannels), static_cast<int>(kChannels));
+    pulp::audio::Buffer<float> input(kChannels, 256), output(kChannels, 256);
+    std::array<const float*, kChannels> input_channels{};
+    for (std::size_t ch = 0; ch < kChannels; ++ch) {
+        input_channels[ch] = input.channel(ch).data();
+        for (std::size_t i = 0; i < 256; ++i)
+            input.channel(ch)[i] = 0.25f * std::sin(2.0 * 3.14159265358979323846 * 440.0 * i / 48000.0);
+    }
+    pulp::audio::BufferView<const float> input_view(input_channels.data(), kChannels, 256);
+    for (int block = 0; block < 8; ++block) {
+        auto output_view = output.view();
+        host.process(output_view, input_view);
+    }
+    auto* plugin = host.processor_as<spectr::Spectr>();
+    REQUIRE(plugin != nullptr);
+    auto* provider = plugin->audio_display_provider();
+    REQUIRE(provider != nullptr);
+    constexpr auto kFrame = pulp::vellum_audio::AudioDisplayProvider::kMaxMeterChannels;
+    std::array<float, kFrame> rms{};
+    std::array<float, kFrame> peak{};
+    REQUIRE(provider->read_meter(0, rms, peak) == kChannels);
+    for (std::size_t ch = 0; ch < kChannels; ++ch)
+        CHECK(rms[ch] > 0.01f);
+}
+
+TEST_CASE("Analyzer bins pool to a display frame and keep a narrow peak") {
+    // 9 bins (fft 16) to 5 bins (fft 8): bin 0 kept, each output the max of two.
+    const std::array<float, 9> in{-1.0f, -90.0f, -80.0f, -70.0f, -3.0f, -60.0f, -60.0f, -50.0f, -40.0f};
+    std::array<float, 5> out{};
+    REQUIRE(spectr::pool_analyzer_bins(in, out) == 5);
+    CHECK(out[0] == -1.0f);
+    CHECK(out[1] == -80.0f);
+    CHECK(out[2] == -3.0f);
+    CHECK(out[3] == -60.0f);
+    CHECK(out[4] == -40.0f);
+    // Sizes that are not a power-of-two reduction are refused.
+    std::array<float, 4> odd{};
+    CHECK(spectr::pool_analyzer_bins(in, odd) == 0);
+    // The display frame fits the scope and is one of Spectr's FFT reductions.
+    STATIC_REQUIRE(spectr::kAnalyzerDisplayBins <=
+                   pulp::vellum_audio::AudioDisplayProvider::kMaxScopeSamples);
+    STATIC_REQUIRE(spectr::kAnalyzerFftSize % spectr::kAnalyzerDisplayFftSize == 0);
 }
