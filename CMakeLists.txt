@@ -228,7 +228,45 @@ set(SPECTR_HEADERS
     include/spectr/snapshot.hpp
     include/spectr/level_controls.hpp
     include/spectr/ui/editor_view.hpp
+    include/spectr/vellum_editor.hpp
 )
+
+# The Vellum editor package is an opt-in port slice. Keeping it off preserves
+# the shipping native editor until the installed Pulp/Vellum package exposes
+# the model-backed scripted session; enabling it compiles the package root and
+# its allowlist resolver without adding a second bridge or widget tree.
+option(SPECTR_VELLUM_EDITOR_PACKAGE
+    "Compile the model-backed Vellum editor package slice" OFF)
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    find_package(Vellum CONFIG REQUIRED)
+    if(NOT COMMAND pulp_add_vellum_editor_package)
+        include("${Pulp_DIR}/PulpVellumEditorPackage.cmake")
+    endif()
+    if(NOT COMMAND pulp_add_vellum_editor_package OR NOT TARGET pulp::vellum)
+        message(FATAL_ERROR
+            "SPECTR_VELLUM_EDITOR_PACKAGE requires pulp::vellum and "
+            "pulp_add_vellum_editor_package from the local SDK")
+    endif()
+    pulp_add_vellum_editor_package(SpectrVellumEditor
+        VIEW_HEADER spectr/vellum_editor.hpp
+        VIEW_TYPE spectr::vellum_editor::RootView
+        VIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    add_library(Spectr-vellum-editor-package-check OBJECT EXCLUDE_FROM_ALL
+        src/ui/vellum_editor_package.cpp)
+    target_link_libraries(Spectr-vellum-editor-package-check PRIVATE
+        SpectrVellumEditor)
+    target_include_directories(Spectr-vellum-editor-package-check PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_definitions(Spectr-vellum-editor-package-check PRIVATE
+        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
+        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
+        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
+        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
+        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
+        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
+        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
+        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
+endif()
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
 #
@@ -858,6 +896,10 @@ if(SPECTR_SDK_HAS_DESIGN_IMPORT)
     # in the design-import lane instead of allowing an SDK capability mismatch
     # to make every Windows audio build fail at link time.
     target_sources(Spectr-test PRIVATE test/test_import_fidelity.cpp)
+endif()
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
+    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value)
 endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis

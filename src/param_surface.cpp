@@ -6,6 +6,7 @@
 #include <pulp/state/store.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <initializer_list>
@@ -1224,6 +1225,32 @@ bool Spectr::is_editor_plain_param(pulp::state::ParamID id) noexcept {
         || (id >= kParamLfo2Enabled && id <= kParamLfo2Depth)
         || id == kParamFreezeHoldForLength
         || is_lfo_route_param(id);
+}
+
+std::optional<pulp::state::ParamID>
+Spectr::resolve_editor_param_key(std::string_view key) noexcept {
+    if (key.empty()) return std::nullopt;
+
+    const auto named = [&](std::string_view name,
+                           pulp::state::ParamID id)
+        -> std::optional<pulp::state::ParamID> {
+        return key == name && is_editor_plain_param(id)
+            ? std::optional<pulp::state::ParamID>{id} : std::nullopt;
+    };
+    if (auto id = named("Mix", kMix)) return id;
+    if (auto id = named("Output Trim", kOutputTrim)) return id;
+    if (auto id = named("Intensity", kParamIntensity)) return id;
+    if (auto id = named("Auto Gain", kParamAutoGain)) return id;
+    if (auto id = named("Freeze Hold for Length", kParamFreezeHoldForLength)) return id;
+
+    pulp::state::ParamID id{};
+    const auto* first = key.data();
+    const auto* last = first + key.size();
+    const auto result = std::from_chars(first, last, id);
+    if (result.ec != std::errc{} || result.ptr != last
+        || !is_editor_plain_param(id))
+        return std::nullopt;
+    return id;
 }
 
 bool Spectr::edit_param_from_editor(pulp::state::ParamID id,
