@@ -925,6 +925,11 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
     target_sources(Spectr-test PRIVATE test/test_vellum_editor_gpu.cpp)
     target_link_libraries(Spectr-test PRIVATE Pulp::vellum Vellum::Value Vellum::MirrorView_core)
+    if(APPLE)
+        # The layout test decodes the captured PNG with ImageIO.
+        target_link_libraries(Spectr-test PRIVATE "-framework ImageIO"
+            "-framework CoreGraphics" "-framework CoreFoundation")
+    endif()
 endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis
