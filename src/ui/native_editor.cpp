@@ -58,6 +58,7 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
+#include "spectr_native_embedded_files.hpp"
 
 namespace spectr_cache {
 
@@ -368,10 +369,7 @@ struct EmbeddedFile {
 };
 
 const std::array kEmbeddedFiles{
-    EmbeddedFile{"runtime.js", spectr_native::runtime_js, spectr_native::runtime_js_size},
-    EmbeddedFile{"materialized-document.runtime.json", spectr_native::materialized_document_runtime_json, spectr_native::materialized_document_runtime_json_size},
-    EmbeddedFile{"design.js", spectr_native::design_js, spectr_native::design_js_size},
-    EmbeddedFile{"help-content.js", spectr_native::help_content_js, spectr_native::help_content_js_size},
+    SPECTR_NATIVE_EMBEDDED_FILES
 };
 
 constexpr const char* kPackagePrefix = "spectr-native-materialized-";
