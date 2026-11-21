@@ -953,6 +953,7 @@ add_executable(Spectr-test
     test/test_audio_glitches.cpp
     test/test_freeze.cpp
     test/test_freeze_length.cpp
+    test/test_embedded_package_identity.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
