@@ -297,6 +297,49 @@ set(SPECTR_NATIVE_ASSET_SOURCES
     native-ui/materialized/help-content.js
 )
 
+# The materialized document is the source of truth for captured image assets.
+# Enumerate its references at configure time so a new capture cannot silently
+# ship an image that the native editor package does not mount.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+            --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+            --cmake
+    RESULT_VARIABLE _spectr_native_asset_check
+    OUTPUT_VARIABLE _spectr_native_asset_paths
+    ERROR_VARIABLE _spectr_native_asset_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _spectr_native_asset_check EQUAL 0)
+    message(FATAL_ERROR
+        "Materialized document references unavailable native assets:\n"
+        "${_spectr_native_asset_error}${_spectr_native_asset_paths}")
+endif()
+string(REPLACE "\n" ";" _spectr_native_asset_paths "${_spectr_native_asset_paths}")
+list(APPEND SPECTR_NATIVE_ASSET_SOURCES ${_spectr_native_asset_paths})
+
+set(_spectr_embedded_file_entries "")
+foreach(_spectr_asset IN LISTS SPECTR_NATIVE_ASSET_SOURCES)
+    get_filename_component(_spectr_asset_name "${_spectr_asset}" NAME)
+    string(MAKE_C_IDENTIFIER "${_spectr_asset_name}" _spectr_asset_symbol)
+    if(IS_ABSOLUTE "${_spectr_asset}")
+        file(RELATIVE_PATH _spectr_package_path
+            "${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized"
+            "${_spectr_asset}")
+    else()
+        string(REPLACE "native-ui/materialized/" "" _spectr_package_path
+            "${_spectr_asset}")
+    endif()
+    string(APPEND _spectr_embedded_file_entries
+        "    EmbeddedFile{\"${_spectr_package_path}\", spectr_native::${_spectr_asset_symbol}, spectr_native::${_spectr_asset_symbol}_size},")
+endforeach()
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/spectr_native_embedded_files.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp
+    @ONLY)
+
 # Fail closed before the native asset encoder can capture an incomplete
 # materialized document.  These selectors are the stable product bridge used
 # by native_shot and the shipping native editor; embedding a runtime without
@@ -319,6 +362,24 @@ add_test(NAME Spectr-materialized-pseudo-plane
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_pseudo_plane.py)
 set_tests_properties(Spectr-materialized-pseudo-plane PROPERTIES TIMEOUT 30)
+add_test(NAME Spectr-materialized-native-assets
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+        --package-header ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp)
+add_test(NAME Spectr-materialized-native-assets-negative-control
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+        --package-header ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp
+        --plant-missing)
+set_tests_properties(Spectr-materialized-native-assets PROPERTIES TIMEOUT 30)
+set_tests_properties(Spectr-materialized-native-assets-negative-control PROPERTIES
+    TIMEOUT 30 WILL_FAIL TRUE)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
@@ -428,6 +489,7 @@ function(spectr_configure_native_target target)
     endif()
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}
     )
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
@@ -896,6 +958,7 @@ add_executable(Spectr-test
     test/test_audio_glitches.cpp
     test/test_freeze.cpp
     test/test_freeze_length.cpp
+    test/test_embedded_package_identity.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
