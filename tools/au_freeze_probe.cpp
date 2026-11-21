@@ -505,7 +505,13 @@ struct Host {
         auto* dict = CFDictionaryCreateMutableCopy(nullptr, 0, static_cast<CFDictionaryRef>(plist));
         CFRelease(plist);
         bool changed = false;
-        if (auto* data = static_cast<CFDataRef>(CFDictionaryGetValue(dict, CFSTR("pulp-state")));
+        CFStringRef state_key = CFSTR("pulpState");
+        auto* state_value = CFDictionaryGetValue(dict, state_key);
+        if (!state_value) {
+            state_key = CFSTR("pulp-state");
+            state_value = CFDictionaryGetValue(dict, state_key);
+        }
+        if (auto* data = static_cast<CFDataRef>(state_value);
             data && CFGetTypeID(data) == CFDataGetTypeID()) {
             std::string blob(reinterpret_cast<const char*>(CFDataGetBytePtr(data)), std::size_t(CFDataGetLength(data)));
             const auto u32 = [&](std::size_t at) {
@@ -532,7 +538,7 @@ struct Host {
                     }
                     put(out, ~crc);
                     auto* next = CFDataCreate(nullptr, reinterpret_cast<const UInt8*>(out.data()), CFIndex(out.size()));
-                    CFDictionarySetValue(dict, CFSTR("pulp-state"), next);
+                    CFDictionarySetValue(dict, state_key, next);
                     CFRelease(next);
                     changed = true;
                 }
