@@ -1,4 +1,7 @@
 #include <spectr/mask_renderer.hpp>
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+#include <spectr/experimental/tracking_gpu_convolver.hpp>
+#endif
 #include "spectr/test_seams.hpp"
 
 #include <pulp/format/background_task_lane.hpp>
@@ -517,6 +520,7 @@ private:
 /// `spectr_mask_design_backlog_v1()` instead.
 class ZeroLatencyMaskRenderer final : public MaskRenderer {
 public:
+    explicit ZeroLatencyMaskRenderer(bool tracking_gpu = false) : tracking_gpu_(tracking_gpu) {}
     ~ZeroLatencyMaskRenderer() override { stop_lane_(); }
 
     [[nodiscard]] bool prepare(const MaskRendererConfig& config) override {
@@ -573,7 +577,7 @@ public:
         design_magnitudes_.assign(static_cast<std::size_t>(bins), 0.0);
         design_taps_.assign(static_cast<std::size_t>(config.design_grid_size), 0.0f);
 
-        mixer_.set_wet_latency(kRenderBlock);
+        mixer_.set_wet_latency(latency_samples());
         mixer_.set_mix(config.initial_mix);
         mixer_.set_curve(pulp::signal::MixCurve::Linear);
         mixer_.set_ramp_samples(config.mix_ramp_samples);
@@ -583,6 +587,9 @@ public:
         // rather than silence, then let the first published layout replace it.
         std::fill(design_magnitudes_.begin(), design_magnitudes_.end(), 1.0);
         if (!design_into_taps_()) return false;
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        if (tracking_gpu_ && !prepare_tracking_gpu_()) return false;
+#endif
         for (int ch = 0; ch < channels_; ++ch) {
             convolvers_[static_cast<std::size_t>(ch)].load_ir(
                 design_taps_.data(), design_taps_.size(),
@@ -619,12 +626,12 @@ public:
     [[nodiscard]] bool prepared() const noexcept override { return prepared_; }
 
     [[nodiscard]] int latency_samples() const noexcept override {
-        return kRenderBlock;
+        return kRenderBlock + (tracking_gpu_ ? kTrackingGpuTransportFrames : 0);
     }
 
     [[nodiscard]] int maximum_tail_samples() const noexcept override {
         // One render block of input buffering plus the whole designed impulse.
-        return prepared_ ? kRenderBlock + config_.design_grid_size : 0;
+        return prepared_ ? latency_samples() + config_.design_grid_size : 0;
     }
     [[nodiscard]] int design_grid_size() const noexcept override {
         return config_.design_grid_size;
@@ -767,6 +774,9 @@ private:
 
     void render_block_() noexcept {
         PULP_TRACE_SCOPE_NAMED("dsp", "tracking.render_block");
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        const auto before = gpu_staged_generation_.load(std::memory_order_acquire);
+#endif
         // The fade a swap landing now is given is the gap it closes: the
         // samples since the previous swap landed, clamped. Saturate the count
         // so an idle renderer cannot overflow it. See kIrCrossfadeSamples.
@@ -811,6 +821,19 @@ private:
                 pending_generation_.load(std::memory_order_acquire),
                 std::memory_order_release);
         }
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        if (tracking_gpu_path_) {
+            // stage_ir() publishes the channels separately. Only adopt GPU audio
+            // once every channel consumed the same generation and its fade ended.
+            const bool settled = before != kStagingGpuGeneration &&
+                std::none_of(swappers_.begin(), swappers_.end(), [](const auto& s) {
+                    return s->has_pending();
+                }) && before == gpu_staged_generation_.load(std::memory_order_acquire) &&
+                static_cast<std::size_t>(blocks_since_swap_) * kRenderBlock >=
+                    crossfade_samples_ + kTrackingGpuTransportFrames;
+            (void)tracking_gpu_path_->process(in_ptrs_.data(), out_ptrs_.data(), out_ptrs_.data(), before, settled);
+        }
+#endif
     }
     // SPECTR-RENDER-PATH END
 
@@ -823,6 +846,9 @@ public:
         blocks_since_swap_ = 0;
         for (auto& conv : convolvers_) conv.reset();
         mixer_.reset();
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        if (tracking_gpu_path_) tracking_gpu_path_->reset();
+#endif
     }
 
     [[nodiscard]] unsigned long long active_generation() const noexcept override {
@@ -931,6 +957,10 @@ private:
         // visible, so the audio thread can never adopt an impulse whose
         // generation has not been written yet.
         const auto generation = next_generation_++;
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        if (tracking_gpu_path_) gpu_staged_generation_.store(kStagingGpuGeneration, std::memory_order_release);
+        bool staged_all = true;
+#endif
         pending_generation_.store(generation, std::memory_order_release);
 
         bool staged_any = false;
@@ -944,7 +974,16 @@ private:
             if (swapper.stage_ir(design_taps_.data(), design_taps_.size(),
                                  static_cast<std::size_t>(kRenderBlock)))
                 staged_any = true;
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+            else staged_all = false;
+#endif
         }
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+        if (tracking_gpu_path_ && staged_all) {
+            (void)tracking_gpu_path_->enqueue_ir(generation, design_taps_);
+            gpu_staged_generation_.store(generation, std::memory_order_release);
+        }
+#endif
         return staged_any;
     }
 
@@ -1044,6 +1083,48 @@ private:
     std::uint64_t last_staged_ordinal_ = 0;
 
     pulp::format::BackgroundTaskLane<DesignTask, 8> lane_;
+    bool tracking_gpu_;
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+    // The design lane writes an in-progress sentinel around publication of the
+    // per-channel IRs. The audio owner reads it before and after adoption.
+    static constexpr std::uint64_t kStagingGpuGeneration = UINT64_MAX;
+    std::atomic<std::uint64_t> gpu_staged_generation_{0};
+    std::unique_ptr<experimental::TrackingGpuConvolver> tracking_gpu_path_;
+    bool prepare_tracking_gpu_() {
+        using Engine = experimental::TrackingGpuConvolver;
+        static_assert(Engine::kQuantumFrames == kRenderBlock);
+        static_assert(Engine::kQuantumFrames * Engine::kGpuLatencyQuanta == kTrackingGpuTransportFrames);
+        gpu_staged_generation_.store(0, std::memory_order_release);
+        if (SPECTR_TEST_ENV("SPECTR_FORCE_TRACKING_GPU_REFUSAL")) return false;
+        Engine::Config gpu_config;
+        gpu_config.channels = static_cast<std::uint32_t>(channels_);
+        gpu_config.sample_rate = static_cast<std::uint32_t>(std::lround(config_.sample_rate));
+        gpu_config.max_ir_taps = static_cast<std::uint32_t>(design_taps_.size());
+        auto engine = std::make_unique<Engine>(gpu_config);
+        if (!engine->prepare(design_taps_)) return false;
+        tracking_gpu_path_ = std::move(engine);
+        return true;
+    }
+public:
+    std::optional<GpuAudioStatus::Delivery> tracking_gpu_delivery() const noexcept override {
+        if (!tracking_gpu_path_) return {};
+        const auto snapshot = tracking_gpu_path_->snapshot();
+        using State = experimental::TrackingGpuConvolver::ProviderState;
+        GpuAudioStatus::Delivery result;
+        switch (snapshot.state) {
+        case State::Unprepared: result.provider_state = 0; break;
+        case State::SharedReady: result.provider_state = 1; break;
+        case State::CpuOnly: result.provider_state = 2; break;
+        case State::Degraded: result.provider_state = 5; break;
+        case State::Unavailable: result.provider_state = 6; break;
+        }
+        result.current_epoch = snapshot.epoch;
+        result.gpu_selected = snapshot.gpu_selected;
+        result.cpu_fallback = snapshot.cpu_fallback;
+        result.has_terminal_records = false;
+        return result;
+    }
+#endif
 };
 
 } // namespace
@@ -1343,6 +1424,14 @@ std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode) {
         return std::make_unique<ZeroLatencyMaskRenderer>();
     }
     return nullptr;
+}
+
+std::unique_ptr<MaskRenderer> make_tracking_gpu_mask_renderer() {
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+    return std::make_unique<ZeroLatencyMaskRenderer>(true);
+#else
+    return {};
+#endif
 }
 
 } // namespace spectr

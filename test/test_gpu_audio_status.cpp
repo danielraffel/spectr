@@ -2,6 +2,7 @@
 #include <spectr/editor_bridge.hpp>
 #include <spectr/detail/gpu_audio_status_projection.hpp>
 #include <pulp/state/store.hpp>
+#include <pulp/runtime/system.hpp>
 #include <choc/text/choc_JSON.h>
 #include <atomic>
 #include <cstdint>
@@ -59,6 +60,11 @@ void projection_controls() {
     require(spectr::detail::gpu_audio_status_projection(s)["provider_state"].get<std::string>()=="unknown","unknown provider state claimed ready");
     s.delivery->provider_state=1;s.delivery->gpu_selected=0;
     require(spectr::detail::gpu_audio_status_projection(s)["gpu_selected"].get<std::string>()=="0","readiness fabricated GPU use");
+    s.delivery->has_terminal_records = false;
+    const auto tracking = spectr::detail::gpu_audio_status_projection(s);
+    require(!tracking.hasObjectMember("cancelled") && !tracking.hasObjectMember("lost_terminal_records") &&
+            !tracking.hasObjectMember("current_epoch") && tracking.hasObjectMember("tracking_node_serial"),
+            "Tracking invented a terminal ledger or mislabeled its node serial");
 }
 struct Rig {
     pulp::state::StateStore store;
@@ -71,7 +77,13 @@ void lifecycle_and_bridge_controls() {
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     require(first.processor.gpu_audio_status().availability==A::NotPrepared,"unprepared shared instance measured");
 #else
-    require(first.processor.gpu_audio_status().availability==A::NotBuilt,"non-shared build measured");
+    // Tracking can have its own provider build even when Mixing's shared
+    // renderer is absent. In that configuration the unprepared instance is a
+    // real capability waiting for prepare(), rather than a non-built feature.
+    const auto expected = first.processor.tracking_gpu_built()
+        ? A::NotPrepared : A::NotBuilt;
+    require(first.processor.gpu_audio_status().availability==expected,
+            "unprepared Tracking capability measured");
 #endif
     pulp::view::EditorBridge bridge;
     std::string copied;
@@ -82,6 +94,17 @@ void lifecycle_and_bridge_controls() {
     require(!response["gpu_audio"].hasObjectMember("gpu_selected"),"actual bridge invented GPU zero");
     require(response["gpu_audio"]["freeze_available"].getBool(),"build_info hides the freeze availability");
     require(choc::json::parse(bridge.dispatch_json(R"({"type":"build_info_copy","payload":{}})"))["ok"].getBool(),"copy route failed");
+    const auto& system = pulp::runtime::get_system_info();
+    const auto process_arch = response["plugin_arch"].get<std::string>();
+    const std::string system_arch = system.arch.empty() ? "unknown" : system.arch;
+    const std::string cpu_model = system.cpu_model.empty() ? "unknown" : system.cpu_model;
+    require(!process_arch.empty() && response["system_arch"].get<std::string>() == system_arch &&
+            response["cpu_model"].get<std::string>() == cpu_model, "build info lost system identity");
+    require(copied.find("Plug-in architecture: " + process_arch + "\n") != std::string::npos &&
+            copied.find("System architecture: " + system_arch + "\n") != std::string::npos &&
+            copied.find("CPU: " + cpu_model + "\n") != std::string::npos, "clipboard lost machine identity");
+    std::cout << "copy_info plugin_arch=" << process_arch << " system_arch=" << system_arch
+              << " cpu=" << cpu_model << '\n';
     require(copied==response["copy_text"].get<std::string>(),"structured/copy observation diverged");
     std::atomic<bool> done{false},bad{false};
     std::atomic<std::uint64_t> reads{0};
@@ -116,6 +139,48 @@ void lifecycle_and_bridge_controls() {
     require(reads>0&&!bad,"concurrent observation contract failed");
     require(!first.processor.gpu_audio_status().delivery.has_value(),"released renderer remained observable");
     std::cout<<"lifecycle_reads="<<reads.load()<<'\n';
+}
+
+void tracking_gpu_bridge_projection_separates_mixing() {
+    Rig rig;
+    pulp::view::EditorBridge bridge;
+    spectr::register_spectr_editor_handlers(bridge, rig.processor,
+        rig.processor.patterns(), rig.processor.editor_authority(),
+        [](std::string_view){ return true; });
+    const auto info = [&] {
+        return choc::json::parse(bridge.dispatch_json(
+            R"({"type":"build_info_get","payload":{}})"));
+    };
+    const auto before = info();
+    require(before["ok"].getBool(), "Tracking projection build_info failed");
+    require(before["tracking_gpu"].hasObjectMember("eligibility"),
+            "Tracking projection omitted eligibility");
+    const auto mode = before["latency"]["mode"].get<std::string>();
+    const auto mixing_gpu = rig.processor.gpu_processing();
+
+    // The opt-in is an independent saved choice. A write must not change the
+    // render mode or Mixing's saved choice, even before audio is prepared.
+    const auto off = choc::json::parse(bridge.dispatch_json(
+        R"({"type":"tracking_gpu_processing_set","payload":{"enabled":false}})"));
+    require(off["ok"].getBool(), "Tracking GPU disable failed");
+    const auto off_payload = off.hasObjectMember("payload") ? off["payload"] : off;
+    require(off_payload["latency"]["mode"].get<std::string>() == mode,
+            "Tracking write changed render mode");
+    require(off_payload["latency"]["gpu_processing"].getBool() == mixing_gpu,
+            "Tracking write changed Mixing selection");
+
+    // Prepare Mixing's shared renderer, when present. Its delivery counters
+    // are intentionally excluded from Tracking's `actual` observation.
+    rig.processor.prepare({48000.0, 128, 2, 2});
+    require(rig.processor.set_render_mode(spectr::MaskRenderMode::linear_phase),
+            "Mixing mode preparation failed");
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    require(rig.processor.set_gpu_processing(true), "Mixing GPU preparation failed");
+#endif
+    const auto mixing = info();
+    require(!mixing["tracking_gpu"].hasObjectMember("actual"),
+            "Mixing counters leaked into Tracking actual observations");
+    rig.processor.release();
 }
 }
 // The editor's GPU processing message: it switches Mixing's renderer, answers
@@ -224,5 +289,5 @@ void tracking_gpu_choice_is_inert() {
     require(mixing_builds>0,"control: Mixing GPU toggles built nothing, so the counter is blind");
 #endif
 }
-int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();tracking_gpu_choice_is_inert();std::cout<<"GPU audio status controls passed\n";return 0;}
+int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();tracking_gpu_choice_is_inert();tracking_gpu_bridge_projection_separates_mixing();std::cout<<"GPU audio status controls passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

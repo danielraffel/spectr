@@ -630,9 +630,14 @@ MaskRendererConfig Spectr::renderer_config_() const noexcept {
 
 GpuAudioStatus Spectr::gpu_audio_status() const {
     const bool freeze=freeze_source_wired();
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) || defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
     std::lock_guard<std::mutex> lock(renderer_observation_mutex_);
     if(!renderer_)return {GpuAudioStatus::Availability::NotPrepared,{},freeze};
+    if (const auto delivery = renderer_->tracking_gpu_delivery())
+        return {GpuAudioStatus::Availability::Available, delivery, freeze};
+    if (tracking_gpu_provider_refused() && render_mode_ == MaskRenderMode::zero_latency)
+        return {GpuAudioStatus::Availability::ProviderUnavailable, {}, freeze};
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     const auto* shared=dynamic_cast<const experimental::SharedSpectralMaskRenderer*>(renderer_.get());
     if(!shared)return {GpuAudioStatus::Availability::NonSharedRenderer,{},freeze};
     const auto s=shared->snapshot();
@@ -640,7 +645,12 @@ GpuAudioStatus Spectr::gpu_audio_status() const {
         GpuAudioStatus::Delivery{unsigned(s.state),s.epoch,s.gpu_delivered,
             s.cpu_fallback,s.cancelled,s.lost_records},freeze};
 #else
+    return {GpuAudioStatus::Availability::NonSharedRenderer, {}, freeze};
+#endif
+#else
     GpuAudioStatus status;
+    if (tracking_gpu_provider_refused() && render_mode_ == MaskRenderMode::zero_latency)
+        status.availability = GpuAudioStatus::Availability::ProviderUnavailable;
     status.freeze_available=freeze;
     return status;
 #endif
@@ -691,22 +701,19 @@ bool render_switch_plants_hard_cut_() noexcept {
 
 std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool gpu) {
     renderer_builds_.fetch_add(1, std::memory_order_relaxed);
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     std::unique_ptr<MaskRenderer> renderer;
-    // GPU processing is a Mixing-only choice: Tracking is always the CPU
-    // minimum-phase renderer, and Mixing with GPU processing off is the CPU
-    // linear-phase renderer at its own (lower) latency.
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     if(mode==MaskRenderMode::linear_phase && gpu)
         renderer=std::make_unique<experimental::SharedSpectralMaskRenderer>(
 #if defined(SPECTR_SHARED_PRODUCT_ACCEPTANCE)
             shared_product_force_cpu_
 #endif
         );
-    else renderer=make_mask_renderer(mode);
-#else
-    (void)gpu;
-    auto renderer = make_mask_renderer(mode);
 #endif
+    if (mode == MaskRenderMode::zero_latency && gpu)
+        renderer = make_tracking_gpu_mask_renderer();
+    else if (!renderer)
+        renderer = make_mask_renderer(mode);
     if (!renderer) return nullptr;
     if (!renderer->prepare(renderer_config_())) return nullptr;
     // Hand the new renderer the magnitude that is already drawn, so a switch
@@ -727,7 +734,7 @@ std::unique_ptr<MaskRenderer> Spectr::build_renderer_(MaskRenderMode mode, bool 
     if (!renderer->publish_layout(layout)) return nullptr;
     // Record what the renderer is now realising, so neither the control nor
     // the audio path restages this same mask and pays a crossfade for it.
-#if !defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+#if !defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) && !defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
     last_published_layout_ = layout;
     last_published_layout_valid_ = true;
 #endif
@@ -810,7 +817,48 @@ bool Spectr::set_render_mode(MaskRenderMode mode) {
         render_mode_ = mode;
         return true;
     }
-    return switch_renderer_(mode, gpu_processing_);
+    if (mode == MaskRenderMode::zero_latency && tracking_gpu_processing()) {
+        if (switch_renderer_(mode, true)) {
+            tracking_gpu_refused_.store(false);
+            return true;
+        }
+        tracking_gpu_refused_.store(true);
+        return switch_renderer_(mode, false);
+    }
+    return switch_renderer_(mode, mode == MaskRenderMode::linear_phase && gpu_processing_);
+}
+
+bool Spectr::tracking_gpu_built() noexcept {
+#if defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool Spectr::set_tracking_gpu_processing(bool enabled) {
+    std::lock_guard<std::mutex> switch_lock(switch_mutex_);
+    const bool refused = tracking_gpu_provider_refused();
+    if (enabled == tracking_gpu_processing() && !refused) return true;
+    if (enabled && !tracking_gpu_built()) {
+        // A project keeps its authored choice when opened on another platform.
+        tracking_gpu_processing_.store(true);
+        tracking_gpu_refused_.store(true);
+        return false;
+    }
+    if (processor_prepared_ && render_mode_ == MaskRenderMode::zero_latency && (enabled || !refused)) {
+        settle_render_switch_();
+        if (!switch_renderer_(render_mode_, enabled)) {
+            if (enabled) {
+                tracking_gpu_processing_.store(true);
+                tracking_gpu_refused_.store(true);
+            }
+            return false;
+        }
+    }
+    tracking_gpu_processing_.store(enabled);
+    tracking_gpu_refused_.store(false);
+    return true;
 }
 
 bool Spectr::set_gpu_processing(bool enabled) {
@@ -841,7 +889,7 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
 
     MaskRenderer* incoming = replacement.get();
     std::unique_ptr<MaskRenderer> outgoing;
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) || defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
     {
         // Control publication uses this mutex too. Swap ownership only after
         // an old publisher has finished, then publish the latest field to the
@@ -851,9 +899,9 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
             std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
             outgoing=std::move(renderer_);
             renderer_=std::move(replacement);
+            render_mode_=mode;
         }
-        render_mode_=mode;
-        gpu_processing_=gpu;
+        if (mode == MaskRenderMode::linear_phase) gpu_processing_=gpu;
         last_published_layout_valid_=false;
         publish_processing_state_();
     }
@@ -862,9 +910,9 @@ bool Spectr::switch_renderer_(MaskRenderMode mode, bool gpu) {
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
         outgoing=std::move(renderer_);
         renderer_=std::move(replacement);
+        render_mode_=mode;
     }
-    render_mode_=mode;
-    gpu_processing_=gpu;
+    if (mode == MaskRenderMode::linear_phase) gpu_processing_=gpu;
 #endif
 
     // Hand both renderers to the audio thread. It keeps rendering the old one
@@ -1166,11 +1214,16 @@ void Spectr::prepare(const pulp::format::PrepareContext& ctx) {
     drain_retired_renderers_();
 
     if (channels_ <= static_cast<int>(kMaximumChannels)) {
-        auto replacement=build_renderer_(render_mode_, gpu_processing_);
+        const bool tracking = render_mode_ == MaskRenderMode::zero_latency;
+        auto replacement = build_renderer_(render_mode_, tracking ? tracking_gpu_processing() : gpu_processing_);
+        if (tracking && tracking_gpu_processing()) {
+            tracking_gpu_refused_.store(!replacement);
+            if (!replacement) replacement = build_renderer_(render_mode_, false);
+        }
         std::lock_guard<std::mutex> observation_lock(renderer_observation_mutex_);
         renderer_=std::move(replacement);
     }
-#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER) || defined(SPECTR_EXPERIMENTAL_TRACKING_GPU)
     {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         last_published_layout_=make_mask_layout_();
@@ -1620,12 +1673,15 @@ int Spectr::latency_samples() const {
 }
 
 int Spectr::render_mode_latency_samples(MaskRenderMode mode) const noexcept {
-    return render_mode_latency_samples(mode, gpu_processing_);
+    return render_mode_latency_samples(mode, mode == MaskRenderMode::linear_phase
+        ? gpu_processing_ : tracking_gpu_processing() && !tracking_gpu_provider_refused());
 }
 
 int Spectr::render_mode_latency_samples(MaskRenderMode mode, bool gpu) const noexcept {
     const auto config=latency_geometry_();
     auto latency=mask_render_latency_samples(mode,config);
+    if (mode == MaskRenderMode::zero_latency && gpu && tracking_gpu_built())
+        return latency + kTrackingGpuTransportFrames;
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
     if(mode==MaskRenderMode::linear_phase && gpu)
         latency+=int(experimental::SharedSpectralMaskRenderer::additional_latency(config));
@@ -3673,6 +3729,7 @@ std::vector<uint8_t> Spectr::serialize_plugin_state() const {
     // Absent in older projects, which load with it off (the CPU renderer they
     // were mixed with).
     root.addMember("gpu_processing", gpu_processing_);
+    root.addMember("tracking_gpu_processing", tracking_gpu_processing());
 
 
     auto json = choc::json::toString(root, /*useLineBreaks=*/false);
@@ -3854,6 +3911,7 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
         // Outside the lock, for the same reason as the main path below.
         (void)set_render_mode(kDefaultRenderMode);
         (void)set_gpu_processing(false);
+        (void)set_tracking_gpu_processing(false);
         // A bare parameter blob predates the level controls by construction:
         // it opens at the level it was mixed at.
         if (param_store_) param_store_->set_value(kParamAutoGain, 0.0f);
@@ -4015,6 +4073,12 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     }
 
     bool new_gpu_processing = false;
+    bool new_tracking_gpu_processing = false;
+    if (root.hasObjectMember("tracking_gpu_processing")) {
+        const auto& flag = root["tracking_gpu_processing"];
+        if (!flag.isBool()) return false;
+        new_tracking_gpu_processing = flag.getBool();
+    }
     if (root.hasObjectMember("gpu_processing")) {
         const auto& flag = root["gpu_processing"];
         if (!flag.isBool()) return false;
@@ -4330,11 +4394,15 @@ bool Spectr::deserialize_plugin_state(std::span<const uint8_t> bytes) {
     if (render_mode_ != MaskRenderMode::linear_phase
         || new_render_mode == MaskRenderMode::linear_phase)
         (void)set_gpu_processing(new_gpu_processing);
+    if (render_mode_ == MaskRenderMode::linear_phase || new_render_mode == MaskRenderMode::zero_latency)
+        (void)set_tracking_gpu_processing(new_tracking_gpu_processing);
     if (!set_render_mode(new_render_mode)) {
         std::lock_guard<std::mutex> lock(processing_state_mutex_);
         render_mode_unknown_on_load_ = true;
     }
     if (gpu_processing_ != new_gpu_processing) (void)set_gpu_processing(new_gpu_processing);
+    if (tracking_gpu_processing() != new_tracking_gpu_processing)
+        (void)set_tracking_gpu_processing(new_tracking_gpu_processing);
     // A session saved before Intensity and Auto Gain existed was mixed at the
     // level it plays at; Auto Gain must not change that on reload, whatever
     // the new-instance default is. Its Intensity lane is absent and keeps the

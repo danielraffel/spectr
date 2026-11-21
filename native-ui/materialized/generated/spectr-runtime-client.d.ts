@@ -52,6 +52,7 @@ export type SpectrCommand =
   | "set_default_pattern"
   | "spectral_resolution_request"
   | "tooltips_set"
+  | "tracking_gpu_processing_set"
   | "undo"
   | "undo_gesture_end"
   | "undo_gesture_start";
@@ -122,6 +123,7 @@ export interface SpectrRuntimeClient {
   setDefaultPattern<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   spectralResolutionRequest<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   tooltipsSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
+  trackingGpuProcessingSet<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   undo<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   undoGestureEnd<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;
   undoGestureStart<T = unknown>(payload?: SpectrPayload, id?: string): Promise<SpectrResponse<T>>;

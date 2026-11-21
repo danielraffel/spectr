@@ -59,6 +59,7 @@
     "set_default_pattern",
     "spectral_resolution_request",
     "tooltips_set",
+    "tracking_gpu_processing_set",
     "undo",
     "undo_gesture_end",
     "undo_gesture_start",

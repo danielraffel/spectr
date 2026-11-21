@@ -21,6 +21,7 @@
 
 #include <pulp/signal/spectral_band_mask.hpp>
 #include <pulp/signal/spectral_mask_processor.hpp>
+#include <spectr/gpu_audio_status.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -63,6 +64,10 @@ public:
     using Table  = pulp::signal::SpectralMaskTable;
 
     virtual ~MaskRenderer() = default;
+
+    [[nodiscard]] virtual std::optional<GpuAudioStatus::Delivery> tracking_gpu_delivery() const noexcept {
+        return {};
+    }
 
     using EffectiveFrameObserver = void (*)(void*, const Table&, std::uint64_t) noexcept;
     // Experimental capture, installed while stopped. Only the linear renderer
@@ -371,6 +376,7 @@ TrackingTransitionGeometry shape_tracking_transitions(
 /// built-artifact test reading what a host is told -- derives the figure
 /// instead of retyping it.
 inline constexpr int kZeroLatencyRenderBlock = 64;
+inline constexpr int kTrackingGpuTransportFrames = 2 * kZeroLatencyRenderBlock;
 
 /// Latency of a mode, before anything is prepared.
 ///
@@ -384,6 +390,7 @@ inline constexpr int kZeroLatencyRenderBlock = 64;
 
 /// Construct the renderer for a mode. Returns null only on an unknown mode.
 [[nodiscard]] std::unique_ptr<MaskRenderer> make_mask_renderer(MaskRenderMode mode);
+[[nodiscard]] std::unique_ptr<MaskRenderer> make_tracking_gpu_mask_renderer();
 
 } // namespace spectr
 
