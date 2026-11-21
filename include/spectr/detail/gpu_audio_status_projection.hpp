@@ -8,6 +8,7 @@ inline const char* gpu_audio_availability(GpuAudioStatus::Availability value) {
     switch(value) {
     case GpuAudioStatus::Availability::NotBuilt: return "not_built";
     case GpuAudioStatus::Availability::NotPrepared: return "not_prepared";
+    case GpuAudioStatus::Availability::ProviderUnavailable: return "provider_unavailable";
     case GpuAudioStatus::Availability::NonSharedRenderer: return "non_shared_renderer";
     case GpuAudioStatus::Availability::Available: return "available";
     }
@@ -20,6 +21,8 @@ inline const char* gpu_audio_provider_state(unsigned value) {
     case 2: return "cpu_only";
     case 3: return "fenced";
     case 4: return "release_unconfirmed";
+    case 5: return "degraded";
+    case 6: return "unavailable";
     default: return "unknown";
     }
 }
@@ -44,11 +47,14 @@ inline choc::value::Value gpu_audio_status_projection(const GpuAudioStatus& s) {
     value.addMember("count_scope","renderer_preparation_before_mix_trim");
     value.addMember("provider_state",std::string(gpu_audio_provider_state(d.provider_state)));
     // Decimal strings preserve all 64 bits across JavaScript editor bridges.
-    value.addMember("current_epoch",std::to_string(d.current_epoch));
+    value.addMember(d.has_terminal_records ? "current_epoch" : "tracking_node_serial",
+                    std::to_string(d.current_epoch));
     value.addMember("gpu_selected",std::to_string(d.gpu_selected));
     value.addMember("cpu_fallback",std::to_string(d.cpu_fallback));
-    value.addMember("cancelled",std::to_string(d.cancelled));
-    value.addMember("lost_terminal_records",std::to_string(d.lost_terminal_records));
+    if (d.has_terminal_records) {
+        value.addMember("cancelled",std::to_string(d.cancelled));
+        value.addMember("lost_terminal_records",std::to_string(d.lost_terminal_records));
+    }
     return value;
 }
 inline std::string gpu_audio_status_copy_text(const GpuAudioStatus& s) {
@@ -59,9 +65,10 @@ inline std::string gpu_audio_status_copy_text(const GpuAudioStatus& s) {
     return std::string("GPU audio: ")+gpu_audio_provider_state(d.provider_state)+freeze+
         "\nGPU selected: "+std::to_string(d.gpu_selected)+
         "\nCPU fallback: "+std::to_string(d.cpu_fallback)+
-        "\nCancelled: "+std::to_string(d.cancelled)+
-        "\nLost terminal records: "+std::to_string(d.lost_terminal_records)+
-        "\nCurrent epoch: "+std::to_string(d.current_epoch)+
+        (d.has_terminal_records ? "\nCancelled: "+std::to_string(d.cancelled)+
+            "\nLost terminal records: "+std::to_string(d.lost_terminal_records) : "")+
+        (d.has_terminal_records ? "\nCurrent epoch: " : "\nTracking node serial: ")+
+        std::to_string(d.current_epoch)+
         "\nGPU audio counts: independent live observations since renderer preparation, before mix/trim";
 }
 }

@@ -5,14 +5,14 @@
   "sources": {
     "services": {
       "path": "native-ui/materialized/spectr-native-services.js",
-      "sha256": "b1efe3ad4690f1f73a51b6d064019d72dbb50fbc160e0b45b2d9a8d7e10f68d2",
-      "bytes": 23244
+      "sha256": "0897f023cd52c17f58e33abfee5a9abc5cba7f0e64b3dffee794d8b900cd63e8",
+      "bytes": 23279
     },
     "bridges": [
       {
         "path": "src/editor_bridge.cpp",
-        "sha256": "8ffb534781bb64ed7e4dc4f0ba8183db1a1fc5bfce850868acba65348a16b9e6",
-        "bytes": 78708
+        "sha256": "86fb0f163956fbeae09d64c39ee79c892c872ae493822d772c6fa1a171a354ce",
+        "bytes": 83672
       },
       {
         "path": "src/ui/native_editor.cpp",
@@ -387,6 +387,13 @@
       ]
     },
     {
+      "name": "tracking_gpu_processing_set",
+      "method": "trackingGpuProcessingSet",
+      "sources": [
+        "src/editor_bridge.cpp"
+      ]
+    },
+    {
       "name": "undo",
       "method": "undo",
       "sources": [
@@ -428,18 +435,18 @@
   "generated": {
     "spectr-runtime-client.mjs": {
       "path": "spectr-runtime-client.mjs",
-      "sha256": "816a288ec2e15e70ced4fe7e36966a1e7a834432d07e14f077145b2bc261276b",
-      "bytes": 7042
+      "sha256": "eaa79223e570d2eff80577a8261a5caa60c4ed6f5ac695d08fe9a765cf9a19de",
+      "bytes": 7192
     },
     "spectr-runtime-client.d.ts": {
       "path": "spectr-runtime-client.d.ts",
-      "sha256": "d5de9f18e4e0c612df9973de4fa4cf2dc9283a7768197a205928532c27f0125c",
-      "bytes": 7199
+      "sha256": "9c038c2442b4b7a7174ee2306cd8cd0c86514ef5d77a1fb1b2a8d145b7104efc",
+      "bytes": 7340
     },
     "spectr-runtime-client.inline.js": {
       "path": "spectr-runtime-client.inline.js",
-      "sha256": "9061b7129a91f1c22b2e5f1fe34a25499cc7d89c6df83fe51c22016cffc24990",
-      "bytes": 2009
+      "sha256": "8c9c7f75b541f0af634be3cccbba0a3f73af2be99f1e7cbd55b4f98008f2ee0e",
+      "bytes": 2044
     }
   }
 }

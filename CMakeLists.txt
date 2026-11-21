@@ -384,6 +384,19 @@ endif()
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
        "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
 
+option(SPECTR_EXPERIMENTAL_TRACKING_GPU
+       "Offer the minimum-phase Tracking GPU convolver on an exact Apple Silicon SDK" OFF)
+set(_spectr_tracking_gpu FALSE)
+if(SPECTR_EXPERIMENTAL_TRACKING_GPU)
+    if(APPLE AND PULP_SDK_PLATFORM STREQUAL "darwin-arm64" AND PULP_GPU_AUDIO_HAS_DAWN_SHARED_IO
+       AND PULP_GPU_AUDIO_SHARED_CONVOLVER_ENABLED
+       AND PULP_GPU_AUDIO_EXACT_PROVIDER_PROOF_ENABLED AND TARGET Pulp::gpu-audio)
+        set(_spectr_tracking_gpu TRUE)
+    else()
+        message(STATUS "Tracking GPU unavailable: this SDK lacks the authenticated Apple Silicon shared convolver")
+    endif()
+endif()
+
 option(SPECTR_SHARED_PRODUCT_ACCEPTANCE
        "Build default-off actual-processor shared renderer acceptance diagnostics" OFF)
 if(SPECTR_SHARED_PRODUCT_ACCEPTANCE AND NOT SPECTR_EXPERIMENTAL_SHARED_RENDERER)
@@ -403,6 +416,14 @@ option(SPECTR_GPU_AUDIO_PERF_FIXTURE
        "Register opt-in staged GPU STFT baseline and lifecycle receipt checks" OFF)
 
 function(spectr_configure_native_target target)
+    if(_spectr_tracking_gpu)
+        get_target_property(_tracking_sources ${target} SOURCES)
+        if("${_tracking_sources}" MATCHES "mask_renderer\\.cpp")
+            target_compile_definitions(${target} PRIVATE SPECTR_EXPERIMENTAL_TRACKING_GPU=1)
+            target_sources(${target} PRIVATE src/experimental/tracking_gpu_convolver.cpp)
+            target_link_libraries(${target} PUBLIC Pulp::gpu-audio)
+        endif()
+    endif()
     if(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
         if(NOT TARGET Pulp::gpu-audio)
             message(FATAL_ERROR "Experimental shared renderer requires Pulp::gpu-audio")
@@ -2587,6 +2608,16 @@ if(SPECTR_NODE_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_audio_materialized_ui.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
     set_tests_properties(Spectr-gpu-audio-materialized-ui PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-tracking-gpu-source-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tracking_gpu_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html)
+    set_tests_properties(Spectr-tracking-gpu-source-ui PROPERTIES TIMEOUT 30)
+    add_test(NAME Spectr-tracking-gpu-materialized-ui
+        COMMAND ${SPECTR_NODE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tracking_gpu_ui.mjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json)
+    set_tests_properties(Spectr-tracking-gpu-materialized-ui PROPERTIES TIMEOUT 30)
     add_test(NAME Spectr-materialized-propagation
         COMMAND ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_propagation.mjs
@@ -4761,21 +4792,23 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
 
-    add_executable(Spectr-au-probe-state-test test/test_au_probe_state.cpp)
-    target_link_libraries(Spectr-au-probe-state-test PRIVATE
-        Catch2::Catch2WithMain Pulp::format-core ZLIB::ZLIB
-        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
-    # The released SDK can predate the compact encoder.
-    set(_spectr_au_header "${Pulp_DIR}/../../../include/pulp/format/au_v2_common.hpp")
-    if(EXISTS "${_spectr_au_header}")
-        file(STRINGS "${_spectr_au_header}" _spectr_compact_state
-            REGEX "^namespace compact_state")
-        if(_spectr_compact_state)
-            target_compile_definitions(Spectr-au-probe-state-test PRIVATE SPECTR_HAS_PULP_COMPACT_STATE)
-            target_link_libraries(Spectr-au-probe-state-test PRIVATE Pulp::ausdk)
+    if(SPECTR_ENABLE_TEST_SEAMS)
+        add_executable(Spectr-au-probe-state-test test/test_au_probe_state.cpp)
+        target_link_libraries(Spectr-au-probe-state-test PRIVATE
+            Catch2::Catch2WithMain Pulp::format-core ZLIB::ZLIB
+            "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+        # The released SDK can predate the compact encoder.
+        set(_spectr_au_header "${Pulp_DIR}/../../../include/pulp/format/au_v2_common.hpp")
+        if(EXISTS "${_spectr_au_header}")
+            file(STRINGS "${_spectr_au_header}" _spectr_compact_state
+                REGEX "^namespace compact_state")
+            if(_spectr_compact_state)
+                target_compile_definitions(Spectr-au-probe-state-test PRIVATE SPECTR_HAS_PULP_COMPACT_STATE)
+                target_link_libraries(Spectr-au-probe-state-test PRIVATE Pulp::ausdk)
+            endif()
         endif()
+        add_test(NAME Spectr-au-probe-state COMMAND Spectr-au-probe-state-test)
     endif()
-    add_test(NAME Spectr-au-probe-state COMMAND Spectr-au-probe-state-test)
     set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
     # A short Length (1/16 bar: 125 ms at the probe's 120 BPM) holds the
     # spectrum: the engage's spectral pre-roll is what these two measure.
@@ -5277,6 +5310,17 @@ endif()
 
 # Only the CLAP entry owns this diagnostic factory/export. Embedded CPU state
 # authors in Spectr-artifact-test retain their ordinary compilation contract.
+if(APPLE AND _spectr_tracking_gpu AND TARGET ${SPECTR_NATIVE_CLAP_TARGET})
+    # A manually supplied candidate path is required at run time. Keeping the
+    # host as a small standalone target lets release acceptance load the exact
+    # copied .clap under test without installing it or touching host user data.
+    add_executable(Spectr-tracking-gpu-clap-host EXCLUDE_FROM_ALL
+        test/test_tracking_gpu_clap.cpp)
+    target_include_directories(Spectr-tracking-gpu-clap-host PRIVATE
+        "${PULP_CLAP_INCLUDE_DIR}")
+    target_link_libraries(Spectr-tracking-gpu-clap-host PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 if(SPECTR_SHARED_NATIVE_HOST_PROBE)
     if(NOT APPLE OR NOT TARGET ${SPECTR_NATIVE_CLAP_TARGET})
         message(FATAL_ERROR "Shared native host probe requires macOS CLAP")
@@ -5298,6 +5342,19 @@ if(SPECTR_SHARED_NATIVE_HOST_PROBE)
     add_executable(Spectr-shared-host-contract EXCLUDE_FROM_ALL test/test_shared_host_contract.cpp)
     target_include_directories(Spectr-shared-host-contract PRIVATE include)
     add_test(NAME Spectr-shared-host-contract COMMAND Spectr-shared-host-contract)
+endif()
+
+if(SPECTR_ENABLE_TEST_SEAMS)
+    add_executable(Spectr-tracking-gpu-test EXCLUDE_FROM_ALL test/test_tracking_gpu.cpp)
+    spectr_configure_native_target(Spectr-tracking-gpu-test)
+    target_compile_definitions(Spectr-tracking-gpu-test PRIVATE
+        $<$<BOOL:${SPECTR_EXPERIMENTAL_SHARED_RENDERER}>:SPECTR_EXPERIMENTAL_SHARED_RENDERER=1>)
+    target_link_libraries(Spectr-tracking-gpu-test PRIVATE ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain)
+    add_test(NAME Spectr-tracking-gpu COMMAND Spectr-tracking-gpu-test "~[refusal]")
+    add_test(NAME Spectr-tracking-gpu-refusal COMMAND Spectr-tracking-gpu-test "[refusal]")
+    set_tests_properties(Spectr-tracking-gpu-refusal PROPERTIES
+        ENVIRONMENT SPECTR_FORCE_TRACKING_GPU_REFUSAL=1 TIMEOUT 60 RESOURCE_LOCK pulp_gpu)
+    set_tests_properties(Spectr-tracking-gpu PROPERTIES TIMEOUT 120 RESOURCE_LOCK pulp_gpu)
 endif()
 
 # Public diagnostics must work in a probe-OFF native consumer as well as tests.

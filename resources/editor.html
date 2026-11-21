@@ -498,6 +498,72 @@ document.addEventListener('DOMContentLoaded', async function() {
       backdropFilter: text ? 'blur(8px)' : 'none',
     }}>{text}</div>`,
       'status banner shell is visually empty while idle');
+    // Latency is hydration-only state, like the render mode itself. Keep one
+    // small store outside React so Settings can mount before or after the
+    // native editor reply without losing the authoritative projection.
+    const latencyStore = window.__spectrLatency || (window.__spectrLatency = {
+      state: null, listeners: [], pending: false,
+    });
+    const publishLatency = (state) => {
+      latencyStore.state = state;
+      (latencyStore.listeners || []).slice().forEach(listener => {
+        try { listener(); } catch (error) {
+          console.error('[Spectr] latency listener failed', error);
+        }
+      });
+    };
+    const normalizeLatency = (raw) => {
+      if (!raw || typeof raw.mode !== 'string' || !Array.isArray(raw.options)) return null;
+      const options = raw.options.filter(option => option
+        && (option.mode === 'linear_phase' || option.mode === 'zero_latency')
+        && typeof option.label === 'string'
+        && typeof option.description === 'string'
+        && Number.isFinite(Number(option.samples))
+        && Number.isFinite(Number(option.ms))
+      ).map(option => ({
+        mode: option.mode, label: option.label, description: option.description,
+        samples: Number(option.samples), ms: Number(option.ms),
+      }));
+      const tracking = raw.tracking_gpu;
+      if ((raw.mode !== 'linear_phase' && raw.mode !== 'zero_latency')
+          || options.length !== 2 || !tracking || typeof tracking !== 'object'
+          || typeof tracking.built !== 'boolean'
+          || typeof tracking.processing !== 'boolean'
+          || typeof tracking.eligibility !== 'string'
+          || !Number.isFinite(Number(tracking.cpu_samples))
+          || !Number.isFinite(Number(tracking.gpu_samples))) return null;
+      return {
+        control_label: typeof raw.control_label === 'string' ? raw.control_label : 'Latency',
+        mode: raw.mode, samples: Number(raw.samples), ms: Number(raw.ms),
+        options, sample_rate: Number(raw.sample_rate),
+        tracking_gpu: {
+          ...tracking,
+          cpu_samples: Number(tracking.cpu_samples),
+          gpu_samples: Number(tracking.gpu_samples),
+        },
+      };
+    };
+    window.SpectrLatency = {
+      store: latencyStore,
+      publish(raw) {
+        const state = normalizeLatency(raw);
+        if (state) publishLatency(state);
+        return state;
+      },
+      refreshTrackingGpu() {
+        if (!window.pulp || typeof window.pulp.postMessage !== 'function')
+          return Promise.resolve();
+        return Promise.resolve(window.pulp.postMessage(
+          'build_info_get', {}, 'spectr-tracking-gpu-refresh'))
+          .then(response => response && response.payload ? response.payload : response)
+          .then(body => {
+            const tracking = body && body.tracking_gpu;
+            const current = latencyStore.state;
+            if (tracking && current)
+              publishLatency({ ...current, tracking_gpu: tracking });
+          });
+      },
+    };
     window.SpectrNativeState = {
       parse(payload) {
         const n = payload && Number(payload.n_visible);
@@ -513,9 +579,9 @@ document.addEventListener('DOMContentLoaded', async function() {
         const analyzerMode = modeIndex('analyzer_mode', ['peak', 'avg', 'both', 'off']);
         const editMode = modeIndex('edit_mode', ['sculpt', 'level', 'boost', 'flare', 'glide']);
         const visualizationMode = modeIndex('visualization_mode', ['bars', 'response', 'both']);
-        const renderMode = payload && payload.latency
-          && (payload.latency.mode === 'linear_phase' || payload.latency.mode === 'zero_latency')
-          ? payload.latency.mode : null;
+        const latency = payload && payload.latency
+          ? window.SpectrLatency.publish(payload.latency) : null;
+        const renderMode = latency ? latency.mode : null;
         if (![32, 40, 48, 56, 64].includes(n)
             || !Array.isArray(gainDb) || gainDb.length !== n
             || !Array.isArray(muted) || muted.length !== n
@@ -548,7 +614,7 @@ document.addEventListener('DOMContentLoaded', async function() {
           n, gainDb: gainDb.slice(), muted: muted.slice(),
           gains: gainDb.map((db, i) => muted[i]
             ? -Infinity : Math.max(-1, Math.min(1, db / 24))),
-          minHz, maxHz, snapshots: { A, B },
+          minHz, maxHz, snapshots: { A, B }, latency,
           motionMode, analyzerMode, editMode, visualizationMode, renderMode,
           revision: Number(payload.revision) || 0,
           patternsJson: typeof payload.patterns_json === 'string'
@@ -1387,8 +1453,15 @@ function App() {`,
       Promise.resolve(window.pulp.postMessage('build_info_get', {}, 'spectr-gpu-status'))
         .then(response => response && response.payload ? response.payload : response)
         .then(body => {
-          if (active && body && body.ok === true && body.gpu_audio)
+          if (active && body && body.ok === true && body.gpu_audio) {
+            const latency = window.SpectrLatency;
+            const current = latency && latency.store.state;
+            if (current && body.tracking_gpu && !latency.store.pending &&
+                current.tracking_gpu.processing === body.tracking_gpu.processing &&
+                JSON.stringify(current.tracking_gpu) !== JSON.stringify(body.tracking_gpu))
+              latency.publish({ ...current, tracking_gpu: body.tracking_gpu });
             setGpuAudio(body.gpu_audio);
+          }
         })
         .catch(() => {});
     };
@@ -3980,17 +4053,45 @@ window.PatternManager = PatternManager;`,
       'GPU mode indicator follows zoom readout in the top bar');
     replaceSpectrSource(
       'function StatusBanner({ message, disabled }) {',
-      String.raw`function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
+      String.raw`function spectrTrackingGpuDisplay(tracking) {
+  if (!tracking) return { chip: '—', text: 'Tracking status unavailable', state: 'unknown' };
+  const actual = tracking.actual || {};
+  const provider = tracking.provider_state || actual.provider_state;
+  const status = tracking.eligibility;
+  const count = value => /^(0|[1-9][0-9]*)$/.test(String(value)) ? String(value) : null;
+  const gpu = count(actual.gpu_selected);
+  const cpu = count(actual.cpu_fallback);
+  const delivered = gpu !== null && gpu !== '0';
+  const totals = (gpu !== null ? ' · ' + gpu + ' GPU blocks delivered' : '')
+    + (cpu !== null ? ' · ' + cpu + ' CPU fallback' : '');
+  if (status === 'provider_refused' || tracking.provider_refused)
+    return { chip: 'CPU', text: 'Tracking GPU refused · CPU active' + totals, state: 'refused' };
+  if (status === 'unsupported_platform')
+    return { chip: 'CPU', text: 'Tracking on the CPU · GPU unavailable on this platform', state: 'unsupported' };
+  if (!tracking.processing)
+    return { chip: 'CPU', text: 'Tracking on the CPU', state: 'cpu' };
+  if (['degraded', 'unavailable', 'fenced', 'cpu_only', 'release_unconfirmed'].includes(provider))
+    return { chip: 'CPU', text: 'Tracking GPU ' + provider.replace(/_/g, ' ') + ' · CPU active' + totals, state: 'fallback' };
+  if (delivered)
+    return { chip: 'GPU used', text: 'Tracking' + totals, state: 'delivered' };
+  if (status === 'ready' || provider === 'shared_ready')
+    return { chip: 'Ready', text: 'Tracking GPU ready · waiting for delivery' + totals, state: 'ready' };
+  return { chip: 'GPU set', text: 'Tracking GPU selected · waiting for provider', state: 'selected' };
+}
+
+function GpuModeIndicator({ renderMode, gpuAudio, onChange }) {
   const mixing = renderMode === 'linear_phase';
   const available = mixing && gpuAudio && gpuAudio.available === true;
   const ready = available && gpuAudio.provider_state === 'shared_ready';
-  const label = mixing ? (ready ? 'GPU' : 'GPU unavailable') : 'CPU';
-  const color = ready ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
+  const tracking = spectrTrackingGpuDisplay(window.SpectrLatency?.store?.state?.tracking_gpu);
+  const label = mixing ? (ready ? 'GPU' : 'GPU unavailable') : tracking.chip;
+  const providerReady = mixing ? ready : ['ready', 'delivered'].includes(tracking.state);
+  const color = providerReady ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
   return <button data-spectr-gpu-mode-indicator data-spectr-gpu-mode={mixing ? 'mixing' : 'tracking'}
-    data-spectr-gpu-ready={ready ? 'true' : 'false'} role="status"
+    data-spectr-gpu-ready={providerReady ? 'true' : 'false'} role="status"
     aria-label={'Compute mode: ' + label}
-    title={mixing ? (ready ? 'Shared GPU audio is active' : 'GPU shared renderer unavailable') : 'Tracking uses the CPU path'}
-    onClick={() => onChange && onChange(mixing ? 'zero_latency' : 'linear_phase')}
+    title={mixing ? (ready ? 'Shared GPU audio is active' : 'GPU shared renderer unavailable') : tracking.text + ' · Tracking GPU in Settings'}
+    onClick={mixing ? () => onChange && onChange('zero_latency') : undefined}
     style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 10,
       padding: '3px 8px', borderRadius: 3, border: '1px solid ' + color,
       background: 'rgba(255,255,255,0.03)', color, fontFamily: 'var(--mono)',
@@ -4005,8 +4106,10 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
   const mixing = renderMode === 'linear_phase';
   const ready = mixing && gpuAudio && gpuAudio.available === true
     && gpuAudio.provider_state === 'shared_ready';
-  const color = ready ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
-  let text = mixing ? 'GPU unavailable' : 'Convolving on the CPU';
+  const tracking = spectrTrackingGpuDisplay(window.SpectrLatency?.store?.state?.tracking_gpu);
+  const providerReady = mixing ? ready : ['ready', 'delivered'].includes(tracking.state);
+  const color = providerReady ? 'hsl(205,90%,64%)' : 'hsl(38,90%,62%)';
+  let text = mixing ? 'GPU unavailable' : tracking.text;
   if (mixing && gpuAudio && gpuAudio.provider_state
       && gpuAudio.provider_state !== 'shared_ready')
     text += ' · ' + gpuAudio.provider_state;
@@ -4015,7 +4118,7 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
     const fallback = Number(gpuAudio.cpu_fallback || 0);
     text = 'GPU | ' + gpu + ' blocks | ' + fallback + ' CPU fallback';
   }
-  return <div data-spectr-gpu-audio-status-pill data-spectr-gpu-audio-state={ready ? 'gpu' : 'cpu'}
+  return <div data-spectr-gpu-audio-status-pill data-spectr-gpu-audio-state={mixing ? (ready ? 'gpu' : 'cpu') : tracking.state}
     style={{ position: 'absolute', left: '50%', bottom: 88, transform: 'translateX(-50%)',
       display: 'inline-flex', alignItems: 'center', gap: 6, zIndex: 6, pointerEvents: 'none',
       padding: '5px 10px', borderRadius: 3, border: '1px solid ' + color,
@@ -4027,6 +4130,97 @@ function GpuAudioStatusPill({ enabled, renderMode, gpuAudio }) {
 
 function StatusBanner({ message, disabled }) {`,
       'GPU mode and status pill components');
+
+    // Tracking GPU is a separate opt-in from Mixing. Keep the row in the
+    // native Settings surface, while the bridge owns eligibility and measured
+    // PDC figures. The control never changes mode optimistically: a rejected
+    // provider request leaves the authoritative selection and reason visible.
+    replaceSpectrSource(
+      'function SettingsModal({ settings, setSettings, onClose }) {',
+      String.raw`function SpectrTrackingGpuSettings() {
+  const store = window.SpectrLatency && window.SpectrLatency.store;
+  const [, redraw] = React.useState(0);
+  React.useEffect(() => {
+    if (!store) return undefined;
+    const listener = () => redraw(value => value + 1);
+    const listeners = store.listeners || (store.listeners = []);
+    listeners.push(listener);
+    return () => {
+      const index = listeners.indexOf(listener);
+      if (index >= 0) listeners.splice(index, 1);
+    };
+  }, [store]);
+  const latency = store && store.state;
+  const tracking = latency && latency.tracking_gpu;
+  if (!tracking) return null;
+  const selected = tracking.processing === true;
+  const built = tracking.built === true;
+  const unavailable = tracking.eligibility === 'unsupported_platform';
+  const refused = tracking.eligibility === 'provider_refused';
+  const active = tracking.eligibility === 'active';
+  const ready = tracking.eligibility === 'ready';
+  const provider = tracking.provider_state
+    || (tracking.actual && tracking.actual.reason) || 'unprobed';
+  const status = spectrTrackingGpuDisplay(tracking).text;
+  const statusColor = unavailable || refused ? 'hsl(38,90%,62%)'
+    : active ? 'hsl(205,90%,64%)' : 'rgba(255,255,255,0.62)';
+  const formatPdc = samples => Number.isFinite(Number(samples))
+    ? String(Math.round(Number(samples))) + ' samples'
+    : '—';
+  const request = next => {
+    if (!store || store.pending || (unavailable && next)) return;
+    if (!window.pulp || typeof window.pulp.postMessage !== 'function') return;
+    store.pending = true;
+    redraw(value => value + 1);
+    Promise.resolve(window.pulp.postMessage('tracking_gpu_processing_set',
+      { enabled: !!next }, 'spectr-tracking-gpu'))
+      .then(response => {
+        const body = response && response.payload ? response.payload : response;
+        if (!response || response.ok !== true || !body || body.ok !== true)
+          throw new Error((body && body.error) || 'Tracking GPU request rejected');
+        if (body.latency && window.SpectrLatency)
+          window.SpectrLatency.publish(body.latency);
+      })
+      .catch(error => {
+        console.error('[Spectr] Tracking GPU request failed', error);
+        if (window.SpectrLatency && typeof window.SpectrLatency.refreshTrackingGpu === 'function')
+          window.SpectrLatency.refreshTrackingGpu().catch(refreshError =>
+            console.error('[Spectr] Tracking GPU refusal refresh failed', refreshError));
+      })
+      .finally(() => {
+        store.pending = false;
+        redraw(value => value + 1);
+      });
+  };
+  return <SpectrSettingsGroup title="TRACKING GPU"
+    subtitle="Opt-in backend for Tracking. Delivery remains provider-dependent.">
+    <SpectrSettingsField label="Processing"
+      hint={'CPU ' + formatPdc(tracking.cpu_samples) + ' · GPU ' + formatPdc(tracking.gpu_samples)}>
+      <div data-spectr-tracking-gpu-toggle="true"
+        data-spectr-tracking-gpu-state={selected ? 'on' : 'off'}>
+        <SpectrSettingsToggle value={selected}
+          onChange={request}
+          aria-label="Use Tracking GPU" />
+      </div>
+    </SpectrSettingsField>
+    <div data-spectr-tracking-gpu-status={tracking.eligibility}
+      style={{ display: 'flex', justifyContent: 'space-between', gap: 12,
+        padding: '8px 10px', borderRadius: 3,
+        border: '1px solid rgba(255,255,255,0.1)',
+        background: 'rgba(255,255,255,0.025)', fontFamily: 'var(--sans)',
+        fontSize: 10, color: statusColor }}>
+      <span>{status}</span>
+      <span style={{ opacity: 0.7 }}>{built ? 'provider: ' + provider : 'build: unsupported'}</span>
+    </div>
+  </SpectrSettingsGroup>;
+}
+
+function SettingsModal({ settings, setSettings, onClose }) {`,
+      'Tracking GPU settings control');
+    replaceSpectrSource(
+      '        <SpectrSettingsGroup title="MOTION"',
+      '        <SpectrTrackingGpuSettings />\n\n        <SpectrSettingsGroup title="MOTION"',
+      'Tracking GPU settings group placement');
 
     // Mirror imperative cursor writes into the React-owned style prop. The
     // browser DOM assignment remains as a fallback, while WidgetBridge sees
