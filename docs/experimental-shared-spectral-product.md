@@ -1,4 +1,4 @@
-# Opt-in Spectr shared renderer
+# Spectr shared renderer
 
 ## 2026-09-28 latest-source validation
 
@@ -19,10 +19,10 @@ control on the isolated branch. It is not a realtime deadline or speedup claim,
 and the CPU backend remains the product default.
 
 `SPECTR_EXPERIMENTAL_SHARED_RENDERER=ON` selects the shared spectral adapter for
-native Spectr's existing linear-phase mode. It is OFF by default. The saved mode
-values and normal CPU factory are unchanged; the zero-latency mode stays CPU.
-This is a development build option, not a released backend preference. Use a
-separate preview identity when installing it beside normal Spectr.
+native Spectr's existing linear-phase mode. It is enabled by default on macOS
+and remains off by default on other platforms. The saved mode values and normal
+CPU factory are unchanged, and the zero-latency mode stays CPU. Use a separate
+preview identity when installing it beside normal Spectr.
 
 The wrapper implements `MaskRenderer`, so existing band publication, audio-rate
 staging, mix automation and reset reach the same control authority and mixer
@@ -170,7 +170,7 @@ is introduced here.
 
 `SPECTR_SHARED_PRODUCT_ACCEPTANCE=ON` adds a dedicated
 `Spectr-shared-product-acceptance` executable and stopped-lane diagnostics. The
-option is OFF by default and requires the experimental renderer. It does not
+option is OFF by default and requires the shared renderer. It does not
 change saved state or normal backend selection. Its forced-CPU control must be
 set before preparation and cannot change a prepared instance.
 

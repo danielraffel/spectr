@@ -94,6 +94,12 @@ shipped binaries carry none of the variable names (`Spectr-test-seams-absent`
 in a release build, `Spectr-test-seams-present` as its positive control in the
 test build).
 
+On macOS, the shared GPU linear renderer is compiled in by default so Mixing
+can offer its GPU processing switch. The switch remains off for each new
+instance until the user enables it. Override the build default with
+`-DSPECTR_EXPERIMENTAL_SHARED_RENDERER=OFF`; non-macOS and iOS-family builds
+default to `OFF` until those platforms have a proven GPU path.
+
 To try a branch in a DAW next to an installed release, configure a separate
 build directory with `-DSPECTR_DEV_IDENTITY=<Suffix>` (for example `Freeze`).
 It changes every identifier a host keys on — product name `Spectr Freeze Dev`,
