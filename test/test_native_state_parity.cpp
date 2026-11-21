@@ -1106,8 +1106,13 @@ TEST_CASE("native editor advertises proportional host-corner resizing",
         "return s && s.width === 520 && s.height === 679"
         // The GPU processing row (122 px) exists only where the processor
         // reports GPU processing available.
-        " && (() => { const gpu = globalThis.__spectrLatency?.state?.gpu_available === true ? 122 : 0;"
-        "      return s.content_height > 2750 + gpu && s.content_height < 2910 + gpu; })()"
+        // The Tracking GPU group (242 px: title, subtitle, Processing row and
+        // status line) exists only where the latency state carries
+        // tracking_gpu, so the window shifts by that group only there.
+        " && (() => { const st = globalThis.__spectrLatency?.state;"
+        "      const gpu = st?.gpu_available === true ? 122 : 0;"
+        "      const trk = st?.tracking_gpu ? 242 : 0;"
+        "      return s.content_height > 2750 + gpu + trk && s.content_height < 2910 + gpu + trk; })()"
         " && s.scroll_reachable === true"
         " && s.native_scroll_view === true"
         " && s.authored_skin === true; })()",
