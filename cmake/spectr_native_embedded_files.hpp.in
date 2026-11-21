@@ -1,0 +1,4 @@
+#pragma once
+
+#define SPECTR_NATIVE_EMBEDDED_FILES \
+@_spectr_embedded_file_entries@
