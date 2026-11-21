@@ -150,39 +150,39 @@ Spectr::Spectr() : editor_authority_(*this) {
     prime_negative_control_seams();
     auto_gain_tap_.bind(&freeze_source_, &auto_gain_material_);
 #if defined(SPECTR_NATIVE_EDITOR)
-    pulp::view::CommandInfo settings;
+    editor_view::CommandInfo settings;
     settings.id = kOpenSettingsCommand;
     settings.name = "Settings\u2026";
     settings.category = "App";
-    settings.default_key = static_cast<pulp::view::KeyCode>(',');
+    settings.default_key = static_cast<editor_view::KeyCode>(',');
 #if defined(__APPLE__)
-    settings.default_modifiers = pulp::view::kModCmd;
+    settings.default_modifiers = editor_view::kModCmd;
 #else
-    settings.default_modifiers = pulp::view::kModCtrl;
+    settings.default_modifiers = editor_view::kModCtrl;
 #endif
     native_command_registry_.register_command(settings);
 
-    pulp::view::CommandInfo undo;
+    editor_view::CommandInfo undo;
     undo.id = kUndoCommand;
     undo.name = "Undo";
     undo.category = "Edit";
-    undo.default_key = pulp::view::KeyCode::z;
+    undo.default_key = editor_view::KeyCode::z;
 #if defined(__APPLE__)
-    undo.default_modifiers = pulp::view::kModCmd;
+    undo.default_modifiers = editor_view::kModCmd;
 #else
-    undo.default_modifiers = pulp::view::kModCtrl;
+    undo.default_modifiers = editor_view::kModCtrl;
 #endif
     native_command_registry_.register_command(undo);
 
-    pulp::view::CommandInfo redo;
+    editor_view::CommandInfo redo;
     redo.id = kRedoCommand;
     redo.name = "Redo";
     redo.category = "Edit";
-    redo.default_key = pulp::view::KeyCode::z;
+    redo.default_key = editor_view::KeyCode::z;
 #if defined(__APPLE__)
-    redo.default_modifiers = pulp::view::kModCmd | pulp::view::kModShift;
+    redo.default_modifiers = editor_view::kModCmd | editor_view::kModShift;
 #else
-    redo.default_modifiers = pulp::view::kModCtrl | pulp::view::kModShift;
+    redo.default_modifiers = editor_view::kModCtrl | editor_view::kModShift;
 #endif
     native_command_registry_.register_command(redo);
     native_command_registry_.add_handler(this);
@@ -1419,7 +1419,7 @@ void Spectr::preroll_surviving_hold_() {
 }
 
 std::unique_ptr<pulp::view::View> Spectr::create_view() {
-#if defined(SPECTR_AAX_HEADLESS)
+#if defined(SPECTR_AAX_HEADLESS) || defined(SPECTR_VELLUM_EDITOR_PACKAGE)
     // AAX discovery and audio instantiation must not load the native view
     // stack. Pro Tools parses the AAX module in-process before it has a UI
     // host; returning no editor keeps that path processor-only.
@@ -1444,7 +1444,7 @@ pulp::format::ViewSize Spectr::view_size() const {
 }
 
 void Spectr::on_view_opened(pulp::view::View& view) {
-#if defined(SPECTR_AAX_HEADLESS)
+#if defined(SPECTR_AAX_HEADLESS) || defined(SPECTR_VELLUM_EDITOR_PACKAGE)
     (void)view;
 #elif defined(SPECTR_NATIVE_EDITOR)
     open_native_editor_(view);
@@ -1456,11 +1456,21 @@ void Spectr::on_view_opened(pulp::view::View& view) {
 }
 
 void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
-#if defined(SPECTR_AAX_HEADLESS)
+#if defined(SPECTR_AAX_HEADLESS) || defined(SPECTR_VELLUM_EDITOR_PACKAGE)
     (void)view;
     (void)w;
     (void)h;
 #elif defined(SPECTR_NATIVE_EDITOR)
+    resize_native_editor_(view, w, h);
+#else
+    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
+        editor->sync_to_host();
+    }
+#endif
+}
+
+#if defined(SPECTR_NATIVE_EDITOR)
+void Spectr::resize_native_editor_(editor_view::View& view, uint32_t w, uint32_t h) {
     if (&view != native_editor_root_ || w == 0 || h == 0) return;
     native_host_width_ = w;
     native_host_height_ = h;
@@ -1482,7 +1492,7 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         // unpainted band during a live drag came from exactly that round trip —
         // the responsive pass needs ~96 host frames to commit, so the surface
         // outran the content for the whole gesture.
-        const pulp::view::Rect authored_bounds{
+        const editor_view::Rect authored_bounds{
             0.0f, 0.0f, static_cast<float>(kEditorDesignWidth),
             static_cast<float>(kEditorDesignHeight)};
         if (view.bounds() != authored_bounds) {
@@ -1502,21 +1512,14 @@ void Spectr::on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) {
         publish_native_layout_(kEditorDesignWidth, kEditorDesignHeight);
         return;
     }
-    const pulp::view::Rect host_bounds{
+    const editor_view::Rect host_bounds{
         0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h)};
     if (view.bounds() != host_bounds) {
         view.set_bounds(host_bounds);
         view.layout_children();
     }
     publish_native_layout_(w, h);
-#else
-    if (auto* editor = dynamic_cast<EditorView*>(&view)) {
-        editor->sync_to_host();
-    }
-#endif
 }
-
-#if defined(SPECTR_NATIVE_EDITOR)
 void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
     // The pass below restores the captured authored geometry and re-places the
     // whole materialized tree — hundreds of bridge writes. Under a pinned
@@ -1551,7 +1554,7 @@ void Spectr::publish_native_layout_(std::uint32_t w, std::uint32_t h) {
 #endif
 
 void Spectr::on_view_closed(pulp::view::View& view) {
-#if defined(SPECTR_AAX_HEADLESS)
+#if defined(SPECTR_AAX_HEADLESS) || defined(SPECTR_VELLUM_EDITOR_PACKAGE)
     (void)view;
 #elif defined(SPECTR_NATIVE_EDITOR)
     if (&view == native_editor_root_) close_native_editor_();

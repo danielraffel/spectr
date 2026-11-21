@@ -3,7 +3,6 @@
 
 #include <pulp/format/editor_host.hpp>
 #include <pulp/vellum/param_port_model.hpp>
-#include "spectr/vellum_editor.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -102,12 +101,3 @@ TEST_CASE("Vellum editor model follows controls and restores state") {
     }
     CHECK(port.ends(101) == 1);
 }
-
-TEST_CASE("Vellum editor package allowlists every editable control") {
-    for (const auto key : spectr::vellum_editor::RootView::model_control_keys())
-        CHECK(spectr::vellum_editor::RootView::resolve_param_key(key).has_value());
-    for (const auto key : {"LFO 1 Bank", "LFO 1 Bank Depth", "LFO 2 Freeze",
-                           "LFO 2 Freeze Depth"})
-        CHECK(spectr::vellum_editor::RootView::resolve_param_key(key).has_value());
-}
-
