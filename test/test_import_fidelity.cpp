@@ -31,7 +31,7 @@ constexpr std::string_view kTemplateDigest =
 // goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
 // bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "6dd931d853835282f18784bffc7174a6cd59ce4cf76a70a24c9f5d87f7aac860";
+    "2ecc3e86b86f4a47d78db2307fd9442dbf762224f35a685d0457129fb705e995";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -178,6 +178,27 @@ constexpr std::array kPatchNeedles{
     ContractMarker{"overflow-fit-view", "              <button onClick={() => { act(b => b.resetView())(); setOverflowMenu(false); }} style={menuItem}>FIT VIEW</button>"},
 };
 
+constexpr std::array kCurrentContextPatchNeedles{
+    ContractMarker{
+        "current mute callback",
+        "onMuteBand={(b) => { const cur = targetGainsRef.current[b]; commitGain(b, isMuted(cur) ? 0 : -Infinity); if (onStatus) onStatus(isMuted(cur) ? `BAND ${b + 1} UNMUTED` : `BAND ${b + 1} MUTED`); }}"},
+    ContractMarker{
+        "current reset callback",
+        "onZeroBand={(b) => { commitGain(b, 0); if (onStatus) onStatus(`BAND ${b + 1} RESET`); }}"},
+    ContractMarker{
+        "current solo callback",
+        "commitMany(map);\n          }}\n          onSelectAround="},
+    ContractMarker{
+        "current selection zero callback",
+        "commitMany(map);\n          }}\n          onMuteSel="},
+    ContractMarker{
+        "current selection mute callback",
+        "commitMany(map);\n            if (onStatus) onStatus(`MUTED ${map.size} BAND${map.size === 1 ? '' : 'S'}`);"},
+    ContractMarker{
+        "current fit callback",
+        "onFitView={() => setView({ lmin: Math.log10(20), lmax: Math.log10(20000) })}"},
+};
+
 constexpr std::array kGestureMarkers{
     ContractMarker{"drag-threshold", "      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.didDrag = true;"},
     ContractMarker{"shift-selection", "      pointerRef.current = { mode: 'shift-select', band };"},
@@ -276,6 +297,9 @@ TEST_CASE("import fidelity: embedded Claude payload and adapter match Release 1 
     mutated_adapter.front() ^= 1;
     CHECK(pulp::runtime::sha256_hex(mutated_adapter) != kAdapterDigest);
     CHECK(adapter.find("throw new Error('Spectr source patch point missing: ' + label)") != adapter.npos);
+    CHECK(adapter.find("const currentSourceFallbacks = {") != adapter.npos);
+    CHECK(adapter.find("'flush band context mute publication'") != adapter.npos);
+    CHECK(adapter.find("'flush selection mute publication'") != adapter.npos);
     CHECK(adapter.find("new DOMParser().parseFromString(template, 'text/html')") != adapter.npos);
     CHECK(adapter.find("window.Babel.transformScriptTags()") != adapter.npos);
     CHECK(adapter.find("window.pulp.postMessage('processing_state_set'") != adapter.npos);
@@ -469,6 +493,18 @@ TEST_CASE("import adapter contract detects pinned core source-needle drift") {
         auto source = bundle->template_html;
         erase_once(source, marker.text);
         CHECK(contains(patch_errors(source), marker.label));
+    }
+}
+
+TEST_CASE("import adapter contract detects current Vellum context patch drift") {
+    const auto bundle = pulp::view::parse_claude_bundle(embedded_html());
+    REQUIRE(bundle.has_value());
+    for (const auto& marker : kCurrentContextPatchNeedles) {
+        INFO(marker.label);
+        auto source = bundle->template_html;
+        REQUIRE(source.find(marker.text) != source.npos);
+        erase_once(source, marker.text);
+        CHECK(source.find(marker.text) == source.npos);
     }
 }
 
