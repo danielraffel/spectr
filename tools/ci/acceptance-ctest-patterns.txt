@@ -453,6 +453,7 @@ optional(browser oracle lane needs node+chrome): ^Spectr-browser-
 # flag does not outlive its session. Needs Spectr-au-routes-probe, which the
 # workflow builds for exactly these.
 ^Spectr-au-offline-
+^Spectr-au-probe-state$
 
 # Third-party validators over the built bundles. clap-validator's
 # state-reproducibility-flush failed on 1.0.7 RC1 (the legacy LFO Depth and
