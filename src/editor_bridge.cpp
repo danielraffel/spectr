@@ -12,7 +12,9 @@
 
 #include <pulp/state/store.hpp>
 #include <pulp/platform/clipboard.hpp>
+#include <pulp/platform/detect.hpp>
 #include <pulp/runtime/build_info.hpp>
+#include <pulp/runtime/system.hpp>
 #include <pulp/runtime/trace.hpp>
 #include <pulp/view/editor_bridge.hpp>
 // Pulp's in-app update bridge (pulp_updates_*). Spectr builds against SDKs
@@ -150,6 +152,22 @@ choc::value::Value pattern_library_projection_(const PatternLibrary& library) {
     return result;
 }
 
+constexpr const char* plugin_architecture_() noexcept {
+#if defined(_M_ARM64EC) || defined(__arm64ec__)
+    return "arm64ec";
+#else
+    using pulp::platform::Arch;
+    switch (pulp::platform::current_arch) {
+    case Arch::ARM64: return "arm64";
+    case Arch::x86_64: return "x86_64";
+    case Arch::ARM32: return "arm";
+    case Arch::x86: return "x86";
+    case Arch::Unknown: return "unknown";
+    }
+    return "unknown";
+#endif
+}
+
 std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gpu_status) {
     std::string result;
     const auto append = [&result](std::string_view label, std::string_view value) {
@@ -174,6 +192,10 @@ std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gp
         ? std::string_view{"unknown"}
         : pulp::runtime::kGitDirty ? std::string_view{"dirty"}
                                   : std::string_view{"clean"});
+    const auto& system = pulp::runtime::get_system_info();
+    append("Plug-in architecture", plugin_architecture_());
+    append("System architecture", system.arch.empty() ? "unknown" : system.arch);
+    append("CPU", system.cpu_model.empty() ? "unknown" : system.cpu_model);
     append("Build", pulp::runtime::kBuildType);
     append("Built", pulp::runtime::kBuildIso8601);
     {
@@ -191,9 +213,61 @@ std::string build_info_copy_text_(const Spectr& plugin, const GpuAudioStatus& gp
     return result;
 }
 
+// Tracking's GPU choice is a saved opt-in independent from Mixing's choice.
+// Keep the UI's eligibility wording in the native projection so it cannot
+// claim that a build-time capability is the same thing as actual provider
+// delivery. A selected backend only becomes "active" after the renderer has
+// published a live delivery snapshot.
+choc::value::Value tracking_gpu_projection_(const Spectr& plugin) {
+    const auto status = plugin.gpu_audio_status();
+    const bool built = Spectr::tracking_gpu_built();
+    const bool selected = plugin.tracking_gpu_processing();
+    const bool refused = plugin.tracking_gpu_provider_refused();
+    const bool tracking_mode = plugin.render_mode() == MaskRenderMode::zero_latency;
+    // The shared Mixing renderer publishes the same status shape as Tracking.
+    // Its terminal-record ledger is not a Tracking observation, so never let
+    // those counters appear under this projection. Tracking delivery is the
+    // renderer snapshot explicitly marked as having no terminal ledger.
+    const auto tracking_delivery = tracking_mode && status.delivery.has_value()
+        && !status.delivery->has_terminal_records
+        ? &*status.delivery : nullptr;
+    const bool provider_ready = tracking_delivery != nullptr
+        && status.availability == GpuAudioStatus::Availability::Available
+        && tracking_delivery->provider_state == 1;
+    const bool active = selected
+        && provider_ready
+        && tracking_delivery->gpu_selected > 0;
+    const char* eligibility = !built ? "unsupported_platform"
+        : refused ? "provider_refused"
+        : active ? "active" : "unprobed";
+    if (!refused && built && provider_ready && !active)
+        eligibility = "ready";
+
+    auto value = choc::value::createObject("SpectrTrackingGpu");
+    value.addMember("built", built);
+    value.addMember("processing", selected);
+    value.addMember("eligibility", std::string(eligibility));
+    value.addMember("cpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::zero_latency, false)));
+    value.addMember("gpu_samples", static_cast<double>(
+        plugin.render_mode_latency_samples(MaskRenderMode::zero_latency, true)));
+    value.addMember("sample_rate", plugin.sample_rate());
+    value.addMember("provider_refused", refused);
+    if (tracking_delivery) {
+        value.addMember("actual", detail::gpu_audio_status_projection(status));
+        value.addMember("provider_state", std::string(
+            detail::gpu_audio_provider_state(tracking_delivery->provider_state)));
+    }
+    return value;
+}
+
 choc::value::Value build_info_projection_(const Spectr& plugin) {
     auto result = choc::value::createObject("SpectrBuildInfo");
     result.addMember("product_version", plugin.descriptor().version);
+    const auto& system = pulp::runtime::get_system_info();
+    result.addMember("plugin_arch", std::string(plugin_architecture_()));
+    result.addMember("system_arch", system.arch.empty() ? "unknown" : system.arch);
+    result.addMember("cpu_model", system.cpu_model.empty() ? "unknown" : system.cpu_model);
     constexpr std::string_view product_sha{SPECTR_PRODUCT_GIT_SHA};
     if (!product_sha.empty())
         result.addMember("product_sha", std::string{product_sha});
@@ -224,6 +298,7 @@ choc::value::Value build_info_projection_(const Spectr& plugin) {
     }
     const auto gpu_status=plugin.gpu_audio_status();
     result.addMember("gpu_audio", detail::gpu_audio_status_projection(gpu_status));
+    result.addMember("tracking_gpu", tracking_gpu_projection_(plugin));
     result.addMember("copy_text", build_info_copy_text_(plugin,gpu_status));
     return result;
 }
@@ -573,6 +648,7 @@ choc::value::Value make_editor_state_payload(const Spectr& plugin,
         plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, false)));
     latency.addMember("mixing_gpu_samples", static_cast<double>(
         plugin.render_mode_latency_samples(MaskRenderMode::linear_phase, true)));
+    latency.addMember("tracking_gpu", tracking_gpu_projection_(plugin));
     latency.addMember("sample_rate", plugin.sample_rate());
     payload.addMember("latency", latency);
 
@@ -1440,6 +1516,23 @@ void register_spectr_editor_handlers(EditorBridge& bridge,
                 return EditorBridge::err_response("this build has no GPU processing");
             if (!plugin.set_gpu_processing(p["enabled"].getBool()))
                 return EditorBridge::err_response("could not prepare that renderer");
+            return shown_response_(plugin.editor_authority(), plugin,
+                                   plugin.editor_authority().revision());
+        });
+    bridge.add_handler("tracking_gpu_processing_set",
+        [&plugin](const choc::value::ValueView& p) -> std::string {
+            if (!p.isObject() || !p.hasObjectMember("enabled") || !p["enabled"].isBool())
+                return EditorBridge::err_response("enabled must be a bool");
+            const bool enabled = p["enabled"].getBool();
+            // Clearing a saved opt-in remains available on an unsupported
+            // build, so a project cannot get stuck with a refused choice.
+            if (enabled && !Spectr::tracking_gpu_built())
+                return EditorBridge::err_response("Tracking GPU is unavailable on this platform");
+            if (!plugin.set_tracking_gpu_processing(enabled)) {
+                if (plugin.tracking_gpu_provider_refused())
+                    return EditorBridge::err_response("Tracking GPU provider refused");
+                return EditorBridge::err_response("could not prepare the Tracking GPU renderer");
+            }
             return shown_response_(plugin.editor_authority(), plugin,
                                    plugin.editor_authority().revision());
         });

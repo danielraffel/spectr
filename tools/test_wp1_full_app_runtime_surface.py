@@ -57,7 +57,7 @@ class FullAppRuntimeSurfaceTest(unittest.TestCase):
         contract = json.loads((output / "runtime-surface-contract.json").read_text())
         self.assertEqual(contract["schema"], "spectr-owned-app-runtime-surface-v1")
         self.assertEqual(contract["root"], "App")
-        self.assertEqual(contract["module_count"], 59)
+        self.assertEqual(contract["module_count"], 60)
         self.assertEqual(contract["typescript"]["diagnostics"], 0)
         self.assertIn("pulp", contract["runtime_surface"]["window"]["used"])
         self.assertIn("spectrSetRangeDb", contract["runtime_surface"]["globalThis"]["used"])

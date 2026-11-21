@@ -2011,11 +2011,10 @@ int main(int argc, char** argv) {
             std::printf("[gpu-status] GPU stats pill after Settings > GPU stats: %s\n",
                         pill_enabled.c_str());
             if (pill_enabled != "present") steps_ok = false;
-            // Tracking is CPU-only: a press on the indicator answers with a
-            // notice saying why, and changes nothing in the processor -- no
-            // renderer is built, the mode, the GPU choice and the latency the
-            // host is told all stay where they were.
+            // Tracking has an independent Settings control. Pressing its readout
+            // points there without rebuilding the renderer or changing either GPU choice.
             const auto builds_before = rig.processor.renderer_build_count();
+            const auto tracking_before = rig.processor.tracking_gpu_processing();
             const int latency_before = rig.processor.latency_samples();
             const char* notice_q = "document.querySelector('[data-spectr-gpu-tracking-notice]')";
             const std::string notice_before = painted_text(notice_q);
@@ -2034,14 +2033,15 @@ int main(int argc, char** argv) {
                         notice_before.c_str(), notice.c_str(), title.c_str());
             capture(rig, dir, prefix + "gpu-status-0b-tracking-notice", backend, scale);
             if (rig.processor.gpu_processing()
+                || rig.processor.tracking_gpu_processing() != tracking_before
                 || rig.processor.render_mode() != spectr::MaskRenderMode::zero_latency
                 || rig.processor.latency_samples() != latency_before
                 || rig.processor.renderer_build_count() != builds_before) steps_ok = false;
             // The notice was not there before the press and is after it, and
             // the hover tooltip says the same.
             if (notice_before != "(absent)"
-                || notice.find("GPU runs in Mixing only") == std::string::npos
-                || title.find("switch to Mixing for GPU") == std::string::npos) steps_ok = false;
+                || notice.find("Tracking GPU in Settings") == std::string::npos
+                || title.find("Tracking GPU in Settings") == std::string::npos) steps_ok = false;
             // The notice is one line in a box that holds it: its painted
             // height is a single line, and its text fits inside the box's
             // padding at the editor's scale (it used to break after the dash

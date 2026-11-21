@@ -16,7 +16,7 @@ assert.match(source, /setRenderMode\(mode\)/);
 assert.match(source, /gpu_audio/);
 assert.match(source, /onRenderModeChange=\{setRenderModeFromUi\}/);
 assert.match(source, /renderMode === 'linear_phase'/);
-assert.match(source, /Convolving on the CPU/);
+assert.match(source, /spectrTrackingGpuDisplay\(window\.SpectrLatency/);
 assert.match(source, /CPU fallback/);
 // The UI must never silently call the old unimplemented toggle component.
 assert.doesNotMatch(source, /function GpuModeControl\(/);

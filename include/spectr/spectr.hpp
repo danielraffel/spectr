@@ -579,10 +579,15 @@ public:
     /// parameter: switching it rebuilds the renderer and moves the latency the
     /// host is told, exactly like a Tracking/Mixing switch, so it must not be
     /// automatable. Off by default: GPU output is the CPU linear-phase output
-    /// (no sonic difference) at a higher latency. Tracking is always CPU.
+    /// (no sonic difference) at a higher latency.
     /// Control thread only; same failure contract as set_render_mode.
     bool set_gpu_processing(bool enabled);
     [[nodiscard]] bool gpu_processing() const noexcept { return gpu_processing_; }
+    /// Independently saved: projects authored with the Mixing switch still open in CPU Tracking.
+    [[nodiscard]] static bool tracking_gpu_built() noexcept;
+    [[nodiscard]] bool tracking_gpu_processing() const noexcept { return tracking_gpu_processing_.load(); }
+    [[nodiscard]] bool tracking_gpu_provider_refused() const noexcept { return tracking_gpu_refused_.load(); }
+    bool set_tracking_gpu_processing(bool enabled);
     /// Whether this build can render Mixing on the GPU at all.
     [[nodiscard]] static constexpr bool gpu_processing_available() noexcept {
 #if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
@@ -1232,8 +1237,10 @@ private:
     // The mode `renderer_` was built for. Authoritative for what this instance
     // sounds like and what latency it reports; written by the control thread
     // only, read by process() to notice a pending rebuild.
-    MaskRenderMode                         render_mode_ = kDefaultRenderMode;
+    std::atomic<MaskRenderMode>            render_mode_{kDefaultRenderMode};
     bool                                   gpu_processing_ = false;
+    std::atomic<bool>                      tracking_gpu_processing_{false};
+    std::atomic<bool>                      tracking_gpu_refused_{false};
     // Set when a restore could not build the renderer the project asked for.
     // The instance keeps the mode it has and says so rather than pretending
     // the project opened cleanly.
