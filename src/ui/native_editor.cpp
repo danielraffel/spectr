@@ -4179,6 +4179,12 @@ void RootView::editor_opened() {
     if (processor_.native_editor_root_ != this) return;
     if (auto* host = plugin_view_host(); host && processor_.native_scripted_ui_)
         processor_.native_scripted_ui_->attach_gpu_surface(host->gpu_surface());
+    // Content-first mounts the materialized UI now rather than on a later idle
+    // poll, so the first frame the host presents already shows the editor.
+    if (auto* session = processor_.native_scripted_ui_.get();
+        session != nullptr && session->document_load_pending() &&
+        pulp::format::editor_content_first_open_enabled())
+        (void)session->complete_pending_load();
     processor_.open_native_editor_(*this);
 }
 
@@ -4192,6 +4198,12 @@ void RootView::editor_idle() {
     }
     if (processor_.native_scripted_ui_) processor_.native_scripted_ui_->poll();
     processor_.retire_failed_native_session_();
+}
+
+bool RootView::editor_content_ready() const {
+    if (processor_.native_editor_root_ != this) return false;
+    const auto* session = processor_.native_scripted_ui_.get();
+    return session != nullptr && !session->document_load_pending() && session->bridge() != nullptr;
 }
 
 void RootView::editor_closing() {
