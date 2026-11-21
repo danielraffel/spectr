@@ -50,10 +50,8 @@
 
 #if defined(SPECTR_NATIVE_EDITOR)
 #include <filesystem>
-#include <pulp/view/command_registry.hpp>
 #include <pulp/view/editor_bridge.hpp>
-#include <pulp/view/frame_clock.hpp>
-#include <pulp/view/scripted_ui.hpp>
+#include "spectr/editor_view_api.hpp"
 #include "spectr/editor_bridge.hpp"
 #endif
 
@@ -512,7 +510,7 @@ inline pulp::format::PluginDescriptor make_descriptor() {
 /// streaming spectral-mask processor.
 class Spectr : public pulp::format::Processor
 #if defined(SPECTR_NATIVE_EDITOR)
-             , private pulp::view::CommandHandler
+             , private editor_view::CommandHandler
 #endif
 {
 public:
@@ -734,12 +732,17 @@ public:
     void on_view_resized(pulp::view::View& view, uint32_t w, uint32_t h) override;
     void on_view_closed(pulp::view::View& view) override;
 #if defined(SPECTR_NATIVE_EDITOR)
-    pulp::view::ScriptedUiSession* active_scripted_ui() override {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    editor_view::ScriptedUiSession* native_scripted_ui() { return native_scripted_ui_.get(); }
+    editor_view::View* native_editor_root() { return native_editor_root_; }
+#else
+    editor_view::ScriptedUiSession* active_scripted_ui() override {
         return native_scripted_ui_.get();
     }
-    const pulp::view::ScriptedUiSession* active_scripted_ui() const override {
+    const editor_view::ScriptedUiSession* active_scripted_ui() const override {
         return native_scripted_ui_.get();
     }
+#endif
     EditorRevision native_editor_revision() const noexcept {
         return editor_authority_.revision();
     }
@@ -1761,24 +1764,24 @@ private:
     // Matches Pulp's framework-reserved `PLST` command in pending pulp#7712.
     // Keeping the consumer on the existing registry surface lets the current
     // SDK prove Spectr's handler before the host-side Cmd/Ctrl+, fallback lands.
-    static constexpr pulp::view::CommandID kOpenSettingsCommand = 0x504C5354;
+    static constexpr editor_view::CommandID kOpenSettingsCommand = 0x504C5354;
     // Spectr owns document history, so these chords must be claimed by the
     // plugin before a DAW interprets Cmd/Ctrl+Z as its own project command.
-    static constexpr pulp::view::CommandID kUndoCommand = 0x5350554E; // 'SPUN'
-    static constexpr pulp::view::CommandID kRedoCommand = 0x53505244; // 'SPRD'
-    std::vector<pulp::view::CommandID> commands() const override;
-    bool perform_command(pulp::view::CommandID id) override;
+    static constexpr editor_view::CommandID kUndoCommand = 0x5350554E; // 'SPUN'
+    static constexpr editor_view::CommandID kRedoCommand = 0x53505244; // 'SPRD'
+    std::vector<editor_view::CommandID> commands() const override;
+    bool perform_command(editor_view::CommandID id) override;
 
-    pulp::view::CommandRegistry native_command_registry_{};
+    editor_view::CommandRegistry native_command_registry_{};
     pulp::view::EditorBridge native_editor_bridge_{};
     bool native_editor_handlers_registered_ = false;
-    std::unique_ptr<pulp::view::ScriptedUiSession> native_scripted_ui_{};
+    std::unique_ptr<editor_view::ScriptedUiSession> native_scripted_ui_{};
     std::int64_t scenario_mod_sequence_ = 1000000;  // menu-scenario modframe steps
     bool scenario_drag_held_ = false;               // menu-scenario drag:...!hold
-    pulp::view::Point scenario_held_point_{};
+    editor_view::Point scenario_held_point_{};
     std::uint16_t scenario_held_mods_ = 0;
     std::filesystem::path native_package_path_{};
-    pulp::view::View* native_editor_root_ = nullptr;
+    editor_view::View* native_editor_root_ = nullptr;
     // Latches once the SPECTR_SETTINGS_SCROLL fixture has positioned the
     // settings body, so the capture is not re-scrolled every frame.
     bool settings_fixture_scrolled_ = false;
@@ -1818,7 +1821,7 @@ private:
     // transform, which is a per-event constant and identical in both arms.
     int gesture_perf_tick_ = -1;
     bool gesture_perf_done_ = false;
-    pulp::view::View* gesture_perf_target_ = nullptr;
+    editor_view::View* gesture_perf_target_ = nullptr;
 #endif
     bool resize_fixture_applied_ = false;
     bool resize_request_sent_ = false;
@@ -1831,7 +1834,7 @@ private:
     // complete even if the process is killed rather than closed.
     std::string native_state_trace_{};
     int native_state_trace_tick_ = 0;
-    pulp::view::View* native_resize_grip_ = nullptr;
+    editor_view::View* native_resize_grip_ = nullptr;
     // Last host size reported to on_view_resized. Under a pinned viewport the
     // ROOT is constant at the authored box, so root bounds are useless as a
     // resize base — every drag would measure from 1320x860 and the grip could
@@ -1853,7 +1856,7 @@ private:
     // state a freshly created editor must be in so the first pass still runs.
     std::uint32_t native_published_width_ = 0;
     std::uint32_t native_published_height_ = 0;
-    pulp::view::FrameClock* native_frame_clock_ = nullptr;
+    editor_view::FrameClock* native_frame_clock_ = nullptr;
     int native_frame_subscription_ = -1;
     float native_analyzer_elapsed_ = 0.0f;
     // Last PUBLISHED output-level reading, so an unchanged one costs no
@@ -1894,7 +1897,14 @@ private:
     std::int64_t  native_modulation_controls_key_ = -1;
     EditorRevision native_host_automation_revision_ = 0;
 
-    std::unique_ptr<pulp::view::View> create_native_editor_();
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    friend class vellum_editor::RootView;
+    void mount_native_editor_(editor_view::View&, pulp::vellum::EditorEnv&);
+#else
+    std::unique_ptr<editor_view::View> create_native_editor_();
+#endif
+    void resize_native_editor_(editor_view::View&, uint32_t w, uint32_t h);
+    void detach_native_dispatch_();
 
     // Hands the materialized document to the constructed session. Pulp
     // evaluates it at once in-process, or from the session's second idle poll
@@ -1910,7 +1920,7 @@ private:
     bool native_session_failed_ = false;
     bool native_document_load_reported_ = false;
     void publish_native_layout_(std::uint32_t w, std::uint32_t h);
-    void open_native_editor_(pulp::view::View& view);
+    void open_native_editor_(editor_view::View& view);
     void close_native_editor_();
     bool tick_native_analyzer_(float dt);
     /// Draw what the modulators are playing: reconstruct the post-LFO field at

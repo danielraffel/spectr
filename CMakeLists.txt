@@ -231,12 +231,9 @@ set(SPECTR_HEADERS
     include/spectr/vellum_editor.hpp
 )
 
-# The Vellum editor package is an opt-in port slice. Keeping it off preserves
-# the shipping native editor until the installed Pulp/Vellum package exposes
-# the model-backed scripted session; enabling it compiles the package root and
-# its allowlist resolver without adding a second bridge or widget tree.
+# Both editor packages mount the same materialized document and runtime.
 option(SPECTR_VELLUM_EDITOR_PACKAGE
-    "Compile the model-backed Vellum editor package slice" OFF)
+    "Host the existing materialized Spectr editor with Vellum" OFF)
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     find_package(Vellum CONFIG REQUIRED)
     if(NOT COMMAND pulp_add_vellum_editor_package)
@@ -251,21 +248,6 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
         VIEW_HEADER spectr/vellum_editor.hpp
         VIEW_TYPE spectr::vellum_editor::RootView
         VIEW_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    add_library(Spectr-vellum-editor-package-check OBJECT EXCLUDE_FROM_ALL
-        src/ui/vellum_editor_package.cpp)
-    target_link_libraries(Spectr-vellum-editor-package-check PRIVATE
-        SpectrVellumEditor)
-    target_include_directories(Spectr-vellum-editor-package-check PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_compile_definitions(Spectr-vellum-editor-package-check PRIVATE
-        SPECTR_AUTHORED_DESIGN_W=${SPECTR_AUTHORED_WIDTH}
-        SPECTR_AUTHORED_DESIGN_H=${SPECTR_AUTHORED_HEIGHT}
-        SPECTR_HOST_PREFERRED_W=${SPECTR_HOST_PREFERRED_WIDTH}
-        SPECTR_HOST_PREFERRED_H=${SPECTR_HOST_PREFERRED_HEIGHT}
-        SPECTR_HOST_MIN_W=${SPECTR_HOST_MIN_WIDTH}
-        SPECTR_HOST_MIN_H=${SPECTR_HOST_MIN_HEIGHT}
-        SPECTR_HOST_MAX_W=${SPECTR_HOST_MAX_WIDTH}
-        SPECTR_HOST_MAX_H=${SPECTR_HOST_MAX_HEIGHT})
 endif()
 
 # ── Native-editor N1 vertical slice ──────────────────────────────────
@@ -923,19 +905,6 @@ if(SPECTR_SDK_HAS_DESIGN_IMPORT)
     # to make every Windows audio build fail at link time.
     target_sources(Spectr-test PRIVATE test/test_import_fidelity.cpp)
 endif()
-if(SPECTR_VELLUM_EDITOR_PACKAGE)
-    target_sources(Spectr-test PRIVATE test/test_vellum_editor_model.cpp)
-    target_sources(Spectr-test PRIVATE test/test_vellum_editor_gpu.cpp)
-    target_sources(Spectr-test PRIVATE test/test_vellum_audio_display.cpp)
-    target_link_libraries(Spectr-test PRIVATE Pulp::vellum Pulp::vellum-audio
-        Vellum::Value Vellum::MirrorView_core)
-    target_compile_definitions(Spectr-test PRIVATE SPECTR_VELLUM_EDITOR_PACKAGE=1)
-    if(APPLE)
-        # The layout test decodes the captured PNG with ImageIO.
-        target_link_libraries(Spectr-test PRIVATE "-framework ImageIO"
-            "-framework CoreGraphics" "-framework CoreFoundation")
-    endif()
-endif()
 target_link_libraries(Spectr-test PRIVATE
     Pulp::format Pulp::view Pulp::audio-analysis
     Catch2::Catch2WithMain
@@ -1558,13 +1527,43 @@ if(SPECTR_NODE_EXECUTABLE)
     set_tests_properties(Spectr-parity-state-canonical-node PROPERTIES TIMEOUT 30)
 endif()
 
+set(_spectr_reference_core ${SPECTR_NATIVE_CORE_TARGET})
+if(SPECTR_VELLUM_EDITOR_PACKAGE)
+    # These reference fixtures exercise the Pulp ViewBridge and its
+    # screenshot APIs. Build the same sources with the reference backend.
+    add_library(Spectr-pulp-reference-core OBJECT ${SPECTR_NATIVE_SOURCES})
+    target_include_directories(Spectr-pulp-reference-core PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+    target_link_libraries(Spectr-pulp-reference-core PUBLIC
+        Pulp::format ${SPECTR_NATIVE_VIEW_TARGET} spectr_native_assets)
+    spectr_configure_native_target(Spectr-pulp-reference-core)
+    set(_spectr_reference_core Spectr-pulp-reference-core)
+
+    add_executable(Spectr-vellum-editor-test
+        test/test_editor_open.cpp
+        test/test_vellum_editor_model.cpp
+        test/test_vellum_editor_gpu.cpp
+        test/test_vellum_audio_display.cpp)
+    target_link_libraries(Spectr-vellum-editor-test PRIVATE
+        ${SPECTR_NATIVE_CORE_TARGET} SpectrVellumEditor Catch2::Catch2WithMain)
+    spectr_configure_native_target(Spectr-vellum-editor-test)
+    target_include_directories(Spectr-vellum-editor-test PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+    if(APPLE)
+        set_source_files_properties(test/test_vellum_editor_gpu.cpp PROPERTIES LANGUAGE OBJCXX)
+        target_link_libraries(Spectr-vellum-editor-test PRIVATE
+            "-framework Metal" "-framework ImageIO" "-framework CoreGraphics")
+    endif()
+    catch_discover_tests(Spectr-vellum-editor-test TEST_PREFIX "Vellum: "
+        PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor SKIP_RETURN_CODE 4)
+endif()
+
 add_executable(Spectr-native-n1-test
     test/test_native_n1.cpp
     test/test_native_state_parity.cpp
     test/test_editor_open.cpp
 )
 target_link_libraries(Spectr-native-n1-test PRIVATE
-    ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain
+    ${_spectr_reference_core} Catch2::Catch2WithMain
 )
 spectr_configure_native_target(Spectr-native-n1-test)
 # Both cases mount the same heavyweight native materialized editor runtime.
@@ -1580,7 +1579,7 @@ catch_discover_tests(Spectr-native-n1-test
 if(APPLE)
     add_executable(Spectr-native-host-click-test test/test_native_host_click.mm)
     target_link_libraries(Spectr-native-host-click-test PRIVATE
-        ${SPECTR_NATIVE_CORE_TARGET} Catch2::Catch2WithMain "-framework AppKit")
+        ${_spectr_reference_core} Catch2::Catch2WithMain "-framework AppKit")
     spectr_configure_native_target(Spectr-native-host-click-test)
     catch_discover_tests(Spectr-native-host-click-test
         PROPERTIES RESOURCE_LOCK spectr_native_materialized_editor
@@ -1632,7 +1631,7 @@ add_executable(Spectr-native-shot
     tools/native_shot.cpp
 )
 target_link_libraries(Spectr-native-shot PRIVATE
-    ${SPECTR_NATIVE_CORE_TARGET}
+    ${_spectr_reference_core}
 )
 spectr_configure_native_target(Spectr-native-shot)
 if(Python3_Interpreter_FOUND)

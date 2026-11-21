@@ -22,10 +22,21 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <pulp/state/store.hpp>
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+#include "vellum_editor_harness.hpp"
+#include "spectr_native_assets_data.hpp"
+#include <choc/text/choc_JSON.h>
+#include <vellum/view/widget_bridge.hpp>
+#pragma push_macro("PULP_VIEW_HAS_AUDIO_WIDGETS")
+#undef PULP_VIEW_HAS_AUDIO_WIDGETS
+#include <vellum/view/widgets.hpp>
+#pragma pop_macro("PULP_VIEW_HAS_AUDIO_WIDGETS")
+#else
 #include <pulp/view/frame_clock.hpp>
 #include <pulp/view/scripted_ui.hpp>
 #include <pulp/view/widget_bridge.hpp>
 #include <pulp/view/widgets.hpp>
+#endif
 
 #include <memory>
 #include <optional>
@@ -33,10 +44,10 @@
 
 namespace {
 
-using pulp::view::View;
+using spectr::editor_view::View;
 
-const pulp::view::Label* find_label(const View& view, std::string_view text) {
-    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+const spectr::editor_view::Label* find_label(const View& view, std::string_view text) {
+    if (const auto* label = dynamic_cast<const spectr::editor_view::Label*>(&view);
         label != nullptr && label->text() == text)
         return label;
     for (std::size_t index = 0; index < view.child_count(); ++index)
@@ -48,8 +59,15 @@ const pulp::view::Label* find_label(const View& view, std::string_view text) {
 struct EditorHarness {
     pulp::state::StateStore store;
     spectr::Spectr processor;
-    pulp::view::FrameClock clock;
+    spectr::editor_view::FrameClock clock;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    std::optional<pulp::format::StateStoreParamPort> port;
+    std::optional<spectr_test::VellumContext> context;
+    std::unique_ptr<pulp::format::Editor> editor;
+    spectr::vellum_editor::RootView* root = nullptr;
+#else
     std::unique_ptr<View> root;
+#endif
 
     EditorHarness() {
         processor.set_state_store(&store);
@@ -61,12 +79,49 @@ struct EditorHarness {
         prepare.output_channels = 2;
         processor.prepare(prepare);
     }
-    ~EditorHarness() {
+    ~EditorHarness() { close(); }
+
+    void close() {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        editor.reset();
+        root = nullptr;
+#else
         if (root) processor.on_view_closed(*root);
+        root.reset();
+#endif
+    }
+
+    auto* session() {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        return processor.native_scripted_ui();
+#else
+        return processor.active_scripted_ui();
+#endif
+    }
+
+    void resize(std::uint32_t w, std::uint32_t h) {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        REQUIRE(editor->set_size({w, h, 1.0}));
+#else
+        processor.on_view_resized(*root, w, h);
+#endif
     }
     // `deferred` opens the view the way a plug-in host does: inside the
     // view-creation guard Pulp's ViewBridge holds for hosted editors.
     void open_view(bool deferred = false) {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        port.emplace(store);
+        context.emplace(*port);
+        context->kind = deferred ? pulp::format::EditorHostKind::plugin
+                                 : pulp::format::EditorHostKind::standalone;
+        auto* factory = pulp::vellum::generated::SpectrVellumEditor();
+        editor = factory->create(processor, *context, pulp::format::EditorRole::editor);
+        REQUIRE(editor != nullptr);
+        root = dynamic_cast<spectr::vellum_editor::RootView*>(processor.native_editor_root());
+        REQUIRE(root != nullptr);
+        root->set_frame_clock(&clock);
+        root->editor_opened();
+#else
         std::optional<pulp::view::ScopedDeferredDocumentLoad> guard;
         if (deferred) guard.emplace();
         root = processor.create_view();
@@ -75,16 +130,21 @@ struct EditorHarness {
         root->set_frame_clock(&clock);
         root->layout_children();
         processor.on_view_opened(*root);
+#endif
     }
     // One host frame: the idle pump polls the session, then the frame clock
     // ticks -- the order ViewBridge's idle pump and the GPU host run them.
     void frame() {
-        if (auto* session = processor.active_scripted_ui()) session->poll();
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        editor->idle();
+#else
+        if (auto* ui = session()) ui->poll();
+#endif
         clock.tick(1.0f / 60.0f);
     }
-    pulp::view::WidgetBridge* bridge() {
-        auto* session = processor.active_scripted_ui();
-        return session ? session->bridge() : nullptr;
+    spectr::editor_view::WidgetBridge* bridge() {
+        auto* ui = session();
+        return ui ? ui->bridge() : nullptr;
     }
 };
 
@@ -107,12 +167,12 @@ TEST_CASE("a deferred editor returns unevaluated and mounts on its second frame"
 
     // Returned to the host before any script ran: a session exists (the
     // adapter needs it to wire the GPU surface), its realm does not.
-    REQUIRE(h.processor.active_scripted_ui() != nullptr);
+    REQUIRE(h.session() != nullptr);
     CHECK(h.bridge() == nullptr);
     CHECK(find_label(*h.root, "CLEAR") == nullptr);
 
     // Host resizes before the first frame are kept, not dropped.
-    h.processor.on_view_resized(*h.root, 990, 645);
+    h.resize(990, 645);
     CHECK(h.bridge() == nullptr);
 
     // Frame 1 paints the empty editor; nothing is evaluated yet.
@@ -135,13 +195,12 @@ TEST_CASE("a deferred editor closed before its second frame tears down cleanly",
     EditorHarness h;
     h.open_view(/*deferred=*/true);
     h.frame();
-    h.processor.on_view_closed(*h.root);
-    h.root.reset();
+    h.close();
     // The analyzer subscription went with the editor; ticking must not reach
     // a stale load.
     h.clock.tick(1.0f / 60.0f);
     h.clock.tick(1.0f / 60.0f);
-    CHECK(h.processor.active_scripted_ui() == nullptr);
+    CHECK(h.session() == nullptr);
 
     // And a reopen evaluates normally.
     h.open_view(/*deferred=*/true);
@@ -158,7 +217,9 @@ TEST_CASE("without deferral the document is mounted when create_view returns",
     CHECK(h.bridge() != nullptr);
 }
 
+#if !defined(SPECTR_VELLUM_EDITOR_PACKAGE)
 #include <pulp/view/js_engine.hpp>
+#endif
 
 TEST_CASE("an editor open evaluates the document once and a reopen reuses its bytecode",
           "[editor-open]") {
@@ -170,24 +231,23 @@ TEST_CASE("an editor open evaluates the document once and a reopen reuses its by
     h.frame();
     h.frame();
     REQUIRE(h.bridge() != nullptr);
-    CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
+    CHECK(h.session()->probe_realm_evaluations() == 0);
 
-    h.processor.on_view_closed(*h.root);
-    h.root.reset();
-    const auto before = pulp::view::script_bytecode_cache_stats();
+    h.close();
+    const auto before = spectr::editor_view::script_bytecode_cache_stats();
     h.open_view(/*deferred=*/true);
     h.frame();
     h.frame();
     REQUIRE(h.bridge() != nullptr);
-    const auto after = pulp::view::script_bytecode_cache_stats();
+    const auto after = spectr::editor_view::script_bytecode_cache_stats();
     CHECK(after.hits > before.hits);
     CHECK(after.compiles == before.compiles);
-    CHECK(h.processor.active_scripted_ui()->probe_realm_evaluations() == 0);
+    CHECK(h.session()->probe_realm_evaluations() == 0);
 }
 
 namespace {
 // load_script returns nothing, so a value rides back as an exception's text.
-std::string read_js(pulp::view::WidgetBridge& bridge, const std::string& expr) {
+std::string read_js(spectr::editor_view::WidgetBridge& bridge, const std::string& expr) {
     try {
         bridge.load_script("throw new Error('PULPVALUE:' + (" + expr + ") + ':PULPEND');",
                            "spectr-editor-open-read");
@@ -202,7 +262,7 @@ std::string read_js(pulp::view::WidgetBridge& bridge, const std::string& expr) {
     return "no-value";
 }
 
-long read_js_int(pulp::view::WidgetBridge& bridge, const std::string& expr) {
+long read_js_int(spectr::editor_view::WidgetBridge& bridge, const std::string& expr) {
     const auto text = read_js(bridge, "String(" + expr + ")");
     try {
         return std::stol(text);
@@ -291,3 +351,60 @@ TEST_CASE("an editor opens showing a non-default session without a hydrate commi
     CHECK(read_js(bridge,
         "globalThis.__spectrTestHooks.renderState().targetGains[0].toFixed(3)") == "0.500");
 }
+
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+TEST_CASE("Vellum factory mounts Spectr's authored editor and exposes its commands",
+          "[editor-open][vellum]") {
+    EditorHarness h;
+    h.open_view(true);
+    CHECK(h.editor->size().width == 990);
+    CHECK(h.editor->size().height == 645);
+    CHECK(h.editor->size_hints().design_width == 1320);
+    CHECK(h.editor->size_hints().design_height == 860);
+    REQUIRE(h.session() != nullptr);
+
+    std::vector<std::string> script_errors;
+    const auto log = h.session()->add_log_callback(
+        [&](std::string_view level, std::string_view text) {
+            if (level == "error") script_errors.emplace_back(text);
+        });
+    for (int frame = 0; frame < 20; ++frame) h.frame();
+    REQUIRE(h.bridge() != nullptr);
+    h.session()->remove_log_callback(log);
+    for (const auto& error : script_errors) WARN(error);
+    CHECK(script_errors.empty());
+
+    auto& bridge = *h.bridge();
+    CHECK(read_js(bridge, R"js(
+        JSON.parse(__spectrEditorDispatch('{"type":"build_info_get"}')).ok
+           && JSON.parse(__spectrEditorDispatch('{"type":"processing_state_get"}')).ok
+           && JSON.parse(__spectrEditorDispatch('{"type":"output_levels_get"}')).ok
+    )js") == "true");
+    CHECK(read_js(bridge, R"js(
+        JSON.parse(__spectrEditorDispatch('{"type":"__unknown_test_command__"}')).ok
+    )js") == "false");
+
+    // The authored knobs route through the Spectr command schema, so the
+    // document has no declarative bindWidgetToParam() bindings.
+    CHECK(bridge.params().resolve(std::to_string(spectr::kMix)).valid());
+    CHECK(bridge.param_binding_count() == 0);
+    const auto document = choc::json::parse(std::string_view(
+        reinterpret_cast<const char*>(spectr_native::materialized_document_runtime_json),
+        spectr_native::materialized_document_runtime_json_size));
+    const auto expected_canvases = document["canvas_bindings"].size();
+    REQUIRE(expected_canvases > 0);
+    CHECK(read_js_int(bridge,
+        "__pulpMaterializedCanvasBindingsReady__.filter(Boolean).length") == expected_canvases);
+    CHECK(read_js_int(bridge, R"js(
+        ['mix','intensity','output-trim','auto-gain'].filter(
+            name => document.querySelector('[data-spectr-' + name + ']')).length
+    )js") == 4);
+    CHECK(read_js(bridge, R"js(
+        JSON.parse(__spectrEditorDispatch('{"type":"param_edit","payload":{"id":1,"value":37}}')).ok
+    )js") == "true");
+    CHECK(h.store.get_value(spectr::kMix) == 37.0f);
+    for (int frame = 0; frame < 20; ++frame) h.frame();
+    CHECK(read_js(bridge,
+        "document.querySelector('[data-spectr-mix]').getAttribute('aria-valuenow')") == "37");
+}
+#endif

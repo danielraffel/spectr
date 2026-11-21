@@ -1,16 +1,29 @@
 #include "spectr/spectr.hpp"
 #include "spectr/test_seams.hpp"
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+#include <vellum/view/plugin_view_host.hpp>
+#include <vellum/view/screenshot.hpp>
+#include <vellum/view/script_event_dispatch.hpp>
+#include <vellum/view/tracing_badge.hpp>
+#include <vellum/view/buttons.hpp>
+#include <vellum/view/canvas_widget.hpp>
+#include <vellum/view/hover_cursor.hpp>
+#include <vellum/view/input_events.hpp>
+#include <vellum/view/layout_snapshot.hpp>
+#include <vellum/view/overlay_dismissal.hpp>
+#include <vellum/view/plugin_key_routing.hpp>
+#include <vellum/view/pointer_dispatch.hpp>
+#include <vellum/view/ui_components.hpp>
+#include <vellum/view/view.hpp>
+// The installed mirror also reads Pulp's feature macro, but ships audio
+// widgets via the Pulp Vellum adapter, outside the mirror widgets header.
+#pragma push_macro("PULP_VIEW_HAS_AUDIO_WIDGETS")
+#undef PULP_VIEW_HAS_AUDIO_WIDGETS
+#include <vellum/view/widgets.hpp>
+#pragma pop_macro("PULP_VIEW_HAS_AUDIO_WIDGETS")
+#include <vellum/view/window_host.hpp>
+#else
 #include <pulp/view/plugin_view_host.hpp>
-
-#include "spectr/editor_bridge.hpp"
-
-#include <pulp/runtime/log.hpp>
-#include <pulp/runtime/trace.hpp>
-#include <pulp/signal/spectral_band_mask.hpp>
-#include <pulp/format/plugin_descriptor.hpp>
-#include <atomic>
-#include <cstdio>
-#include <thread>
 #include <pulp/view/screenshot.hpp>
 #include <pulp/view/script_event_dispatch.hpp>
 #include <pulp/view/tracing_badge.hpp>
@@ -26,6 +39,21 @@
 #include <pulp/view/view.hpp>
 #include <pulp/view/widgets.hpp>
 #include <pulp/view/window_host.hpp>
+#endif
+
+#include "spectr/editor_bridge.hpp"
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+#include "spectr/vellum_editor.hpp"
+#include <pulp/vellum/editor_env.hpp>
+#endif
+
+#include <pulp/runtime/log.hpp>
+#include <pulp/runtime/trace.hpp>
+#include <pulp/signal/spectral_band_mask.hpp>
+#include <pulp/format/plugin_descriptor.hpp>
+#include <atomic>
+#include <cstdio>
+#include <thread>
 
 #include <choc/text/choc_JSON.h>
 
@@ -57,13 +85,13 @@ void retain_static_pixels(View& view) {
 // drives rows a pointer cannot reach and reports them working.
 namespace spectr_menu_probe {
 
-pulp::view::View* nearest_clickable(pulp::view::View* view) {
+spectr::editor_view::View* nearest_clickable(spectr::editor_view::View* view) {
     for (auto* node = view; node != nullptr; node = node->parent())
         if (node->on_click) return node;
     return nullptr;
 }
 
-void root_origin_of(const pulp::view::View& view, float& x, float& y) {
+void root_origin_of(const spectr::editor_view::View& view, float& x, float& y) {
     x = 0.0f;
     y = 0.0f;
     for (const auto* node = &view; node != nullptr; node = node->parent()) {
@@ -72,12 +100,12 @@ void root_origin_of(const pulp::view::View& view, float& x, float& y) {
     }
 }
 
-const pulp::view::Label* find_label_if(
-        const pulp::view::View& view,
+const spectr::editor_view::Label* find_label_if(
+        const spectr::editor_view::View& view,
         bool (*match)(const std::string&, const std::string&),
         const std::string& needle, bool include_hidden = false) {
     if (!include_hidden && !view.visible()) return nullptr;
-    if (const auto* label = dynamic_cast<const pulp::view::Label*>(&view);
+    if (const auto* label = dynamic_cast<const spectr::editor_view::Label*>(&view);
         label != nullptr && match(label->text(), needle))
         return label;
     for (std::size_t i = 0; i < view.child_count(); ++i)
@@ -108,9 +136,9 @@ inline int menu_scope_depth = -1;
 // The node the band header was found under: it contains the band menu even
 // while a submenu is the top overlay, so rows of the band menu itself can be
 // aimed at by label.
-inline pulp::view::View* menu_band_scope = nullptr;
+inline spectr::editor_view::View* menu_band_scope = nullptr;
 
-pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
+spectr::editor_view::View* menu_container(spectr::editor_view::View& root, int& band_number) {
     band_number = -1;
     menu_scope_depth = -1;
     menu_band_scope = nullptr;
@@ -145,16 +173,16 @@ pulp::view::View* menu_container(pulp::view::View& root, int& band_number) {
 
 struct RowAim {
     bool found = false;
-    pulp::view::View* row = nullptr;
+    spectr::editor_view::View* row = nullptr;
     float x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
     float cx = 0.0f, cy = 0.0f;
 };
 
-RowAim aim_row(pulp::view::View& scope, const std::string& suffix) {
+RowAim aim_row(spectr::editor_view::View& scope, const std::string& suffix) {
     RowAim aim;
     const auto* label = find_label_if(scope, ends_with, suffix);
     if (label == nullptr) return aim;
-    auto* live = const_cast<pulp::view::Label*>(label);
+    auto* live = const_cast<spectr::editor_view::Label*>(label);
     aim.found = true;
     aim.row = nearest_clickable(live);
     root_origin_of(*live, aim.x, aim.y);
@@ -168,10 +196,10 @@ RowAim aim_row(pulp::view::View& scope, const std::string& suffix) {
 /// The nearest ancestor of @p view that clips (overflow other than visible)
 /// and leaves @p view's centre outside its box, or nullptr. @p dy is set to
 /// the direction a wheel must move the content to bring the centre in.
-pulp::view::View* clipping_ancestor(pulp::view::View& view, float cx, float cy,
+spectr::editor_view::View* clipping_ancestor(spectr::editor_view::View& view, float cx, float cy,
                                     float& wx, float& wy, float& dy) {
     for (auto* a = view.parent(); a != nullptr; a = a->parent()) {
-        if (a->overflow() == pulp::view::View::Overflow::visible) continue;
+        if (a->overflow() == spectr::editor_view::View::Overflow::visible) continue;
         float ax = 0.0f, ay = 0.0f;
         root_origin_of(*a, ax, ay);
         const auto b = a->bounds();
@@ -288,13 +316,13 @@ constexpr float kAnalyzerCeilingDb = 24.0f;
 // host-normalized movement deltas when they are available, so its cumulative
 // `on_resize` delta remains invariant while Logic changes the editor and window
 // sizes underneath the captured pointer.
-class EditorResizeGrip : public pulp::view::ResizableCorner {
+class EditorResizeGrip : public spectr::editor_view::ResizableCorner {
 public:
     EditorResizeGrip() {
         // Pulp maps this through the shared macOS cursor helper, including in
         // embedded AU editors, so the larger hit target also gets the expected
         // diagonal resize feedback.
-        set_cursor(pulp::view::View::CursorStyle::bottom_right_resize);
+        set_cursor(spectr::editor_view::View::CursorStyle::bottom_right_resize);
     }
 
     std::function<void()> on_drag_begin;
@@ -310,13 +338,13 @@ public:
     // flush grip in Pro Tools. The hit box is still flush; only the ink moves.
     static constexpr float kCornerClearance = 6.0f;
 
-    void paint(pulp::canvas::Canvas& canvas) override {
+    void paint(spectr::editor_canvas::Canvas& canvas) override {
         const float w = bounds().width - kCornerClearance;
         const float h = bounds().height - kCornerClearance;
         canvas.set_line_width(1.5f);
         for (int i = 0; i < 3; ++i) {
             const float inset = 2.0f + static_cast<float>(i) * 5.0f;
-            canvas.set_stroke_color(pulp::canvas::Color::rgba8(
+            canvas.set_stroke_color(spectr::editor_canvas::Color::rgba8(
                 190, 200, 214, static_cast<uint8_t>(hovered_ ? 235 : 170)));
             canvas.stroke_line(w - inset, h - 1.0f, w - 1.0f, h - inset);
         }
@@ -325,8 +353,8 @@ public:
     void on_mouse_enter() override { hovered_ = true; }
     void on_mouse_leave() override { hovered_ = false; }
 
-    void on_mouse_down(pulp::view::Point pos) override {
-        pulp::view::ResizableCorner::on_mouse_down(pos);
+    void on_mouse_down(spectr::editor_view::Point pos) override {
+        spectr::editor_view::ResizableCorner::on_mouse_down(pos);
         if (on_drag_begin) on_drag_begin();
     }
 
@@ -691,7 +719,7 @@ namespace {
 // The settings body is the only scroll container in the panel, but the editor
 // tree carries others, so collect them all and let the caller skip any that
 // cannot scroll.
-void collect_depths(const pulp::view::View& view, int depth, std::vector<int>& out) {
+void collect_depths(const spectr::editor_view::View& view, int depth, std::vector<int>& out) {
     out.push_back(depth);
     for (const auto* child : view.sorted_children_by_z_index())
         collect_depths(*child, depth + 1, out);
@@ -699,8 +727,8 @@ void collect_depths(const pulp::view::View& view, int depth, std::vector<int>& o
 
 // Name a View::CursorStyle so a probe result reads as the cursor a person
 // would see, not an enum ordinal that silently shifts when the enum grows.
-const char* cursor_style_name(pulp::view::View::CursorStyle style) {
-    using CS = pulp::view::View::CursorStyle;
+const char* cursor_style_name(spectr::editor_view::View::CursorStyle style) {
+    using CS = spectr::editor_view::View::CursorStyle;
     switch (style) {
         case CS::default_: return "default";
         case CS::pointer: return "pointer";
@@ -727,11 +755,11 @@ const char* cursor_style_name(pulp::view::View::CursorStyle style) {
 }
 
 // The NSCursor a given style resolves to on macOS, transcribed from
-// pulp::view::mac_geometry::set_ns_cursor_for_style. The probe runs headless,
+// spectr::editor_view::mac_geometry::set_ns_cursor_for_style. The probe runs headless,
 // so it cannot ask AppKit what is on screen; naming the mapped NSCursor keeps
 // the last hop auditable instead of implied.
-const char* ns_cursor_name(pulp::view::View::CursorStyle style) {
-    using CS = pulp::view::View::CursorStyle;
+const char* ns_cursor_name(spectr::editor_view::View::CursorStyle style) {
+    using CS = spectr::editor_view::View::CursorStyle;
     switch (style) {
         case CS::default_: return "arrowCursor";
         case CS::pointer: return "pointingHandCursor";
@@ -757,20 +785,20 @@ const char* ns_cursor_name(pulp::view::View::CursorStyle style) {
     return "?";
 }
 
-void collect_settings_scroll_views(pulp::view::View& view,
-                                   std::vector<pulp::view::ScrollView*>& out) {
-    if (auto* scroll = dynamic_cast<pulp::view::ScrollView*>(&view))
+void collect_settings_scroll_views(spectr::editor_view::View& view,
+                                   std::vector<spectr::editor_view::ScrollView*>& out) {
+    if (auto* scroll = dynamic_cast<spectr::editor_view::ScrollView*>(&view))
         out.push_back(scroll);
     for (auto* child : view.sorted_children_by_z_index())
         collect_settings_scroll_views(*child, out);
 }
 } // namespace
 
-std::vector<pulp::view::CommandID> Spectr::commands() const {
+std::vector<spectr::editor_view::CommandID> Spectr::commands() const {
     return {kOpenSettingsCommand, kUndoCommand, kRedoCommand};
 }
 
-bool Spectr::perform_command(pulp::view::CommandID id) {
+bool Spectr::perform_command(spectr::editor_view::CommandID id) {
     if ((id != kOpenSettingsCommand && id != kUndoCommand && id != kRedoCommand)
         || !native_scripted_ui_ || !native_scripted_ui_->bridge()) {
         return false;
@@ -850,9 +878,17 @@ pulp::format::Processor::EditorPrewarm Spectr::editor_prewarm() const {
 }
 #endif
 
-std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
-    PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_create");
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+void Spectr::mount_native_editor_(editor_view::View& editor_root,
+                                  pulp::vellum::EditorEnv& env) {
+    auto* root = &editor_root;
+#else
+std::unique_ptr<editor_view::View> Spectr::create_native_editor_() {
+    auto root_owner = std::make_unique<editor_view::View>();
+    auto* root = root_owner.get();
     (void)install_host_view_first_mouse();
+#endif
+    PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_create");
     // Logic may retain a detached AUv2 NSView and ask the same Processor for a
     // replacement editor before that retained view is deallocated. In that
     // ordering `on_view_closed(old_root)` has not run yet. Spectr has one
@@ -903,11 +939,10 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
         state().set_value(kParamLfoEnabled, 1.0f);
     }
 #endif
-    auto root = std::make_unique<pulp::view::View>();
-    root->set_theme(pulp::view::Theme::dark());
-    root->flex().direction = pulp::view::FlexDirection::column;
+    root->set_theme(spectr::editor_view::Theme::dark());
+    root->flex().direction = spectr::editor_view::FlexDirection::column;
     root->set_requires_gpu_host(true);
-    pulp::view::route_global_keys(*root, native_command_registry_);
+    spectr::editor_view::route_global_keys(*root, native_command_registry_);
 
     native_package_path_ = package_path_for(this);
     bool package_written = false;
@@ -919,17 +954,28 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     if (!package_written) {
         pulp::runtime::log_error(
             "[Spectr native] materialized editor package could not be written; editor is fail-closed");
-        native_editor_root_ = root.get();
-        return root;
+        native_editor_root_ = root;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        return;
+#else
+        return root_owner;
+#endif
     }
 
-    pulp::view::ScriptedUiOptions options;
+    spectr::editor_view::ScriptedUiOptions options;
     options.script_path = native_package_path_ / "runtime.js";
     options.enable_hot_reload = false;
     options.enable_theme_reload = false;
     options.enable_runtime_import = true;
-    native_scripted_ui_ = std::make_unique<pulp::view::ScriptedUiSession>(
+    native_scripted_ui_ = std::make_unique<spectr::editor_view::ScriptedUiSession>(
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        *root, env.params, std::move(options));
+    native_scripted_ui_->set_host_kind(
+        env.context.host_kind() == pulp::format::EditorHostKind::standalone
+            ? "standalone" : "plugin");
+#else
         *root, state(), std::move(options));
+#endif
     // A new document has drawn none of the display-only publications: the
     // next tick sends each of them again rather than assuming the last
     // editor's state.
@@ -971,11 +1017,22 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             });
         native_editor_handlers_registered_ = true;
     }
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    native_scripted_ui_->attach_native_message_handler(
+        "__spectrEditorDispatch", env.native_message_handler([this](std::string_view json) {
+            return native_editor_bridge_.dispatch_json(json);
+        }));
+#else
     native_editor_bridge_.attach_native_runtime(
         *native_scripted_ui_, "__spectrEditorDispatch");
+#endif
 
     // Pulp holds view::ScopedDeferredDocumentLoad around this call for every
     // host-embedded editor, so load_deferrable() returns the view first there.
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    std::optional<editor_view::ScopedDeferredDocumentLoad> defer;
+    if (env.context.host_kind() == pulp::format::EditorHostKind::plugin) defer.emplace();
+#endif
     load_native_document_();
 
     // ── Editor-owned resize grip ────────────────────────────────────────
@@ -1015,7 +1072,7 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     // asked) gets nothing here by default.
     if (editor_owns_resize_grip()) {
     auto grip = std::make_unique<EditorResizeGrip>();
-    grip->set_position(pulp::view::View::Position::absolute);
+    grip->set_position(spectr::editor_view::View::Position::absolute);
     grip->set_right(kResizeGripInset);
     grip->set_bottom(kResizeGripBottomInset);
     grip->flex().preferred_width = kResizeGripSize;
@@ -1032,7 +1089,11 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             ? native_host_height_ : kEditorPreferredHeight;
         native_resize_refused_ = false;
     };
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    grip->on_resize = [this, &env](float movement_x, float movement_y) {
+#else
     grip->on_resize = [this](float movement_x, float movement_y) {
+#endif
         if (native_resize_refused_ || native_resize_base_width_ == 0) return;
         const auto target = resolve_editor_resize(
             native_resize_base_width_, native_resize_base_height_,
@@ -1045,7 +1106,12 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
             && native_host_height_ == target.height) {
             return;
         }
-        if (!request_editor_resize(target.width, target.height)) {
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+        const bool accepted = env.request_resize({target.width, target.height, 1.0});
+#else
+        const bool accepted = request_editor_resize(target.width, target.height);
+#endif
+        if (!accepted) {
             // One log per gesture, not per mouse-move.
             native_resize_refused_ = true;
             pulp::runtime::log_info(
@@ -1058,8 +1124,10 @@ std::unique_ptr<pulp::view::View> Spectr::create_native_editor_() {
     root->add_child(std::move(grip));
     }
 
-    native_editor_root_ = root.get();
-    return root;
+    native_editor_root_ = root;
+#if !defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    return root_owner;
+#endif
 }
 
 void Spectr::load_native_document_() {
@@ -1102,8 +1170,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
     // that session while its call is still on the stack; it is marked and
     // retired by the caller or the next frame tick instead.
     const auto fail_closed = [this, from_session] {
-        native_editor_bridge_.detach_native_runtime(
-            *native_scripted_ui_, "__spectrEditorDispatch");
+        detach_native_dispatch_();
         native_session_failed_ = true;
         if (!from_session) retire_failed_native_session_();
     };
@@ -1189,7 +1256,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
             // the header draws its own on that line instead, so Pulp's is
             // hidden while this editor is open (restored on close).
             if constexpr (pulp::runtime::kTracingEnabled) {
-                pulp::view::set_tracing_badge_visible(false);
+                spectr::editor_view::set_tracing_badge_visible(false);
                 bridge->load_script(
                     "if (typeof globalThis.__spectrShowTracingBadge === 'function') "
                     "globalThis.__spectrShowTracingBadge(); "
@@ -1352,7 +1419,7 @@ void Spectr::finish_native_document_load_(bool session_loaded,
     // registered, and open_native_editor_ publishes instead.)
     if (session_loaded && native_editor_root_ != nullptr && native_scripted_ui_
         && native_scripted_ui_->bridge() != nullptr) {
-        on_view_resized(*native_editor_root_,
+        resize_native_editor_(*native_editor_root_,
                         native_host_width_ > 0 ? native_host_width_
                                                : kEditorPreferredWidth,
                         native_host_height_ > 0 ? native_host_height_
@@ -1361,9 +1428,15 @@ void Spectr::finish_native_document_load_(bool session_loaded,
     }
 }
 
-void Spectr::open_native_editor_(pulp::view::View& view) {
+void Spectr::open_native_editor_(spectr::editor_view::View& view) {
     PULP_TRACE_SCOPE_NAMED("state", "spectr_editor_opened");
     if (&view != native_editor_root_ || !native_scripted_ui_) return;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    const auto host_size = view.plugin_view_host()
+        ? view.plugin_view_host()->get_size()
+        : editor_view::PluginViewHost::Size{kEditorPreferredWidth, kEditorPreferredHeight};
+    resize_native_editor_(view, host_size.width, host_size.height);
+#else
     const auto bounds = view.bounds();
     const auto width = bounds.width > 0.0f
         ? static_cast<uint32_t>(std::lround(bounds.width))
@@ -1371,7 +1444,8 @@ void Spectr::open_native_editor_(pulp::view::View& view) {
     const auto height = bounds.height > 0.0f
         ? static_cast<uint32_t>(std::lround(bounds.height))
         : kEditorPreferredHeight;
-    on_view_resized(view, width, height);
+    resize_native_editor_(view, width, height);
+#endif
     native_host_automation_revision_ = host_automation_revision();
     if (native_frame_subscription_ >= 0) return;
     native_frame_clock_ = view.frame_clock();
@@ -1410,13 +1484,13 @@ void Spectr::dump_fixture_stage_(const std::string& stage) {
     const auto* prefix = SPECTR_TEST_ENV("SPECTR_DRAG_DUMP_PREFIX");
     if (prefix == nullptr || *prefix == '\0' || native_editor_root_ == nullptr)
         return;
-    pulp::view::LayoutTreeSnapshotOptions options;
+    spectr::editor_view::LayoutTreeSnapshotOptions options;
     options.surface = "standalone";
     options.viewport_width = native_editor_root_->bounds().width;
     options.viewport_height = native_editor_root_->bounds().height;
     const std::string base = std::string(prefix) + "." + stage;
     std::ofstream out(base + ".layout.json");
-    out << pulp::view::dump_layout_tree(*native_editor_root_, options);
+    out << spectr::editor_view::dump_layout_tree(*native_editor_root_, options);
     out.close();
     std::vector<int> depths;
     collect_depths(*native_editor_root_, 0, depths);
@@ -1739,7 +1813,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 const auto h = static_cast<std::uint32_t>(
                     std::strtoul(text.substr(x + 1).c_str(), nullptr, 10));
                 if (w > 0 && h > 0) {
-                    on_view_resized(*native_editor_root_, w, h);
+                    resize_native_editor_(*native_editor_root_, w, h);
                     std::fprintf(stderr,
                                  "[resize-fixture] host=%ux%u root=%gx%g\n",
                                  w, h, native_editor_root_->bounds().width,
@@ -1758,7 +1832,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     {
         if (const auto* scroll_to = SPECTR_TEST_ENV("SPECTR_SETTINGS_SCROLL");
             scroll_to != nullptr) {
-            std::vector<pulp::view::ScrollView*> found;
+            std::vector<spectr::editor_view::ScrollView*> found;
             if (native_editor_root_ != nullptr)
                 collect_settings_scroll_views(*native_editor_root_, found);
             for (auto* scroll : found) {
@@ -1873,41 +1947,41 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 const auto plus = spec.find('+');
                 if (plus == std::string::npos || plus + 1 >= spec.size()) break;
                 const std::string mod = spec.substr(0, plus);
-                if (mod == "cmd")        mods |= pulp::view::kModCmd;
-                else if (mod == "meta")  mods |= pulp::view::kModMeta;
-                else if (mod == "ctrl")  mods |= pulp::view::kModCtrl;
-                else if (mod == "alt")   mods |= pulp::view::kModAlt;
-                else if (mod == "shift") mods |= pulp::view::kModShift;
+                if (mod == "cmd")        mods |= spectr::editor_view::kModCmd;
+                else if (mod == "meta")  mods |= spectr::editor_view::kModMeta;
+                else if (mod == "ctrl")  mods |= spectr::editor_view::kModCtrl;
+                else if (mod == "alt")   mods |= spectr::editor_view::kModAlt;
+                else if (mod == "shift") mods |= spectr::editor_view::kModShift;
                 else break;
                 spec.erase(0, plus + 1);
             }
-            pulp::view::KeyCode code = pulp::view::KeyCode::unknown;
-            if (spec == "escape") code = pulp::view::KeyCode::escape;
-            else if (spec == "enter") code = pulp::view::KeyCode::enter;
-            else if (spec == "tab") code = pulp::view::KeyCode::tab;
-            else if (spec == "up") code = pulp::view::KeyCode::up;
-            else if (spec == "down") code = pulp::view::KeyCode::down;
+            spectr::editor_view::KeyCode code = spectr::editor_view::KeyCode::unknown;
+            if (spec == "escape") code = spectr::editor_view::KeyCode::escape;
+            else if (spec == "enter") code = spectr::editor_view::KeyCode::enter;
+            else if (spec == "tab") code = spectr::editor_view::KeyCode::tab;
+            else if (spec == "up") code = spectr::editor_view::KeyCode::up;
+            else if (spec == "down") code = spectr::editor_view::KeyCode::down;
             else if (spec.size() == 1) {
                 // Printable single character. Letters fold to lower case: the
                 // host reports the physical key, and the bridge's own matcher
                 // folds 'A'-'Z' the same way.
                 char c = spec[0];
                 if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-                code = static_cast<pulp::view::KeyCode>(c);
+                code = static_cast<spectr::editor_view::KeyCode>(c);
             }
-            if (code == pulp::view::KeyCode::unknown) {
+            if (code == spectr::editor_view::KeyCode::unknown) {
                 std::fprintf(stderr, "[key-fixture] unknown key '%s'\n", key);
             } else {
-                pulp::view::KeyEvent down; down.key = code;
+                spectr::editor_view::KeyEvent down; down.key = code;
                 down.modifiers = mods; down.is_down = true;
-                pulp::view::KeyEvent up;   up.key = code;
+                spectr::editor_view::KeyEvent up;   up.key = code;
                 up.modifiers = mods;   up.is_down = false;
                 const bool view_handled = native_editor_root_->on_key_event(down);
                 const bool script_handled =
-                    pulp::view::script_events::dispatch_key_for_root(
+                    spectr::editor_view::script_events::dispatch_key_for_root(
                         *native_editor_root_, static_cast<int>(code), mods,
                         /*is_down=*/true);
-                pulp::view::script_events::dispatch_key_for_root(
+                spectr::editor_view::script_events::dispatch_key_for_root(
                     *native_editor_root_, static_cast<int>(code), mods,
                     /*is_down=*/false);
                 native_editor_root_->on_key_event(up);
@@ -1992,19 +2066,19 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     b_part = coords.substr(gt + 1);
                 }
                 const auto parse_point = [](const std::string& text,
-                                            pulp::view::Point& value) {
+                                            spectr::editor_view::Point& value) {
                     const auto comma = text.find(',');
                     if (comma == std::string::npos) return false;
                     value.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
                     value.y = std::strtof(text.substr(comma + 1).c_str(), nullptr);
                     return true;
                 };
-                pulp::view::Point a{};
-                pulp::view::Point b{};
+                spectr::editor_view::Point a{};
+                spectr::editor_view::Point b{};
                 if (!parse_point(a_part, a)) continue;
                 const bool is_drag = !b_part.empty() && parse_point(b_part, b);
 
-                using CS = pulp::view::View::CursorStyle;
+                using CS = spectr::editor_view::View::CursorStyle;
                 CS resolved = CS::default_;
                 std::string hit_id = "<none>";
                 std::string phase = is_drag ? "drag" : "hover";
@@ -2017,15 +2091,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // drag point -- is what the host reads the style from, so a
                     // probe that re-hit-tests mid-drag would measure a
                     // different mechanism than the one that runs.
-                    pulp::view::ViewCapture capture;
+                    spectr::editor_view::ViewCapture capture;
                     capture.set(root.hit_test(a));
                     auto* target = capture.live_in(root);
                     if (target == nullptr) {
                         hit_missing = true;
                     } else {
-                        pulp::view::deliver_mouse_down(root, target, a, 0, 1);
+                        spectr::editor_view::deliver_mouse_down(root, target, a, 0, 1);
                         if (auto* live = capture.live_in(root)) {
-                            pulp::view::deliver_mouse_drag(root, live, b, 0, 1);
+                            spectr::editor_view::deliver_mouse_drag(root, live, b, 0, 1);
                         }
                         if (auto* live = capture.live_in(root)) {
                             resolved = live->cursor();
@@ -2041,8 +2115,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // but leaving the press un-released poisons every later
                         // probe in the same run.
                         if (auto* live = capture.live_in(root)) {
-                            pulp::view::MouseUpHost up_host;
-                            pulp::view::deliver_mouse_up(root, live, b, 0, 1,
+                            spectr::editor_view::MouseUpHost up_host;
+                            spectr::editor_view::deliver_mouse_up(root, live, b, 0, 1,
                                                          up_host);
                         }
                     }
@@ -2076,11 +2150,11 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // separately, from a hit test run AFTER the hover sample,
                     // and reported as `hit:false` when it misses.
                     root.simulate_hover(a);
-                    pulp::view::View* hover_target = root.hit_test(a);
+                    spectr::editor_view::View* hover_target = root.hit_test(a);
                     const auto hover_style =
-                        pulp::view::hover_cursor_at(root, a);
-                    struct { pulp::view::View* target;
-                             pulp::view::View::CursorStyle style; }
+                        spectr::editor_view::hover_cursor_at(root, a);
+                    struct { spectr::editor_view::View* target;
+                             spectr::editor_view::View::CursorStyle style; }
                         hover{hover_target, hover_style};
                     if (hover.target == nullptr) {
                         hit_missing = true;
@@ -2153,8 +2227,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 }
             }
             const int steps = std::max(1, static_cast<int>(coords[4]));
-            const pulp::view::Point start{coords[0], coords[1]};
-            const pulp::view::Point finish{coords[2], coords[3]};
+            const spectr::editor_view::Point start{coords[0], coords[1]};
+            const spectr::editor_view::Point finish{coords[2], coords[3]};
             auto* target = native_editor_root_->hit_test(start);
             std::fprintf(stderr,
                          "[drag] start=(%.1f,%.1f) end=(%.1f,%.1f) steps=%d "
@@ -2165,23 +2239,23 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 : "NONE");
             if (target != nullptr) {
                 dump_fixture_stage_("press-before");
-                pulp::view::deliver_mouse_down(*native_editor_root_, target,
+                spectr::editor_view::deliver_mouse_down(*native_editor_root_, target,
                                                start, 0, 1, true);
                 settle_native_runtime_(4);
                 dump_fixture_stage_("press");
                 for (int i = 1; i <= steps; ++i) {
                     const float t = static_cast<float>(i) / steps;
-                    const pulp::view::Point p{
+                    const spectr::editor_view::Point p{
                         start.x + (finish.x - start.x) * t,
                         start.y + (finish.y - start.y) * t};
-                    pulp::view::deliver_mouse_drag(*native_editor_root_, target,
+                    spectr::editor_view::deliver_mouse_drag(*native_editor_root_, target,
                                                    p, 0);
                     settle_native_runtime_(4);
                     dump_fixture_stage_("move" + std::to_string(i));
                 }
-                pulp::view::deliver_mouse_up(*native_editor_root_, target,
+                spectr::editor_view::deliver_mouse_up(*native_editor_root_, target,
                                              finish, 0, 1,
-                                             pulp::view::MouseUpHost{});
+                                             spectr::editor_view::MouseUpHost{});
                 settle_native_runtime_(4);
                 dump_fixture_stage_("release");
             }
@@ -2233,10 +2307,10 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 };
                 const std::string name = take();
                 if (name == "none") mods = 0;
-                else if (name == "cmd") mods = pulp::view::kModCmd;
-                else if (name == "shift") mods = pulp::view::kModShift;
+                else if (name == "cmd") mods = spectr::editor_view::kModCmd;
+                else if (name == "shift") mods = spectr::editor_view::kModShift;
                 else if (name == "cmd-shift")
-                    mods = pulp::view::kModCmd | pulp::view::kModShift;
+                    mods = spectr::editor_view::kModCmd | spectr::editor_view::kModShift;
                 else valid = false;
                 for (int i = 0; i < 4 && valid; ++i) {
                     const std::string field = take();
@@ -2289,7 +2363,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     const auto bounds = native_editor_root_->bounds();
                     const float t = static_cast<float>(sample)
                                   / static_cast<float>(steps);
-                    const pulp::view::Point p{
+                    const spectr::editor_view::Point p{
                         (pt[0] + (pt[2] - pt[0]) * t) * bounds.width,
                         (pt[1] + (pt[3] - pt[1]) * t) * bounds.height};
                     PULP_TRACE_SCOPE_NAMED("js", "gesture perf sample");
@@ -2306,20 +2380,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                                 : gesture_perf_target_->id().c_str())
                                          : "NONE");
                         if (gesture_perf_target_ != nullptr)
-                            pulp::view::deliver_mouse_down(*native_editor_root_,
+                            spectr::editor_view::deliver_mouse_down(*native_editor_root_,
                                                            gesture_perf_target_,
                                                            p, mods, 1, true);
                     } else if (gesture_perf_target_ != nullptr) {
                         if (sample == steps) {
-                            pulp::view::deliver_mouse_up(
+                            spectr::editor_view::deliver_mouse_up(
                                 *native_editor_root_, gesture_perf_target_, p,
-                                mods, 1, pulp::view::MouseUpHost{});
+                                mods, 1, spectr::editor_view::MouseUpHost{});
                             std::fprintf(stderr,
                                          "[gesture-perf] released after %d samples\n",
                                          steps);
                             gesture_perf_target_ = nullptr;
                         } else {
-                            pulp::view::deliver_mouse_drag(*native_editor_root_,
+                            spectr::editor_view::deliver_mouse_drag(*native_editor_root_,
                                                            gesture_perf_target_,
                                                            p, mods);
                         }
@@ -2501,7 +2575,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
             // the whole of the accuracy question, and a summary statistic
             // (count changed, a hash) cannot answer "which".
             const auto emit_sample = [this, &out](const char* phase,
-                                                  pulp::view::Point pt) {
+                                                  spectr::editor_view::Point pt) {
                 const auto snap = processing_state_snapshot();
                 const auto n = visible_count(snap.layout);
                 out << "\n   {\"phase\":\"" << phase << "\""
@@ -2563,10 +2637,10 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         names = dash == std::string_view::npos
                             ? std::string_view{} : names.substr(dash + 1);
                         if (one == "none") continue;
-                        else if (one == "shift") mods |= pulp::view::kModShift;
-                        else if (one == "cmd") mods |= pulp::view::kModCmd;
-                        else if (one == "alt") mods |= pulp::view::kModAlt;
-                        else if (one == "ctrl") mods |= pulp::view::kModCtrl;
+                        else if (one == "shift") mods |= spectr::editor_view::kModShift;
+                        else if (one == "cmd") mods |= spectr::editor_view::kModCmd;
+                        else if (one == "alt") mods |= spectr::editor_view::kModAlt;
+                        else if (one == "ctrl") mods |= spectr::editor_view::kModCtrl;
                         else mods_ok = false;
                     }
                 }
@@ -2583,15 +2657,15 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 const auto gt = coords.find('>');
                 if (gt == std::string::npos) continue;
                 const auto parse_point = [](const std::string& text,
-                                            pulp::view::Point& value) {
+                                            spectr::editor_view::Point& value) {
                     const auto comma = text.find(',');
                     if (comma == std::string::npos) return false;
                     value.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
                     value.y = std::strtof(text.substr(comma + 1).c_str(), nullptr);
                     return true;
                 };
-                pulp::view::Point a{};
-                pulp::view::Point b{};
+                spectr::editor_view::Point a{};
+                spectr::editor_view::Point b{};
                 if (!parse_point(coords.substr(0, gt), a)) continue;
                 if (!parse_point(coords.substr(gt + 1), b)) continue;
 
@@ -2603,7 +2677,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     << ",\"mods\":" << static_cast<unsigned>(mods);
                 first_gesture = false;
 
-                pulp::view::ViewCapture capture;
+                spectr::editor_view::ViewCapture capture;
                 capture.set(root.hit_test(a));
                 auto* target = capture.live_in(root);
                 // A miss is reported as a miss and the gesture is skipped. A
@@ -2619,23 +2693,23 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     continue;
                 }
                 emit_sample("pre", a);
-                pulp::view::deliver_mouse_down(root, target, a, mods, 1);
+                spectr::editor_view::deliver_mouse_down(root, target, a, mods, 1);
                 out << ",";
                 emit_sample("down", a);
                 for (int i = 1; i <= steps; ++i) {
                     const float t = static_cast<float>(i)
                                   / static_cast<float>(steps);
-                    const pulp::view::Point pt{a.x + (b.x - a.x) * t,
+                    const spectr::editor_view::Point pt{a.x + (b.x - a.x) * t,
                                                a.y + (b.y - a.y) * t};
                     auto* live = capture.live_in(root);
                     if (live == nullptr) break;
-                    pulp::view::deliver_mouse_drag(root, live, pt, mods, 1);
+                    spectr::editor_view::deliver_mouse_drag(root, live, pt, mods, 1);
                     out << ",";
                     emit_sample("move", pt);
                 }
                 if (auto* live = capture.live_in(root)) {
-                    pulp::view::MouseUpHost up_host;
-                    pulp::view::deliver_mouse_up(root, live, b, mods, 1, up_host);
+                    spectr::editor_view::MouseUpHost up_host;
+                    spectr::editor_view::deliver_mouse_up(root, live, b, mods, 1, up_host);
                 }
                 out << ",";
                 emit_sample("up", b);
@@ -2767,7 +2841,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     ? std::string{} : body.substr(colon + 1);
 
                 const auto point_of = [](const std::string& text,
-                                         pulp::view::Point& pt) {
+                                         spectr::editor_view::Point& pt) {
                     const auto comma = text.find(',');
                     if (comma == std::string::npos) return false;
                     pt.x = std::strtof(text.substr(0, comma).c_str(), nullptr);
@@ -2793,14 +2867,14 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 // before delivering the press, as the macOS window host's
                 // -mouseDown: does (prepareDragTarget). The `f*` verbs set it.
                 bool host_focus = false;
-                const auto click_at = [&root, &host_focus](pulp::view::Point pt) {
-                    pulp::view::ViewCapture capture;
+                const auto click_at = [&root, &host_focus](spectr::editor_view::Point pt) {
+                    spectr::editor_view::ViewCapture capture;
                     std::string route = "hit-test";
                     bool bubble = true;
                     const auto overlay_press =
-                        pulp::view::route_press_to_active_overlay(root, pt);
+                        spectr::editor_view::route_press_to_active_overlay(root, pt);
                     if (overlay_press.routing
-                        == pulp::view::OverlayPressRouting::routed) {
+                        == spectr::editor_view::OverlayPressRouting::routed) {
                         capture.set(overlay_press.target);
                         bubble = false;
                         route = "overlay-routed";
@@ -2812,25 +2886,25 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     if (host_focus) {
                         auto* candidate = capture.live_in(root);
                         if (candidate == nullptr
-                            || !pulp::view::transfer_input_focus(root, candidate))
+                            || !spectr::editor_view::transfer_input_focus(root, candidate))
                             return route + ":focus-refused";
                     }
                     auto* target = capture.live_in(root);
                     if (target == nullptr) return route + ":no-target";
-                    if (!pulp::view::deliver_mouse_down(root, target, pt, 0, 1,
+                    if (!spectr::editor_view::deliver_mouse_down(root, target, pt, 0, 1,
                                                        bubble))
                         capture.reset();
                     auto* live = capture.live_in(root);
                     if (live == nullptr) return route + ":unmounted-on-down";
                     std::string clicked{"<none>"};
-                    pulp::view::MouseUpHost up_host;
+                    spectr::editor_view::MouseUpHost up_host;
                     up_host.fire_click =
                         [&clicked](const std::function<void()>& handler,
                                    const std::string& id, std::uint16_t) {
                             clicked = id.empty() ? std::string{"<anon>"} : id;
                             if (handler) handler();
                         };
-                    pulp::view::deliver_mouse_up(root, live, pt, 0, 1, up_host);
+                    spectr::editor_view::deliver_mouse_up(root, live, pt, 0, 1, up_host);
                     return route + ":click=" + clicked;
                 };
 
@@ -2839,14 +2913,14 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 float press_x = -1.0f, press_y = -1.0f;
                 bool attributable = false;
                 if (kind == "rpress") {
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     if (point_of(arg, pt)) {
-                        const auto res = pulp::view::route_context_press(root, pt);
+                        const auto res = spectr::editor_view::route_context_press(root, pt);
                         press_x = pt.x; press_y = pt.y;
                         detail = res.handled ? "handled" : "not-handled";
                     } else detail = "bad-arg";
                 } else if (kind == "press") {
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     if (point_of(arg, pt)) {
                         press_x = pt.x; press_y = pt.y;
                         detail = click_at(pt);
@@ -2866,7 +2940,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             if (spectr_menu_probe::clipping_ancestor(
                                     *aim.row, aim.cx, aim.cy, wx, wy, dy) == nullptr)
                                 break;
-                            pulp::view::deliver_mouse_wheel(root, {wx, wy}, 0.0f, dy, {});
+                            spectr::editor_view::deliver_mouse_wheel(root, {wx, wy}, 0.0f, dy, {});
                             root.layout_children();
                             aim = spectr_menu_probe::aim_row(*scope, arg);
                         }
@@ -2875,11 +2949,11 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         else {
                             press_x = aim.cx; press_y = aim.cy;
                             auto* hit = root.hit_test(
-                                pulp::view::Point{aim.cx, aim.cy});
+                                spectr::editor_view::Point{aim.cx, aim.cy});
                             attributable =
                                 spectr_menu_probe::nearest_clickable(hit) == aim.row;
                             detail = click_at(
-                                pulp::view::Point{aim.cx, aim.cy});
+                                spectr::editor_view::Point{aim.cx, aim.cy});
                         }
                     }
                 } else if (kind == "hroot" || kind == "proot") {
@@ -2897,10 +2971,10 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         else {
                             press_x = aim.cx; press_y = aim.cy;
                             if (kind == "hroot") {
-                                pulp::view::deliver_hover_move(root, {aim.cx, aim.cy});
+                                spectr::editor_view::deliver_hover_move(root, {aim.cx, aim.cy});
                                 detail = "hovered";
                             } else {
-                                detail = click_at(pulp::view::Point{aim.cx, aim.cy});
+                                detail = click_at(spectr::editor_view::Point{aim.cx, aim.cy});
                             }
                         }
                     }
@@ -2908,7 +2982,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // Pointer movement with no button down -- the host's
                     // -mouseMoved: path -- aimed at a point or at a row by its
                     // painted label, like `row`.
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     bool aimed = false;
                     if (kind == "hover") {
                         aimed = point_of(arg, pt);
@@ -2925,7 +2999,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     }
                     if (aimed) {
                         press_x = pt.x; press_y = pt.y;
-                        pulp::view::deliver_hover_move(root, pt);
+                        spectr::editor_view::deliver_hover_move(root, pt);
                         detail = "hovered";
                     }
                 } else if (kind == "key" || kind == "pkey" || kind == "fkey") {
@@ -2941,34 +3015,34 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         if (plus == std::string::npos || plus + 1 >= spec.size())
                             break;
                         const std::string mod = spec.substr(0, plus);
-                        if (mod == "cmd")        key_mods |= pulp::view::kModCmd;
-                        else if (mod == "meta")  key_mods |= pulp::view::kModMeta;
-                        else if (mod == "ctrl")  key_mods |= pulp::view::kModCtrl;
-                        else if (mod == "alt")   key_mods |= pulp::view::kModAlt;
-                        else if (mod == "shift") key_mods |= pulp::view::kModShift;
+                        if (mod == "cmd")        key_mods |= spectr::editor_view::kModCmd;
+                        else if (mod == "meta")  key_mods |= spectr::editor_view::kModMeta;
+                        else if (mod == "ctrl")  key_mods |= spectr::editor_view::kModCtrl;
+                        else if (mod == "alt")   key_mods |= spectr::editor_view::kModAlt;
+                        else if (mod == "shift") key_mods |= spectr::editor_view::kModShift;
                         else { bad_mod = true; break; }
                         spec.erase(0, plus + 1);
                     }
-                    pulp::view::KeyCode code = pulp::view::KeyCode::unknown;
-                    if (spec == "escape") code = pulp::view::KeyCode::escape;
-                    else if (spec == "enter") code = pulp::view::KeyCode::enter;
-                    else if (spec == "tab") code = pulp::view::KeyCode::tab;
-                    else if (spec == "up") code = pulp::view::KeyCode::up;
-                    else if (spec == "down") code = pulp::view::KeyCode::down;
-                    else if (spec == "left") code = pulp::view::KeyCode::left;
-                    else if (spec == "right") code = pulp::view::KeyCode::right;
-                    else if (spec == "home") code = pulp::view::KeyCode::home;
-                    else if (spec == "end") code = pulp::view::KeyCode::end_;
-                    else if (spec == "backspace") code = pulp::view::KeyCode::backspace;
-                    else if (spec == "delete") code = pulp::view::KeyCode::delete_;
-                    else if (spec == "minus") code = static_cast<pulp::view::KeyCode>('-');
+                    spectr::editor_view::KeyCode code = spectr::editor_view::KeyCode::unknown;
+                    if (spec == "escape") code = spectr::editor_view::KeyCode::escape;
+                    else if (spec == "enter") code = spectr::editor_view::KeyCode::enter;
+                    else if (spec == "tab") code = spectr::editor_view::KeyCode::tab;
+                    else if (spec == "up") code = spectr::editor_view::KeyCode::up;
+                    else if (spec == "down") code = spectr::editor_view::KeyCode::down;
+                    else if (spec == "left") code = spectr::editor_view::KeyCode::left;
+                    else if (spec == "right") code = spectr::editor_view::KeyCode::right;
+                    else if (spec == "home") code = spectr::editor_view::KeyCode::home;
+                    else if (spec == "end") code = spectr::editor_view::KeyCode::end_;
+                    else if (spec == "backspace") code = spectr::editor_view::KeyCode::backspace;
+                    else if (spec == "delete") code = spectr::editor_view::KeyCode::delete_;
+                    else if (spec == "minus") code = static_cast<spectr::editor_view::KeyCode>('-');
                     else if (spec.size() == 1) {
                         char c = spec[0];
                         if (c >= 'A' && c <= 'Z')
                             c = static_cast<char>(c - 'A' + 'a');
-                        code = static_cast<pulp::view::KeyCode>(c);
+                        code = static_cast<spectr::editor_view::KeyCode>(c);
                     }
-                    if (bad_mod || code == pulp::view::KeyCode::unknown) {
+                    if (bad_mod || code == spectr::editor_view::KeyCode::unknown) {
                         detail = "bad-arg";
                     } else if (kind == "fkey") {
                         // The WHOLE AppKit order for one key press in the
@@ -2981,17 +3055,17 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // script fan-out, overlay Escape, focused view).
                         // `key` starts at the root hook, so a focused view
                         // that swallows a key is invisible to it.
-                        pulp::view::KeyEvent down;
+                        spectr::editor_view::KeyEvent down;
                         down.key = code;
                         down.modifiers = key_mods;
                         down.is_down = true;
                         std::string stage;
-                        if (auto* fv = pulp::view::focused_input_under_root(root);
+                        if (auto* fv = spectr::editor_view::focused_input_under_root(root);
                             fv != nullptr && fv->on_key_event(down)) {
                             stage = "pke-focused";
                         } else if (root.on_global_key && root.on_global_key(down)) {
                             stage = "pke-root";
-                        } else if (pulp::view::View::call_inspector_key_hook(down)) {
+                        } else if (spectr::editor_view::View::call_inspector_key_hook(down)) {
                             stage = "inspector";
                         } else if (root.on_global_key && root.on_global_key(down)) {
                             stage = "root";
@@ -3000,20 +3074,20 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                    && root.on_navigation_key(down)) {
                             stage = "navigation";
                         } else {
-                            pulp::view::script_events::dispatch_global_key(
+                            spectr::editor_view::script_events::dispatch_global_key(
                                 static_cast<int>(code), key_mods, /*is_down=*/true);
                             stage = "script";
-                            if (code == pulp::view::KeyCode::escape
-                                && pulp::view::route_escape_to_active_overlay(
+                            if (code == spectr::editor_view::KeyCode::escape
+                                && spectr::editor_view::route_escape_to_active_overlay(
                                        root, key_mods, false)
-                                       != pulp::view::OverlayEscapeResult::none) {
+                                       != spectr::editor_view::OverlayEscapeResult::none) {
                                 stage = "script+overlay";
                             } else if (auto* fv2 =
-                                           pulp::view::focused_input_under_root(root)) {
+                                           spectr::editor_view::focused_input_under_root(root)) {
                                 stage += fv2->on_key_event(down) ? "+focused" : "";
                             }
                         }
-                        const auto* fv_now = pulp::view::focused_input_under_root(root);
+                        const auto* fv_now = spectr::editor_view::focused_input_under_root(root);
                         detail = stage + "|focused="
                             + (fv_now ? (fv_now->id().empty() ? std::string{"<anon>"}
                                                               : fv_now->id())
@@ -3023,17 +3097,17 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // the root-scoped script delivery, and whatever
                         // neither consumed is handed to the host. A key the
                         // editor wrongly keeps is a key the DAW never sees.
-                        pulp::view::PluginKeyOffer offer;
+                        spectr::editor_view::PluginKeyOffer offer;
                         offer.key.key = code;
                         offer.key.modifiers = key_mods;
                         offer.key.is_down = true;
                         offer.is_function_key = true;
                         const auto disposition =
-                            pulp::view::route_plugin_key(root, offer);
+                            spectr::editor_view::route_plugin_key(root, offer);
                         if (disposition
-                            != pulp::view::PluginKeyDisposition::forward_to_host) {
+                            != spectr::editor_view::PluginKeyDisposition::forward_to_host) {
                             detail = "plugin-consumed";
-                        } else if (pulp::view::script_events::dispatch_key_for_root(
+                        } else if (spectr::editor_view::script_events::dispatch_key_for_root(
                                        root, static_cast<int>(code), key_mods,
                                        /*is_down=*/true)) {
                             detail = "script-consumed";
@@ -3049,7 +3123,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // own keydown listener at all. Reproducing that order
                         // is the whole point: it is what decides which half
                         // of a key path is answering.
-                        pulp::view::KeyEvent down;
+                        spectr::editor_view::KeyEvent down;
                         down.key = code;
                         down.modifiers = key_mods;
                         down.is_down = true;
@@ -3068,14 +3142,14 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             && root.on_navigation_key)
                             navigation_claimed = root.on_navigation_key(down);
                         if (!root_claimed && !navigation_claimed) {
-                            pulp::view::script_events::dispatch_global_key(
+                            spectr::editor_view::script_events::dispatch_global_key(
                                 static_cast<int>(code), key_mods,
                                 /*is_down=*/true);
-                            if (code == pulp::view::KeyCode::escape)
+                            if (code == spectr::editor_view::KeyCode::escape)
                                 overlay_escaped =
-                                    pulp::view::route_escape_to_active_overlay(
+                                    spectr::editor_view::route_escape_to_active_overlay(
                                         root, key_mods, false)
-                                    != pulp::view::OverlayEscapeResult::none;
+                                    != spectr::editor_view::OverlayEscapeResult::none;
                         }
                         detail = root_claimed ? "root"
                             : navigation_claimed ? "navigation"
@@ -3084,19 +3158,19 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     }
                 } else if (kind == "escape") {
                     const auto res =
-                        pulp::view::route_escape_to_active_overlay(root);
-                    detail = res == pulp::view::OverlayEscapeResult::overlay
+                        spectr::editor_view::route_escape_to_active_overlay(root);
+                    detail = res == spectr::editor_view::OverlayEscapeResult::overlay
                         ? "overlay"
-                        : (res == pulp::view::OverlayEscapeResult::none
+                        : (res == spectr::editor_view::OverlayEscapeResult::none
                                ? "none" : "modal");
                 } else if (kind == "outside") {
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     if (point_of(arg, pt)) {
                         press_x = pt.x; press_y = pt.y;
                         const auto res =
-                            pulp::view::route_press_to_active_overlay(root, pt);
+                            spectr::editor_view::route_press_to_active_overlay(root, pt);
                         detail = res.routing
-                                     == pulp::view::OverlayPressRouting::dismissed
+                                     == spectr::editor_view::OverlayPressRouting::dismissed
                             ? "dismissed" : "not-dismissed";
                     } else detail = "bad-arg";
                 } else if (kind == "param") {
@@ -3130,7 +3204,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         drag_arg.resize(drag_arg.size() - 5);
                     }
                     if (drag_arg.rfind("cmd+", 0) == 0) {
-                        drag_mods = pulp::view::kModCmd;
+                        drag_mods = spectr::editor_view::kModCmd;
                         drag_arg = drag_arg.substr(4);
                     }
                     const auto gt = drag_arg.find('>');
@@ -3140,26 +3214,26 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         dsteps = std::max(1, std::atoi(coords.substr(at + 1).c_str()));
                         coords = coords.substr(0, at);
                     }
-                    pulp::view::Point a{}, b{};
+                    spectr::editor_view::Point a{}, b{};
                     const auto gt2 = coords.find('>');
                     if (gt == std::string::npos || !point_of(coords.substr(0, gt2), a)
                         || !point_of(coords.substr(gt2 + 1), b)) {
                         detail = "bad-arg";
                     } else {
-                        pulp::view::ViewCapture capture;
+                        spectr::editor_view::ViewCapture capture;
                         capture.set(root.hit_test(a));
                         auto* target = capture.live_in(root);
                         if (target == nullptr) detail = "no-target";
                         else {
-                            pulp::view::deliver_mouse_down(root, target, a, drag_mods, 1);
+                            spectr::editor_view::deliver_mouse_down(root, target, a, drag_mods, 1);
                             for (int i = 1; i <= dsteps; ++i) {
                                 const float t = static_cast<float>(i)
                                               / static_cast<float>(dsteps);
                                 auto* live = capture.live_in(root);
                                 if (live == nullptr) break;
-                                pulp::view::deliver_mouse_drag(
+                                spectr::editor_view::deliver_mouse_drag(
                                     root, live,
-                                    pulp::view::Point{a.x + (b.x - a.x) * t,
+                                    spectr::editor_view::Point{a.x + (b.x - a.x) * t,
                                                       a.y + (b.y - a.y) * t},
                                     drag_mods, 1);
                             }
@@ -3170,8 +3244,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 detail = "held";
                             } else {
                                 if (auto* live = capture.live_in(root)) {
-                                    pulp::view::MouseUpHost up_host;
-                                    pulp::view::deliver_mouse_up(root, live, b, drag_mods, 1,
+                                    spectr::editor_view::MouseUpHost up_host;
+                                    spectr::editor_view::deliver_mouse_up(root, live, b, drag_mods, 1,
                                                                  up_host);
                                 }
                                 detail = "dragged";
@@ -3184,8 +3258,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     else {
                         scenario_drag_held_ = false;
                         if (auto* target = root.hit_test(scenario_held_point_)) {
-                            pulp::view::MouseUpHost up_host;
-                            pulp::view::deliver_mouse_up(root, target, scenario_held_point_,
+                            spectr::editor_view::MouseUpHost up_host;
+                            spectr::editor_view::deliver_mouse_up(root, target, scenario_held_point_,
                                                          scenario_held_mods_, 1, up_host);
                             detail = "released";
                         } else detail = "no-target";
@@ -3209,9 +3283,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             dy = std::strtof(parts[2].c_str(), nullptr);
                             if (parts.size() >= 4)
                                 count = std::max(1, std::atoi(parts[3].c_str()));
-                            pulp::view::WheelHost wheel_host;
+                            spectr::editor_view::WheelHost wheel_host;
                             for (int i = 0; i < count; ++i)
-                                pulp::view::deliver_mouse_wheel(
+                                spectr::editor_view::deliver_mouse_wheel(
                                     root, {wx, wy}, 0.0f, dy, wheel_host);
                             detail = "wheeled";
                         } else detail = "bad-arg";
@@ -3228,9 +3302,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     }
                     if (v.size() >= 4) {
                         const int count = v.size() >= 5 ? std::max(1, static_cast<int>(v[4])) : 1;
-                        pulp::view::WheelHost wheel_host;
+                        spectr::editor_view::WheelHost wheel_host;
                         for (int i = 0; i < count; ++i)
-                            pulp::view::deliver_mouse_wheel(
+                            spectr::editor_view::deliver_mouse_wheel(
                                 root, {v[0], v[1]}, v[2], v[3], wheel_host);
                         press_x = v[0]; press_y = v[1];
                         detail = "wheeled";
@@ -3251,7 +3325,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // Walk up from the label to the first node holding the
                         // three parts, rather than assuming how deep the span
                         // that paints the label sits.
-                        const pulp::view::View* row_view = label;
+                        const spectr::editor_view::View* row_view = label;
                         while (row_view != nullptr && row_view->child_count() < 3)
                             row_view = row_view->parent();
                         if (row_view == nullptr || row_view == scope) detail = "row-absent";
@@ -3260,7 +3334,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             float tx = 0.0f, ty = 0.0f;
                             spectr_menu_probe::root_origin_of(*track, tx, ty);
                             const float f = std::clamp(std::strtof(arg.c_str() + at + 1, nullptr), 0.0f, 1.0f);
-                            const pulp::view::Point pt{tx + track->bounds().width * f,
+                            const spectr::editor_view::Point pt{tx + track->bounds().width * f,
                                                        ty + track->bounds().height * 0.5f};
                             press_x = pt.x; press_y = pt.y;
                             detail = click_at(pt);
@@ -3307,7 +3381,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // host's wheel route, aimed like psel.
                     const auto bar1 = arg.find('|');
                     const auto bar2 = bar1 == std::string::npos ? bar1 : arg.find('|', bar1 + 1);
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     bool aimed = false;
                     if (bar2 != std::string::npos) {
                         try {
@@ -3333,9 +3407,9 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     else {
                         const float dy = std::strtof(arg.substr(bar1 + 1, bar2 - bar1 - 1).c_str(), nullptr);
                         const int count = std::max(1, std::atoi(arg.substr(bar2 + 1).c_str()));
-                        pulp::view::WheelHost wheel_host;
+                        spectr::editor_view::WheelHost wheel_host;
                         for (int i = 0; i < count; ++i)
-                            pulp::view::deliver_mouse_wheel(root, pt, 0.0f, dy, wheel_host);
+                            spectr::editor_view::deliver_mouse_wheel(root, pt, 0.0f, dy, wheel_host);
                         press_x = pt.x; press_y = pt.y;
                         detail = "wheeled";
                     }
@@ -3345,7 +3419,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // measured from the live layout at that moment -- the
                     // place a person would aim -- and then delivered through
                     // the host's own press or hover route like `press`.
-                    pulp::view::Point pt{};
+                    spectr::editor_view::Point pt{};
                     bool aimed = false;
                     try {
                         native_scripted_ui_->bridge()->load_script(
@@ -3375,7 +3449,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                             detail = click_at(pt);
                             host_focus = false;
                         }
-                        else { pulp::view::deliver_hover_move(root, pt); detail = "hovered"; }
+                        else { spectr::editor_view::deliver_hover_move(root, pt); detail = "hovered"; }
                     }
                 } else if (kind == "exists") {
                     // Whether a selector matches anything now (a reading).
@@ -3435,10 +3509,10 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // A Skia raster of the editor as it stands, to the path
                     // given (the screenshot backend the GPU compositor matches).
                     const auto box = root.bounds();
-                    detail = pulp::view::render_to_file(
+                    detail = spectr::editor_view::render_to_file(
                                  root, static_cast<int>(box.width),
                                  static_cast<int>(box.height), arg, 2.0f,
-                                 pulp::view::ScreenshotBackend::skia)
+                                 spectr::editor_view::ScreenshotBackend::skia)
                         ? "written" : "not-written";
                 } else if (kind == "rgprobe") {
                     // The editor's PAINTED band heights (normalised, four
@@ -3486,7 +3560,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                     // steps recorded `unknown-step`, the window never moved,
                     // and the two reopens after them measured the unresized
                     // window while reading as though a resize had happened.
-                    pulp::view::Point size{};
+                    spectr::editor_view::Point size{};
                     if (point_of(arg, size) && size.x > 0.0f && size.y > 0.0f) {
                         // BOTH axes, before and after. "resized" on its own is a
                         // claim about the CALL, and the two outcomes a reader
@@ -3506,7 +3580,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         const auto before = root.bounds();
                         const auto host_before_w = native_host_width_;
                         const auto host_before_h = native_host_height_;
-                        on_view_resized(root,
+                        resize_native_editor_(root,
                                         static_cast<std::uint32_t>(size.x),
                                         static_cast<std::uint32_t>(size.y));
                         const auto after = root.bounds();
@@ -3549,23 +3623,23 @@ bool Spectr::tick_native_analyzer_(float dt) {
                        << "],\"menu_children\":" << scope->child_count()
                        << ",\"rows\":[";
                     bool first_row = true;
-                    std::vector<pulp::view::View*> seen;
-                    std::function<void(pulp::view::View&)> walk =
-                        [&](pulp::view::View& v) {
+                    std::vector<spectr::editor_view::View*> seen;
+                    std::function<void(spectr::editor_view::View&)> walk =
+                        [&](spectr::editor_view::View& v) {
                             if (!v.visible()) return;
                             if (const auto* label =
-                                    dynamic_cast<const pulp::view::Label*>(&v);
+                                    dynamic_cast<const spectr::editor_view::Label*>(&v);
                                 label != nullptr && !label->text().empty()) {
                                 float lx = 0.0f, ly = 0.0f;
                                 spectr_menu_probe::root_origin_of(v, lx, ly);
                                 const auto box = v.bounds();
                                 auto* own = spectr_menu_probe::nearest_clickable(
-                                    const_cast<pulp::view::View*>(&v));
+                                    const_cast<spectr::editor_view::View*>(&v));
                                 bool self = false;
                                 std::string covered_by;
                                 if (own != nullptr && box.width > 0.0f
                                     && box.height > 0.0f) {
-                                    auto* hit = root.hit_test(pulp::view::Point{
+                                    auto* hit = root.hit_test(spectr::editor_view::Point{
                                         lx + box.width * 0.5f,
                                         ly + box.height * 0.5f});
                                     auto* winner =
@@ -3599,7 +3673,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                                 bool clipped = false;
                                 for (auto* a = v.parent(); a != nullptr && !clipped;
                                      a = a->parent()) {
-                                    if (a->overflow() == pulp::view::View::Overflow::visible)
+                                    if (a->overflow() == spectr::editor_view::View::Overflow::visible)
                                         continue;
                                     float ax = 0.0f, ay = 0.0f;
                                     spectr_menu_probe::root_origin_of(*a, ax, ay);
@@ -3653,7 +3727,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                 {
                     // Where the Settings scroller sits, if one is open: a
                     // vertical panel must never have moved sideways.
-                    std::vector<pulp::view::ScrollView*> scrollers;
+                    std::vector<spectr::editor_view::ScrollView*> scrollers;
                     collect_settings_scroll_views(root, scrollers);
                     if (!scrollers.empty()) {
                         auto* sv = scrollers.front();
@@ -3667,8 +3741,8 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         // Any view under Settings that can move sideways.
                         js << ",\"settings_hscroll\":[";
                         bool first = true;
-                        std::function<void(pulp::view::View&)> walk_h =
-                            [&](pulp::view::View& v) {
+                        std::function<void(spectr::editor_view::View&)> walk_h =
+                            [&](spectr::editor_view::View& v) {
                                 if (v.max_scroll_offset_x() > 0.0f || v.scroll_offset_x() != 0.0f) {
                                     js << (first ? "" : ",") << "[\""
                                        << spectr_menu_probe::json_escape(v.id()) << "\","
@@ -3683,7 +3757,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
                         js << "]";
                     }
                     if (press_x >= 0.0f) {
-                        auto* hit = root.hit_test(pulp::view::Point{press_x, press_y});
+                        auto* hit = root.hit_test(spectr::editor_view::Point{press_x, press_y});
                         bool under = false;
                         for (auto* a = hit; a; a = a->parent()) if (a == sv) under = true;
                         float ox = 0.0f, oy = 0.0f;
@@ -3754,7 +3828,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
     if (const auto* path = SPECTR_TEST_ENV("SPECTR_PAINT_COST_DUMP");
         path && native_editor_root_) {
         auto rows = choc::value::createEmptyArray();
-        const auto visit = [&](const auto& self, const pulp::view::View& view,
+        const auto visit = [&](const auto& self, const spectr::editor_view::View& view,
                                int depth, bool ancestors_visible) -> void {
             auto row = choc::value::createObject("");
             row.addMember("id", view.id());
@@ -3766,7 +3840,7 @@ bool Spectr::tick_native_analyzer_(float dt) {
             row.addMember("blend", static_cast<int>(view.mix_blend_mode()));
             row.addMember("backdrop_blur", view.backdrop_blur());
             row.addMember("shadow_count", static_cast<int>(view.box_shadows().size()));
-            if (const auto* widget = dynamic_cast<const pulp::view::CanvasWidget*>(&view)) {
+            if (const auto* widget = dynamic_cast<const spectr::editor_view::CanvasWidget*>(&view)) {
                 row.addMember("canvas_commands", static_cast<int>(widget->command_count()));
                 row.addMember("canvas_isolation", widget->needs_backdrop_isolation());
             }
@@ -3802,12 +3876,12 @@ bool Spectr::tick_native_analyzer_(float dt) {
     if (settings_fixture_scrolled_) {
         if (const auto* dump = SPECTR_TEST_ENV("SPECTR_LAYOUT_DUMP");
             dump != nullptr && native_editor_root_ != nullptr) {
-            pulp::view::LayoutTreeSnapshotOptions options;
+            spectr::editor_view::LayoutTreeSnapshotOptions options;
             options.surface = "standalone";
             options.viewport_width = native_editor_root_->bounds().width;
             options.viewport_height = native_editor_root_->bounds().height;
             std::ofstream out(dump);
-            out << pulp::view::dump_layout_tree(*native_editor_root_, options);
+            out << spectr::editor_view::dump_layout_tree(*native_editor_root_, options);
             out.close();
             // dump_layout_tree emits pre-order nodes with no depth, and a
             // consumer that infers ancestry from rect containment gets it
@@ -4027,9 +4101,19 @@ bool Spectr::tick_native_analyzer_(float dt) {
     return true;
 }
 
+void Spectr::detach_native_dispatch_() {
+    if (!native_scripted_ui_) return;
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    native_scripted_ui_->detach_native_message_handler("__spectrEditorDispatch");
+#else
+    native_editor_bridge_.detach_native_runtime(
+        *native_scripted_ui_, "__spectrEditorDispatch");
+#endif
+}
+
 void Spectr::close_native_editor_() {
     if constexpr (pulp::runtime::kTracingEnabled)
-        pulp::view::set_tracing_badge_visible(true);
+        spectr::editor_view::set_tracing_badge_visible(true);
     if (native_frame_subscription_ >= 0 && native_frame_clock_)
         native_frame_clock_->unsubscribe(native_frame_subscription_);
     native_frame_subscription_ = -1;
@@ -4056,11 +4140,15 @@ void Spectr::close_native_editor_() {
     gesture_perf_tick_ = -1;
     gesture_perf_done_ = false;
 #endif
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+    if (native_resize_grip_ && native_editor_root_)
+        native_editor_root_->remove_child(native_resize_grip_);
+    native_resize_grip_ = nullptr;
+    native_host_width_ = 0;
+    native_host_height_ = 0;
+#endif
     native_editor_root_ = nullptr;
-    if (native_scripted_ui_) {
-        native_editor_bridge_.detach_native_runtime(
-            *native_scripted_ui_, "__spectrEditorDispatch");
-    }
+    detach_native_dispatch_();
     native_scripted_ui_.reset();
     // The package is shared by every editor in this process and is reused by
     // the next open (see package_path_for); forget it, do not delete it.
@@ -4068,3 +4156,47 @@ void Spectr::close_native_editor_() {
 }
 
 } // namespace spectr
+
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+namespace spectr::vellum_editor {
+
+RootView::RootView(pulp::vellum::EditorEnv& env, pulp::format::Processor& processor)
+    : env_(env), processor_(static_cast<Spectr&>(processor)) {
+    processor_.mount_native_editor_(*this, env_);
+}
+
+RootView::~RootView() {
+    editor_closing();
+}
+
+pulp::format::ViewSize RootView::editor_view_size() const {
+    return processor_.view_size();
+}
+
+void RootView::editor_opened() {
+    if (!processor_.native_editor_root_)
+        processor_.mount_native_editor_(*this, env_);
+    if (processor_.native_editor_root_ != this) return;
+    if (auto* host = plugin_view_host(); host && processor_.native_scripted_ui_)
+        processor_.native_scripted_ui_->attach_gpu_surface(host->gpu_surface());
+    processor_.open_native_editor_(*this);
+}
+
+void RootView::editor_idle() {
+    if (processor_.native_editor_root_ != this) return;
+    if (auto* host = plugin_view_host()) {
+        const auto size = host->get_size();
+        if (size.width != processor_.native_host_width_ ||
+            size.height != processor_.native_host_height_)
+            processor_.resize_native_editor_(*this, size.width, size.height);
+    }
+    if (processor_.native_scripted_ui_) processor_.native_scripted_ui_->poll();
+    processor_.retire_failed_native_session_();
+}
+
+void RootView::editor_closing() {
+    if (processor_.native_editor_root_ == this) processor_.close_native_editor_();
+}
+
+} // namespace spectr::vellum_editor
+#endif
