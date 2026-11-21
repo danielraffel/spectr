@@ -47,6 +47,8 @@
 // Exit: 0 clean, 1 a problem (click, fade overshoot, dropout, slow edge,
 // render-thread tail notification), 2 setup error.
 
+#include "au_probe_state.hpp"
+
 #include <spectr/freeze_length.hpp>
 
 #include <AudioToolbox/AudioToolbox.h>
@@ -491,59 +493,19 @@ struct Host {
         return true;
     }
 
-    // Edit the plugin's own JSON inside the unit's saved state and load it
-    // back -- exactly what a host does when it restores a project. The state
-    // is Pulp's "PLST" envelope: magic, version, the parameter-store and
-    // plugin-state sizes, the two payloads, and a CRC-32 of everything
-    // before it.
+    // Edit the processor JSON and restore the class info the way a host does.
     template <typename Edit>
     bool edit_state(Edit&& edit) {
         CFPropertyListRef plist = nullptr;
         UInt32 size = sizeof(plist);
         if (AudioUnitGetProperty(au, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &plist, &size) != noErr || !plist)
             return false;
-        auto* dict = CFDictionaryCreateMutableCopy(nullptr, 0, static_cast<CFDictionaryRef>(plist));
+        auto* dict = CFGetTypeID(plist) == CFDictionaryGetTypeID()
+            ? CFDictionaryCreateMutableCopy(nullptr, 0, static_cast<CFDictionaryRef>(plist))
+            : nullptr;
         CFRelease(plist);
-        bool changed = false;
-        CFStringRef state_key = CFSTR("pulpState");
-        auto* state_value = CFDictionaryGetValue(dict, state_key);
-        if (!state_value) {
-            state_key = CFSTR("pulp-state");
-            state_value = CFDictionaryGetValue(dict, state_key);
-        }
-        if (auto* data = static_cast<CFDataRef>(state_value);
-            data && CFGetTypeID(data) == CFDataGetTypeID()) {
-            std::string blob(reinterpret_cast<const char*>(CFDataGetBytePtr(data)), std::size_t(CFDataGetLength(data)));
-            const auto u32 = [&](std::size_t at) {
-                std::uint32_t v = 0;
-                for (int b = 0; b < 4; ++b) v |= std::uint32_t(std::uint8_t(blob[at + std::size_t(b)])) << (8 * b);
-                return v;
-            };
-            const auto put = [](std::string& out, std::uint32_t v) {
-                for (int b = 0; b < 4; ++b) out.push_back(char((v >> (8 * b)) & 0xFF));
-            };
-            if (blob.size() > 20 && blob.compare(0, 4, "PLST") == 0) {
-                const std::size_t store = u32(8), plugin = u32(12);
-                std::string json = blob.substr(16 + store, plugin);
-                if (edit(json)) {
-                    std::string out = blob.substr(0, 12);
-                    put(out, std::uint32_t(json.size()));
-                    out += blob.substr(16, store);
-                    out += json;
-                    std::uint32_t crc = 0xFFFFFFFFu;
-                    for (const char c : out) {
-                        crc ^= static_cast<std::uint8_t>(c);
-                        for (int bit = 0; bit < 8; ++bit)
-                            crc = (crc >> 1) ^ (0xEDB88320u & ((crc & 1u) ? 0xFFFFFFFFu : 0u));
-                    }
-                    put(out, ~crc);
-                    auto* next = CFDataCreate(nullptr, reinterpret_cast<const UInt8*>(out.data()), CFIndex(out.size()));
-                    CFDictionarySetValue(dict, state_key, next);
-                    CFRelease(next);
-                    changed = true;
-                }
-            }
-        }
+        if (!dict) return false;
+        const bool changed = spectr::au_probe_state::edit_class_info(dict, std::forward<Edit>(edit));
         CFPropertyListRef out = dict;
         const OSStatus st = changed
             ? AudioUnitSetProperty(au, kAudioUnitProperty_ClassInfo, kAudioUnitScope_Global, 0, &out, sizeof(out))

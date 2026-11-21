@@ -4754,11 +4754,28 @@ if(APPLE AND TARGET ${SPECTR_NATIVE_AU_TARGET})
         COMMAND Spectr-au-level-probe
             --bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
     set_tests_properties(Spectr-au-level-host PROPERTIES TIMEOUT 300)
+    find_package(ZLIB REQUIRED)
     add_executable(Spectr-au-freeze-probe tools/au_freeze_probe.cpp)
     target_include_directories(Spectr-au-freeze-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_link_libraries(Spectr-au-freeze-probe PRIVATE
+    target_link_libraries(Spectr-au-freeze-probe PRIVATE ZLIB::ZLIB
         "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
     add_dependencies(Spectr-au-freeze-probe ${SPECTR_NATIVE_AU_TARGET})
+
+    add_executable(Spectr-au-probe-state-test test/test_au_probe_state.cpp)
+    target_link_libraries(Spectr-au-probe-state-test PRIVATE
+        Catch2::Catch2WithMain Pulp::format-core ZLIB::ZLIB
+        "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreFoundation")
+    # The released SDK can predate the compact encoder.
+    set(_spectr_au_header "${Pulp_DIR}/../../../include/pulp/format/au_v2_common.hpp")
+    if(EXISTS "${_spectr_au_header}")
+        file(STRINGS "${_spectr_au_header}" _spectr_compact_state
+            REGEX "^namespace compact_state")
+        if(_spectr_compact_state)
+            target_compile_definitions(Spectr-au-probe-state-test PRIVATE SPECTR_HAS_PULP_COMPACT_STATE)
+            target_link_libraries(Spectr-au-probe-state-test PRIVATE Pulp::ausdk)
+        endif()
+    endif()
+    add_test(NAME Spectr-au-probe-state COMMAND Spectr-au-probe-state-test)
     set(_spectr_au_bundle "${CMAKE_BINARY_DIR}/AU/${SPECTR_NATIVE_PLUGIN_NAME}.component")
     # A short Length (1/16 bar: 125 ms at the probe's 120 BPM) holds the
     # spectrum: the engage's spectral pre-roll is what these two measure.
