@@ -31,7 +31,7 @@ constexpr std::string_view kTemplateDigest =
 // goes stale silently and surfaces ~9 minutes into the M5 acceptance gate as a
 // bare hash mismatch. The failure below names the remedy for that reason.
 constexpr std::string_view kAdapterDigest =
-    "6dd931d853835282f18784bffc7174a6cd59ce4cf76a70a24c9f5d87f7aac860";
+    "2ecc3e86b86f4a47d78db2307fd9442dbf762224f35a685d0457129fb705e995";
 
 struct CanonicalBundle {
     std::string asset_set_digest;
@@ -497,7 +497,7 @@ TEST_CASE("import adapter contract detects pinned core source-needle drift") {
 }
 
 TEST_CASE("import adapter contract detects current Vellum context patch drift") {
-    const bundle = pulp::view::parse_claude_bundle(embedded_html());
+    const auto bundle = pulp::view::parse_claude_bundle(embedded_html());
     REQUIRE(bundle.has_value());
     for (const auto& marker : kCurrentContextPatchNeedles) {
         INFO(marker.label);
