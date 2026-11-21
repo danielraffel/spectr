@@ -256,6 +256,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         // A patch that cannot find its point is a patch that is not applied;
         // say so rather than continuing.
         if (template.includes(replacement)) return;
+        const fallback = currentSourceFallbacks[label];
+        if (fallback && template.includes(fallback[0])) {
+          template = template.replace(fallback[0], fallback[1]);
+          return;
+        }
         throw new Error('Spectr source patch point missing: ' + label);
       }
       template = template.replace(needle, replacement);
@@ -273,6 +278,37 @@ document.addEventListener('DOMContentLoaded', async function() {
     const spectrTemplate = (text) => text
       .replaceAll('__BT__', String.fromCharCode(96))
       .replaceAll('__D__', '${');
+
+    // The Vellum migration refreshed the embedded editor source. Its context
+    // actions are inline callbacks, while older exports used the multiline
+    // callback form below. Keep the publication patches anchored to both
+    // source shapes so a refreshed export cannot stop the editor at startup.
+    const currentSourceFallbacks = {
+      'flush band context mute publication': [
+        '          onMuteBand={(b) => { const cur = targetGainsRef.current[b]; commitGain(b, isMuted(cur) ? 0 : -Infinity); if (onStatus) onStatus(isMuted(cur) ? `BAND ${b + 1} UNMUTED` : `BAND ${b + 1} MUTED`); }}',
+        '          onMuteBand={(b) => { const cur = targetGainsRef.current[b]; commitGain(b, isMuted(cur) ? 0 : -Infinity); flushNativeProcessingStatePublication(); if (onStatus) onStatus(isMuted(cur) ? `BAND ${b + 1} UNMUTED` : `BAND ${b + 1} MUTED`); }}',
+      ],
+      'flush band context reset publication': [
+        '          onZeroBand={(b) => { commitGain(b, 0); if (onStatus) onStatus(`BAND ${b + 1} RESET`); }}',
+        '          onZeroBand={(b) => { commitGain(b, 0); flushNativeProcessingStatePublication(); if (onStatus) onStatus(`BAND ${b + 1} RESET`); }}',
+      ],
+      'flush band context solo publication': [
+        '            commitMany(map);\n          }}\n          onSelectAround=',
+        '            commitMany(map);\n            flushNativeProcessingStatePublication();\n          }}\n          onSelectAround=',
+      ],
+      'flush selection zero publication': [
+        '            commitMany(map);\n          }}\n          onMuteSel=',
+        '            commitMany(map);\n            flushNativeProcessingStatePublication();\n          }}\n          onMuteSel=',
+      ],
+      'flush selection mute publication': [
+        '            commitMany(map);\n            if (onStatus) onStatus(`MUTED ${map.size} BAND${map.size === 1 ? \'\' : \'S\'}`);',
+        '            commitMany(map);\n            flushNativeProcessingStatePublication();\n            if (onStatus) onStatus(`MUTED ${map.size} BAND${map.size === 1 ? \'\' : \'S\'}`);',
+      ],
+      'flush fit-view publication': [
+        '          onFitView={() => setView({ lmin: Math.log10(20), lmax: Math.log10(20000) })}',
+        '          onFitView={() => { setView({ lmin: Math.log10(20), lmax: Math.log10(20000) }); queueNativeProcessingStatePublication(); flushNativeProcessingStatePublication(); }}',
+      ],
+    };
 
     // One analyzer source feeds every imported visualization. In a native
     // WebView, silence before the first valid publication is intentional:
