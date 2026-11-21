@@ -381,8 +381,13 @@ if(SPECTR_ENABLE_PERF_FIXTURES AND NOT SPECTR_ENABLE_TEST_SEAMS)
         "seams; configure with -DSPECTR_ENABLE_TEST_SEAMS=ON as well")
 endif()
 
+set(_spectr_shared_renderer_default OFF)
+if(APPLE AND NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|tvOS|watchOS)$")
+    set(_spectr_shared_renderer_default ON)
+endif()
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
-       "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
+       "Enable the shared GPU linear renderer in native Spectr (adds fixed geometry latency)"
+       ${_spectr_shared_renderer_default})
 
 option(SPECTR_SHARED_PRODUCT_ACCEPTANCE
        "Build default-off actual-processor shared renderer acceptance diagnostics" OFF)

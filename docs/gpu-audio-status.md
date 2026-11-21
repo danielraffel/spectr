@@ -26,9 +26,10 @@ mode does not imply GPU-selected output.
 
 When unavailable, `available` is false and `reason` is `not_built`,
 `not_prepared`, `non_shared_renderer`, or `snapshot_unavailable`. Counter fields
-are absent rather than zero. A normal build without the experimental shared
-renderer reports not_built. An experimental build still defaults to
-zero_latency; select linear_phase to exercise the shared renderer.
+are absent rather than zero. Non-macOS and iOS-family builds default to the
+CPU-only renderer and report not_built. macOS builds include the shared
+renderer by default, while each instance still defaults to zero_latency and
+GPU processing remains off until the user selects it.
 
 For a real-host check, capture the same loaded plugin's identity and status
 before and after a stable, nontrivial wet run. Require a positive GPU-selected
@@ -90,7 +91,7 @@ step needs both an acoustic reason to exist and realtime evidence: output
 parity, CPU/GPU work time, p99.9 deadline behavior, fallback rate, and the
 effect of simultaneous rendering load.
 
-## GPU processing: a Mixing choice, off by default
+## GPU processing: a Mixing choice, off by default per instance
 
 GPU processing is a saved, non-automatable session setting that selects
 Mixing's renderer: on, Mixing renders through the shared GPU renderer; off
