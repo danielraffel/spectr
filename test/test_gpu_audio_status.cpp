@@ -71,6 +71,18 @@ struct Rig {
     spectr::Spectr processor;
     Rig(){processor.set_state_store(&store);processor.define_parameters(store);}
 };
+void default_gpu_processing_contract() {
+#if defined(SPECTR_EXPERIMENTAL_SHARED_RENDERER)
+    constexpr bool expected_available = true;
+#else
+    constexpr bool expected_available = false;
+#endif
+    require(spectr::Spectr::gpu_processing_available() == expected_available,
+            "GPU processing availability does not match the build default");
+    Rig fresh;
+    require(!fresh.processor.gpu_processing(),
+            "a fresh instance enabled GPU processing");
+}
 void lifecycle_and_bridge_controls() {
     using A=spectr::GpuAudioStatus::Availability;
     Rig first,second;
@@ -289,5 +301,5 @@ void tracking_gpu_choice_is_inert() {
     require(mixing_builds>0,"control: Mixing GPU toggles built nothing, so the counter is blind");
 #endif
 }
-int main(){try{projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();tracking_gpu_choice_is_inert();tracking_gpu_bridge_projection_separates_mixing();std::cout<<"GPU audio status controls passed\n";return 0;}
+int main(){try{default_gpu_processing_contract();projection_controls();lifecycle_and_bridge_controls();gpu_processing_bridge_controls();tracking_gpu_choice_is_inert();tracking_gpu_bridge_projection_separates_mixing();std::cout<<"GPU audio status controls passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
