@@ -297,6 +297,49 @@ set(SPECTR_NATIVE_ASSET_SOURCES
     native-ui/materialized/help-content.js
 )
 
+# The materialized document is the source of truth for captured image assets.
+# Enumerate its references at configure time so a new capture cannot silently
+# ship an image that the native editor package does not mount.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+            ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+            --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+            --cmake
+    RESULT_VARIABLE _spectr_native_asset_check
+    OUTPUT_VARIABLE _spectr_native_asset_paths
+    ERROR_VARIABLE _spectr_native_asset_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _spectr_native_asset_check EQUAL 0)
+    message(FATAL_ERROR
+        "Materialized document references unavailable native assets:\n"
+        "${_spectr_native_asset_error}${_spectr_native_asset_paths}")
+endif()
+string(REPLACE "\n" ";" _spectr_native_asset_paths "${_spectr_native_asset_paths}")
+list(APPEND SPECTR_NATIVE_ASSET_SOURCES ${_spectr_native_asset_paths})
+
+set(_spectr_embedded_file_entries "")
+foreach(_spectr_asset IN LISTS SPECTR_NATIVE_ASSET_SOURCES)
+    get_filename_component(_spectr_asset_name "${_spectr_asset}" NAME)
+    string(MAKE_C_IDENTIFIER "${_spectr_asset_name}" _spectr_asset_symbol)
+    if(IS_ABSOLUTE "${_spectr_asset}")
+        file(RELATIVE_PATH _spectr_package_path
+            "${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized"
+            "${_spectr_asset}")
+    else()
+        string(REPLACE "native-ui/materialized/" "" _spectr_package_path
+            "${_spectr_asset}")
+    endif()
+    string(APPEND _spectr_embedded_file_entries
+        "    EmbeddedFile{\"${_spectr_package_path}\", spectr_native::${_spectr_asset_symbol}, spectr_native::${_spectr_asset_symbol}_size},")
+endforeach()
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/spectr_native_embedded_files.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp
+    @ONLY)
+
 # Fail closed before the native asset encoder can capture an incomplete
 # materialized document.  These selectors are the stable product bridge used
 # by native_shot and the shipping native editor; embedding a runtime without
@@ -319,6 +362,24 @@ add_test(NAME Spectr-materialized-pseudo-plane
     COMMAND ${Python3_EXECUTABLE} -B
         ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_pseudo_plane.py)
 set_tests_properties(Spectr-materialized-pseudo-plane PROPERTIES TIMEOUT 30)
+add_test(NAME Spectr-materialized-native-assets
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+        --package-header ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp)
+add_test(NAME Spectr-materialized-native-assets-negative-control
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_assets.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized
+        --source ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/design.js
+        --package-header ${CMAKE_CURRENT_BINARY_DIR}/spectr_native_embedded_files.hpp
+        --plant-missing)
+set_tests_properties(Spectr-materialized-native-assets PROPERTIES TIMEOUT 30)
+set_tests_properties(Spectr-materialized-native-assets-negative-control PROPERTIES
+    TIMEOUT 30 WILL_FAIL TRUE)
 execute_process(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_materialized_native_markers.py
@@ -381,8 +442,13 @@ if(SPECTR_ENABLE_PERF_FIXTURES AND NOT SPECTR_ENABLE_TEST_SEAMS)
         "seams; configure with -DSPECTR_ENABLE_TEST_SEAMS=ON as well")
 endif()
 
+set(_spectr_shared_renderer_default OFF)
+if(APPLE AND NOT CMAKE_SYSTEM_NAME MATCHES "^(iOS|tvOS|watchOS)$")
+    set(_spectr_shared_renderer_default ON)
+endif()
 option(SPECTR_EXPERIMENTAL_SHARED_RENDERER
-       "Use experimental shared GPU linear renderer in native Spectr (adds fixed geometry latency)" OFF)
+       "Enable the shared GPU linear renderer in native Spectr (adds fixed geometry latency)"
+       ${_spectr_shared_renderer_default})
 
 option(SPECTR_EXPERIMENTAL_TRACKING_GPU
        "Offer the minimum-phase Tracking GPU convolver on an exact Apple Silicon SDK" OFF)
@@ -444,6 +510,7 @@ function(spectr_configure_native_target target)
     endif()
     target_include_directories(${target} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_BINARY_DIR}
     )
     target_compile_definitions(${target} PRIVATE
         SPECTR_NATIVE_EDITOR=1
@@ -912,6 +979,7 @@ add_executable(Spectr-test
     test/test_audio_glitches.cpp
     test/test_freeze.cpp
     test/test_freeze_length.cpp
+    test/test_embedded_package_identity.cpp
     test/test_freeze_click.cpp
     test/test_freeze_level.cpp
     test/test_level_controls.cpp
@@ -4001,33 +4069,38 @@ if(NOT (SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE))
     endif()
 endif()
 if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
+    # Skip, rather than crash, the installed browser inside an agent sandbox.
+    set(_spectr_browser_guard)
+    if(CMAKE_HOST_UNIX)
+        set(_spectr_browser_guard /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/browser_test_guard.sh)
+    endif()
     add_test(NAME Spectr-browser-source-doctype
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_compare_source_html_chromium.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/compare_source_html_chromium.mjs
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-source-doctype PROPERTIES TIMEOUT 120)
     add_test(NAME Spectr-browser-analyzer
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-analyzer PROPERTIES TIMEOUT 150)
     add_test(NAME Spectr-browser-runtime-facade
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_spectr_runtime_facade_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/spectr-native-services.js
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-runtime-facade PROPERTIES TIMEOUT 45)
     add_test(NAME Spectr-browser-resize
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE}
             --resize-only)
     set_tests_properties(Spectr-browser-resize PROPERTIES TIMEOUT 90)
     add_test(NAME Spectr-browser-popups
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE}
@@ -4037,21 +4110,21 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # state each mode's real pointer handler publishes -- not the shared
     # decision point, which would pass even if a mode bypassed it.
     add_test(NAME Spectr-browser-mute-modes
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_editor_analyzer_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE}
             --mute-modes)
     set_tests_properties(Spectr-browser-mute-modes PROPERTIES TIMEOUT 180)
     add_test(NAME Spectr-browser-build-info-timeout
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_build_info_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             ${SPECTR_CHROME_EXECUTABLE})
     set_tests_properties(Spectr-browser-build-info-timeout PROPERTIES TIMEOUT 45)
     add_test(NAME Spectr-browser-ux-polish
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_materialized_ux_polish_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
@@ -4066,7 +4139,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # per-launch timeout, which says which scenario hung.
     set_tests_properties(Spectr-browser-ux-polish PROPERTIES TIMEOUT 300)
     add_test(NAME Spectr-browser-preset-parity
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             --shipping-only
@@ -4085,7 +4158,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # Verified by hand before registering: baseline exits 0, planted exits 1
     # with "factory:flat action overlap: APPLY/★ DEFAULT".
     add_test(NAME Spectr-browser-preset-parity-negative-control
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             --shipping-only
@@ -4102,7 +4175,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # assertion must reject it. Verified: baseline exits 0, planted exits 1 with
     # "preset title spills 308px past the detail panel instead of truncating".
     add_test(NAME Spectr-browser-preset-truncation-negative-control
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_preset_parity_browser.mjs
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             --shipping-only
@@ -4120,7 +4193,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # cannot pass silently.  This remains staging evidence; it never mutates
     # editor.html or the materialized runtime and does not claim native parity.
     add_test(NAME Spectr-browser-authored-filter-bank-reimport
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_filter_bank_app_mount.mjs
             --editor ${CMAKE_CURRENT_SOURCE_DIR}/resources/editor.html
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
@@ -4132,7 +4205,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # predates SpectrControlMenu and newer helpers.  This remains staging
     # evidence and does not imply native parity or production cutover.
     add_test(NAME Spectr-browser-authored-full-app-materialized-reimport
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/authored_reimport_full_app_materialized_browser.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --chrome ${SPECTR_CHROME_EXECUTABLE}
@@ -4147,7 +4220,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # silently relabel the existing editor.html/materialized cross-artifact
     # comparison as pixel parity.
     add_test(NAME Spectr-browser-materialized-runtime-authority-oracle
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
@@ -4160,7 +4233,7 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
     # The test script accepts the run only when the strict network-failure
     # assertion rejects the capture for the intended reason.
     add_test(NAME Spectr-browser-materialized-runtime-authority-oracle-negative-control
-        COMMAND ${SPECTR_NODE_EXECUTABLE}
+        COMMAND ${_spectr_browser_guard} ${SPECTR_NODE_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/materialized_runtime_chromium_oracle.mjs
             --artifact ${CMAKE_CURRENT_SOURCE_DIR}/native-ui/materialized/materialized-document.runtime.json
             --fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures/spectr-parity-analyzer-v1.json
@@ -4170,6 +4243,15 @@ if(SPECTR_NODE_EXECUTABLE AND SPECTR_CHROME_EXECUTABLE)
             --dpr 2
             --plant-missing-asset)
     set_tests_properties(Spectr-browser-materialized-runtime-authority-oracle-negative-control PROPERTIES TIMEOUT 180)
+    get_property(_spectr_tests DIRECTORY PROPERTY TESTS)
+    list(FILTER _spectr_tests INCLUDE REGEX "^Spectr-browser-")
+    if(_spectr_tests)
+        set_tests_properties(${_spectr_tests} PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endif()
+if(CMAKE_HOST_UNIX)
+    add_test(NAME Spectr-browser-test-guard
+        COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/test/test_browser_test_guard.sh)
 endif()
 
 # These need node only -- NOT chrome. Registered under the browser

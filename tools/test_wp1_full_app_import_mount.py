@@ -65,7 +65,7 @@ class FullAppImportMountTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         receipt = json.loads((first / "full-app-import-mount.json").read_text())
         self.assertEqual(receipt["schema"], "spectr-owned-full-app-import-mount-v1")
-        self.assertEqual(receipt["mount"]["modules"], 59)
+        self.assertEqual(receipt["mount"]["modules"], 60)
         self.assertEqual(receipt["mount"]["render_tree"]["type"], "div")
         self.assertTrue(receipt["checks"]["explicit_runtime_facade"])
         self.assertTrue(receipt["checks"]["authored_app_root_invoked"])

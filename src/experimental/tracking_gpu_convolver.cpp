@@ -113,7 +113,11 @@ struct TrackingGpuConvolver::Impl {
             const auto& ir = requests.read();
             const auto epoch = requested_epoch.load(std::memory_order_acquire);
             const auto now = std::chrono::steady_clock::now();
-            if (ir.generation != seen_generation || epoch != seen_epoch) {
+            // A transport reset changes only the epoch, so this branch also
+            // rebuilds the same IR into a fresh Generation before GPU output
+            // can be selected again.
+            const bool reset_epoch_changed = epoch != seen_epoch;
+            if (ir.generation != seen_generation || reset_epoch_changed) {
                 seen_generation = ir.generation;
                 seen_epoch = epoch;
                 quiet_since = now;
@@ -216,6 +220,8 @@ struct TrackingGpuConvolver::Impl {
         std::fill(cpu_delay.begin(), cpu_delay.end(), 0.f);
         delay_pos = 0;
         history = stable_quanta = 0;
+        // run() observes this epoch even when the IR generation is unchanged
+        // and publishes a replacement Generation carrying the new epoch.
         requested_epoch.fetch_add(1, std::memory_order_release);
     }
 

@@ -42,6 +42,7 @@
 #endif
 
 #include "spectr/editor_bridge.hpp"
+#include "spectr/embedded_package_identity.hpp"
 #if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
 #include "spectr/vellum_editor.hpp"
 #include <pulp/vellum/editor_env.hpp>
@@ -58,6 +59,7 @@
 #include <choc/text/choc_JSON.h>
 
 #include "spectr_native_assets_data.hpp"
+#include "spectr_native_embedded_files.hpp"
 
 namespace spectr_cache {
 
@@ -368,23 +370,18 @@ struct EmbeddedFile {
 };
 
 const std::array kEmbeddedFiles{
-    EmbeddedFile{"runtime.js", spectr_native::runtime_js, spectr_native::runtime_js_size},
-    EmbeddedFile{"materialized-document.runtime.json", spectr_native::materialized_document_runtime_json, spectr_native::materialized_document_runtime_json_size},
-    EmbeddedFile{"design.js", spectr_native::design_js, spectr_native::design_js_size},
-    EmbeddedFile{"help-content.js", spectr_native::help_content_js, spectr_native::help_content_js_size},
+    SPECTR_NATIVE_EMBEDDED_FILES
 };
 
 constexpr const char* kPackagePrefix = "spectr-native-materialized-";
 
-// Identity of the embedded package: file count and total bytes, hex. Any build
-// that adds, removes or resizes a file names a different directory, so two
-// Spectr builds loaded into one host process never share a package.
-std::string embedded_package_stamp() {
-    std::size_t total = 0;
-    for (const auto& file : kEmbeddedFiles) total += file.size;
-    std::ostringstream stamp;
-    stamp << std::hex << kEmbeddedFiles.size() << 'x' << total;
-    return stamp.str();
+// Identity of the embedded package: file count, total bytes and a content
+// digest, hex. Any build that adds, removes, resizes or edits a file names a
+// different directory, so two Spectr builds loaded into one host process never
+// share a package. Hashed once per process (~8 MB) and cached.
+const std::string& embedded_package_stamp() {
+    static const std::string stamp = spectr::embedded_package_identity(kEmbeddedFiles);
+    return stamp;
 }
 
 #if !defined(_WIN32)
@@ -472,7 +469,7 @@ std::filesystem::path package_path_for(const void*) {
 // blocked, so it must stay a handful of stat() calls and never read content.
 // A regenerated package that happened to preserve every file's size byte for
 // byte would defeat it, which is why the caller ALSO gates on a stamp that
-// changes with the build.
+// changes with the build (count, size and a content digest).
 bool embedded_package_is_current(const std::filesystem::path& path) {
     std::error_code ec;
     for (const auto& file : kEmbeddedFiles) {
@@ -492,8 +489,8 @@ bool embedded_package_is_current(const std::filesystem::path& path) {
 // identical bytes on the one path where the host is stalled is pure cost.
 //
 // Skip when the package on disk already matches this build. The stamp carries
-// the file count and total byte count, so adding, removing or resizing any file
-// invalidates it; the per-file size check then catches a partial or interrupted
+// the file count, total byte count and a content digest, so adding, removing,
+// resizing or editing any file invalidates it; the per-file size check then catches a partial or interrupted
 // previous write. Anything unexpected falls through to the full write, so the
 // worst case is the old behaviour rather than a stale editor.
 // Negative-control plant for the group-drag mute contract.
@@ -567,10 +564,7 @@ bool write_embedded_package(const std::filesystem::path& path) {
         SPECTR_TEST_ENV("SPECTR_GROUP_DRAG_FREEZE_PLANT") != nullptr;
     const bool plant = plant_unmute || plant_freeze;
 
-    std::size_t total = 0;
-    for (const auto& file : kEmbeddedFiles) total += file.size;
-    const auto stamp = std::to_string(kEmbeddedFiles.size()) + ':'
-                       + std::to_string(total);
+    const auto& stamp = embedded_package_stamp();
     const auto stamp_path = path / ".package-stamp";
 
     // A planted package must never be served from the stamp fast path: its
