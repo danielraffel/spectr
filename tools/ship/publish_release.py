@@ -457,18 +457,19 @@ def main() -> int:
         raise SystemExit("updater publication requires --pkg and --appcast")
     if args.pkg.name != f"Spectr-{args.version}.pkg":
         raise SystemExit(f"--pkg must be Spectr-{args.version}.pkg")
-    if bool(args.windows_arm64ec) != bool(args.windows_x64):
-        raise SystemExit("ARM64EC and x64 Windows assets must be supplied together")
+    if args.windows_arm64ec and not args.windows_x64:
+        raise SystemExit("ARM64EC requires the native x64 Windows asset")
+    if args.windows_x64 and not args.windows_arm64:
+        raise SystemExit("native x64 Windows publication requires native ARM64")
     windows = ((args.windows_arm64, args.windows_arm64ec, args.windows_x64)
-               if args.windows_arm64 else
-               (args.windows_arm64ec, args.windows_x64)
-               if args.windows_arm64ec else None)
-    complete_windows = windows == (
-        args.windows_arm64, args.windows_arm64ec, args.windows_x64)
+               if args.windows_arm64ec else
+               (args.windows_arm64, args.windows_x64)
+               if args.windows_arm64 and args.windows_x64 else None)
+    complete_windows = windows is not None
     if (args.require_windows or args.reuse_draft) and not complete_windows:
         raise SystemExit(
-            "complete release publication requires --windows-arm64, "
-            "--windows-arm64ec, and --windows-x64 together")
+            "complete release publication requires --windows-arm64 and "
+            "--windows-x64; ARM64EC is optional until an eligible provider exists")
     linux = ((args.linux_aarch64, args.linux_x86_64)
              if args.linux_aarch64 and args.linux_x86_64 else None)
     if args.require_linux and linux is None:
@@ -479,8 +480,8 @@ def main() -> int:
     if linux and (linux[0].name != f"Spectr-v{args.version}-linux-aarch64.tar.xz"
                   or linux[1].name != f"Spectr-v{args.version}-linux-x86_64.tar.xz"):
         raise SystemExit("Linux package filenames must match the release version and architecture")
-    if windows and ((len(windows) == 3 and windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
-                    or windows[-2].name != f"Spectr-windows-arm64ec-{args.version}.zip"
+    if windows and ((windows[0].name != f"Spectr-windows-arm64-{args.version}.zip")
+                    or (len(windows) == 3 and windows[1].name != f"Spectr-windows-arm64ec-{args.version}.zip")
                     or windows[-1].name != f"Spectr-windows-x64-{args.version}.zip"):
         raise SystemExit("Windows package filenames must match the release version and architecture")
     target = args.target
@@ -500,7 +501,8 @@ def main() -> int:
     check_macos_package(args.pkg, args.version, target)
     print(f"verified macOS package source={target}", flush=True)
     if windows:
-        arches = ("arm64-win", "arm64ec-win", "x86_64-win") if len(windows) == 3 else ("arm64ec-win", "x86_64-win")
+        arches = (("arm64-win", "arm64ec-win", "x86_64-win") if len(windows) == 3
+                  else ("arm64-win", "x86_64-win"))
         for asset, arch in zip(windows, arches):
             if not asset.is_file():
                 raise SystemExit(f"missing {asset}")
