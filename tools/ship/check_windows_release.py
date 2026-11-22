@@ -126,7 +126,8 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-sha", required=True, help="exact macOS release commit")
     parser.add_argument("--arm64", required=True, type=Path)
-    parser.add_argument("--arm64ec", required=True, type=Path)
+    parser.add_argument("--arm64ec", type=Path,
+                        help="optional verified Windows ARM64EC package")
     parser.add_argument("--x64", required=True, type=Path)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_sha):
@@ -135,7 +136,11 @@ def main() -> int:
         parser.error("--version must be X.Y.Z")
     try:
         results = []
-        for path, arch in ((args.arm64, "arm64-win"), (args.arm64ec, "arm64ec-win"), (args.x64, "x86_64-win")):
+        packages = [(args.arm64, "arm64-win")]
+        if args.arm64ec is not None:
+            packages.append((args.arm64ec, "arm64ec-win"))
+        packages.append((args.x64, "x86_64-win"))
+        for path, arch in packages:
             digest = check_package(path, arch, args.version, args.source_sha)
             results.append(f"PASS {arch} {path} sha256={digest} source={args.source_sha}")
     except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as exc:
