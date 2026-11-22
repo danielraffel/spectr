@@ -195,7 +195,7 @@ class PublishOrdering(unittest.TestCase):
         with mock.patch.object(sys, "argv", argv):
             with self.assertRaises(SystemExit) as error:
                 publish_release.main()
-        self.assertIn("requires --windows-arm64", str(error.exception))
+        self.assertIn("native ARM64", str(error.exception))
 
     def test_require_linux_rejects_an_incomplete_platform_set(self) -> None:
         argv = [
