@@ -46,7 +46,7 @@ class StartupTraceScope {
 public:
     explicit StartupTraceScope(const char* operation)
         : operation_(operation) {
-        const char* value = std::getenv("SPECTR_STARTUP_TRACE");
+        const char* value = SPECTR_TEST_ENV("SPECTR_STARTUP_TRACE");
         enabled_ = value != nullptr && std::strcmp(value, "0") != 0
             && std::strcmp(value, "") != 0;
         if (enabled_) {
@@ -75,8 +75,8 @@ private:
 };
 
 void startup_trace_file_mark(const char* stage) noexcept {
-    const char* value = std::getenv("SPECTR_STARTUP_TRACE");
-    const char* path = std::getenv("SPECTR_STARTUP_TRACE_FILE");
+    const char* value = SPECTR_TEST_ENV("SPECTR_STARTUP_TRACE");
+    const char* path = SPECTR_TEST_ENV("SPECTR_STARTUP_TRACE_FILE");
     if (value == nullptr || std::strcmp(value, "0") == 0 ||
         value[0] == '\0' || path == nullptr || path[0] == '\0') return;
     static std::mutex file_mutex;
