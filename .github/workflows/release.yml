@@ -1,10 +1,10 @@
 name: Spectr Release
 
 # A release is dispatched only after exact-head Windows ARM64 and x64 ZIPs
-# are available. ARM64EC remains parked under PARKED/windows #382 until a
-# qualifying provider is available, so its inputs are optional.
 # are available as authenticated assets on a pre-created draft vX.Y.Z release
-# targeted at the same commit. The transient Tart guest downloads and verifies
+# targeted at the same commit. ARM64EC remains parked under PARKED/windows #382
+# until a qualifying provider is available, so its inputs are optional. The
+# transient Tart guest downloads and verifies
 # them before doing any macOS work, then the publisher fills and publishes
 # that draft atomically.
 on:
