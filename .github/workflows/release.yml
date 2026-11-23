@@ -1,8 +1,10 @@
 name: Spectr Release
 
-# A release is dispatched only after exact-head Windows ARM64, ARM64EC, and x64 ZIPs
+# A release is dispatched only after exact-head Windows ARM64 and x64 ZIPs
 # are available as authenticated assets on a pre-created draft vX.Y.Z release
-# targeted at the same commit. The transient Tart guest downloads and verifies
+# targeted at the same commit. ARM64EC remains parked under PARKED/windows #382
+# until a qualifying provider is available, so its inputs are optional. The
+# transient Tart guest downloads and verifies
 # them before doing any macOS work, then the publisher fills and publishes
 # that draft atomically.
 on:
@@ -15,7 +17,7 @@ on:
         type: string
       windows_arm64ec_url:
         description: GitHub API URL for an asset on the pre-created draft release
-        required: true
+        required: false
         type: string
       windows_arm64_url:
         description: GitHub API URL for the native ARM64 asset on the pre-created draft release
@@ -27,7 +29,7 @@ on:
         type: string
       windows_arm64ec_sha256:
         description: SHA-256 for the exact-head ARM64EC ZIP
-        required: true
+        required: false
         type: string
       windows_x64_url:
         description: GitHub API URL for an asset on the pre-created draft release
@@ -181,7 +183,7 @@ jobs:
           [[ "$draft" == true ]] || { echo "v$version must already be a draft" >&2; exit 1; }
           [[ "$SPECTR_RELEASE_SOURCE_SHA" == "${{ steps.source.outputs.sha }}" ]] || { echo "tag source changed during checkout" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/spectr-windows-assets"
-          arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
+          arm=""
           native="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64-$version.zip"
           x64="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-x64-$version.zip"
           # macOS runners use the system Bash 3.2, which does not implement
@@ -191,15 +193,28 @@ jobs:
           [[ "$include_linux" == true || "$include_linux" == false ]] || {
             echo "include_linux must be boolean" >&2; exit 1;
           }
-          [[ "$WINDOWS_ARM64_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_ARM64EC_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_X64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
-            echo "Windows asset URLs must be GitHub release asset API URLs" >&2; exit 1;
+          include_ec=false
+          if [[ -n "$WINDOWS_ARM64EC_URL" || -n "$WINDOWS_ARM64EC_SHA256" ]]; then
+            [[ -n "$WINDOWS_ARM64EC_URL" && -n "$WINDOWS_ARM64EC_SHA256" ]] || {
+              echo "ARM64EC URL and SHA-256 must be supplied together" >&2; exit 1;
+            }
+            include_ec=true
+            arm="$RUNNER_TEMP/spectr-windows-assets/Spectr-windows-arm64ec-$version.zip"
+          fi
+          [[ "$WINDOWS_ARM64_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_X64_URL" == https://api.github.com/repos/*/releases/assets/* ]] || {
+            echo "Windows native ARM64 and x64 URLs must be GitHub release asset API URLs" >&2; exit 1;
           }
-          [[ "$WINDOWS_ARM64_URL" != *\?* && "$WINDOWS_ARM64EC_URL" != *\?* && "$WINDOWS_X64_URL" != *\?* ]] || {
+          [[ "$WINDOWS_ARM64_URL" != *\?* && "$WINDOWS_X64_URL" != *\?* ]] || {
             echo "Windows asset URLs must not contain query credentials" >&2; exit 1;
           }
-          [[ "$WINDOWS_ARM64_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
-            echo "Windows asset digests must be 64 hexadecimal characters" >&2; exit 1;
+          [[ "$WINDOWS_ARM64_SHA256" =~ ^[[:xdigit:]]{64}$ && "$WINDOWS_X64_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+            echo "Windows native asset digests must be 64 hexadecimal characters" >&2; exit 1;
           }
+          if [[ "$include_ec" == true ]]; then
+            [[ "$WINDOWS_ARM64EC_URL" == https://api.github.com/repos/*/releases/assets/* && "$WINDOWS_ARM64EC_URL" != *\?* && "$WINDOWS_ARM64EC_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || {
+              echo "Windows ARM64EC URL or digest is invalid" >&2; exit 1;
+            }
+          fi
           linux_aarch64=""
           linux_x86_64=""
           if [[ "$include_linux" == true ]]; then
@@ -217,17 +232,18 @@ jobs:
             mkdir -p "$RUNNER_TEMP/spectr-linux-assets"
           fi
           draft_assets=$(gh release view "v$version" --repo danielraffel/spectr --json assets)
-          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" INCLUDE_LINUX="$include_linux" python3 - <<'PY'
+          DRAFT_ASSETS="$draft_assets" RELEASE_VERSION="$version" INCLUDE_EC="$include_ec" INCLUDE_LINUX="$include_linux" python3 - <<'PY'
           import json, os, sys
           assets = json.loads(os.environ['DRAFT_ASSETS'])['assets']
           expected = {
               f"Spectr-windows-arm64-{os.environ['RELEASE_VERSION']}.zip": (
                   os.environ['WINDOWS_ARM64_URL'], os.environ['WINDOWS_ARM64_SHA256']),
-              f"Spectr-windows-arm64ec-{os.environ['RELEASE_VERSION']}.zip": (
-                  os.environ['WINDOWS_ARM64EC_URL'], os.environ['WINDOWS_ARM64EC_SHA256']),
               f"Spectr-windows-x64-{os.environ['RELEASE_VERSION']}.zip": (
                   os.environ['WINDOWS_X64_URL'], os.environ['WINDOWS_X64_SHA256']),
           }
+          if os.environ['INCLUDE_EC'] == 'true':
+              expected[f"Spectr-windows-arm64ec-{os.environ['RELEASE_VERSION']}.zip"] = (
+                  os.environ['WINDOWS_ARM64EC_URL'], os.environ['WINDOWS_ARM64EC_SHA256'])
           if os.environ['INCLUDE_LINUX'] == 'true':
               expected.update({
                   f"Spectr-v{os.environ['RELEASE_VERSION']}-linux-aarch64.tar.xz": (
@@ -242,7 +258,9 @@ jobs:
               if asset.get('apiUrl') != url or asset.get('digest') != 'sha256:' + digest.lower():
                   sys.exit(f"draft asset identity or digest differs: {asset['name']}")
           PY
-          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
+          if [[ "$include_ec" == true ]]; then
+            curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$arm" "$WINDOWS_ARM64EC_URL"
+          fi
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$native" "$WINDOWS_ARM64_URL"
           curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$x64" "$WINDOWS_X64_URL"
           if [[ "$include_linux" == true ]]; then
@@ -250,11 +268,16 @@ jobs:
             curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/octet-stream' --output "$linux_x86_64" "$LINUX_X86_64_URL"
           fi
           printf '%s  %s\n' "$WINDOWS_ARM64_SHA256" "$native" | shasum -a 256 --check
-          printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
+          if [[ "$include_ec" == true ]]; then
+            printf '%s  %s\n' "$WINDOWS_ARM64EC_SHA256" "$arm" | shasum -a 256 --check
+          fi
+          windows_check=(--version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" --arm64 "$native")
+          if [[ "$include_ec" == true ]]; then
+            windows_check+=(--arm64ec "$arm")
+          fi
+          windows_check+=(--x64 "$x64")
           printf '%s  %s\n' "$WINDOWS_X64_SHA256" "$x64" | shasum -a 256 --check
-          python3 "$RELEASE_TOOLS/ship/check_windows_release.py" \
-            --version "$version" --source-sha "$SPECTR_RELEASE_SOURCE_SHA" \
-            --arm64 "$native" --arm64ec "$arm" --x64 "$x64"
+          python3 "$RELEASE_TOOLS/ship/check_windows_release.py" "${windows_check[@]}"
           if [[ "$include_linux" == true ]]; then
             printf '%s  %s\n' "$LINUX_AARCH64_SHA256" "$linux_aarch64" | shasum -a 256 --check
             printf '%s  %s\n' "$LINUX_X86_64_SHA256" "$linux_x86_64" | shasum -a 256 --check
@@ -266,6 +289,7 @@ jobs:
             echo "arm=$arm"
             echo "native=$native"
             echo "x64=$x64"
+            echo "include_ec=$include_ec"
             [[ "$include_linux" == true ]] && echo "linux_aarch64=$linux_aarch64"
             [[ "$include_linux" == true ]] && echo "linux_x86_64=$linux_x86_64"
             echo "include_linux=$include_linux"
@@ -377,11 +401,13 @@ jobs:
             --appcast artifacts/appcast.xml \
             --notes "${{ steps.version.outputs.notes }}" \
             --windows-arm64 "${{ steps.version.outputs.native }}" \
-            --windows-arm64ec "${{ steps.version.outputs.arm }}" \
             --windows-x64 "${{ steps.version.outputs.x64 }}" \
             --require-windows \
             --reuse-draft \
           )
+          if [[ -n "${{ steps.version.outputs.arm }}" ]]; then
+            publish_args+=( --windows-arm64ec "${{ steps.version.outputs.arm }}" )
+          fi
           if [[ "$INCLUDE_LINUX" == true ]]; then
             publish_args+=( \
               --linux-aarch64 "${{ steps.version.outputs.linux_aarch64 }}" \

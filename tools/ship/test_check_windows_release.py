@@ -30,6 +30,7 @@ def pe(machine: int, arm64x=False) -> bytes:
 
 def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH,
                  declare_wgpu=True, include_wgpu=True, windows_names=False):
+    info_path = f"VST3/Spectr.vst3/Contents/{arch}/Spectr.pulp-build-info.json"
     info = {
         "schema": "pulp.build-info.v1",
         "product": {"name": "Spectr", "version": "1.0.9",
@@ -40,21 +41,26 @@ def make_package(path: Path, *, source=SHA, tamper=False, arch=ARCH,
     data = json.dumps(info).encode()
     vdir = f"VST3/Spectr.vst3/Contents/{arch}"
     contents = {
-        INFO: data,
-        "Standalone/Spectr.exe": pe(0x8664, arm64x=True),
-        "CLAP/Spectr.clap": pe(0x8664, arm64x=True),
-        f"{vdir}/Spectr.vst3": pe(0x8664, arm64x=True),
+        info_path: data,
+        "Standalone/Spectr.exe": pe(0xAA64 if arch == "arm64-win" else 0x8664,
+                                      arm64x=arch == "arm64ec-win"),
+        "CLAP/Spectr.clap": pe(0xAA64 if arch == "arm64-win" else 0x8664,
+                                 arm64x=arch == "arm64ec-win"),
+        f"{vdir}/Spectr.vst3": pe(0xAA64 if arch == "arm64-win" else 0x8664,
+                                   arm64x=arch == "arm64ec-win"),
         "icudtl.dat": b"icu data",
         f"{vdir}/icudtl.dat": b"icu data",
     }
     if include_wgpu:
-        contents["wgpu_native.dll"] = pe(0xAA64)
-        contents[f"{vdir}/wgpu_native.dll"] = pe(0xAA64)
+        runtime_machine = 0xAA64 if arch in ("arm64-win", "arm64ec-win") else 0x8664
+        contents["wgpu_native.dll"] = pe(runtime_machine)
+        contents[f"{vdir}/wgpu_native.dll"] = pe(runtime_machine)
     manifest = {
         "schema": 1,
         "architecture": arch,
         "artifact_architectures": {"standalone": arch, "vst3": arch,
-                                   "clap": arch, "runtime": "arm64-win"},
+                                   "clap": arch,
+                                   "runtime": "arm64-win" if arch == "arm64ec-win" else arch},
         "files": [{"path": name, "bytes": len(payload),
                    "sha256": hashlib.sha256(payload).hexdigest()}
                   for name, payload in contents.items()],
@@ -105,6 +111,17 @@ class WindowsReleaseTest(unittest.TestCase):
             make_package(path)
             self.assertEqual(check_package(path, ARCH, "1.0.9", SHA),
                              hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_native_arm64_package_is_valid_without_arm64ec(self):
+        with tempfile.TemporaryDirectory() as directory:
+            arm64 = Path(directory) / "arm64.zip"
+            x64 = Path(directory) / "x64.zip"
+            make_package(arm64, arch="arm64-win")
+            make_package(x64, arch="x86_64-win")
+            self.assertEqual(check_package(arm64, "arm64-win", "1.0.9", SHA),
+                             hashlib.sha256(arm64.read_bytes()).hexdigest())
+            self.assertEqual(check_package(x64, "x86_64-win", "1.0.9", SHA),
+                             hashlib.sha256(x64.read_bytes()).hexdigest())
 
     def test_stale_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

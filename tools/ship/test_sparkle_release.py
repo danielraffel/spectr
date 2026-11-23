@@ -162,7 +162,7 @@ class PublishOrdering(unittest.TestCase):
         self.assertEqual(verify[verify.index("--expect-version") + 1], "1.0.7")
 
     def test_windows_assets_join_the_draft_before_publication(self) -> None:
-        arm = Path("a/Spectr-windows-arm64ec-1.0.9.zip")
+        arm = Path("a/Spectr-windows-arm64-1.0.9.zip")
         x64 = Path("a/Spectr-windows-x64-1.0.9.zip")
         steps = publish_release.plan("1.0.9", Path("a/Spectr-1.0.9.pkg"),
                                      Path("a/appcast.xml"), Path("n.md"),
@@ -170,6 +170,18 @@ class PublishOrdering(unittest.TestCase):
         self.assertLess(steps.index(steps[1]), steps.index(steps[2]))
         self.assertIn(str(arm), steps[1])
         self.assertIn(str(x64), steps[1])
+
+    def test_native_windows_publication_does_not_require_arm64ec(self) -> None:
+        argv = [
+            "publish_release.py", "--version", "1.0.9",
+            "--pkg", "a/Spectr-1.0.9.pkg", "--appcast", "a/appcast.xml",
+            "--notes", "n.md", "--windows-arm64",
+            "a/Spectr-windows-arm64-1.0.9.zip", "--windows-x64",
+            "a/Spectr-windows-x64-1.0.9.zip", "--require-windows",
+            "--dry-run",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            self.assertEqual(publish_release.main(), 0)
 
     def test_require_windows_rejects_an_incomplete_platform_set(self) -> None:
         argv = [
@@ -183,7 +195,7 @@ class PublishOrdering(unittest.TestCase):
         with mock.patch.object(sys, "argv", argv):
             with self.assertRaises(SystemExit) as error:
                 publish_release.main()
-        self.assertIn("requires --windows-arm64", str(error.exception))
+        self.assertIn("native ARM64", str(error.exception))
 
     def test_require_linux_rejects_an_incomplete_platform_set(self) -> None:
         argv = [
