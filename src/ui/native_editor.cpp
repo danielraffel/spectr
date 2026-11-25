@@ -1213,7 +1213,18 @@ void Spectr::finish_native_document_load_(bool session_loaded,
                     "if (typeof globalThis.__pulpApplyMaterializedVisualAuthority__ === 'function') "
                     "globalThis.__pulpApplyMaterializedVisualAuthority__(); "
                     "if (typeof globalThis.__pulpBindMaterializedCanvases__ === 'function') "
-                    "globalThis.__pulpBindMaterializedCanvases__();",
+                    "globalThis.__pulpBindMaterializedCanvases__();"
+#if defined(SPECTR_VELLUM_EDITOR_PACKAGE)
+                    // The mount commit runs before the runtime installs its
+                    // canvas sync, and later commits are scoped, so nothing
+                    // would alias the plot canvases' pointer and wheel
+                    // handlers onto their live widgets until an unrelated
+                    // full pass. One explicit full pass makes the first
+                    // pointer event reach the canvas.
+                    "if (typeof globalThis.__pulpApplyMaterializedImportMetadata__ === 'function') "
+                    "globalThis.__pulpApplyMaterializedImportMetadata__();"
+#endif
+                    ,
                     "spectr-materialized-bind");
             }
 #if defined(_WIN32)
