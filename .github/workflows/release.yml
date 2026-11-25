@@ -74,7 +74,7 @@ jobs:
     # Signed publication is restricted to the trusted m5studio lane. The
     # acceptance labels are intentionally insufficient: they are shared by
     # other hosts that may run untrusted product checks.
-    runs-on: [self-hosted, macOS, ARM64, pulp-build-vm-release]
+    runs-on: [self-hosted, macOS, ARM64, spectr-build, spectr-build-vm, spectr-gate-fast]
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
