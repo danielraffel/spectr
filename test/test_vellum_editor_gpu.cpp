@@ -119,8 +119,11 @@ struct GpuEditor {
         const auto rect = choc::json::parse(result);
         const float sx = float(image.width) / spectr::kEditorDesignWidth;
         const float sy = float(image.height) / spectr::kEditorDesignHeight;
-        return {rect[0].getFloat32() * sx, rect[1].getFloat32() * sy,
-                rect[2].getFloat32() * sx, rect[3].getFloat32() * sy};
+        auto num = [](const choc::value::ValueView& v) {
+            return v.isInt() ? float(v.getInt64()) : float(v.getFloat64());
+        };
+        return {num(rect[0]) * sx, num(rect[1]) * sy,
+                num(rect[2]) * sx, num(rect[3]) * sy};
     }
 };
 
