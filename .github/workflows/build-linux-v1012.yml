@@ -1,0 +1,41 @@
+name: Spectr Linux v1.0.12 artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        required: true
+        default: 2ba67e6753902532feb89901c603dccb3e464199
+        type: string
+jobs:
+  build-x86_64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.0.12
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libasound2-dev libsm-dev libice-dev libx11-dev libxext-dev libfontconfig1-dev libfreetype6-dev libjack-jackd2-dev
+      - name: Download official Pulp SDK
+        run: |
+          curl --fail --location --retry 3 -o /tmp/pulp-sdk.tar.gz https://github.com/Generous-Corp/pulp/releases/download/v1.149.0/pulp-sdk-linux-x64.tar.gz
+          echo '8eadfd42b37595a844c5d5cbc2058098bf4b4d12aa755b0bfd12ff1322a038ac  /tmp/pulp-sdk.tar.gz' | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/pulp-sdk"
+          tar -xzf /tmp/pulp-sdk.tar.gz -C "$RUNNER_TEMP/pulp-sdk" --strip-components=1
+      - name: Configure and build exact release
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPulp_DIR="$RUNNER_TEMP/pulp-sdk/lib/cmake/Pulp" \
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="${{ inputs.source_sha }}" \
+            -DSPECTR_EXPECTED_PULP_SDK_SHA=53b987f84b80143cc6d1e6118bdefe53b5ad22d4
+          cmake --build build --parallel 4 --target Spectr_Standalone Spectr_VST3 Spectr_CLAP
+      - name: Package and verify
+        run: |
+          python3 tools/ship/package_linux_release.py . "$RUNNER_TEMP/linux-release" x86_64
+          python3 tools/ship/check_linux_release.py --version 1.0.12 --source-sha "${{ inputs.source_sha }}" "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz"
+          cp "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spectr-v1.0.12-linux-x86_64
+          path: Spectr-v1.0.12-linux-x86_64.tar.xz
+          if-no-files-found: error
