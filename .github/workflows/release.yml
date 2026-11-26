@@ -331,6 +331,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DPulp_DIR="$PULP_SDK_ROOT/lib/cmake/Pulp" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA="$PULP_SDK_SHA" \
             -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
