@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.12 LANGUAGES CXX)
+project(Spectr VERSION 1.0.13 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -232,8 +232,16 @@ set(SPECTR_HEADERS
 )
 
 # Both editor packages mount the same materialized document and runtime.
+# Vellum hosts the editor by default on Apple Silicon, the one platform the
+# released Pulp SDK stages a Vellum SDK for (share/pulp/vellum-sdk/<version>).
+# Every other platform keeps the legacy native editor until Vellum ships there.
+set(_spectr_vellum_editor_default OFF)
+if(APPLE AND PULP_SDK_PLATFORM STREQUAL "darwin-arm64")
+    set(_spectr_vellum_editor_default ON)
+endif()
 option(SPECTR_VELLUM_EDITOR_PACKAGE
-    "Host the existing materialized Spectr editor with Vellum" OFF)
+    "Host the existing materialized Spectr editor with Vellum"
+    ${_spectr_vellum_editor_default})
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     find_package(Vellum CONFIG REQUIRED)
     if(NOT COMMAND pulp_add_vellum_editor_package)
@@ -628,7 +636,7 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
     # editor contract even while the package factory owns the opt-in editor.
     target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC Pulp::view Pulp::vellum-audio)
     target_sources(${SPECTR_NATIVE_CORE_TARGET} PRIVATE
-        src/ui/vellum_editor_update_stub.cpp)
+        src/ui/vellum_editor_app_updates.cpp)
     target_compile_definitions(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
         SPECTR_VELLUM_EDITOR_PACKAGE=1)
 endif()
@@ -1632,7 +1640,8 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
         test/test_editor_open.cpp
         test/test_vellum_editor_model.cpp
         test/test_vellum_editor_gpu.cpp
-        test/test_vellum_audio_display.cpp)
+        test/test_vellum_audio_display.cpp
+        test/test_vellum_app_updates.cpp)
     target_link_libraries(Spectr-vellum-editor-test PRIVATE
         ${SPECTR_NATIVE_CORE_TARGET} SpectrVellumEditor Catch2::Catch2WithMain)
     spectr_configure_native_target(Spectr-vellum-editor-test)
