@@ -78,6 +78,15 @@ def main():
             fail(f"{key}={actual!r}, expected {expected!r}")
     expected_dir = (args.sdk_root / "lib/cmake/Pulp").resolve()
     if Path(cache.get("Pulp_DIR", "")).resolve() != expected_dir: fail("Pulp_DIR is not the extracted SDK")
+    # An Apple Silicon release ships the Vellum editor, resolved from the Vellum
+    # SDK the Pulp release stages inside its own prefix, never from elsewhere.
+    if pin["platform"] == "darwin-arm64":
+        if not cmake_bool(cache.get("SPECTR_VELLUM_EDITOR_PACKAGE", "")):
+            fail("SPECTR_VELLUM_EDITOR_PACKAGE is not ON for a darwin-arm64 release")
+        vellum_root = (args.sdk_root / "share/pulp/vellum-sdk").resolve()
+        vellum_dir = Path(cache.get("Vellum_DIR", "")).resolve()
+        if vellum_root not in vellum_dir.parents:
+            fail(f"Vellum_DIR {vellum_dir} is not the Vellum SDK staged in the Pulp SDK")
 
     provenance = json.loads((args.sdk_root / "sdk-provenance.json").read_text(encoding="utf-8"))
     expected = {

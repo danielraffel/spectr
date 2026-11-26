@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Spectr VERSION 1.0.12 LANGUAGES CXX)
+project(Spectr VERSION 1.0.13 LANGUAGES CXX)
 
 # PROJECT_VERSION is Spectr's one product version. The plugin descriptor (what
 # Settings > About, CLAP and VST3 report), every bundle's Info.plist, the AU
@@ -232,8 +232,16 @@ set(SPECTR_HEADERS
 )
 
 # Both editor packages mount the same materialized document and runtime.
+# Vellum hosts the editor by default on Apple Silicon, the one platform the
+# released Pulp SDK stages a Vellum SDK for (share/pulp/vellum-sdk/<version>).
+# Every other platform keeps the legacy native editor until Vellum ships there.
+set(_spectr_vellum_editor_default OFF)
+if(APPLE AND PULP_SDK_PLATFORM STREQUAL "darwin-arm64")
+    set(_spectr_vellum_editor_default ON)
+endif()
 option(SPECTR_VELLUM_EDITOR_PACKAGE
-    "Host the existing materialized Spectr editor with Vellum" OFF)
+    "Host the existing materialized Spectr editor with Vellum"
+    ${_spectr_vellum_editor_default})
 if(SPECTR_VELLUM_EDITOR_PACKAGE)
     find_package(Vellum CONFIG REQUIRED)
     if(NOT COMMAND pulp_add_vellum_editor_package)
