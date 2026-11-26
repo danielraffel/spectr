@@ -46,7 +46,7 @@ jobs:
           python3 "$RUNNER_TEMP/spectr-linux-tools/package_linux_release.py" . "$RUNNER_TEMP/linux-release" x86_64 \
             --version 1.0.12 --source-sha "$SPECTR_SOURCE_SHA" \
             --sdk-sha 53b987f84b80143cc6d1e6118bdefe53b5ad22d4
-          python3 "$RUNNER_TEMP/spectr-linux-tools/check_linux_release.py" --version 1.0.12 --source-sha "$SPECTR_SOURCE_SHA" "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz"
+          python3 "$RUNNER_TEMP/spectr-linux-tools/check_linux_release.py" --version 1.0.12 --source-sha "$SPECTR_SOURCE_SHA" --x86_64 "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz"
           cp "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz" .
       - uses: actions/upload-artifact@v4
         with:
