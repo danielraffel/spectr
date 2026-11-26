@@ -27,9 +27,6 @@ Windows packages are not code-signed. If SmartScreen warns, choose
 
 - **Intel macOS and Linux:** no package in this release. Use 1.0.11 for those
   platforms.
-- **Updates in Settings (macOS standalone):** with the Vellum-hosted editor the
-  UPDATES group in Settings is not wired yet. **Spectr > Check for Updates…** in
-  the app menu works as before, and automatic checks are unchanged.
 - **Windows:** full qualification of these exact archives remains incomplete.
 - **ARM64EC:** no ARM64EC package is included.
 - GPU-audio Tracking behavior remains unproven and is not advertised as supported.
