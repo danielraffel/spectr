@@ -12,8 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v1.0.12
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
+      - name: Preserve workflow release tools
+        run: |
+          set -euo pipefail
+          tools_dir="$RUNNER_TEMP/spectr-linux-tools"
+          mkdir -p "$tools_dir"
+          git show "$GITHUB_SHA:tools/ship/package_linux_release.py" > "$tools_dir/package_linux_release.py"
+          git show "$GITHUB_SHA:tools/ship/check_linux_release.py" > "$tools_dir/check_linux_release.py"
+          chmod 755 "$tools_dir/package_linux_release.py"
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libasound2-dev libsm-dev libice-dev libx11-dev libxext-dev libfontconfig1-dev libfreetype6-dev libjack-jackd2-dev
       - name: Download official Pulp SDK
@@ -23,16 +31,22 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pulp-sdk"
           tar -xzf /tmp/pulp-sdk.tar.gz -C "$RUNNER_TEMP/pulp-sdk" --strip-components=1
       - name: Configure and build exact release
+        env:
+          SPECTR_SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DPulp_DIR="$RUNNER_TEMP/pulp-sdk/lib/cmake/Pulp" \
-            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="${{ inputs.source_sha }}" \
+            -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_SOURCE_SHA" \
             -DSPECTR_EXPECTED_PULP_SDK_SHA=53b987f84b80143cc6d1e6118bdefe53b5ad22d4
           cmake --build build --parallel 4 --target Spectr_Standalone Spectr_VST3 Spectr_CLAP
       - name: Package and verify
+        env:
+          SPECTR_SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          python3 tools/ship/package_linux_release.py . "$RUNNER_TEMP/linux-release" x86_64
-          python3 tools/ship/check_linux_release.py --version 1.0.12 --source-sha "${{ inputs.source_sha }}" "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz"
+          python3 "$RUNNER_TEMP/spectr-linux-tools/package_linux_release.py" . "$RUNNER_TEMP/linux-release" x86_64 \
+            --version 1.0.12 --source-sha "$SPECTR_SOURCE_SHA" \
+            --sdk-sha 53b987f84b80143cc6d1e6118bdefe53b5ad22d4
+          python3 "$RUNNER_TEMP/spectr-linux-tools/check_linux_release.py" --version 1.0.12 --source-sha "$SPECTR_SOURCE_SHA" "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz"
           cp "$RUNNER_TEMP/linux-release/Spectr-v1.0.12-linux-x86_64.tar.xz" .
       - uses: actions/upload-artifact@v4
         with:
