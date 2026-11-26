@@ -2,7 +2,7 @@
 """Static, non-dispatching checks for Spectr's local-first acceptance lane."""
 from pathlib import Path
 import json, re, subprocess, sys, tomllib
-from validate_release_sdk import cmake_bool, feature_mismatches
+from validate_release_sdk import cmake_bool, feature_mismatches, vellum_editor_problems
 from cmake_parse_check import scan as cmake_scan, PLANTS as CMAKE_PLANTS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -294,6 +294,27 @@ checks = {
     "features: a disabled inspector is rejected":
         bool(feature_mismatches({"audio_probes": False, "inspector": False})),
     "features: a non-object is rejected": bool(feature_mismatches(None)),
+    "release requires the Vellum editor": "--require-vellum-editor" in workflow_step(
+        release_workflow, "Configure the exact Release build"),
+    "product acceptance does not require the Vellum editor":
+        "--require-vellum-editor" not in workflow,
+    "vellum: the staged Vellum with the editor on is accepted": not vellum_editor_problems(
+        {"SPECTR_VELLUM_EDITOR_PACKAGE": "ON",
+         "Vellum_DIR": "/sdk/share/pulp/vellum-sdk/0.2.3/sdk/lib/cmake/Vellum"},
+        "/sdk", "darwin-arm64"),
+    "vellum: the editor off is rejected": bool(vellum_editor_problems(
+        {"SPECTR_VELLUM_EDITOR_PACKAGE": "OFF",
+         "Vellum_DIR": "/sdk/share/pulp/vellum-sdk/0.2.3/sdk/lib/cmake/Vellum"},
+        "/sdk", "darwin-arm64")),
+    "vellum: a Vellum outside the Pulp SDK is rejected": bool(vellum_editor_problems(
+        {"SPECTR_VELLUM_EDITOR_PACKAGE": "ON", "Vellum_DIR": "/elsewhere/sdk/lib/cmake/Vellum"},
+        "/sdk", "darwin-arm64")),
+    "vellum: an unresolved Vellum is rejected": bool(vellum_editor_problems(
+        {"SPECTR_VELLUM_EDITOR_PACKAGE": "ON"}, "/sdk", "darwin-arm64")),
+    "vellum: a non-darwin-arm64 platform is rejected": bool(vellum_editor_problems(
+        {"SPECTR_VELLUM_EDITOR_PACKAGE": "ON",
+         "Vellum_DIR": "/sdk/share/pulp/vellum-sdk/0.2.3/sdk/lib/cmake/Vellum"},
+        "/sdk", "windows-x64")),
     "CMake boolean aliases": (all(cmake_bool(value) for value in ("1", "ON", "YES", "TRUE", "Y"))
                               and not any(cmake_bool(value) for value in
                                           ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND", "x-NOTFOUND"))),

@@ -32,6 +32,23 @@ def feature_mismatches(features):
                 if key not in REQUIRED_FEATURES and value is not False]
     return reasons
 
+def vellum_editor_problems(cache, sdk_root, platform):
+    """Reasons a build may not ship as the Vellum-hosted editor, or [] when it may.
+
+    A published Apple Silicon package hosts its editor with Vellum, resolved
+    from the Vellum SDK the Pulp release stages inside its own prefix
+    (share/pulp/vellum-sdk/<version>), never from a Vellum found elsewhere."""
+    if platform != "darwin-arm64":
+        return [f"the Vellum editor ships only on darwin-arm64, not {platform}"]
+    problems = []
+    if not cmake_bool(cache.get("SPECTR_VELLUM_EDITOR_PACKAGE", "")):
+        problems.append("SPECTR_VELLUM_EDITOR_PACKAGE is not ON")
+    staged = (Path(sdk_root) / "share/pulp/vellum-sdk").resolve()
+    vellum_dir = Path(cache.get("Vellum_DIR", "") or "/nonexistent").resolve()
+    if staged not in vellum_dir.parents:
+        problems.append(f"Vellum_DIR {vellum_dir} is not the Vellum SDK staged in the Pulp SDK")
+    return problems
+
 def cache_values(path):
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -80,19 +97,9 @@ def main():
             fail(f"{key}={actual!r}, expected {expected!r}")
     expected_dir = (args.sdk_root / "lib/cmake/Pulp").resolve()
     if Path(cache.get("Pulp_DIR", "")).resolve() != expected_dir: fail("Pulp_DIR is not the extracted SDK")
-    # A published Apple Silicon package ships the Vellum editor, resolved from
-    # the Vellum SDK the Pulp release stages inside its own prefix, never from
-    # elsewhere. Product acceptance builds the legacy host on purpose, so only
-    # the release asks for this.
     if args.require_vellum_editor:
-        if pin["platform"] != "darwin-arm64":
-            fail(f"the Vellum editor ships only on darwin-arm64, not {pin['platform']}")
-        if not cmake_bool(cache.get("SPECTR_VELLUM_EDITOR_PACKAGE", "")):
-            fail("SPECTR_VELLUM_EDITOR_PACKAGE is not ON for a darwin-arm64 release")
-        vellum_root = (args.sdk_root / "share/pulp/vellum-sdk").resolve()
-        vellum_dir = Path(cache.get("Vellum_DIR", "")).resolve()
-        if vellum_root not in vellum_dir.parents:
-            fail(f"Vellum_DIR {vellum_dir} is not the Vellum SDK staged in the Pulp SDK")
+        problems = vellum_editor_problems(cache, args.sdk_root, pin["platform"])
+        if problems: fail("; ".join(problems))
 
     provenance = json.loads((args.sdk_root / "sdk-provenance.json").read_text(encoding="utf-8"))
     expected = {
