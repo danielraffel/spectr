@@ -337,7 +337,8 @@ jobs:
             -DSPECTR_EXPECTED_PRODUCT_GIT_SHA="$SPECTR_RELEASE_SOURCE_SHA"
           python3 "$RELEASE_TOOLS/ci/validate_release_sdk.py" \
             --sdk-root "$PULP_SDK_ROOT" --build-dir build \
-            --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA"
+            --pin tools/ci/pulp-sdk-release.json --product-sha "$SPECTR_RELEASE_SOURCE_SHA" \
+            --require-vellum-editor
 
       - name: Build the signed package inputs through the governed builder
         env:

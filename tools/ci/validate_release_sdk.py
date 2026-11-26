@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--pin", type=Path, required=True)
     parser.add_argument("--product-sha", required=True)
+    parser.add_argument("--require-vellum-editor", action="store_true",
+                        help="refuse a build without the Vellum-hosted editor")
     args = parser.parse_args()
     pin = json.loads(args.pin.read_text(encoding="utf-8"))
     version, sha = pin["release_tag"].removeprefix("v"), pin["source_git_sha"]
@@ -78,9 +80,13 @@ def main():
             fail(f"{key}={actual!r}, expected {expected!r}")
     expected_dir = (args.sdk_root / "lib/cmake/Pulp").resolve()
     if Path(cache.get("Pulp_DIR", "")).resolve() != expected_dir: fail("Pulp_DIR is not the extracted SDK")
-    # An Apple Silicon release ships the Vellum editor, resolved from the Vellum
-    # SDK the Pulp release stages inside its own prefix, never from elsewhere.
-    if pin["platform"] == "darwin-arm64":
+    # A published Apple Silicon package ships the Vellum editor, resolved from
+    # the Vellum SDK the Pulp release stages inside its own prefix, never from
+    # elsewhere. Product acceptance builds the legacy host on purpose, so only
+    # the release asks for this.
+    if args.require_vellum_editor:
+        if pin["platform"] != "darwin-arm64":
+            fail(f"the Vellum editor ships only on darwin-arm64, not {pin['platform']}")
         if not cmake_bool(cache.get("SPECTR_VELLUM_EDITOR_PACKAGE", "")):
             fail("SPECTR_VELLUM_EDITOR_PACKAGE is not ON for a darwin-arm64 release")
         vellum_root = (args.sdk_root / "share/pulp/vellum-sdk").resolve()
