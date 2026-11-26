@@ -636,7 +636,7 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
     # editor contract even while the package factory owns the opt-in editor.
     target_link_libraries(${SPECTR_NATIVE_CORE_TARGET} PUBLIC Pulp::view Pulp::vellum-audio)
     target_sources(${SPECTR_NATIVE_CORE_TARGET} PRIVATE
-        src/ui/vellum_editor_update_stub.cpp)
+        src/ui/vellum_editor_app_updates.cpp)
     target_compile_definitions(${SPECTR_NATIVE_CORE_TARGET} PUBLIC
         SPECTR_VELLUM_EDITOR_PACKAGE=1)
 endif()
@@ -1640,7 +1640,8 @@ if(SPECTR_VELLUM_EDITOR_PACKAGE)
         test/test_editor_open.cpp
         test/test_vellum_editor_model.cpp
         test/test_vellum_editor_gpu.cpp
-        test/test_vellum_audio_display.cpp)
+        test/test_vellum_audio_display.cpp
+        test/test_vellum_app_updates.cpp)
     target_link_libraries(Spectr-vellum-editor-test PRIVATE
         ${SPECTR_NATIVE_CORE_TARGET} SpectrVellumEditor Catch2::Catch2WithMain)
     spectr_configure_native_target(Spectr-vellum-editor-test)
